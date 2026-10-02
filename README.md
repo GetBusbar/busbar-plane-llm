@@ -5,7 +5,7 @@ First-party signed kind:plane plugin cdylib: the llm plane, packaged as a droppa
 
 | kind | alias | crate | busbar | license |
 |---|---|---|---|---|
-| `plane` | `llm` | `busbar-plane-llm-plugin` | 1.6.0 (pinned in `.busbar-ref`) | Apache-2.0 |
+| `plane` | `llm` | `busbar-plane-llm-plugin` | 1.6.0 (pinned in `.busbar-ref`) | MIT |
 
 [![ci](https://github.com/GetBusbar/busbar-plane-llm/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/GetBusbar/busbar-plane-llm/actions/workflows/ci.yml)
 <!-- fleet:header:end -->

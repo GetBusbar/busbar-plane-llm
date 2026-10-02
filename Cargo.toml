@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 #
 # RENDERED by `busbar-release plugin sync busbar-plane-llm` from GetBusbar/busbar-release template/ and
 # GetBusbar/busbar's dependency policy; a hand edit is overwritten by the next sync.
@@ -11,7 +11,7 @@
 #
 # THIRD-PARTY VERSIONS ARE THE FLEET'S, NOT THIS REPO'S. The table below is busbar's own root
 # `[workspace.dependencies]` (third-party rows) at busbar 7a5b429041752e00375e120ab1547a8928c3dee4, followed by the plugin-only rows
-# of busbar's `.github/fleet/deps.toml` at fd8a207bb97a2ded5e401a41bd7e49d62db111bd. A member takes a crate with
+# of busbar's `.github/fleet/deps.toml` at dd9637da0c849b811238e108cbafabcb4c7c22a2. A member takes a crate with
 # `{ workspace = true }` (adding features if it needs them); a crate in neither table is a new
 # `deps.toml` row in busbar first. CI holds this repo's Cargo.lock to busbar's lock at the pin.
 [workspace]
@@ -24,7 +24,7 @@ members = [
 [workspace.package]
 edition = "2021"
 rust-version = "1.98"
-license = "Apache-2.0"
+license = "MIT"
 publish = false
 repository = "https://github.com/GetBusbar/busbar-plane-llm"
 
@@ -102,8 +102,8 @@ tracing-subscriber = "0.3.23"
 url = "2"
 webpki-roots = "1"
 zeroize = "1"
-# busbar .github/fleet/deps.toml [plugin-deps], at fd8a207bb97a2ded5e401a41bd7e49d62db111bd
-ldap3 = { version = "0.11", default-features = false, features = ["sync"] }
+# busbar .github/fleet/deps.toml [plugin-deps], at dd9637da0c849b811238e108cbafabcb4c7c22a2
+ldap3 = { version = "0.12", default-features = false, features = ["sync"] }
 mysql = { version = "26", default-features = false, features = ["minimal"] }
 postgres = "0.19"
 redis = { version = "1", default-features = false, features = ["script"] }

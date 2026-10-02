@@ -7,7 +7,7 @@ Thanks for your interest in improving `busbar-plane-llm`.
 - Be respectful and constructive in all project spaces (see
   [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)).
 - By contributing, you agree your contributions are licensed under the project's
-  [Apache-2.0](LICENSE) license.
+  [MIT](LICENSE) license.
 - Security issues go through [SECURITY.md](SECURITY.md), **not** public issues.
 
 ## Layout
@@ -21,7 +21,7 @@ at the pin); change them there, not here.
 
 ## This repo tests itself against busbar
 
-CI runs the fleet's one harness (busbar-release `ci/plugin/run.sh`) at the busbar commit in
+CI runs the fleet's one harness, busbar's reusable `plugin-ci.yml`, at the busbar commit in
 `.busbar-ref`: fmt, clippy -D warnings, the whole test suite, `cargo deny`, the dependency wall
 (busbar-contract plus third-party only), the socket/TLS ban (no plugin opens its own socket, dials,
 binds or does TLS), the C-dependency allow-list, `Cargo.lock` parity with busbar's lock at the pin,
