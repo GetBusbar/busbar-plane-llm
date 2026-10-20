@@ -79,7 +79,13 @@ fn the_declares_file_states_the_catalog() {
             })
         })
         .collect();
-    let whole = serde_json::json!({ "needs": ["http"], "diagnostics": want });
+    // The plane ABI range every plugin repo's declares.json states at this repo's busbar pin (the
+    // declares gate reads it there), beside the needs and the catalog.
+    let whole = serde_json::json!({
+        "contract_abi": { "min": 1, "max": 1 },
+        "needs": ["http"],
+        "diagnostics": want,
+    });
     assert_eq!(
         declared,
         whole,
