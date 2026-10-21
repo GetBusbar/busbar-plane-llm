@@ -4742,8 +4742,11 @@ fn an_openai_whole_answer_reads_as_an_anthropic_message_naming_the_serving_model
     assert!(got.get("choices").is_none(), "no raw openai body: {got}");
 }
 
+/// A banner and the `error_map_value` it carried, per event.
+type Banners = Vec<(String, Option<String>)>;
+
 /// Every `diag` banner (and its `error_map_value` field) a closure's tracing events carried.
-fn banners_of(f: impl FnOnce()) -> Vec<(String, Option<String>)> {
+fn banners_of(f: impl FnOnce()) -> Banners {
     use std::sync::{Arc, Mutex};
     use tracing::field::{Field, Visit};
 
@@ -4761,7 +4764,7 @@ fn banners_of(f: impl FnOnce()) -> Vec<(String, Option<String>)> {
             }
         }
     }
-    struct Capture(Arc<Mutex<Vec<(String, Option<String>)>>>);
+    struct Capture(Arc<Mutex<Banners>>);
     impl tracing::Subscriber for Capture {
         fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
             true
@@ -4783,8 +4786,8 @@ fn banners_of(f: impl FnOnce()) -> Vec<(String, Option<String>)> {
     }
     let seen = Arc::new(Mutex::new(Vec::new()));
     tracing::subscriber::with_default(Capture(seen.clone()), f);
-    let out = seen.lock().unwrap().clone();
-    out
+    let mut seen = seen.lock().unwrap();
+    std::mem::take(&mut *seen)
 }
 
 /// A provider `error_map` entry that names no status class is ignored, and the operator is told so
@@ -4803,12 +4806,12 @@ fn an_error_map_class_that_names_no_class_is_reported_once() {
         let sig = normalize(400, &raw(400, Some("1302"), None), &em);
         assert_eq!(sig.class, StatusClass::ClientError);
         // The same value again, and the typo'd structured-type mapping.
-        normalize(400, &raw(400, Some("1302"), None), &em);
-        normalize(500, &raw(500, None, Some("overloaded_error")), &em);
+        let _ = normalize(400, &raw(400, Some("1302"), None), &em);
+        let _ = normalize(500, &raw(500, None, Some("overloaded_error")), &em);
         // A recognized mapping reports nothing.
-        normalize(402, &raw(402, Some("quota"), None), &em);
+        let _ = normalize(402, &raw(402, Some("quota"), None), &em);
     });
-    let want: Vec<(String, Option<String>)> = vec![
+    let want: Banners = vec![
         (code.clone(), Some("\"rate_limt_by_code\"".to_string())),
         (code, Some("\"overloaded_by_type\"".to_string())),
     ];
