@@ -26,10 +26,12 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 description = "The LLM plane for busbar: the plugin contract's plane kind implemented as a thin adapter over the busbar-llm dialect codecs."
-# THE ROOT CELLS' ADDRESS: `build.rs` states `cells=<this crate>/tests/root/mod.rs` under this
-# `links` name, and the composition root's `build.rs` reads it as `DEP_BUSBAR_DOOR_CELLS_<CRATE>_CELLS`
-# (the same for a path dependency and a pinned one), so the root compiles this plane's own root cells
-# without naming this crate or resolving its checkout. Links no native library.
+# THE ROOT CELLS' AND THE DRIVER PROOFS' ADDRESSES: `build.rs` states
+# `cells=<this crate>/tests/root/mod.rs` and `driver=<this crate>/tests/on_driver` under this `links`
+# name, and the composition root's `build.rs` reads them as `DEP_BUSBAR_DOOR_CELLS_<CRATE>_CELLS` and
+# `DEP_BUSBAR_DOOR_CELLS_<CRATE>_DRIVER` (the same for a path dependency and a pinned one), so the root
+# compiles this plane's own root cells and driver proofs without naming this crate or resolving its
+# checkout. Links no native library.
 links = "busbar-door-cells-busbar-plane-llm"
 
 [lib]

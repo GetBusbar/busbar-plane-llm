@@ -14,20 +14,19 @@
 //! here and never written), the status the driver chooses for the plane's dialect and the refusal's
 //! reason equals the recorded status.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use busbar_contract::caps::ReasonCode;
 use busbar_kernel::plane_driver::{refusal_status, BufferCaps, DriverConfig};
 use busbar_plane_llm::dialect::DIALECTS;
 use busbar_plane_llm::refusal::REFUSAL_STATUSES;
 
+/// The recorded cells, in busbar's tree. This file compiles only into the composition root's
+/// `hook_parity_driver` suite, so `CARGO_MANIFEST_DIR` is the root crate (`crates/busbar`) and
+/// `../..` is busbar's checkout, where that suite runs; `BUSBAR_CHECKOUT` is plugin CI's, not the
+/// root's, and is unset there.
 fn golden() -> PathBuf {
-    std::path::PathBuf::from(
-        std::env::var_os("BUSBAR_CHECKOUT").expect(
-            "BUSBAR_CHECKOUT is unset: busbar's tree at .busbar-ref (plugin CI exports it)",
-        ),
-    )
-    .join("testing/shadow-oracle/golden/1.5.5/cells")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testing/shadow-oracle/golden/1.5.5/cells")
 }
 
 /// The status a recorded cell answered.
@@ -59,11 +58,8 @@ fn owed(cell: &str) -> u32 {
     let Some((_, status, id)) = ACCEPTED.iter().find(|(c, _, _)| *c == cell) else {
         return recorded(cell);
     };
-    let path =
-        std::path::PathBuf::from(std::env::var_os("BUSBAR_CHECKOUT").expect(
-            "BUSBAR_CHECKOUT is unset: busbar's tree at .busbar-ref (plugin CI exports it)",
-        ))
-        .join("testing/shadow-oracle/accepted-differences.json");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../testing/shadow-oracle/accepted-differences.json");
     let text = std::fs::read_to_string(&path).expect("the register is readable");
     let register: serde_json::Value = serde_json::from_str(&text).expect("the register is JSON");
     let entry = register["accepted"]
