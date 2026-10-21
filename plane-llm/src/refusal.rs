@@ -75,10 +75,13 @@ pub mod reason {
     /// `unauthenticated`: no credential resolved to a principal.
     pub const UNAUTHENTICATED: u32 = 12;
     /// `over_budget`: a spend cap blocked the unit.
+    #[cfg(test)]
     pub const OVER_BUDGET: u32 = 20;
     /// `destination_unreachable`: no member of the pool answered.
+    #[cfg(test)]
     pub const DESTINATION_UNREACHABLE: u32 = 31;
     /// `group_frozen`: the caller's group is disabled.
+    #[cfg(test)]
     pub const GROUP_FROZEN: u32 = 21;
     /// `no_rate`: a rate card is configured and the model it would bill names no rate.
     pub const NO_RATE: u32 = 17;

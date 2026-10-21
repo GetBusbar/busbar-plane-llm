@@ -28,8 +28,10 @@
 
 mod claims;
 // `#![deny(missing_docs)]` above is a rule this crate holds itself to; the `codec` module was not
-// written under it and is exempt, scoped to exactly this module.
-#[allow(missing_docs)]
+// written under it and is exempt, scoped to exactly this module. It is also the dialect codecs
+// folded in whole (the six dialects' keys, diagnostics and readers): a name it states that the door
+// does not reach is its vocabulary, held by its own tests, not dead code of this plane.
+#[allow(missing_docs, dead_code)]
 mod codec;
 mod dialect;
 mod exchange;

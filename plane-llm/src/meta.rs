@@ -7,7 +7,7 @@
 use busbar_contract::ids::{
     AdminVerbId, ClassDirection, MeterClassDecl, MeterClassId, OpClassId, RecordSchemaId,
 };
-use busbar_contract::plane::{PlaneMeta, ServedOpClass, TOKEN_FAMILY};
+use busbar_contract::plane::{PlaneMeta, TOKEN_FAMILY};
 
 use crate::claims;
 use crate::plane_door::TOKEN_CLASSES;
@@ -218,6 +218,7 @@ macro_rules! help_tagline {
 /// The one-line description `busbar --help` opens with (`busbar <version> — <this>`), byte for byte
 /// as the binary has always printed it (shadow-oracle cells `cli__--help` / `cli__-h`). It names
 /// this plane, so this plane owns it (#47/#49) and the composition root reads it from here.
+#[cfg(test)]
 pub const HELP_TAGLINE: &str = help_tagline!();
 
 /// [`HELP_ENDPOINTS`]'s text, spelled once for it and for [`CLI_HELP_TEXT`].
@@ -241,11 +242,13 @@ macro_rules! help_endpoints {
 /// on — byte for byte as the binary has always printed them (shadow-oracle cells `cli__--help` /
 /// `cli__-h`). They name this plane's dialects, so this plane owns them (#47/#49); no trailing
 /// newline, the root splices them between two lines it owns.
+#[cfg(test)]
 pub const HELP_ENDPOINTS: &str = help_endpoints!();
 
 /// This plane's rows of `busbar --help`, as the composition root's CLI-help axis reads them:
 /// `("tagline", …)` the one-line description the help opens with, `("endpoint", …)` its rows of the
 /// `ENDPOINTS` block.
+#[cfg(test)]
 pub const CLI_HELP: &[(&str, &str)] = &[("tagline", HELP_TAGLINE), ("endpoint", HELP_ENDPOINTS)];
 
 /// THE SAME ROWS AS THE DOOR'S TAIL STATES THEM (`PlaneTail::cli_help`), in the contract's grammar
@@ -257,14 +260,6 @@ pub const CLI_HELP_TEXT: &str = concat!(
     "\u{1e}endpoint\u{1f}",
     help_endpoints!()
 );
-
-/// The operation class this plane serves ONE LEVEL DOWN, to another plane's unit that names only the
-/// class it needs, and the display name a refusal naming this plane reads — byte for byte the word
-/// the binary has always printed where it names this plane (#47/#49: this plane owns it).
-pub const SERVED_OP_CLASSES: &[ServedOpClass] = &[ServedOpClass {
-    op: OpClassId::new("chat"),
-    name: "LLM",
-}];
 
 /// THE PROVIDER KEYS THIS PLANE OWNS, per form of a `providers:` entry (row 155 B1c, ARCHITECT
 /// ruling "Option A"): the descriptor this plane states in its Statement's extensions under

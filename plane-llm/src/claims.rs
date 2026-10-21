@@ -27,12 +27,6 @@ use busbar_contract::grammar::{Claim, PathSeg, Selector};
 /// shape is the same transport's own event framing rather than a second claim here.
 pub const TRANSPORT: &str = "http";
 
-/// The streaming transport this plane also claims.
-///
-/// A streamed answer arrives on the event-stream framing of the same request, so the claims below
-/// are made against the request transport and this key names the framing the response uses.
-pub const STREAM_TRANSPORT: &str = "sse";
-
 /// The credential scheme this plane's claims authenticate under.
 ///
 /// One scheme with alternatives, not several schemes: which alternative a unit uses is the
