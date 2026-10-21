@@ -76,7 +76,9 @@ tracing = { workspace = true }
 # The TEST-ONLY seal (#65). `busbar_contract::plugin::TestKernelSeal` is the one blessed
 # fixture implementor of the SEALED `KernelSeal` trait; this crate's test harnesses used to
 # forge their own. Dev-only and feature-gated, so it is absent from every release build.
-busbar-contract = { workspace = true, features = ["test-seal"] }
+# `alloc-counter` is the counting `GlobalAlloc` the allocation gate installs (ARCHITECT ruling
+# 2026-10-21): dev-only, so the crate root keeps the literal `#![forbid(unsafe_code)]`.
+busbar-contract = { workspace = true, features = ["test-seal", "alloc-counter"] }
 # The codec module's own test host (`codec::test_host`), and the entropy source it arms — the same
 # ones the codec's tests used before the fold.
 serde_json = { workspace = true }

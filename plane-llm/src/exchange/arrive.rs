@@ -116,7 +116,9 @@ pub struct Arrived {
     pub body: Vec<u8>,
     /// The body as JSON, when it is JSON.
     pub parsed: Option<Value>,
-    /// The request path.
+    /// The request path (read by the tests that rebuild an arrival; the door routes by the
+    /// dialect and operation it was detected under).
+    #[allow(dead_code)]
     pub path: String,
     /// The query, without its `?`.
     pub query: Option<String>,

@@ -15,8 +15,6 @@ pub const ALLOWED_TOOLS: &str = "allowed_tools";
 pub const ANNOTATIONS: &str = "annotations";
 pub const ANY: &str = "any";
 pub const ANY_OF: &str = "anyOf";
-/// The JSON media type: the contract's, not a second spelling.
-pub use busbar_contract::protocol::APPLICATION_JSON;
 pub const APPLICATION_OCTET_STREAM: &str = "application/octet-stream";
 pub const APPLICATION_PDF: &str = "application/pdf";
 pub const ARGUMENTS: &str = "arguments";

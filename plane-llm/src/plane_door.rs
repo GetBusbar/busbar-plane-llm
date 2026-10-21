@@ -50,7 +50,7 @@ use busbar_contract::abi::host::conn::connector::{
 };
 use busbar_contract::abi::host::service::{ClockReading, MAX_RANDOM_FILL};
 use busbar_contract::abi::mechanism::call::{
-    AbiStr, Blob, InHead, OutHead, Outcome, Span, BLOB_ABSENT, BLOB_OCTETS,
+    AbiStr, Blob, InHead, OutHead, Outcome, Span, BLOB_ABSENT,
 };
 use busbar_contract::abi::mechanism::door::SECTION_REQUIRED;
 use busbar_contract::abi::mechanism::door::{
@@ -100,12 +100,6 @@ use crate::exchange::{handler_of, probe, project, refuse};
 use crate::meta::PROVIDER_KEYS;
 use crate::LlmPlane;
 
-/// THE PROTOCOL AXIS of the door's linked row: the plane's own six dialect declarations, in the
-/// order an operator sees, as contract data (`busbar_contract::protocol::ProtocolDecl`). A
-/// composition root that links this door seeds the kernel's protocol registry from them, so the
-/// kernel names no dialect (ARCHITECT 2026-10-16 ruling 3).
-pub use crate::codec::DECLS as PROTOCOLS;
-
 // ── the Statement ────────────────────────────────────────────────────────────────────────────────
 
 /// The version the Statement names: the crate's (a test pins the two equal).
@@ -135,7 +129,7 @@ const fn section(name: &'static str, flags: u32) -> Section {
 
 /// `pools:` declared; `providers:`, `models:` and `limits:` read beside it; `webhooks:` its own,
 /// opened with as written (the receivers it switches on, [`webhook`]).
-const SECTIONS: &[Section] = &[
+pub const SECTIONS: &[Section] = &[
     section(sections::POOLS, SECTION_DECLARING),
     section(sections::PROVIDERS, SECTION_CONSUMED | SECTION_REQUIRED),
     section(sections::MODELS, SECTION_CONSUMED | SECTION_REQUIRED),
@@ -424,21 +418,23 @@ pub const TAIL: &PlaneTail = &PlaneTail {
     ..PlaneTail::ZERO
 };
 
-/// The Statement's extensions: the plane's provider keys ([`crate::meta::PROVIDER_KEYS`]) under the
-/// contract's one key for them, built at compile time.
-const EXTENSIONS: &[u8] = &extensions::entry::<
-    { extensions::entry_len(EXT_PROVIDER_KEYS, PROVIDER_KEYS.as_bytes()) },
->(EXT_PROVIDER_KEYS, PROVIDER_KEYS.as_bytes());
+busbar_contract::statement_extensions!(
+    /// The Statement's extensions: the plane's provider keys ([`crate::meta::PROVIDER_KEYS`]) under
+    /// the contract's one key for them, and this plugin's whole `declares` document
+    /// (`declares.json`: the transport scheme it needs and every code its catalog holds,
+    /// [`crate::codec::diagnostics::DIAGNOSTICS`]; a test holds the two equal) under `EXT_DECLARES`
+    /// (BUSBAR-1.6.0.md l.246), so the host's catalogue learns this plane's codes from its door
+    /// whichever way the plane came in.
+    EXTENSIONS: [
+        (EXT_PROVIDER_KEYS, PROVIDER_KEYS.as_bytes()),
+        (extensions::EXT_DECLARES, include_bytes!("../declares.json")),
+    ]
+);
 
 /// THE STATEMENT: the plane's key and version, its sections, its needs, its tail and its extensions.
 pub const STATEMENT: Statement = Statement {
     kind_tail: ptr::from_ref(TAIL).cast::<KindTailHead>(),
-    extensions: Blob {
-        ptr: EXTENSIONS.as_ptr(),
-        len: EXTENSIONS.len(),
-        fmt: BLOB_OCTETS,
-        ..Blob::ZERO
-    },
+    extensions: EXTENSIONS,
     sections: SECTIONS.as_ptr(),
     sections_len: SECTIONS.len(),
     needs: NEEDS.as_ptr(),
@@ -651,6 +647,7 @@ impl<S> UnitBook<S> {
     }
 
     /// What the book holds: `(units, ticket bindings)`.
+    #[cfg(test)]
     #[must_use]
     pub fn held(&self) -> (usize, usize) {
         (self.units.len(), self.tickets.len())
