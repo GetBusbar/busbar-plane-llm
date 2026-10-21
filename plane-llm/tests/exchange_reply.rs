@@ -137,6 +137,18 @@ fn a_far_end_error_is_placed_in_its_class() {
     }
     let sig = normalize(400, &raw(400, Some("1302"), None), &em);
     assert_eq!(sig.provider_signal.as_deref(), Some("1302"));
+    // A mapped structured type with no provider code states the type as the signal.
+    let sig = normalize(400, &raw(400, None, Some("overloaded_error")), &em);
+    assert_eq!(sig.class, StatusClass::Overloaded);
+    assert_eq!(sig.provider_signal.as_deref(), Some("overloaded_error"));
+    // The built-in context-length code states itself as the signal.
+    let sig = normalize(
+        400,
+        &raw(400, Some("context_length_exceeded"), None),
+        &HashMap::new(),
+    );
+    assert_eq!(sig.class, StatusClass::ContextLength);
+    assert_eq!(sig.provider_signal.as_deref(), Some("context_length_exceeded"));
 }
 
 const JSON_HEAD: &[(&[u8], &[u8])] = &[(b"content-type", b"application/json")];

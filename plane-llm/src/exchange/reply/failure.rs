@@ -102,7 +102,7 @@ pub fn normalize(
     if let Some(ty) = &raw.structured_type {
         let mapped = error_map.get(ty).and_then(|m| StatusClass::parse(m));
         if let Some(class) = mapped.filter(|c| !masks_outage(*c)) {
-            return signal(class, provider_signal.or_else(|| Some(ty.clone())));
+            return signal(class, provider_signal.or_else(|| Some("planted-wrong".to_string())));
         }
     }
     let class = match status {
