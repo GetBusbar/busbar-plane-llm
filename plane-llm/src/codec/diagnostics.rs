@@ -565,6 +565,29 @@ pub const CONFIG_ERROR_MAP_CLASS_UNRECOGNIZED: Diagnostic = Diagnostic {
     retired: false,
 };
 
+/// Report an operator `error_map` value that names no status class, once per distinct value for the
+/// life of the process (BUSBAR-3022): the misconfiguration sits on the hot error path, so it logs
+/// once and never per request. The set only dedupes this line; no answer the plane gives depends on
+/// it, which is why it sits here with the codec's other scratch state and not in the exchange.
+pub fn warn_error_map_class_unrecognized(value: &str) {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
+    // Poisoning is harmless here (the set only dedupes a warning); recover the guard either way.
+    let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.insert(value.to_string()) {
+        busbar_contract::diag_warn!(
+            CONFIG_ERROR_MAP_CLASS_UNRECOGNIZED,
+            error_map_value = value,
+            "error_map maps an error to an unrecognized status class; the mapping is IGNORED and \
+             classification falls through to the upstream status. Valid classes: rate_limit, \
+             overloaded, server_error, timeout, network, auth, billing, client_error, \
+             context_length"
+        );
+    }
+}
+
 /// Every code this plane defines, in catalog order, for the composition root's
 /// `install_diagnostics`.
 pub static DIAGNOSTICS: &[&Diagnostic] = &[
