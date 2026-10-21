@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "busbar-plane-llm-plugin"
+version = "1.6.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "First-party signed kind:plane plugin cdylib: the llm plane, packaged as a droppable busbar plugin. Drop the signed tarball into plugins/."
+
+[lib]
+# cdylib: the DROPPED-IN door (a signed tarball in `plugins/`), exporting `busbar_plugin_door`.
+# rlib: what `cargo test` links, and what makes `cargo test` emit the cdylib the conformance test
+# loads (a cdylib-only package builds a trivial test harness and never produces the library).
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# THE LOGIC, same repo: its `plane_door::door` is the door this image exports. A busbar build that
+# LINKS the plane names the logic crate, which exports no symbol.
+busbar-plane-llm = { path = "../plane-llm" }
+busbar-contract = { workspace = true }
+
+[dev-dependencies]
+# The published suite (`tests/conformance.rs`, `conformance_suite!`) loads the linked door and
+# dlopens the built cdylib over busbar's REAL loader: dev-only, never in the shipped artifact. The
+# op-by-op both-ways script (`tests/both_ways.rs`, moved here with the crate from busbar's
+# crates/busbar-plane-llm/tests/conformance.rs) drives the same two doors through it.
+busbar-plugin-loader = { workspace = true, features = ["conformance"] }
