@@ -25,6 +25,7 @@ pub mod open_class;
 pub mod rerank;
 /// IR-18: the busbar signature-provenance envelope for client carriers with no origin field.
 pub mod sig_envelope;
+#[cfg(test)]
 pub use facts_impl::project;
 
 /// The concrete chat IR TYPES, split to `types.rs` so busbar-core can `#[path]`-share them
