@@ -149,7 +149,10 @@ fn a_far_end_error_is_placed_in_its_class() {
         &HashMap::new(),
     );
     assert_eq!(sig.class, StatusClass::ContextLength);
-    assert_eq!(sig.provider_signal.as_deref(), Some("context_length_exceeded"));
+    assert_eq!(
+        sig.provider_signal.as_deref(),
+        Some("context_length_exceeded")
+    );
 }
 
 const JSON_HEAD: &[(&[u8], &[u8])] = &[(b"content-type", b"application/json")];
