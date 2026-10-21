@@ -26,24 +26,29 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-pub mod claims;
+mod claims;
 // `#![deny(missing_docs)]` above is a rule this crate holds itself to; the `codec` module was not
 // written under it and is exempt, scoped to exactly this module.
 #[allow(missing_docs)]
-pub mod codec;
-pub mod dialect;
-pub mod exchange;
-pub mod meta;
-pub mod plane;
-pub mod plane_door;
-pub mod refusal;
+mod codec;
+mod dialect;
+mod exchange;
+mod meta;
+mod plane;
+mod plane_door;
+mod refusal;
+#[cfg(test)]
+mod tests;
 
-/// THE PLANE'S DECLARED METADATA (`declares.json`): the `declares` section its signed tarball carries
-/// and the one the composition root reads for its linked door (`linked-declares`), one file for both
-/// — the transport scheme it needs and every code its catalog holds
-/// ([`codec::diagnostics::DIAGNOSTICS`]; a test holds the two equal), so the host's catalogue learns
-/// this plane's codes from its door's declaration whichever way the plane came in.
-pub const DECLARES: &str = include_str!("../declares.json");
+/// THE DOOR: this plugin's one public item (BUSBAR-1.6.0.md l.3567, Crate shape). The same table is
+/// compiled in (linked) and dropped in (`busbar-plane-llm-plugin`'s one `export_door!` line).
+pub use plane_door::door;
+
+/// THE PLANE'S DECLARED METADATA (`declares.json`), for the tests that hold it equal to the
+/// catalog ([`codec::diagnostics::DIAGNOSTICS`]); the door states the same bytes under
+/// `EXT_DECLARES` in its Statement.
+#[cfg(test)]
+const DECLARES: &str = include_str!("../declares.json");
 
 use busbar_contract::ids::LaneId;
 use busbar_contract::ir::egress_prep::LaneCaps;
@@ -58,7 +63,7 @@ use busbar_contract::plugin::{AbiVersion, Kind, Plugin};
 /// after registration can vary them, and the memory the names occupy is a fixed term rather than
 /// one that grows with traffic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Upstream {
+struct Upstream {
     /// The priced lane this upstream is reached on.
     pub lane: LaneId,
     /// The host to dial.
@@ -79,7 +84,7 @@ pub struct Upstream {
 /// The one field is a borrowed, immutable list. There is no cell here, no lock and no atomic: the
 /// purity test asserts that by walking the type, not by trusting this sentence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LlmPlane {
+struct LlmPlane {
     upstreams: &'static [Upstream],
 }
 

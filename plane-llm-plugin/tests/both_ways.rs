@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE DOOR, BOTH WAYS (`BUSBAR-1.6.0.md` Part 2 #2, THE DESIGN, the section on one table for compiled-in and dropped-in): the linked door
-//! (`plane_door::door`) and this crate's dropped-in image (the `busbar-plane-llm-plugin` cdylib, the
+//! (`busbar_plane_llm::door`) and this crate's dropped-in image (the `busbar-plane-llm-plugin` cdylib, the
 //! same door behind `export_door!`), each admitted through the one loader, run ONE script through every plane
 //! op, each answer read back. The two transcripts must be identical, and carry what the plane's
 //! answers to the driver require (Part 3, the plane seam's driver section).
@@ -28,12 +28,27 @@ use busbar_contract::abi::plane::{
 use busbar_contract::abi::sdk::capture::{CaptureHome, CaptureSlot};
 use busbar_contract::abi::sdk::door::kind_op;
 use busbar_contract::abi::sdk::{Instance, Lent, Out, Safe, SafeSlot};
-use busbar_plane_llm::plane_door;
+use busbar_plane_llm::door;
 use busbar_plugin_loader::dispatch::kinds::plane::Plane;
 use busbar_plugin_loader::dispatch::{
-    in_head, load_dropped, load_linked, out_head, rendering_of, Bind, DispatchConfig, Dispatcher,
-    Frame, LinkedRow, NoSink, Plugin,
+    in_head, load_dropped, load_linked, out_head, rendering_of_loaded, Bind, DispatchConfig,
+    Dispatcher, Frame, LinkedRow, NoSink, Plugin,
 };
+
+/// This plugin's own door, named for the loader.
+fn loaded_door() -> busbar_plugin_loader::dispatch::LoadedDoor {
+    // SAFETY: `busbar_plane_llm::door` is this crate's own door: it answers the `'static` door of
+    // this plugin.
+    #[allow(unused_unsafe)]
+    let loaded =
+        unsafe { busbar_plugin_loader::dispatch::LoadedDoor::from_raw(busbar_plane_llm::door) };
+    loaded
+}
+
+/// The per-request fee unit's billable-class index: the last of the tail's 20 billable classes (the
+/// four token classes, the fifteen open classes, then the fee unit). The logic crate holds the same
+/// number against its own tail (`plane_door::FEE_CLASS_INDEX`, in its tests).
+const FEE_CLASS_INDEX: u32 = 19;
 
 fn z<T>() -> T {
     // SAFETY: every `in`/`out` here is plain C data; all-zero is a valid value of each.
@@ -471,7 +486,8 @@ fn assert_the_planes_answers(t: &[String]) {
 }
 
 fn linked(d: &Dispatcher) -> Plugin<Plane> {
-    let row = LinkedRow::of(plane_door::door).expect("the linked door states its Statement");
+    let row =
+        LinkedRow::of_loaded(crate::loaded_door()).expect("the linked door states its Statement");
     load_linked(&row, bind(d)).expect("the linked door loads")
 }
 
@@ -486,7 +502,7 @@ fn dropped(d: &Dispatcher) -> Plugin<Plane> {
         .into_iter()
         .find(|p| p.exists())
         .unwrap_or_else(|| panic!("this crate's cdylib ({file}) is not built"));
-    let stated = rendering_of(plane_door::door).expect("the door renders its Statement");
+    let stated = rendering_of_loaded(crate::loaded_door()).expect("the door renders its Statement");
     load_dropped(&path, &stated, bind(d)).expect("the dropped door loads")
 }
 
@@ -585,17 +601,8 @@ fn translated(p: &Plugin<Plane>, unit: u64) -> String {
 /// the over-cap 500's own bytes. Linked and dropped in alike: no host reader is consulted.
 #[test]
 fn the_translate_cap_the_settings_carry_is_the_one_the_door_enforces() {
-    // The openai over-cap refusal mints nothing, so the host it is rendered with gives nothing.
-    struct NoHost;
-    impl busbar_contract::codec::CodecHost for NoHost {
-        fn fill_entropy(&self, _out: &mut [u8]) -> bool {
-            false
-        }
-        fn wall_clock_now(&self) -> Option<u64> {
-            None
-        }
-    }
-    let refused = busbar_plane_llm::exchange::reply::whole::over_cap(&NoHost, "openai").answer;
+    // The openai over-cap refusal is the previous release's own: a 500 whose envelope carries the
+    // generic response-error detail (the logic crate's tests hold its exact bytes).
     let d = Dispatcher::new(DispatchConfig::default());
     for p in [linked(&d), dropped(&d)] {
         let mut i: PlaneOpenIn = z();
@@ -616,11 +623,9 @@ fn the_translate_cap_the_settings_carry_is_the_one_the_door_enforces() {
         assert_eq!(p.refresh(&mut f).0.outcome, Outcome::Ready);
         let capped = translated(&p, 22);
         assert!(
-            capped.contains(&format!(" status={} ", refused.status))
-                && capped.contains(&format!(
-                    "emitted={} more=",
-                    String::from_utf8_lossy(&refused.body)
-                )),
+            capped.contains(" status=500 ")
+                && capped.contains("An internal error occurred while processing the response.")
+                && !capped.contains("chat.completion"),
             "refreshed onto a 64-byte cap, the same answer is the over-cap refusal: {capped}"
         );
     }
@@ -664,7 +669,7 @@ impl SafeSlot for Uncounted {
 extern "C" fn uncounted_door() -> *const Door {
     // SAFETY: the macro's `'static` door and its plane table.
     let (d, mut ops) = unsafe {
-        let d = &*plane_door::door();
+        let d = &*door();
         (d, *d.ops.cast::<plane::Ops>())
     };
     ops.on_piece = kind_op::<plane::Ops, Safe<Uncounted>, TestCapture, { slot::ON_PIECE }>();
@@ -696,39 +701,42 @@ fn red_a_door_that_stops_counting_the_far_ends_units_answers_differently() {
 mod provider_keys_through_the_loader {
     use busbar_contract::abi::mechanism::{extensions, rendering};
     use busbar_contract::provider_keys::{decode, EXT_PROVIDER_KEYS};
-    use busbar_plane_llm::meta::PROVIDER_KEYS;
-    use busbar_plane_llm::plane_door;
+    use busbar_plane_llm::door;
     use busbar_plugin_loader::dispatch::kinds::plane::{linked_probe, registration};
-    use busbar_plugin_loader::dispatch::rendering_of;
+    use busbar_plugin_loader::dispatch::rendering_of_loaded;
 
-    /// The door's signed Statement rendering carries the descriptor under the one extensions key, as
-    /// octets, byte for byte the declared text.
-    #[test]
-    fn the_door_states_its_provider_keys_in_its_statement_extensions() {
-        let stated = rendering_of(plane_door::door).expect("the door renders its Statement");
+    /// The descriptor the door's Statement states under the one extensions key, as the loader reads
+    /// it off the signed rendering.
+    fn stated() -> Vec<u8> {
+        let stated =
+            rendering_of_loaded(crate::loaded_door()).expect("the door renders its Statement");
         let read = rendering::read(&stated).expect("the rendering reads back");
         assert_eq!(
             read.extensions.fmt,
             busbar_contract::abi::mechanism::call::BLOB_OCTETS
         );
-        assert_eq!(
-            extensions::get(&read.extensions.bytes, EXT_PROVIDER_KEYS),
-            Some(PROVIDER_KEYS.as_bytes())
-        );
+        extensions::get(&read.extensions.bytes, EXT_PROVIDER_KEYS)
+            .expect("the Statement states its provider keys")
+            .to_vec()
+    }
+
+    /// The door's signed Statement rendering carries the descriptor under the one extensions key, as
+    /// octets, a neutral descriptor the contract decodes (the logic crate's own tests hold the text
+    /// to its frozen grammar).
+    #[test]
+    fn the_door_states_its_provider_keys_in_its_statement_extensions() {
+        decode(&stated()).expect("the plane's provider keys are a neutral descriptor");
     }
 
     /// The one loader reads the descriptor off the bound door into the plane's registration, decoded
-    /// and equal to the declared one.
+    /// and equal to the stated one.
     #[test]
     fn the_loader_hands_the_provider_keys_on_in_the_registration() {
-        let reg = registration(linked_probe(plane_door::door, "provider-keys-probe"))
-            .expect("the linked door binds");
+        let reg =
+            registration(linked_probe(door, "provider-keys-probe")).expect("the linked door binds");
         assert_eq!(
             reg.provider_keys,
-            Some(
-                decode(PROVIDER_KEYS.as_bytes())
-                    .expect("the plane's provider keys are a neutral descriptor")
-            )
+            Some(decode(&stated()).expect("the plane's provider keys are a neutral descriptor"))
         );
     }
 }
@@ -755,7 +763,7 @@ mod door_units {
         UnitCount, EMIT_DONE, FROM_CALLER, FROM_FAR_END, FROM_KERNEL, PIECE_CUT, PIECE_FINAL,
         PIECE_HAS_STATUS, PIECE_LAST, VERDICT_HARD, VERDICT_OK, VERDICT_RETRY,
     };
-    use busbar_plane_llm::plane_door;
+    use busbar_plane_llm::door;
     use busbar_plugin_loader::dispatch::kinds::plane::Plane;
     use busbar_plugin_loader::dispatch::{
         in_head, load_linked, out_head, Bind, DispatchConfig, Dispatcher, Frame, LinkedRow, NoSink,
@@ -820,7 +828,8 @@ mod door_units {
 
     fn door() -> (Dispatcher, Plugin<Plane>) {
         let d = Dispatcher::new(DispatchConfig::default());
-        let row = LinkedRow::of(plane_door::door).expect("the linked door states its Statement");
+        let row = LinkedRow::of_loaded(crate::loaded_door())
+            .expect("the linked door states its Statement");
         let p = load_linked(
             &row,
             Bind {
@@ -1330,7 +1339,7 @@ const NOT_FOUND: &[u8] =
 
 /// The per-request fee unit as a transcript line spells it: the fee class, one, reported.
 fn fee_line() -> String {
-    format!("\"{}:1:true\"", plane_door::FEE_CLASS_INDEX)
+    format!("\"{FEE_CLASS_INDEX}:1:true\"")
 }
 
 /// One whole caller unit on a fresh door: arrive, attempt, the caller's body, then the far end's
