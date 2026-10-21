@@ -68,6 +68,33 @@ pub fn raw_error(far: &str, operation: OpVerb, status: u16, body: &[u8]) -> RawU
 /// The non-standard overload status a provider sends as its overloaded signal.
 const OVERLOADED_STATUS: u16 = 529;
 
+/// The class an operator's `error_map` entry names. An entry that names no class is ignored, and
+/// the operator is told once per distinct value for the life of the process (BUSBAR-3022): a
+/// misconfiguration on a hot error path logs once, never per request, and a typo'd entry
+/// (`rate_limt`) does not silently never take effect.
+fn mapped_class(value: &str) -> Option<StatusClass> {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let class = StatusClass::parse(value);
+    if class.is_none() {
+        let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
+        // Poisoning is harmless here (the set only dedupes warnings); recover the guard either way.
+        let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
+        if seen.insert(value.to_string()) {
+            busbar_contract::diag_warn!(
+                crate::codec::diagnostics::CONFIG_ERROR_MAP_CLASS_UNRECOGNIZED,
+                error_map_value = value,
+                "error_map maps an error to an unrecognized status class; the mapping is IGNORED \
+                 and classification falls through to the upstream status. Valid classes: \
+                 rate_limit, overloaded, server_error, timeout, network, auth, billing, \
+                 client_error, context_length"
+            );
+        }
+    }
+    class
+}
+
 /// THE CLASS of a far-end error of `status` (the status the far end answered, which its dialect's
 /// reading carries) under the provider's `error_map`: a mapped provider code first,
 /// then the built-in context-length code on a request-size status, then a mapped structured type,
@@ -88,7 +115,7 @@ pub fn normalize(
         |class: StatusClass| class == StatusClass::ContextLength && (500..600).contains(&status);
     let provider_signal = match &raw.provider_code {
         Some(code) => {
-            let mapped = error_map.get(code).and_then(|m| StatusClass::parse(m));
+            let mapped = error_map.get(code).and_then(|m| mapped_class(m));
             if let Some(class) = mapped.filter(|c| !masks_outage(*c)) {
                 return signal(class, Some(code.clone()));
             }
@@ -100,9 +127,9 @@ pub fn normalize(
         None => None,
     };
     if let Some(ty) = &raw.structured_type {
-        let mapped = error_map.get(ty).and_then(|m| StatusClass::parse(m));
+        let mapped = error_map.get(ty).and_then(|m| mapped_class(m));
         if let Some(class) = mapped.filter(|c| !masks_outage(*c)) {
-            return signal(class, provider_signal.or_else(|| Some("planted-wrong".to_string())));
+            return signal(class, provider_signal.or_else(|| Some(ty.clone())));
         }
     }
     let class = match status {
