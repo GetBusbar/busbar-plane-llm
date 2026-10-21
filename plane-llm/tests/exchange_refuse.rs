@@ -808,6 +808,7 @@ fn refusal_in(
             envelope,
             kind,
             message: message.into(),
+            entry: None,
         },
     )
 }
