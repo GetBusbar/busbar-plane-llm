@@ -27,12 +27,11 @@ impl busbar_contract::codec::CodecHost for TestHost {
         true
     }
 
+    /// A FIXED wall clock: a relay stamps `created` from it, and the piece-boundary test compares two
+    /// relays of one stream byte for byte, so a running clock answered different bytes whenever the
+    /// two straddled a second (openai<-gemini, coverage run 40137430891).
     fn wall_clock_now(&self) -> Option<u64> {
-        Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs()),
-        )
+        Some(1_700_000_000)
     }
 }
 
