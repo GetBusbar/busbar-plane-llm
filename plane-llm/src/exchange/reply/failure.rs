@@ -69,7 +69,7 @@ pub fn raw_error(far: &str, operation: OpVerb, status: u16, body: &[u8]) -> RawU
 const OVERLOADED_STATUS: u16 = 529;
 
 /// The class an operator's `error_map` entry names. An entry that names no class is ignored, and
-/// the operator is told (BUSBAR-3022, [`crate::codec::diagnostics::warn_error_map_class_unrecognized`]):
+/// the operator is told (an uncoded warning, as 1.5.5: [`crate::codec::diagnostics::warn_error_map_class_unrecognized`]):
 /// a typo'd entry (`rate_limt`) does not silently never take effect.
 fn mapped_class(value: &str) -> Option<StatusClass> {
     let class = StatusClass::parse(value);
