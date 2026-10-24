@@ -32,7 +32,7 @@ jobs:
     uses: GetBusbar/busbar/.github/workflows/plugin-ci.yml@6c1a40665603c929f421c56a7871ac1b489c5737
     with:
       service: none
-      busbar_checkout: true
+      busbar_checkout: false
       macos_test: "cargo test --workspace --locked"
       extra_test: ""
       plugin_crate: busbar-plane-llm-plugin
