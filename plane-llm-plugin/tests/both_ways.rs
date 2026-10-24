@@ -662,24 +662,25 @@ impl SafeSlot for Uncounted {
 
 /// The llm door with `on_piece` swapped for [`Uncounted`].
 extern "C" fn uncounted_door() -> *const Door {
-    // SAFETY: the macro's `'static` door and its plane table.
-    let (d, mut ops) = unsafe {
-        let d = &*plane_door::door();
-        (d, *d.ops.cast::<plane::Ops>())
-    };
+    let d = plane_door::door();
+    // SAFETY: the macro's `'static` door states a plane table.
+    let mut ops = unsafe { *d.ops().cast::<plane::Ops>() };
     ops.on_piece = kind_op::<plane::Ops, Safe<Uncounted>, TestCapture, { slot::ON_PIECE }>();
     let ops: &'static plane::Ops = Box::leak(Box::new(ops));
-    Box::leak(Box::new(Door {
-        ops: std::ptr::from_ref(ops).cast(),
-        ..*d
-    }))
+    let mut parts = d.parts();
+    parts.ops = std::ptr::from_ref(ops).cast();
+    // SAFETY: the llm door's own `'static` Statement, over a leaked plane table whose every slot
+    // honours the call convention (one swapped for the SDK's own `kind_op`).
+    Box::leak(Box::new(unsafe { Door::__from_parts(parts) }))
 }
 
 #[test]
 fn red_a_door_that_stops_counting_the_far_ends_units_answers_differently() {
     let d = Dispatcher::new(DispatchConfig::default());
     let honest = script(&linked(&d));
-    let row = LinkedRow::of(uncounted_door).expect("the door states its Statement");
+    // SAFETY: `uncounted_door` answers the `'static` door it laid out (leaked) over the llm door's.
+    let door = unsafe { busbar_plugin_loader::dispatch::LoadedDoor::from_raw(uncounted_door) };
+    let row = LinkedRow::of_loaded(door).expect("the door states its Statement");
     let red = script(&load_linked::<Plane>(&row, bind(&d)).expect("the door loads"));
     let far_end = |t: &[String]| t.iter().find(|l| l.starts_with("far_end ")).cloned();
     let red_line = far_end(&red).expect("the red door answers the far end");
