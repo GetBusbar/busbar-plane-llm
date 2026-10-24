@@ -8,7 +8,6 @@ use std::collections::HashMap;
 
 use busbar_contract::operation::OpVerb;
 use busbar_contract::upstream::{Disposition, RawUpstreamError, StatusClass};
-use busbar_plane_llm::codec::diagnostics::CONFIG_ERROR_MAP_CLASS_UNRECOGNIZED;
 use busbar_plane_llm::exchange::reply::failure::{
     auth_failure, judge, normalize, relay_verbatim, FarError,
 };
@@ -4959,7 +4958,8 @@ fn an_openai_whole_answer_reads_as_an_anthropic_message_naming_the_serving_model
 /// A banner and the `error_map_value` it carried, per event.
 type Banners = Vec<(String, Option<String>)>;
 
-/// Every `diag` banner (and its `error_map_value` field) a closure's tracing events carried.
+/// Every `diag` banner, and every uncoded line carrying an `error_map_value` (by its message), with
+/// that field, from a closure's tracing events.
 fn banners_of(f: impl FnOnce()) -> Banners {
     use std::sync::{Arc, Mutex};
     use tracing::field::{Field, Visit};
@@ -4967,12 +4967,14 @@ fn banners_of(f: impl FnOnce()) -> Banners {
     #[derive(Default)]
     struct Fields {
         diag: Option<String>,
+        message: Option<String>,
         value: Option<String>,
     }
     impl Visit for Fields {
         fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
             match field.name() {
                 "diag" => self.diag = Some(format!("{value:?}")),
+                "message" => self.message = Some(format!("{value:?}")),
                 "error_map_value" => self.value = Some(format!("{value:?}")),
                 _ => {}
             }
@@ -4991,8 +4993,12 @@ fn banners_of(f: impl FnOnce()) -> Banners {
         fn event(&self, event: &tracing::Event<'_>) {
             let mut fields = Fields::default();
             event.record(&mut fields);
-            if let Some(diag) = fields.diag {
-                self.0.lock().unwrap().push((diag, fields.value));
+            // A coded line by its banner; the uncoded error_map line (1.5.5's) by its message.
+            let line = fields
+                .diag
+                .or_else(|| fields.value.as_ref().and(fields.message));
+            if let Some(line) = line {
+                self.0.lock().unwrap().push((line, fields.value));
             }
         }
         fn enter(&self, _: &tracing::span::Id) {}
@@ -5005,7 +5011,7 @@ fn banners_of(f: impl FnOnce()) -> Banners {
 }
 
 /// A provider `error_map` entry that names no status class is ignored, and the operator is told so
-/// (BUSBAR-3022), once per distinct value for the life of the process, whichever of the two keys
+/// with 1.5.5's uncoded warning, once per distinct value for the life of the process, whichever of the two keys
 /// (a provider code or a structured type) the entry sits under. A recognized entry says nothing.
 #[test]
 fn an_error_map_class_that_names_no_class_is_reported_once() {
@@ -5014,7 +5020,11 @@ fn an_error_map_class_that_names_no_class_is_reported_once() {
         ("overloaded_error", "overloaded_by_type"),
         ("quota", "billing"),
     ]);
-    let code = CONFIG_ERROR_MAP_CLASS_UNRECOGNIZED.banner().to_string();
+    // 1.5.5's line, uncoded (crates/busbar/src/breaker.rs warn_unrecognized_error_map_value).
+    let code = "error_map maps an error to an unrecognized status class; the mapping is IGNORED and \
+                classification falls through to HTTP status. Valid classes: rate_limit, overloaded, \
+                server_error, timeout, network, auth, billing, client_error, context_length"
+        .to_string();
     let seen = banners_of(|| {
         // The typo'd code mapping is ignored: the status places the error.
         let sig = normalize(400, &raw(400, Some("1302"), None), &em);
