@@ -641,7 +641,7 @@ fn synth_completion_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
     // bytes we draw another; on an entropy failure we stop and leave '0' fill.
     'outer: while filled < COMPLETION_ID_TOKEN_LEN {
         let mut batch = [0u8; COMPLETION_ID_TOKEN_LEN];
-        if !super::synth_rng::fill_entropy(host, &mut batch) {
+        if !host.fill_entropy(&mut batch) {
             // Near-impossible entropy failure: keep the remaining '0' fill rather than panic.
             break 'outer;
         }

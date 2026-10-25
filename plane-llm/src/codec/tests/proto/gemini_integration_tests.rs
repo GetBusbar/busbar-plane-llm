@@ -23,7 +23,7 @@ fn test_gemini_upstream_path_for_embeds_model() {
 #[test]
 fn test_gemini_registered_in_builtins() {
     let g = crate::codec::proto_codec::protocol_for("gemini").expect("gemini should be registered");
-    assert_eq!(g.name(), "gemini");
+    assert_eq!(g.name_static(), "gemini");
     assert_eq!(
         g.writer().upstream_path_for("m"),
         "/v1beta/models/m:generateContent"

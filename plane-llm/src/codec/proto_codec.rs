@@ -948,12 +948,6 @@ impl Protocol {
         }
     }
 
-    /// Returns the protocol name ("anthropic", "openai", etc.).
-    #[allow(dead_code)] // used by the netted-core test surface; unused in some plugin build shapes
-    pub fn name(&self) -> &str {
-        self.name
-    }
-
     /// The protocol name as the registry's INTERNED `&'static str` (the `name` field is `&'static`).
     /// Lets a caller that must OUTLIVE the borrowed lookup key (e.g. a streaming response body that
     /// stores the ingress protocol for the life of the stream) hold the name without allocating an

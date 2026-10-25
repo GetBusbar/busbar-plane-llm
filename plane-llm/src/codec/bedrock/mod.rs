@@ -362,7 +362,7 @@ pub fn error_kind_to_bedrock_type(kind: &str) -> &'static str {
 /// copies.
 pub fn synth_amzn_request_id(host: &dyn busbar_contract::codec::CodecHost) -> Option<String> {
     let mut buf = [0u8; 16];
-    if !super::synth_rng::fill_entropy(host, &mut buf) {
+    if !host.fill_entropy(&mut buf) {
         return None;
     }
     // RFC 4122 v4 layout (version + variant bits) so the value is a well-formed UUID.

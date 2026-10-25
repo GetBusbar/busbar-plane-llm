@@ -58,7 +58,7 @@ fn test_all_protocols_stream_write_read_roundtrip_preserves_text_and_terminal() 
         Protocol::responses(),
         Protocol::cohere(),
     ] {
-        let name = proto.name().to_string();
+        let name = proto.name_static().to_string();
         // WRITE: each IR event → its native (event_type, json) frame (skip events a protocol
         // intentionally has no frame for).
         let frames: Vec<(String, serde_json::Value)> = events
@@ -446,7 +446,7 @@ fn test_all_protocols_nonstream_write_read_roundtrip_preserves_text() {
         Protocol::responses(),
         Protocol::cohere(),
     ] {
-        let name = proto.name().to_string();
+        let name = proto.name_static().to_string();
         let resp = crate::codec::ir::IrResponse {
             logprobs: Vec::new(),
             role: crate::codec::ir::IrRole::Assistant,
@@ -4639,7 +4639,7 @@ fn test_gemini_roundtrip_identity() {
 #[test]
 fn test_gemini_protocol_resolves() {
     let proto = Protocol::gemini();
-    assert_eq!(proto.name(), "gemini");
+    assert_eq!(proto.name_static(), "gemini");
 
     let reader = proto.reader();
     let writer = proto.writer();
@@ -4713,7 +4713,7 @@ fn test_bedrock_and_responses_register() {
 
     // Responses: bearer auth + the /v1/responses egress path (fully usable).
     let responses = Protocol::responses();
-    assert_eq!(responses.name(), "responses");
+    assert_eq!(responses.name_static(), "responses");
     assert_eq!(responses.writer().upstream_path(), "/v1/responses");
     // Auth read off THE RESPONSES DECLARATION. `bearer_auth_headers("responses", …)` uses its first
     // argument only for a diagnostic string and returns `authorization: Bearer {key}`
@@ -4757,7 +4757,7 @@ fn test_bedrock_and_responses_register() {
     // Bedrock: model-in-path Converse URL + native SigV4 auth + ConverseStream
     // event-stream decoding. Fully first-class.
     let bedrock = Protocol::bedrock();
-    assert_eq!(bedrock.name(), "bedrock");
+    assert_eq!(bedrock.name_static(), "bedrock");
     assert_eq!(
         bedrock.writer().upstream_path_for("anthropic.claude-3"),
         "/model/anthropic.claude-3/converse"
