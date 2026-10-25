@@ -1,6 +1,5 @@
 //! THE INVOKE-MODEL ENVELOPE, sans I/O: an Anthropic Messages exchange carried over Amazon
-//! Bedrock's `InvokeModel` / `InvokeModelWithResponseStream` operations (the owner's 2026-09-29
-//! compat scope, "Bedrock InvokeModel dialect"; ARCHITECT 2026-10-14, the envelope design).
+//! Bedrock's `InvokeModel` / `InvokeModelWithResponseStream` operations.
 //!
 //! WHAT IT IS. Bedrock serves Anthropic's models over two APIs. Its unified Converse API is the
 //! plane's `bedrock` dialect. Its model-native `InvokeModel` API takes the Anthropic Messages body

@@ -110,7 +110,7 @@ impl Catalogue for One {
 fn the_adhoc_surface_refuses_a_model_another_provider_serves() {
     let d = arrive("POST", "/wrong/m/v1/messages", &json(), b"{}", &One).expect_err("refused");
     assert_eq!((d.why, d.status), (Decline::ProviderMismatch, 400));
-    // Q128 u58: the refusal names the entry it concerns, so the kernel holds it behind the
+    // The refusal names the entry it concerns, so the kernel holds it behind the
     // caller's identity and grant (1.5.5 ran the ad-hoc route's governance guard first).
     assert_eq!(d.entry.as_deref(), Some("m"));
     assert_eq!(
@@ -1528,8 +1528,8 @@ fn every_recorded_body_model_resolves_the_same_model_both_spellings() {
     assert!(seen > 0, "the corpus has a body-model request");
 }
 
-/// Q128 arch u59: A HOOK'S REWRITE IS SPLICED INTO THE CALLER'S BYTES, never re-serialized (the
-/// OWNER 2026-10-02 LLM DIALECT FIDELITY RULE: "hook `rw` edits, spliced per changed block"). The
+/// A HOOK'S REWRITE IS SPLICED INTO THE CALLER'S BYTES, never re-serialized ("hook `rw` edits,
+/// spliced per changed block"). The
 /// body arrives with its members out of sorted order, spaced, with a number spelled `1.50` and an
 /// escaped slash; only `messages` changes, and every other member's bytes reach the far end as the
 /// caller wrote them. RED: the whole body was re-serialized (keys sorted, spacing dropped, `1.50`

@@ -1,5 +1,5 @@
 //! ITEM 133 — A PRESENT-BUT-UNREADABLE BILLED COUNT IS REFUSED ON ITS OWN; IT IS NEVER LEDGERED AS
-//! ZERO (#42), AND IT REFUSES NOTHING ELSE (ARCHITECT ruling 2026-10-15).
+//! ZERO, AND IT REFUSES NOTHING ELSE.
 //!
 //! The Cohere reader used to read every billed count as `.and_then(read_count_u64).unwrap_or(0)`,
 //! so a stringified `"1500"` from a compatible self-hosted backend reached the ledger as ZERO tokens
@@ -107,7 +107,7 @@ fn truncated_recovery_refuses_a_stringified_count_and_recovers_the_readable_ones
 // a present-but-unreadable spelling became `None` — indistinguishable from "not reported" — and the
 // unit silently vanished. Absent or `null` keeps meaning `None`; a readable count is the count; an
 // unreadable one is REFUSED on its own, loudly, on every path: it bills nothing and the readable
-// counts beside it bill (ARCHITECT ruling 2026-10-15).
+// counts beside it bill.
 
 const BILLED_UNIT_FIELDS: [&str; 2] = ["search_units", "classifications"];
 
@@ -193,7 +193,7 @@ fn truncated_recovery_refuses_an_unreadable_billed_unit_on_its_own() {
     assert_eq!((u.input, u.output), (10, 5));
 }
 
-// ── RERANK AND EMBEDDINGS (LLM3#6, LLM2#12) ──────────────────────────────────────────────────────
+// ── RERANK AND EMBEDDINGS ──────────────────────────────────────────────────────
 //
 // The leaf answers judge their billed count the same way the chat table does: an unreadable one is
 // refused ON ITS OWN, it bills nothing, and the answer is served. Refusing the whole answer turned a

@@ -1,6 +1,6 @@
-//! The Gemini spelling of the Q57 typed IR request slots (ir-slots-landed.md): hosted tools
-//! (IR-11), `labels` (IR-03), `allowedFunctionNames` (IR-10), `responseModalities` (IR-19), and the
-//! slots Gemini has no form for (IR-04..07), which the writer drops with a warn and reports.
+//! The Gemini spelling of the typed IR request slots: hosted tools,
+//! `labels`, `allowedFunctionNames`, `responseModalities`, and the
+//! slots Gemini has no form for, which the writer drops with a warn and reports.
 
 use super::{
     FIELD_ALLOWED_FUNCTION_NAMES, FIELD_FUNCTION_CALLING_CONFIG, FIELD_FUNCTION_DECLARATIONS,

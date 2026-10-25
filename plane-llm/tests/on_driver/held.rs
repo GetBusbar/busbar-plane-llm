@@ -580,7 +580,7 @@ async fn responses_instructions_are_system_and_a_system_item_is_a_turn() {
     assert_eq!(c.message_count, 2);
 }
 
-// ── F25 REHOME: the per-dialect rewrite write-back (coverage map v2) ─────────────────────────────
+// ── the per-dialect rewrite write-back ─────────────────────────────
 
 /// A rw hook answering a fixed rewrite.
 struct FixedRewrite(Vec<Value>);

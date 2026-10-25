@@ -96,7 +96,7 @@ fn field_value<'a>(r: &'a busbar_plane_llm::exchange::attempt::FarRequest, name:
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/health_tests.rs::test_probe_sends_native_user_agent_and_accept_headers`
-/// (coverage map v2 row 220). 1.5.5: an active probe of an anthropic lane sends the SAME native-SDK
+/// 1.5.5: an active probe of an anthropic lane sends the SAME native-SDK
 /// fingerprint organic traffic sends: `user-agent: Anthropic/Python 0.39.0` and the non-streaming
 /// `accept: application/json`, so a far end cannot tell busbar's probes from its clients.
 ///
@@ -140,7 +140,7 @@ fn test_probe_sends_native_user_agent_and_accept_headers() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/health_tests.rs::test_probe_signs_and_sends_same_encoded_path_for_reserved_chars`
-/// (coverage map v2 row 230). 1.5.5: a probe of a bedrock model id carrying a reserved `:` sends
+/// 1.5.5: a probe of a bedrock model id carrying a reserved `:` sends
 /// the `%3A`-encoded path, never the raw `:0/converse`, and the signature's canonical path is
 /// computed from that SAME wire path, so the signed and sent paths cannot diverge
 /// (`SignatureDoesNotMatch` would park every such lane dead).

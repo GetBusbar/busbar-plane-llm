@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! The size signal a hook sees for an output cap above `u32::MAX`, as 1.5.5 projected it
-//! (HOOK-DRIFTS, lane-hook-drifts 7a0964496e: "1.5.5 behaviour wins").
+//! The size signal a hook sees for an output cap above `u32::MAX`, as 1.5.5 projected it.
 //!
 //! In 1.5.5 the hook projection read the cap from the caller's body and saturated it
 //! (`max_tokens_for`: `u32::try_from(n).unwrap_or(u32::MAX)`), under the dialect's own key

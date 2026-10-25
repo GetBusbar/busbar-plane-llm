@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! A TURN WHOSE ROLE NO READER KNOWS is screened and the request goes on, as in 1.5.5 (status row
-//! 155, F25 row 250; ARCHITECT 2026-10-13).
+//! A TURN WHOSE ROLE NO READER KNOWS is screened and the request goes on, as in 1.5.5.
 //!
 //! 1.5.5 projected the hook view off the raw body and the projection never failed
 //! (`v1.5.5 crates/busbar/src/proxy/hooks.rs:682`, `build_prompt_projection`): a `role: "wizard"`

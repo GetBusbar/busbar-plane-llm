@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! The irregular half of the Q57 typed IR request slots on the OpenAI Chat Completions wire
-//! (ir-slots-landed.md). The flat members (`metadata`, `service_tier`, `store`,
+//! The irregular half of the typed IR request slots on the OpenAI Chat Completions wire.
+//! The flat members (`metadata`, `service_tier`, `store`,
 //! `safety_identifier`, `prompt_cache_key`, `verbosity`) are rows in `dialects/openai_chat.toml`,
 //! walked by `codec::carry`; what stays here is code no row can state, each case named (the
 //! first two are `codec::carry::Hook`s):

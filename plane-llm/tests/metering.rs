@@ -11,8 +11,8 @@
 //! first kind would bill the cached prefix twice. The codec's reader is where that is settled, and
 //! the case below is the one where getting it wrong is worth eighty tokens a request.
 
-// A list read is `unsafe` while its pointer and length fields are pub (status row 194), and
-// safe once #1471 makes them private: the same `unsafe { x.list() }` compiles on both.
+// A list read is `unsafe` while its pointer and length fields are pub, and safe once they are
+// private: the same `unsafe { x.list() }` compiles on both.
 #![allow(unused_unsafe)]
 
 mod harness;
@@ -313,7 +313,7 @@ fn every_declared_class_is_a_class_the_metering_step_emits() {
     );
 }
 
-/// ONE DECLARATION, ONE SOURCE (ARCHITECT, `$` meter classes: "Money is ledger x ratecard, so there
+/// ONE DECLARATION, ONE SOURCE (`$` meter classes: "Money is ledger x ratecard, so there
 /// must be ONE declaration and one source. The door's billable classes, which are what the
 /// dispatcher checks, are the source; MeterClassDecl derives from them").
 ///

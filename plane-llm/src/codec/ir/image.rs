@@ -209,7 +209,7 @@ impl ImageResp {
     /// (v1.5.5 `crates/busbar/src/handlers/openai.rs:731-758`, `handlers/gemini.rs:446-472`), and
     /// no image handler tapped a same-dialect body (the only `taps_usage` overrides were
     /// embeddings and chat). Billing the tokens would charge a key, and spend its `tokens:` caps,
-    /// where 1.5.5 charged nothing, and no owner ruling signs that (LEDGER-100 records a reported
+    /// where 1.5.5 charged nothing, and nothing signs that (LEDGER-100 records a reported
     /// unit; it does not sign a new charge). A per-image answer with no usage body bills its
     /// `images` count (LEDGER-100, CHANGELOG 1.6.0 Upgrade).
     pub fn billing(&self) -> Option<Billing> {

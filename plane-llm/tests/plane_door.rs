@@ -4,8 +4,8 @@
 //! The llm plane's door, its static half: a Statement and tail the contract accepts, the needs
 //! the dialects' schemes call for, the settings it reads, and the counts it reports.
 
-// A list read is `unsafe` while its pointer and length fields are pub (status row 194), and
-// safe once #1471 makes them private: the same `unsafe { x.list() }` compiles on both.
+// A list read is `unsafe` while its pointer and length fields are pub, and safe once they are
+// private: the same `unsafe { x.list() }` compiles on both.
 #![allow(unused_unsafe)]
 
 use busbar_contract::abi::mechanism::check::check_needs;
@@ -43,7 +43,7 @@ fn the_tail_states_the_planes_help_rows() {
     );
 }
 
-/// THE TAIL STATES EACH DIALECT'S PROVIDER FLAG (ARCHITECT ruling 2026-10-16, item 3), read off its
+/// THE TAIL STATES EACH DIALECT'S PROVIDER FLAG, read off its
 /// `dialect_auth` lines as the kernel reads them: every one of the six is a dialect a provider's
 /// `protocol` may name (1.5.5's `must be one of:` list, in its order). RED arm: a line that dropped
 /// the flag empties the boot's provider list.
@@ -135,7 +135,7 @@ fn the_tail_is_one_the_contract_accepts() {
             4 + k
         );
     }
-    // THE FEE UNIT (owner #77, money-B1): one per billable request, the last billable class.
+    // THE FEE UNIT: one per billable request, the last billable class.
     assert_eq!(TAIL.fee_units_len(), 1);
     let fee = unsafe { TAIL.fee_units() }[0];
     // SAFETY: a `'static` str the door states (abi_str).
@@ -147,7 +147,7 @@ fn the_tail_is_one_the_contract_accepts() {
     );
 }
 
-/// ARCHITECT Q-L1-AUTH (A): every dialect states its default outbound style in the tail, and every
+/// Every dialect states its default outbound style in the tail, and every
 /// style a member may be bound under (each dialect's default, the provider `auth:` overrides) has
 /// exactly one outbound need naming it.
 #[test]
@@ -232,7 +232,7 @@ fn dialect_of(claim: &busbar_contract::abi::sdk::publish::ClaimSpec) -> &'static
     DIALECTS[usize::from(claim.refusal_dialect)].name
 }
 
-/// THE PLANE STATES ITS PATHS AS CLAIMS (ARCHITECT Q-FL1, 2026-10-02): each dialect's own path is a
+/// THE PLANE STATES ITS PATHS AS CLAIMS: each dialect's own path is a
 /// claim wearing the dialect its path shape names, the same rule a refusal renders by.
 #[test]
 fn every_dialects_path_is_a_claim_wearing_its_dialect() {
@@ -276,7 +276,7 @@ fn the_fallback_is_a_prefix_claim_on_the_root_for_every_verb() {
     // No claim is open: every llm path takes a credential, as it did.
     assert!(all.iter().all(|c| c.flags & CLAIM_OPEN == 0));
     // Every claim arrives over the one transport the far ends are reached over, and is named: a
-    // route by its path, an entry fact (status row 173) by its predicates.
+    // route by its path, an entry fact by its predicates.
     assert!(all.iter().all(|c| {
         let entry = c.flags & busbar_contract::abi::plane::CLAIM_ENTRY != 0;
         let named = if entry {
@@ -338,7 +338,7 @@ fn every_need_keeps_all_but_every_dialects_governed_response_fields() {
     }
 }
 
-/// RED (F2, ARCHITECT 2026-10-02 option B): no dialect's tenant- or credential-derived response
+/// RED: no dialect's tenant- or credential-derived response
 /// field crosses to the plane through any need, read from the need itself through the contract's one
 /// crossing rule; every other upstream field does (the S-16 register entry's premise).
 #[test]
@@ -381,7 +381,7 @@ fn red_no_dialects_governed_response_field_leaks_through_a_need() {
     }
 }
 
-/// THE ROUTE AN ARRIVAL NAMES (ARCHITECT Q-SW6 / Q-FL3, 2026-10-02): its model, verbatim, as a pool
+/// THE ROUTE AN ARRIVAL NAMES: its model, verbatim, as a pool
 /// when the plane's `pools` names it, else as a direct entry, the previous release's order (a pool
 /// first, then a configured model). A model that is neither is still named, as a direct entry the
 /// kernel does not hold, so the kernel refuses it (`no_destination`, 1.5.5's 404).
@@ -400,7 +400,7 @@ fn an_arrival_routes_over_its_model_a_pool_first_then_a_direct_entry() {
     assert_eq!(route_of(&shaping, "nope"), (ROUTE_DIRECT, "nope"));
 }
 
-/// THE STICKY-ROUTING KEY (ARCHITECT Q1 ArriveOut, 2026-10-05), as 1.5.5 derived it: the pool's
+/// THE STICKY-ROUTING KEY, as 1.5.5 derived it: the pool's
 /// `affinity.header_name` (else `x-session-id`), matched case-blind, wins over chat's non-empty body
 /// `system`; a header value that is not text is no key; neither is no affinity.
 #[test]
@@ -462,7 +462,7 @@ fn every_open_class_becomes_one_reported_count_at_its_tail_index() {
     }
 }
 
-// ── F25 REHOME: the registry facts and the plane's published identity (coverage map v2) ──────────
+// ── the registry facts and the plane's published identity ──────────
 
 /// The declaration of the dialect named `name`, from the one table the plane serves through.
 fn decl_named(name: &str) -> Option<&'static busbar_contract::protocol::ProtocolDecl> {
@@ -483,7 +483,7 @@ const SHIPPED_DIALECTS: [&str; 6] = [
 ];
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/dialect_registry_facts_tests.rs::registry_resolves_openai_and_its_moderation_handler`
-/// (coverage map v2 row 98). 1.5.5: the openai registration resolves a handler whose protocol name
+/// 1.5.5: the openai registration resolves a handler whose protocol name
 /// is its own and which serves the moderation operation; a protocol nobody registered resolves to
 /// nothing.
 ///
@@ -504,7 +504,7 @@ fn registry_resolves_openai_and_its_moderation_handler() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/dialect_registry_facts_tests.rs::every_protocol_serves_chat_via_its_request_handler`
-/// (coverage map v2 row 99). 1.5.5: chat is reached through the same registry as every other
+/// 1.5.5: chat is reached through the same registry as every other
 /// operation, and all six shipped protocols resolve a handler with a chat operation handler.
 ///
 /// RED: any of the six dialects stops resolving a handler, or its handler stops serving chat.
@@ -532,7 +532,7 @@ fn every_protocol_serves_chat_via_its_request_handler() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/dialect_registry_facts_tests.rs::chat_declares_its_capabilities`
-/// (coverage map v2 row 100). 1.5.5: the chat cell as production resolves it (openai, chat) streams,
+/// 1.5.5: the chat cell as production resolves it (openai, chat) streams,
 /// taps usage from a non-stream body, reads the body's `stream` boolean as the caller's intent, and
 /// takes a non-empty top-level `system` as its body affinity key (an empty one is no key).
 ///
@@ -564,7 +564,7 @@ fn chat_declares_its_capabilities() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_affinity_header_session_mode_without_name_uses_default`
-/// (coverage map v2 row 375). 1.5.5: a pool whose `affinity` is `mode: session` with no
+/// 1.5.5: a pool whose `affinity` is `mode: session` with no
 /// `header_name` keys its sticky routing on `x-session-id`.
 ///
 /// RED: a session-mode pool with no header name reads another header (or none), so a client's
@@ -594,7 +594,7 @@ fn abi_text(s: busbar_contract::abi::mechanism::call::AbiStr) -> &'static [u8] {
 }
 
 /// LEGACY `crates/busbar-llm/src/tests/plane_decl_identity_tests.rs::the_plane_declares_its_published_key_and_is_the_fallback`
-/// (coverage map v2 row 643). 1.5.5: the plane's operator-visible identity, as literals: the key
+/// 1.5.5: the plane's operator-visible identity, as literals: the key
 /// every metric, log and record carries is `llm`, it is the one fallback catch-all, its config
 /// section is `pools`, and a grant on it names a `pool`.
 ///
@@ -622,7 +622,7 @@ fn the_plane_declares_its_published_key_and_is_the_fallback() {
     assert_eq!(kinds, vec![b"pool".as_slice()]);
 }
 
-/// Q128 arch u59: EVERY WAY A UNIT ENDS LEAVES NOTHING OF IT IN THE DOOR'S BOOK. The `refusal` of a
+/// EVERY WAY A UNIT ENDS LEAVES NOTHING OF IT IN THE DOOR'S BOOK. The `refusal` of a
 /// unit refused after an attempt (an exhausted walk, a veto, a failed attempt the kernel renders)
 /// used to take the unit but keep the ticket its attempt came on, forever (a ticket is never
 /// reused); the `cancel` of a unit and the end of its reply leave nothing either, and a unit whose
@@ -671,7 +671,7 @@ fn every_way_a_unit_ends_leaves_nothing_in_the_doors_book() {
     book.ends(10);
     assert_eq!(book.held(), (0, 0));
 
-    // LLM1#4: a unit cancelled BEFORE ITS FIRST PIECE (its caller left during admission or the
+    // A unit cancelled BEFORE ITS FIRST PIECE (its caller left during admission or the
     // hooks) is bound to no ticket; the cancel names it by its key, and it leaves nothing. RED: a
     // cancel read only the ticket, so the arrived unit (its whole body and parsed JSON) stayed.
     book.hold(11, "unbound");
@@ -691,8 +691,7 @@ fn every_way_a_unit_ends_leaves_nothing_in_the_doors_book() {
     assert_eq!(book.held(), (0, 0), "its ticket goes with it");
 }
 
-/// THE SIGNED PATHS ARE THE PREVIOUS RELEASE'S (ARCHITECT rulings 2026-10-16, 3b A, and
-/// 2026-10-17): the raw-affix claims the door flags `CLAIM_SIGNED_INGRESS`, matched against the raw
+/// THE SIGNED PATHS ARE THE PREVIOUS RELEASE'S: the raw-affix claims the door flags `CLAIM_SIGNED_INGRESS`, matched against the raw
 /// path, name exactly the paths 1.5.5 put through the signed-request pre-step (the signing dialect's
 /// residual rule, its own codec declaration) — an unencoded inference-profile ARN, which carries a
 /// raw `/`, and an encoded one alike, and the odd paths as 1.5.5 judged them (no identifier, an

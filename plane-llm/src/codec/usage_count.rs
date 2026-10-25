@@ -109,7 +109,7 @@ const SPELLING_BUDGET: usize = 64;
 /// * **readable** — the count, through [`read_count_u64`], including the float-spelled integer that
 ///   the bare `as_u64` reads as nothing at all.
 /// * **present, not `null`, unreadable** — [`UnreadableCount`], which the caller turns into a
-///   refusal (#42: money-sacred, never a silent 0).
+///   refusal.
 ///
 /// # Errors
 /// The field is present, is not `null`, and is not a count.
@@ -161,7 +161,7 @@ pub fn billed_count_opt(
 /// A RECORDED count (one the ledger notes and never bills): absent or `null` is `Some(0)` (nothing
 /// reported, as [`billed_count`] reads it), a readable count is `Some(n)`, and a present count this
 /// build cannot read is UNKNOWN, `None`. It is never a zero, because a zero records no work for
-/// work that happened (#81, OWNER rule 21). It is never a refusal either, because a count nothing
+/// work that happened. It is never a refusal either, because a count nothing
 /// bills does not justify refusing an answer. The unreadable field is named on `warnings` and in a
 /// warning log line, so the gap is visible where the record is read.
 pub fn recorded_count(
@@ -183,7 +183,7 @@ pub fn recorded_count(
     }
 }
 
-// ── THE USAGE TABLE WALK (#42) ───────────────────────────────────────────────────────────────
+// ── THE USAGE TABLE WALK ───────────────────────────────────────────────────────────────
 
 /// Where one usage count lands in the IR.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -306,7 +306,7 @@ fn opt(
 /// [`billed_count`]'s contract: absent is zero (or `None`), a readable count is the count, and a
 /// present-but-UNREADABLE count is REFUSED.
 ///
-/// THE REFUSAL IS PER FIELD (ARCHITECT ruling 2026-10-15, #878 vs #892): each usage field is judged
+/// THE REFUSAL IS PER FIELD: each usage field is judged
 /// on its own. A readable field bills as stated; an unreadable one (a stringified `"1500"`) is
 /// refused, so IT bills nothing, and the refusal is loud (the warn line below, naming the protocol,
 /// the field and its spelling; #42/#81 "refuse loudly"). Nothing is substituted for it: it is never
@@ -425,7 +425,7 @@ pub fn read_usage(
 /// Whether [`read_usage`] REFUSED a count of `usage` under `table`: a billed row present, not
 /// `null`, and not a count. A usage with a refused count has no stated-total gap to ledger: the
 /// gap would be the refused count itself, priced back in under another name, which is exactly the
-/// substitution a refusal forbids (#77(2); ARCHITECT ruling 2026-10-15). The caller skips
+/// substitution a refusal forbids (each usage field is judged on its own). The caller skips
 /// [`stated_total_note`] for it.
 #[must_use]
 pub fn refused_any(usage: Option<&serde_json::Value>, table: &[UsageCount]) -> bool {

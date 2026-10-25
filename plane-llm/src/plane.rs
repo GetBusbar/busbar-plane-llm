@@ -588,7 +588,7 @@ impl Plane for LlmPlane {
                 // gives, without either call reaching the heap for the writer that answers it.
                 // Written for THIS upstream: its model and its declared capabilities (the output-cap
                 // spelling, the reasoning form, the structured-output form), which the dialect writer
-                // cannot see from the request (OAI-01, ANT-07/09/10 lane-capability ruling).
+                // cannot see from the request.
                 with_writer(egress.name, |w| {
                     let mut written =
                         w.write_request_for_lane(host, &request, upstream.model, &upstream.caps);

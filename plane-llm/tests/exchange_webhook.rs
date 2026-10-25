@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The OpenAI Responses webhook receiver, ported from the retiring engine crate's
-//! `openai_responses_webhook.rs` onto this plane (ARCHITECT 2026-10-14, option A): the plane's own
+//! `openai_responses_webhook.rs` onto this plane: the plane's own
 //! `webhooks:` section switches it on, the auth kind verifies the sender, and the plane reads the
 //! delivery and acknowledges it.
 //!
@@ -10,8 +10,8 @@
 //! receiver's path, so every test here failed to build. The off-by-default half is the parity
 //! guard: a document that does not write the section claims exactly what it claimed before.
 
-// A list read is `unsafe` while its pointer and length fields are pub (status row 194), and
-// safe once #1471 makes them private: the same `unsafe { x.list() }` compiles on both.
+// A list read is `unsafe` while its pointer and length fields are pub, and safe once they are
+// private: the same `unsafe { x.list() }` compiles on both.
 #![allow(unused_unsafe)]
 
 use busbar_contract::abi::mechanism::door::{SECTION_CONSUMED, SECTION_DECLARING};

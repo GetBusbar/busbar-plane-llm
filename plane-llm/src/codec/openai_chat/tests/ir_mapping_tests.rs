@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! IR MAPPING tests for the OpenAI Chat Completions dialect (owner directive Q57: a field the source
+//! IR MAPPING tests for the OpenAI Chat Completions dialect (a field the source
 //! dialect carries that the IR and the target can carry must map). One test (or group) per defect id
 //! of the 1.6.0 IR mapping audit, `OAI-xx`. Each drives the PRODUCTION step list on a real body:
 //! reader → `chat_prepare_for_egress` / `chat_prepare_for_ingress` → writer, and streams through
@@ -100,7 +100,7 @@ fn anthropic_req(extra: Value) -> Value {
 
 // ── OAI-01: the output cap crossing into an OpenAI lane ─────────────────────────────────────────
 
-/// OAI-01 (codec half, architect ruling). The codec writer does NOT pick the spelling blind: a
+/// OAI-01. The codec writer does NOT pick the spelling blind: a
 /// cross-protocol cap is written as `max_tokens` (the key every OpenAI-compatible host accepts), and
 /// the lane's provider entry decides at the egress seam whether it becomes `max_completion_tokens`.
 /// An OpenAI-origin IR keeps the caller's own spelling, and the sentinel never leaks.
@@ -700,7 +700,7 @@ fn oai07_legacy_function_calling_request_maps() {
     assert!(!same.to_string().contains("__busbar"), "{same}");
 }
 
-/// OAI-01 (lane half, architect ruling). A lane that declares `max_output_key:
+/// OAI-01. A lane that declares `max_output_key:
 /// max_completion_tokens` receives a cross-protocol cap — the caller's, and the one the seam injects
 /// — as `max_completion_tokens`; a lane that declares nothing receives `max_tokens`.
 #[test]

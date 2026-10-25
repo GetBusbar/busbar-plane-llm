@@ -279,7 +279,7 @@ fn a_refusal_never_names_the_internal_reason() {
     }
 }
 
-// ── F25 REHOME: the rendered refusal's status and head (coverage map v2) ─────────────────────────
+// ── the rendered refusal's status and head ─────────────────────────
 
 /// The dialect codec of the dialect named `name`.
 fn dialect_codec(name: &str) -> &'static dyn busbar_contract::protocol::DialectCodec {
@@ -317,7 +317,7 @@ fn head_value<'a>(fields: &'a [(String, Vec<u8>)], name: &str) -> Option<&'a [u8
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_ingress_error_request_id_header_matches_body`
-/// (coverage map v2 row 330). 1.5.5: an anthropic-dialect refusal carries a `request-id` head field
+/// 1.5.5: an anthropic-dialect refusal carries a `request-id` head field
 /// in Anthropic's `req_` shape, EQUAL to the body's `request_id`; no other dialect's refusal
 /// carries a `request-id` field.
 ///
@@ -363,7 +363,7 @@ fn test_anthropic_ingress_error_request_id_header_matches_body() {
 }
 
 /// LEGACY `crates/busbar-llm/src/unit/tests/audit.rs::every_refusal_class_renders_byte_identically_on_both_paths`
-/// (coverage map v2 row 682). 1.5.5: every refusal class (exactly eight: unauth 401, wrong-scope
+/// 1.5.5: every refusal class (exactly eight: unauth 401, wrong-scope
 /// 403, over-budget 429 `insufficient_quota`, rate-limit 429 with `Retry-After: 30`, unpriced 400,
 /// no-pool 404, oversize-body 413, context-overflow 400 carrying the breaker's
 /// `context_length_exceeded` code) renders in each of the six dialects with its own status, its

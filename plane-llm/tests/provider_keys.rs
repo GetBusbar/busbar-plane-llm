@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE PLANE STATES ITS PROVIDER KEYS (row 155 B1c, ARCHITECT ruling "Option A"): the descriptor in
+//! THE PLANE STATES ITS PROVIDER KEYS: the descriptor in
 //! `meta::PROVIDER_KEYS` is what the door's Statement carries under the contract's one extensions
 //! key, it reads in the neutral shape vocabulary, and the one loader hands it on in the plane's
 //! registration, unchanged. That each form's keys are the frozen grammar's, in its order, is held

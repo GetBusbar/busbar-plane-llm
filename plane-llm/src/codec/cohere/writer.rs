@@ -11,7 +11,7 @@ impl ProtocolWriter for CohereWriter {
         PATH_UPSTREAM
     }
 
-    /// The Q57 request slots Cohere v2 `/chat` has no form for (ir-slots-landed.md "N" for Cohere):
+    /// The typed request slots Cohere v2 `/chat` has no form for:
     /// each one a request carries is dropped by [`Self::write_request`] with a warn and reported
     /// here, so the seam audits the degradation. `service_tier` included: Cohere's `priority` is an
     /// integer queue order, a different concept, so no tier is written.
@@ -529,7 +529,7 @@ impl ProtocolWriter for CohereWriter {
                  control, so the backend's default parallelism applies"
             );
         }
-        // The Q57 request slots with no Cohere form — the same set `dropped_egress_controls`
+        // The request slots with no Cohere form — the same set `dropped_egress_controls`
         // reports for the seam's audit.
         crate::codec::carry::warn_drops(
             super::map::REQUEST,

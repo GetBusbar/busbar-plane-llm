@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The invoke envelope: an Anthropic Messages exchange carried over Bedrock's `InvokeModel` and
-//! `InvokeModelWithResponseStream` (the owner's 2026-09-29 compat scope; ARCHITECT 2026-10-14).
+//! `InvokeModelWithResponseStream`.
 //!
 //! RED: before the envelope, `models.<m>.protocol: bedrock-invoke` was refused as an unknown
 //! protocol, so none of these builds or holds.
@@ -332,7 +332,7 @@ fn a_streamed_answer_meters_the_carried_dialects_usage() {
     );
 }
 
-/// THE KERNEL NEVER SEES THE ENVELOPE (ARCHITECT 2026-10-14 condition 3; Law 0): it is no codec
+/// THE KERNEL NEVER SEES THE ENVELOPE: it is no codec
 /// protocol this plane declares, so the protocols the composition root installs, and with them the
 /// previous release's "must be one of" list a provider's unknown protocol is refused with, stay
 /// exactly 1.5.5's six in 1.5.5's order (oracle cell `boot.refusal|BOOT-020|validate`; the binary's

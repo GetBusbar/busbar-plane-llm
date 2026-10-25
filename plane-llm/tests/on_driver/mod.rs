@@ -3,7 +3,7 @@
 
 //! THE LLM PLANE'S DRIVER PROOFS: the 1.5.5 hook tests of llm origin, each under its 1.5.5 name and
 //! asserting the values 1.5.5 asserted, kept here, in the plane's own crate, where the dialect names
-//! they are written in belong (BUSBAR-1.6.0.md Law 5; ARCHITECT ruling on #464: the composition root
+//! they are written in belong (the composition root
 //! names zero plane or dialect instance vocabulary).
 //!
 //! They are proven through the plugin door: the composition root's `hook_parity_driver` suite links

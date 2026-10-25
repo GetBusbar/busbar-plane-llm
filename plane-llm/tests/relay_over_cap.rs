@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! A SAME-DIALECT USAGE-TAPPING BODY PAST THE TAP'S CAP BILLS NO TOKENS (status row 155, from the
-//! codec lane's #846; ARCHITECT 2026-10-13), `$`: 1.5.5 kept only the body's first `cap` bytes, its
+//! A SAME-DIALECT USAGE-TAPPING BODY PAST THE TAP'S CAP BILLS NO TOKENS (`$`): 1.5.5 kept only the body's first `cap` bytes, its
 //! reading found no usage, and the request billed no tokens (v1.5.5 proxy/response_body.rs:230-262,
 //! "this request's tokens are undercounted"). The relay billed a FLOOR estimate over the bytes it
 //! kept instead. The cap is the relay's own `translate_cap`, set here at 64 bytes.

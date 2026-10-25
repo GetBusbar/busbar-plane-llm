@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE SEARCH-RESULT SLOT (ARCHITECT 2026-10-02, DF-MAP-2 gap (a)): a Converse `searchResult` block
+//! THE SEARCH-RESULT SLOT: a Converse `searchResult` block
 //! (request content and `toolResult` content) is caller-supplied RAG content. The Bedrock reader
 //! used to have no arm for it, so the block vanished on every translate. It now reads into the same
 //! slot an Anthropic `search_result` reads into (`IrBlock::search_result`), so the passage, its

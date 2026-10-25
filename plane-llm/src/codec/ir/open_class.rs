@@ -2,16 +2,16 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE OPEN CLASSES: every count a far end reports beside its four token totals, by the meter class
-//! it is ledgered under (owner LEDGER-100, docs/design/1.6.0-QUESTIONS.md, 2026-10-03: "every unit
+//! it is ledgered under ("every unit
 //! a provider/far end reports is a ledger line under its meter class; its price comes from the
 //! ratecard"; an unledgered reported unit is a defect, not a residual).
 //!
 //! The plane REPORTS units and never a price. Each class below is declared in the plane's tail
 //! ([`crate::plane_door::OPEN_CLASSES`]) and in the linked declaration's billable classes, so the
 //! kernel prices it from the operator's `rate_card.<model>.units.<class>` with no plane literal of
-//! its own. The ratecard's absent-rate rule is unchanged: no card reads the class at 0 (#42); a
-//! present card that does not configure a declared class is a boot refusal naming it (Q29/Q35); a
-//! per-lane gap refuses at run time (#42).
+//! its own. The ratecard's absent-rate rule is unchanged: no card reads the class at 0; a
+//! present card that does not configure a declared class is a boot refusal naming it; a
+//! per-lane gap refuses at run time.
 
 use crate::codec::ir::rerank::SEARCH_UNITS_CLASS;
 

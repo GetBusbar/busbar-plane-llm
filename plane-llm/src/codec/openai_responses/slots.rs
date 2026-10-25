@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! The Responses spelling of the Q57 typed IR slots (ir-slots-landed.md): what the reader FILLS and
+//! The Responses spelling of the typed IR slots: what the reader FILLS and
 //! the writer EMITS for each request / block slot the Responses dialect can carry. Every helper here
 //! returns the ABSENT value for an absent wire member, so a request that never carried a concept
 //! gains nothing on the wire.

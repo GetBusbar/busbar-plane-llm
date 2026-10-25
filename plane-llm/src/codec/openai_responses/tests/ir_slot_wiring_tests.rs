@@ -503,7 +503,7 @@ fn ir17_reasoning_summary_stays_a_summary() {
     assert_eq!(items[1]["content"][0]["text"], "long", "{out}");
 }
 
-/// Q128 arch u58 (IR-17 buffered): a BUFFERED answer places a summary-kind thought where the
+/// A BUFFERED answer places a summary-kind thought where the
 /// stream does, in `summary[]` as a `summary_text` part with no `content`; a full one keeps the
 /// `reasoning_text` part. RED: `write_response` always wrote `summary: []` plus `content[]`, so a
 /// Gemini thought reached a Responses client in one place streamed and another buffered.

@@ -765,10 +765,10 @@ async fn apply_rewrite_to_body_echoes_redacted_marker_as_visible_text() {
     assert!(!sent.to_string().contains("OPAQUE_CIPHERTEXT_BYTES"));
 }
 
-// ── F25 REHOME: the projection rows the coverage map (v2) homes on the driver ────────────────────
+// ── the projection rows homed on the driver ────────────────────
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_opt_in_projection_tests.rs::max_tokens_signal_is_dialect_aware_for_responses`
-/// (coverage map v2 row 254), its Bedrock arm, the fix the pre-door engine pinned over 1.5.5 (whose
+/// Its Bedrock arm, the fix the pre-door engine pinned over 1.5.5 (whose
 /// top-level `max_tokens` read showed `None`): Bedrock Converse spells
 /// the cap `inferenceConfig.maxTokens`, and the size signal a hook is shown carries it: a body with
 /// `{"inferenceConfig":{"maxTokens":128}}` projects `max_tokens` 128.
@@ -788,7 +788,7 @@ async fn max_tokens_signal_reads_the_bedrock_inference_config() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_opt_in_projection_tests.rs::responses_reasoning_reader_rejects_malformed_encrypted_content`
-/// (coverage map v2 row 264). 1.5.5: a Responses body whose only item is a reasoning item with an
+/// 1.5.5: a Responses body whose only item is a reasoning item with an
 /// EMPTY `encrypted_content` projects no content at all: every turn a hook is shown is empty text
 /// (no marker, no blob).
 ///
@@ -808,7 +808,7 @@ async fn responses_reasoning_reader_rejects_malformed_encrypted_content() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_opt_in_projection_tests.rs::size_signal_and_projection_agree_on_tool_role_content`
-/// (coverage map v2 row 271). 1.5.5: an openai body of a user turn, the assistant turn that CALLED
+/// 1.5.5: an openai body of a user turn, the assistant turn that CALLED
 /// a tool (arguments `{"q":"x"}`) and the tool-role result "TOOL RESULT PAYLOAD" projects 3 turns:
 /// the third exactly `("tool", "TOOL RESULT PAYLOAD")`, the second carrying the call's arguments
 /// (`"q"`), and the size signal equal to the projected characters; a block-array tool result
@@ -861,7 +861,7 @@ async fn size_signal_and_projection_agree_on_tool_role_content() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_opt_in_projection_tests.rs::hook_content_uncapped_by_default_and_omits_whole_when_opted_in`
-/// (coverage map v2 row 273). 1.5.5: the hook content ceiling (`limits.hook_content_max_bytes`) is
+/// 1.5.5: the hook content ceiling (`limits.hook_content_max_bytes`) is
 /// UNLIMITED by default (0): a 200000-character turn is projected in FULL. Opted in (64 KiB),
 /// over-cap content is OMITTED WHOLE, never truncated: the granted hook is shown a present-but-EMPTY
 /// prompt (no turn, no system) while the size signal still reports the real 200000.
@@ -910,7 +910,7 @@ async fn hook_content_uncapped_by_default_and_omits_whole_when_opted_in() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/lazy_body_tests.rs::ensure_ir_reads_the_body_through_the_ingress_reader`
-/// (coverage map v2 row 492). 1.5.5: an openai chat body's in-band system turn is a TURN of the hook
+/// 1.5.5: an openai chat body's in-band system turn is a TURN of the hook
 /// view, not the system field: `[system "be terse", user "hi"]` is 2 turns, no system, and a size
 /// signal of `"be terse".len() + "hi".len()`.
 ///

@@ -337,8 +337,8 @@ struct Open {
 }
 
 thread_local! {
-    /// THE OPEN TRANSLATE ATTEMPT, a dynamic scope for one SYNCHRONOUS call (ARCHITECT ruling,
-    /// row-159 L1#4: a plane may hold a `thread_local` that never carries state between units).
+    /// THE OPEN TRANSLATE ATTEMPT, a dynamic scope for one SYNCHRONOUS call (a plane may hold a
+    /// `thread_local` that never carries state between units).
     /// It is set only by a [`ScopeGuard`] and holds a value only while that guard lives: a guard
     /// never spans an `await` or a yield, a ticket boundary or a return to the driver — every
     /// [`scope`] / [`scope_more`] runs its closure to completion on the calling thread and closes
@@ -678,7 +678,7 @@ pub struct Carried {
     /// The request defaults the far end ECHOES in its answer, each a member's key and its default
     /// as JSON text (`("tool_choice", "\"auto\"")`). A member equal to its default carries nothing
     /// the caller set, so its drop is no unrepresentable control and the walk does not name it;
-    /// any other value of it is named like every drop (ARCHITECT RULING 2026-10-04: a dropped value
+    /// any other value of it is named like every drop (a dropped value
     /// equal to the protocol default, or an echoed default, writes no audit row).
     pub defaults: &'static [(&'static str, &'static str)],
 }
