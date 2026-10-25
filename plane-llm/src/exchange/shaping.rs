@@ -416,6 +416,14 @@ impl Shaping {
                     .pointer("/affinity/header_name")
                     .and_then(Value::as_str)
                 {
+                    // A credential is never a routing key: the caller's key would become the
+                    // kernel's sticky-routing input (CREDENTIAL-LOCKDOWN H8).
+                    if super::attempt::governed(h) {
+                        return Err(format!(
+                            "pool '{name}' affinity.header_name '{h}' names a credential header; \
+                             session affinity cannot key on a credential"
+                        ));
+                    }
                     affinity_headers.insert(name.clone(), h.to_string());
                 }
             }
