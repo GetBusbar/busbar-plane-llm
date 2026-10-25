@@ -37,6 +37,12 @@ needless_update = "allow"
 [workspace.dependencies]
 busbar-contract = { git = "https://github.com/GetBusbar/busbar", rev = "1768a6e1db639389d8d1396f6d0b1e0f144adefc" }
 busbar-plugin-loader = { git = "https://github.com/GetBusbar/busbar", rev = "1768a6e1db639389d8d1396f6d0b1e0f144adefc" }
+# THE SUITE'S HOST CONNECTOR (dev-only; plane-llm-plugin/tests/support/conformance_host.rs,
+# rendered because the declares file states network needs): busbar's connector and its TLS
+# test kit at the pin, and the transport framers those needs name, at the revs busbar links.
+busbar-core-connector = { git = "https://github.com/GetBusbar/busbar", rev = "1768a6e1db639389d8d1396f6d0b1e0f144adefc", features = ["test-support"] }
+busbar-transport-http = { git = "https://github.com/GetBusbar/busbar-transport-http", rev = "12b078389496d4c1fd81b730f5d9d0887537c3b0" }
+busbar-transport-tcp = { git = "https://github.com/GetBusbar/busbar-transport-tcp", rev = "223ec3f02000de94089a1752635b9e206f7492e5" }
 # busbar's root [workspace.dependencies], third-party rows, at 1768a6e1db639389d8d1396f6d0b1e0f144adefc
 arc-swap = "1"
 async-trait = "0.1"
@@ -77,6 +83,7 @@ opentelemetry-proto = { version = "0.32", default-features = false, features = [
 proc-macro2 = { version = "1", features = ["span-locations"] }
 prost = { version = "0.14", default-features = false, features = ["std"] }
 psl = "2.1"
+quote = "1"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 ring = "0.17"
@@ -126,3 +133,9 @@ redis = { version = "1", default-features = false, features = ["script"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 ulid = "1"
 
+# ONE busbar-contract (the suite's host connector): the transport framers above name
+# busbar-contract at their own revs of busbar; this repo's pin serves them all, as busbar
+# patches them to its own tree. The source is busbar spelled through www.github.com: Cargo
+# refuses a patch that names the source it patches.
+[patch."https://github.com/GetBusbar/busbar"]
+busbar-contract = { git = "https://www.github.com/GetBusbar/busbar", rev = "1768a6e1db639389d8d1396f6d0b1e0f144adefc" }
