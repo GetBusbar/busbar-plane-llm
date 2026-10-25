@@ -51,22 +51,6 @@ pub fn parse_image_url(url: &str) -> crate::codec::ir::IrImageSource {
     crate::codec::ir::IrImageSource::Url(url.to_string())
 }
 
-/// True when an image source is a vendor-scoped reference with no neutral form — a foreign writer
-/// that sees one must skip the image with a `tracing::warn!` instead of emitting a corrupt block. The
-/// PRODUCING protocol re-emits its own `Vendor` reference same-protocol and does NOT route through
-/// here (it matches its own `vendor` tag first).
-pub fn is_unresolvable_image_ref(source: &crate::codec::ir::IrImageSource) -> bool {
-    matches!(source, crate::codec::ir::IrImageSource::Vendor { .. })
-}
-
-/// True when an IR block is a structured-json tool-result content block
-/// ([`crate::codec::ir::IrBlock::Json`]) rather than text/image — used by NON-Bedrock ToolResult
-/// writers to drop-with-warn it (there is no lossless cross-protocol projection of a Bedrock
-/// `{"json":…}` tool-result).
-pub fn is_json_tool_result_block(block: &crate::codec::ir::IrBlock) -> bool {
-    matches!(block, crate::codec::ir::IrBlock::Json(_))
-}
-
 /// Signal that this egress dialect cannot express [`crate::codec::ir::IrTool::strict`], naming the
 /// tools whose strict-schema guarantee is being dropped.
 ///

@@ -21,7 +21,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use busbar_contract::billing::TokenUsage;
-use busbar_contract::codec::{OperationHandler, UsageTapFault};
+use busbar_contract::codec::UsageTapFault;
 use busbar_contract::protocol::HeadFields;
 use busbar_contract::upstream::{Disposition, StatusClass};
 
@@ -30,7 +30,6 @@ use super::attempt::StreamIntent;
 use super::invoke;
 use super::refuse::Rendered;
 use super::shaping::Lane;
-use crate::codec::DECLS;
 
 pub mod failure;
 pub mod relay;
@@ -219,14 +218,6 @@ impl std::fmt::Debug for Reply {
     }
 }
 
-fn handler(ctx: &ReplyCtx<'_>) -> Option<&'static dyn OperationHandler> {
-    DECLS
-        .iter()
-        .find(|d| d.name == ctx.arrived.dialect)
-        .and_then(|d| d.handler)
-        .and_then(|rh| rh.operation_handler(ctx.arrived.operation))
-}
-
 fn json_array(ctx: &ReplyCtx<'_>) -> bool {
     ctx.arrived
         .path_model
@@ -307,7 +298,7 @@ impl Reply {
             .is_some_and(wire::is_stream_content_type);
         let ingress = ctx.arrived.dialect;
         let egress = ctx.lane.dialect;
-        let Some(op) = handler(ctx) else {
+        let Some(op) = super::handler_of(ctx.arrived) else {
             return Reply {
                 ended_partial: false,
                 state: State::Whole {

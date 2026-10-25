@@ -72,12 +72,7 @@ fn variation_op_needs_no_prompt() {
 use busbar_contract::ir::facts::{ContentItem, IrFacts, OPAQUE_CONTENT_MARKER};
 use busbar_contract::operation::OpVerb;
 
-fn screened(items: &[ContentItem<'_>]) -> Vec<String> {
-    items
-        .iter()
-        .map(|i| i.screenable_text().into_owned())
-        .collect()
-}
+use crate::codec::test_host::screened;
 
 /// THE NEW-STRING-FIELD FORCING FUNCTION for `ImageReq`.
 ///
