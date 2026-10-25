@@ -1410,7 +1410,7 @@ fn test_generic_error_does_not_fold_into_safety_and_round_trips() {
 /// corrupt tool tracking. Every read site clamps the wire index to `MAX_TOOL_FRAME_INDEX`, well
 /// below the sentinel, so a tool block still opens at a real IR index and the sentinel's
 /// text-high-water meaning is preserved. Before the fix, a `usize::MAX` frame_idx was inserted
-/// into `open_tools`, became indistinguishable from the sentinel, and broke `cohere_lookup_tool_ir_index`.
+/// into `open_tools`, became indistinguishable from the sentinel, and broke the `state.tool_ir_index` lookup.
 #[test]
 fn test_huge_tool_frame_index_clamped_below_sentinel() {
     let reader = CohereReader;
@@ -2039,7 +2039,7 @@ fn test_stream_tool_call_events_mapped() {
     // stable for its lifetime (and the insertion slot of any LATER tool stable), so the set
     // grows monotonically across the stream.
     assert_eq!(
-        cohere_lookup_tool_ir_index(&state, 0),
+        state.tool_ir_index.get(&0).copied(),
         Some(0),
         "the closed tool's assigned IR index is retained to keep later tool indices stable"
     );
@@ -2155,7 +2155,7 @@ fn test_stream_tool_before_text_no_index_collision() {
 
     // The tool's index 0 is still independently resolvable — no overlap occurred.
     assert_eq!(
-        cohere_lookup_tool_ir_index(&state, 0),
+        state.tool_ir_index.get(&0).copied(),
         Some(0),
         "the tool retains its distinct IR index 0"
     );
@@ -4183,7 +4183,7 @@ fn test_open_tools_growth_is_capped() {
     );
 }
 
-/// Performance: `cohere_lookup_tool_ir_index`/`cohere_assign_tool_ir_index`
+/// Performance: the `state.tool_ir_index` lookup and `cohere_assign_tool_ir_index`
 /// used to do a full O(n) linear scan over `state.open_tools` on EVERY tool-call-start/delta frame
 /// (the set is never shrunk), making a stream with many sequential tool calls cost O(n²) instead of
 /// O(n) overall. The fix replaces the scan with an O(log n) `state.tool_ir_index` `BTreeMap` lookup
@@ -4199,7 +4199,7 @@ fn test_open_tools_growth_is_capped() {
 ///   tool's index must remain resolvable after later siblings are recorded.
 /// - Large-N scale check: exactly `MAX_TRACKED_TOOL_FRAMES` tools opened with fully REVERSED wire
 ///   indices (`N-1, N-2, ..., 0`) must each still be assigned insertion-order IR indices
-///   (`0, 1, ..., N-1`), every one of them must remain resolvable via `cohere_lookup_tool_ir_index`
+///   (`0, 1, ..., N-1`), every one of them must remain resolvable via `state.tool_ir_index`
 ///   AFTER all `N` are open (exercising the O(log n) lookup against a full-sized map, not an empty
 ///   or partially-filled one), and the very next frame past the cap must be rejected — proving
 ///   `MAX_TRACKED_TOOL_FRAMES` is still enforced under the new structure.
@@ -4211,12 +4211,12 @@ fn test_stream_tool_ir_index_o1_lookup_matches_insertion_order_at_scale() {
     assert_eq!(cohere_assign_tool_ir_index(&mut state, 10), Some(0));
     assert_eq!(cohere_assign_tool_ir_index(&mut state, 5), Some(1));
     assert_eq!(cohere_assign_tool_ir_index(&mut state, 2), Some(2));
-    assert_eq!(cohere_lookup_tool_ir_index(&state, 10), Some(0));
-    assert_eq!(cohere_lookup_tool_ir_index(&state, 5), Some(1));
-    assert_eq!(cohere_lookup_tool_ir_index(&state, 2), Some(2));
+    assert_eq!(state.tool_ir_index.get(&10).copied(), Some(0));
+    assert_eq!(state.tool_ir_index.get(&5).copied(), Some(1));
+    assert_eq!(state.tool_ir_index.get(&2).copied(), Some(2));
     // Re-asserting an already-open frame is a no-op (duplicate start): no re-assignment.
     assert_eq!(cohere_assign_tool_ir_index(&mut state, 10), None);
-    assert_eq!(cohere_lookup_tool_ir_index(&state, 10), Some(0));
+    assert_eq!(state.tool_ir_index.get(&10).copied(), Some(0));
 
     // Large-N scale check on a FRESH stream: open exactly MAX_TRACKED_TOOL_FRAMES tools with fully
     // reversed wire indices. The i-th call opened (wire = N-1-i) must be assigned IR index i,
@@ -4240,7 +4240,7 @@ fn test_stream_tool_ir_index_o1_lookup_matches_insertion_order_at_scale() {
     for i in 0..n {
         let wire = n - 1 - i;
         assert_eq!(
-            cohere_lookup_tool_ir_index(&state, wire),
+            state.tool_ir_index.get(&wire).copied(),
             Some(i),
             "tool #{i} (wire {wire}) must still resolve to its assigned IR index {i} after all {n} tools are open"
         );

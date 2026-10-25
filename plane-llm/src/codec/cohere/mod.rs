@@ -351,10 +351,6 @@ const RESPONSE_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::B
     companions: &[],
 }];
 
-/// The Cohere reader parks nothing beyond the members its map file does not model (what it
-/// promotes, it takes back out of `extra`).
-const PARKED: &[crate::codec::drops::Parked] = &[];
-
 /// What this dialect's answers carry beyond its map file's rows (the drop walk, design F3 "Drops").
 // The prompt-cache hit count is a slice of the input count the usage carries (never dropped); the
 // serving model is read beside the id.
@@ -392,7 +388,7 @@ const UINT8: &str = "uint8";
 
 /// Hard cap on the number of distinct tool-call frame indices recorded in `state.open_tools` for a
 /// single stream. The set is intentionally never shrunk (so each tool's IR block index stays stable
-/// for its lifetime — see `cohere_lookup_tool_ir_index`), which means a malicious or buggy upstream
+/// for its lifetime — see `state.tool_ir_index`), which means a malicious or buggy upstream
 /// that streams an unbounded number of distinct `tool-call-start` frame indices would grow it
 /// without bound. No legitimate Cohere v2 stream approaches this many parallel tool calls; past the
 /// cap we stop recording new frames so memory stays bounded. The cap leaves every realistic stream
@@ -470,9 +466,6 @@ const COHERE_FINISH_STOP_SEQUENCE: &str = "STOP_SEQUENCE";
 const COHERE_FINISH_TOOL_CALL: &str = "TOOL_CALL";
 /// Cohere v2 `finish_reason` for a max-tokens stop.
 const COHERE_FINISH_MAX_TOKENS: &str = "MAX_TOKENS";
-/// Cohere v2 `finish_reason` for a generation the upstream cut off on its own time limit — an
-/// upstream failure to finish, like `ERROR`.
-const COHERE_FINISH_TIMEOUT: &str = "TIMEOUT";
 
 // ── Cohere v2 tool_choice tokens ──────────────────────────────────────────────
 /// Cohere v2 `tool_choice` value requiring at least one tool call.
@@ -621,7 +614,7 @@ fn read_cohere_document(doc: &serde_json::Value) -> crate::codec::ir::IrBlock {
     let text_document = |text: &str, name: Option<&str>| crate::codec::ir::IrBlock::Media {
         kind: crate::codec::ir::IrMediaKind::Document,
         source: crate::codec::ir::IrImageSource::Base64 {
-            media_type: TEXT_PLAIN.to_string(),
+            media_type: keys::TEXT_PLAIN.to_string(),
             data: busbar_contract::media::base64_encode(text.as_bytes()),
         },
         name: name.filter(|s| !s.is_empty()).map(String::from),
@@ -755,9 +748,6 @@ fn write_cohere_document(
     }
 }
 
-/// The media type a plain-text document carries in the IR.
-const TEXT_PLAIN: &str = "text/plain";
-
 /// Read one Cohere v2 `LogprobItem` — `{"text": "<chunk>", "token_ids": [..], "logprobs": [..]}` —
 /// into the neutral [`crate::codec::ir::IrTokenLogprob`] (COH-13 / COH-14).
 ///
@@ -800,7 +790,6 @@ fn read_cohere_stop_reason(token: &str) -> crate::codec::ir::IrStopReason {
         // billed it. Reading it as `Error` turned a translated buffered answer into a billed 502
         // and a lane fault, a money and serving change no owner ruling signs (CHANGELOG 1.6.0
         // registers only the generic stream `ERROR`).
-        COHERE_FINISH_TIMEOUT => S::Other,
         _ => S::Other,
     }
 }
@@ -928,25 +917,6 @@ fn cohere_tracked_tool_count(state: &crate::codec::ir::StreamDecodeState) -> usi
     state.open_tools.len() - usize::from(state.open_tools.contains(&TEXT_BLOCK_SEEN_SENTINEL))
 }
 
-/// Look up the IMMUTABLE IR block index previously ASSIGNED to the tool call whose wire `frame_idx`
-/// was recorded at `tool-call-start`, or `None` if that frame was never tracked (a duplicate-free
-/// frame past the cap, or an end/delta with no matching start). The index is read verbatim from
-/// `state.tool_ir_index` — it is NOT recomputed from a live rank — so start, delta(s), and end for a
-/// given tool always resolve to the SAME IR index even when the upstream streams frame indices out
-/// of order (a non-monotonic frame index would otherwise perturb a recomputed rank and shift a
-/// tool's index mid-lifecycle).
-///
-/// O(log n) via the shared `StreamDecodeState.tool_ir_index` `BTreeMap`, mirroring the openai_chat
-/// reader's `oai_idx -> ir_idx` lookup (see `openai_chat/reader.rs`) — this used to be a full O(n)
-/// linear scan over `open_tools` on EVERY tool-call-start/delta frame, which made a stream with many
-/// sequential tool calls cost O(n²) instead of O(n) overall.
-fn cohere_lookup_tool_ir_index(
-    state: &crate::codec::ir::StreamDecodeState,
-    frame_idx: usize,
-) -> Option<usize> {
-    state.tool_ir_index.get(&frame_idx).copied()
-}
-
 /// Record a `tool-call-start` for wire `frame_idx`, ASSIGNING it a stable IR block index, and return
 /// that index. Returns `None` (emit nothing) when the frame is a duplicate of one already open, or
 /// when the per-stream cap is reached.
@@ -966,7 +936,7 @@ fn cohere_assign_tool_ir_index(
     frame_idx: usize,
 ) -> Option<usize> {
     // Duplicate tool-call-start for a frame already open: no-op (do not re-assign or re-emit).
-    if cohere_lookup_tool_ir_index(state, frame_idx).is_some() {
+    if state.tool_ir_index.get(&frame_idx).copied().is_some() {
         return None;
     }
     let tracked = cohere_tracked_tool_count(state);
