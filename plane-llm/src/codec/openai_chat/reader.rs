@@ -99,12 +99,6 @@ impl ProtocolReader for OpenAiReader {
         // Where each folded entry stood, for the hook view (`IrRequest::system_folds`).
         let mut system_folds: Vec<crate::codec::ir::IrSystemFold> = Vec::new();
 
-        // Extract scalar fields and extra
-        let _model = obj
-            .get(keys::MODEL)
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
         // Read the caller's output-token cap. `max_tokens` is the legacy field; `max_completion_tokens`
         // is the current Chat Completions parameter and is MANDATORY for reasoning models (o1/o3/...),
         // which REJECT `max_tokens`. Fall back to `max_completion_tokens` when `max_tokens` is absent so
@@ -1307,12 +1301,7 @@ impl ProtocolReader for OpenAiReader {
 
         let choice = &choices[0];
 
-        // Parse role (should be "assistant")
         let message_val = choice.get(keys::MESSAGE).ok_or_else(ir_parse_error)?;
-        let _role_str = message_val
-            .get(keys::ROLE)
-            .and_then(|r| r.as_str())
-            .unwrap_or("");
 
         // Parse content (may be null)
         let mut content: Vec<crate::codec::ir::IrBlock> = Vec::new();

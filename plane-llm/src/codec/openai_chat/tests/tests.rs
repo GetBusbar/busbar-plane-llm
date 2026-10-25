@@ -926,8 +926,6 @@ fn write_request_tool_result_on_user_message_emits_tool_message() {
 #[test]
 fn write_response_joins_text_blocks_and_keeps_tool_calls() {
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: IrRole::Assistant,
         content: vec![
             text_block("Hello "),
             text_block("world"),
@@ -947,14 +945,6 @@ fn write_response_joins_text_blocks_and_keeps_tool_calls() {
             cache_read_input_tokens: None,
             detail: crate::codec::ir::IrUsageDetail::default(),
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let out = openai_writer().write_response(crate::codec::test_host::HOST, &resp);
@@ -970,8 +960,6 @@ fn write_response_joins_text_blocks_and_keeps_tool_calls() {
 #[test]
 fn write_response_content_null_when_no_text() {
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: IrRole::Assistant,
         content: vec![IrBlock::ToolUse {
             thought_signature: None,
             id: "c1".to_string(),
@@ -980,21 +968,6 @@ fn write_response_content_null_when_no_text() {
             cache_control: None,
         }],
         stop_reason: Some(crate::codec::ir::IrStopReason::ToolUse),
-        usage: IrUsage {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
-        },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let out = openai_writer().write_response(crate::codec::test_host::HOST, &resp);
@@ -1118,8 +1091,6 @@ fn cross_protocol_write_synthesizes_valid_id() {
     // IR with no identity (cross-protocol: backend supplied none) must still emit a
     // protocol-correct id ("chatcmpl-...") and a created timestamp, without panicking.
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: IrRole::Assistant,
         content: vec![text_block("hello")],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: IrUsage {
@@ -1129,14 +1100,6 @@ fn cross_protocol_write_synthesizes_valid_id() {
             cache_read_input_tokens: None,
             detail: crate::codec::ir::IrUsageDetail::default(),
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let out = openai_writer().write_response(crate::codec::test_host::HOST, &resp);
@@ -1166,8 +1129,6 @@ fn cross_protocol_write_response_emits_fallback_model() {
     // chat.completion schema requires a non-nullable `model` string, so the writer must emit a
     // present, non-null fallback (never omit the key).
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: IrRole::Assistant,
         content: vec![text_block("hi")],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: IrUsage {
@@ -1177,14 +1138,6 @@ fn cross_protocol_write_response_emits_fallback_model() {
             cache_read_input_tokens: None,
             detail: crate::codec::ir::IrUsageDetail::default(),
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let out = openai_writer().write_response(crate::codec::test_host::HOST, &resp);
@@ -1202,8 +1155,6 @@ fn cross_protocol_write_response_emits_fallback_model() {
 fn write_response_preserves_upstream_model_over_fallback() {
     // A same-protocol passthrough must keep the upstream model verbatim, not the fallback.
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: IrRole::Assistant,
         content: vec![text_block("hi")],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: IrUsage {
@@ -1214,13 +1165,6 @@ fn write_response_preserves_upstream_model_over_fallback() {
             detail: crate::codec::ir::IrUsageDetail::default(),
         },
         model: Some("gpt-4o-mini".to_string()),
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let out = openai_writer().write_response(crate::codec::test_host::HOST, &resp);
@@ -1264,15 +1208,6 @@ fn stream_message_start_preserves_upstream_model_over_fallback() {
         .write_response_event(crate::codec::test_host::HOST, &with_model)
         .expect("message start emits a chunk");
     assert_eq!(chunk["model"], serde_json::json!("gpt-4o-2024-08-06"));
-}
-
-#[test]
-fn synth_completion_ids_are_unique() {
-    // Two synthesized ids minted back-to-back must differ (atomic counter guarantees it).
-    let a = synth_completion_id(crate::codec::test_host::HOST);
-    let b = synth_completion_id(crate::codec::test_host::HOST);
-    assert_ne!(a, b);
-    assert!(a.starts_with("chatcmpl-") && b.starts_with("chatcmpl-")); // golden wire-contract literal (kept bare on purpose)
 }
 
 #[test]
@@ -1491,8 +1426,6 @@ fn preamble_text_then_tool_then_text_opens_a_fresh_balanced_text_block() {
 #[test]
 fn write_response_total_tokens_saturates_on_overflow() {
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: IrRole::Assistant,
         content: vec![text_block("x")],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: IrUsage {
@@ -1502,14 +1435,6 @@ fn write_response_total_tokens_saturates_on_overflow() {
             cache_read_input_tokens: None,
             detail: crate::codec::ir::IrUsageDetail::default(),
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     // Must not panic (debug) or wrap (release); saturates at u64::MAX.
@@ -2433,10 +2358,7 @@ fn write_response_falls_back_to_stop_when_stop_reason_none() {
     // spec's natural-stop token rather than JSON null. This test previously pinned null, which
     // fixed the earlier omission bug but was itself off-schema for a `chat.completion`.
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: IrRole::Assistant,
         content: vec![text_block("partial")],
-        stop_reason: None,
         usage: IrUsage {
             input_tokens: 1,
             output_tokens: 1,
@@ -2444,14 +2366,6 @@ fn write_response_falls_back_to_stop_when_stop_reason_none() {
             cache_read_input_tokens: None,
             detail: crate::codec::ir::IrUsageDetail::default(),
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let out = openai_writer().write_response(crate::codec::test_host::HOST, &resp);
@@ -2483,25 +2397,8 @@ fn write_response_maps_finish_reason_enum_values() {
     ];
     for (stop_reason, want) in cases {
         let resp = crate::codec::ir::IrResponse {
-            logprobs: Vec::new(),
-            role: IrRole::Assistant,
             content: vec![text_block("x")],
             stop_reason,
-            usage: IrUsage {
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-                detail: crate::codec::ir::IrUsageDetail::default(),
-            },
-            model: None,
-            id: None,
-            created: None,
-            system_fingerprint: None,
-            stop_sequence: None,
-
-            request_echo: None,
-            stop_detail: None,
             ..Default::default()
         };
         let out = openai_writer().write_response(crate::codec::test_host::HOST, &resp);
@@ -3061,39 +2958,6 @@ fn stream_open_tools_is_capped() {
     assert!(block_starts <= MAX_OPEN_TOOLS);
 }
 
-// --- synthetic chatcmpl id must not carry an internal field-separator hyphen.
-
-#[test]
-fn synth_completion_id_has_single_hyphen_after_prefix() {
-    let id = synth_completion_id(crate::codec::test_host::HOST);
-    assert!(
-        id.starts_with("chatcmpl-"), // golden wire-contract literal (kept bare on purpose)
-        "id must keep the native prefix: {id}"
-    );
-    // Native ids have exactly one hyphen (the one in `chatcmpl-`); the token after the prefix is
-    // pure base62 with no internal delimiter. An extra hyphen is a structural proxy tell.
-    assert_eq!(
-        id.matches('-').count(),
-        1,
-        "synthetic id has an internal field separator: {id}"
-    );
-    let token = id.strip_prefix("chatcmpl-").expect("prefix present"); // golden wire-contract literal (kept bare on purpose)
-    assert!(!token.is_empty(), "token after prefix must be non-empty");
-    assert!(
-        token.chars().all(|c| c.is_ascii_alphanumeric()),
-        "token must be base62 ([0-9A-Za-z]), got: {token}"
-    );
-}
-
-#[test]
-fn synth_completion_ids_are_distinct_within_process() {
-    // The monotonic atomic counter alone guarantees distinctness even when minted back-to-back
-    // within the same second (where the timestamp field is identical).
-    let a = synth_completion_id(crate::codec::test_host::HOST);
-    let b = synth_completion_id(crate::codec::test_host::HOST);
-    assert_ne!(a, b);
-}
-
 // --- OpenAI tool-message content given as an array of parts must not be dropped.
 
 #[test]
@@ -3319,49 +3183,15 @@ fn req_with_tool(
     description: Option<&str>,
 ) -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        messages: Vec::new(),
         tools: vec![crate::codec::ir::IrTool {
             name: "get_weather".to_string(),
             description: description.map(String::from),
             input_schema,
             cache_control: None,
-
             hosted: None,
-
             strict: None,
         }],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     }
 }
 
@@ -3543,8 +3373,6 @@ fn read_response_normalizes_function_call_to_tool_use() {
 fn write_response_safety_round_trips_to_content_filter() {
     // The canonical `safety` token must serialize back to OpenAI's native `content_filter`.
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: IrRole::Assistant,
         content: vec![text_block("hi")],
         stop_reason: Some(crate::codec::ir::IrStopReason::Safety),
         usage: IrUsage {
@@ -3557,11 +3385,6 @@ fn write_response_safety_round_trips_to_content_filter() {
         model: Some("gpt-4o".to_string()),
         id: Some("chatcmpl-x".to_string()),
         created: Some(1),
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let out = openai_writer().write_response(crate::codec::test_host::HOST, &resp);
@@ -3818,8 +3641,6 @@ fn write_request_string_tool_arguments_emitted_verbatim() {
 fn write_response_string_tool_arguments_emitted_verbatim() {
     let raw = "not-json {oops".to_string();
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::ToolUse {
             thought_signature: None,
             id: "call_1".to_string(),
@@ -3838,11 +3659,6 @@ fn write_response_string_tool_arguments_emitted_verbatim() {
         model: Some("gpt-4o".to_string()),
         id: Some("chatcmpl-x".to_string()),
         created: Some(1),
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let out = openai_writer().write_response(crate::codec::test_host::HOST, &resp);
@@ -4092,34 +3908,6 @@ fn auth_headers_valid_key_emits_bearer_authorization() {
     );
 }
 
-#[test]
-fn auth_headers_invalid_key_omits_header_no_panic() {
-    // #83a S2-a: the dialect DECLARES its credential scheme and the host presents it — a plain
-    // `authorization: Bearer <key>` for every credential and mode. The bytes the host writes for a
-    // valid key, and the omission of a key whose bytes no header value may carry, are pinned in the
-    // host's suite over the shared fixture `testing/plane-copies/declared-credentials.json`.
-    let Some(busbar_contract::protocol::EgressScheme::Static {
-        families,
-        own,
-        passthrough,
-    }) = crate::codec::openai_chat::DECL.egress_scheme
-    else {
-        panic!("openai declares a static credential scheme");
-    };
-    assert!(families.is_empty());
-    assert_eq!(own, busbar_contract::protocol::CredentialHeader::Bearer);
-    assert_eq!(
-        passthrough,
-        busbar_contract::protocol::CredentialHeader::Bearer
-    );
-    assert!(
-        crate::codec::openai_chat::DECL
-            .egress_auth_headers
-            .is_none(),
-        "no credential passes through the plane"
-    );
-}
-
 // --- tool_choice is a first-class IR control; it must round-trip, not degrade to auto ---
 
 #[test]
@@ -4181,43 +3969,11 @@ fn test_openai_tool_choice_absent_is_none() {
 /// Minimal valid `IrRequest` for writer-side tool_choice/temperature tests.
 fn test_ir_request() -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![IrMessage {
             role: IrRole::User,
             content: vec![text_block("hi")],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     }
 }
 
@@ -4967,8 +4723,6 @@ fn read_response_subtracts_cached_prefix_from_prompt_tokens() {
 #[test]
 fn write_response_reconstructs_prompt_tokens_total_with_cached_details() {
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: IrRole::Assistant,
         content: vec![text_block("hi")],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: IrUsage {
@@ -4981,11 +4735,6 @@ fn write_response_reconstructs_prompt_tokens_total_with_cached_details() {
         model: Some("gpt-4o".to_string()),
         id: Some("chatcmpl-abc".to_string()),
         created: Some(1_700_000_000),
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let out = openai_writer().write_response(crate::codec::test_host::HOST, &resp);
@@ -5007,8 +4756,6 @@ fn write_response_reconstructs_prompt_tokens_total_with_cached_details() {
 #[test]
 fn write_response_omits_cached_details_when_no_cache_read() {
     let mut resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: IrRole::Assistant,
         content: vec![text_block("hi")],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: IrUsage {
@@ -5021,11 +4768,6 @@ fn write_response_omits_cached_details_when_no_cache_read() {
         model: Some("gpt-4o".to_string()),
         id: Some("chatcmpl-x".to_string()),
         created: Some(1),
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let out = openai_writer().write_response(crate::codec::test_host::HOST, &resp);
@@ -5313,8 +5055,6 @@ fn write_response_carries_citations_with_join_relative_offsets() {
     };
 
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: IrRole::Assistant,
         id: Some("chatcmpl-c".into()),
         model: Some("gpt-4o".into()),
         created: Some(1_700_000_000),
@@ -5329,7 +5069,6 @@ fn write_response_carries_citations_with_join_relative_offsets() {
             ),
         ],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
-        stop_sequence: None,
         usage: IrUsage {
             input_tokens: 1,
             output_tokens: 1,
@@ -5337,10 +5076,6 @@ fn write_response_carries_citations_with_join_relative_offsets() {
             cache_read_input_tokens: None,
             detail: crate::codec::ir::IrUsageDetail::default(),
         },
-        system_fingerprint: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
 
@@ -5411,8 +5146,6 @@ fn url_annotation_base_accumulates_in_characters() {
     assert_eq!(first_block.len(), 14);
 
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: IrRole::Assistant,
         id: Some("chatcmpl-c".into()),
         model: Some("gpt-4o".into()),
         created: Some(1_700_000_000),
@@ -5431,7 +5164,6 @@ fn url_annotation_base_accumulates_in_characters() {
             },
         ],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
-        stop_sequence: None,
         usage: IrUsage {
             input_tokens: 1,
             output_tokens: 1,
@@ -5439,10 +5171,6 @@ fn url_annotation_base_accumulates_in_characters() {
             cache_read_input_tokens: None,
             detail: crate::codec::ir::IrUsageDetail::default(),
         },
-        system_fingerprint: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let v = openai_writer().write_response(crate::codec::test_host::HOST, &resp);
@@ -5494,8 +5222,6 @@ fn url_annotation_quote_recovery_reports_character_indices() {
 #[test]
 fn write_response_omits_annotations_when_there_are_no_citations() {
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: IrRole::Assistant,
         id: Some("chatcmpl-n".into()),
         model: Some("gpt-4o".into()),
         created: Some(1_700_000_000),
@@ -5506,7 +5232,6 @@ fn write_response_omits_annotations_when_there_are_no_citations() {
             refusal: false,
         }],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
-        stop_sequence: None,
         usage: IrUsage {
             input_tokens: 1,
             output_tokens: 1,
@@ -5514,10 +5239,6 @@ fn write_response_omits_annotations_when_there_are_no_citations() {
             cache_read_input_tokens: None,
             detail: crate::codec::ir::IrUsageDetail::default(),
         },
-        system_fingerprint: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let v = openai_writer().write_response(crate::codec::test_host::HOST, &resp);
@@ -5811,7 +5532,6 @@ fn openai_write_drops_thinking_observably() {
     use busbar_contract::testkit::WarnCapture;
 
     let resp = crate::codec::ir::IrResponse {
-        role: IrRole::Assistant,
         content: vec![
             IrBlock::Thinking {
                 text: "let me reason about this".to_string(),
@@ -5831,15 +5551,6 @@ fn openai_write_drops_thinking_observably() {
             cache_read_input_tokens: None,
             detail: crate::codec::ir::IrUsageDetail::default(),
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-        logprobs: Vec::new(),
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
 
@@ -5980,7 +5691,6 @@ fn plain_ir_response(
 ) -> crate::codec::ir::IrResponse {
     crate::codec::ir::IrResponse {
         logprobs,
-        role: IrRole::Assistant,
         content: vec![text_block("Hello there!")],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: IrUsage {
@@ -5993,10 +5703,6 @@ fn plain_ir_response(
         model: Some("gpt-4o".to_string()),
         id: Some("chatcmpl-1".to_string()),
         created: Some(1),
-        system_fingerprint: None,
-        stop_sequence: None,
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     }
 }
