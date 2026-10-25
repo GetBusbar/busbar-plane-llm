@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The CHAT `IrHandle` — the request/response handle `ChatOperation` yields once `IrReq`/`IrResp`
-//! dissolved (G6 A4b). Wraps the concrete `crate::codec::ir::{IrRequest,IrResponse}` (relocated here) and
+//! dissolved. Wraps the concrete `crate::codec::ir::{IrRequest,IrResponse}` (relocated here) and
 //! carries chat's cross-protocol prep + write, keyed by the peer PROTOCOL STRING: the handle writes
 //! ITSELF onto the target dialect via `super::proto_codec::protocol_for(proto).writer()` — no
 //! downcast. The `prepare_for_egress`/`prepare_for_ingress` bodies are lifted VERBATIM from the
@@ -372,7 +372,7 @@ pub fn drop_untranslatable_response(egress_protocol: &str, body: &Value) {
 
 /// Chat cross-protocol INGRESS preparation (from the former `IrResp::Chat` arm).
 ///
-/// What it clears, and why each is a normalization rather than a drop (IR mapping Q57):
+/// What it clears, and why each is a normalization rather than a drop:
 /// - `id` — every dialect's id is a FORMAT (`chatcmpl-…`, `msg_…`, `resp_…`); the ingress writer
 ///   mints its own native one (the synthesized-ID contract on [`IrResponse::id`]). The stream path
 ///   clears the same field on `MessageStart`.
@@ -393,7 +393,7 @@ pub fn chat_prepare_for_ingress(ir: &mut IrResponse, ingress_protocol: &str, now
     envelope_foreign_signatures(ir, ingress_protocol);
 }
 
-/// IR-18 (architect ruling): a reasoning signature another family minted is
+/// IR-18: a reasoning signature another family minted is
 /// wrapped in the busbar provenance envelope before the ingress writer places it in a client
 /// carrier that has no origin field, so the client's next turn brings back the original bytes AND
 /// their origin (the ingress reader unwraps it) instead of a blob its own family would reject.
@@ -555,8 +555,7 @@ impl IrHandle for ChatRespHandle {
 
 // ─────────────────────────── the chat OperationHandler ───────────────────────────
 
-/// A protocol's chat operation — RELOCATED from `busbar-core/src/handlers/chat.rs` at the G6 A4b
-/// dissolve. The field names the protocol whose `proto_codec` reader/writer are this
+/// A protocol's chat operation — RELOCATED from `busbar-core/src/handlers/chat.rs`. The field names the protocol whose `proto_codec` reader/writer are this
 /// instance's codec; `read_request`/`read_response` now yield `Box<dyn IrHandle>` (a
 /// `ChatReqHandle`/`ChatRespHandle`), and the WRITE half inverted onto those handles (they write
 /// themselves by egress-protocol string). One TYPE, six per-protocol instances registered by each
@@ -603,7 +602,7 @@ impl OperationHandler for ChatOperation {
     {
         // Same-protocol usage tap (verbatim from the former `ChatOperation`; `crate::codec::` re-pathed).
         // Each way the tap cannot read the body is RETURNED as its fault: the door carries it out on
-        // its answer and the kernel counts it and warns once per (protocol, reason) (row 155). The
+        // its answer and the kernel counts it and warns once per (protocol, reason). The
         // codec's own line is the per-request detail, at debug.
         use busbar_contract::codec::UsageTapFault;
         let Some(p) = super::proto_codec::protocol_for(ingress_protocol) else {

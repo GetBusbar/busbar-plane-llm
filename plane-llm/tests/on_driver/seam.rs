@@ -1020,7 +1020,7 @@ async fn request_id_is_recorded_as_native_u64_tracing_field() {
     );
 }
 
-// ── F25 REHOME: the hook seam rows the coverage map (v2) homes on the driver ─────────────────────
+// ── the hook seam rows homed on the driver ─────────────────────
 
 /// The 503 body a decision gate that could not complete answers (1.5.5's literal).
 const GATE_COULD_NOT_COMPLETE: &str = "A required gate could not complete. Please retry shortly.";

@@ -104,7 +104,7 @@ fn empty_settings_are_an_empty_generation_with_the_defaults() {
     assert_eq!(s.reasoning_budgets, DEFAULT_REASONING_BUDGETS);
 }
 
-/// THE TRANSLATE CAP IS THE SETTINGS' (row 155): the cap a generation enforces is the
+/// THE TRANSLATE CAP IS THE SETTINGS': the cap a generation enforces is the
 /// `limits.request_body_max_bytes` the kernel handed in the settings it was opened or refreshed
 /// with, and the kernel's own 32 MiB default when it handed none.
 #[test]
@@ -134,7 +134,7 @@ fn the_glob_takes_prefix_suffix_and_middle_wildcards() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/attempt_timeout_precedence_tests.rs::effective_reasoning_member_override_wins`
-/// (coverage map v2 row 43). 1.5.5: the pool member's `reasoning` override wins over the model's
+/// 1.5.5: the pool member's `reasoning` override wins over the model's
 /// flag in both directions (true over false AND false over true); a member with no override
 /// inherits the model's flag, true or false; a pool or member with no candidate row uses the
 /// model's flag.
@@ -184,7 +184,7 @@ fn effective_reasoning_member_override_wins() {
     );
 }
 
-/// A MODEL'S OWN `protocol` OVERRIDES ITS PROVIDER'S (#51, THE DESIGN section 2, the BEDROCK-INVOKE ruling): the
+/// A MODEL'S OWN `protocol` OVERRIDES ITS PROVIDER'S: the
 /// model is spoken in the dialect it names, a sibling model on the same provider keeps the
 /// provider's, and a dialect the plane does not serve is refused naming the model (fail-closed).
 /// RED: a plane that reads only the provider's `protocol` writes the overriding model's requests
@@ -209,7 +209,7 @@ fn a_models_protocol_overrides_its_providers_and_an_unknown_one_is_refused() {
     );
 }
 
-/// AN EMPTY `model_capabilities` READS AS AN ABSENT ONE (row 155 B1b; coordinator ruling): the
+/// AN EMPTY `model_capabilities` READS AS AN ABSENT ONE: the
 /// kernel's resolved provider table now hands the plane `model_capabilities: []` where a catalog
 /// entry states none, where it used to leave the key out. The plane reads the two the same way, so
 /// every lane shapes its request exactly as before. RED: an empty rule list read differently from an

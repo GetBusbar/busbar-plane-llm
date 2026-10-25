@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! The Anthropic spelling of the Q57 typed request slots: hosted (server) tools, service tier and the slots Anthropic cannot carry.
+//! The Anthropic spelling of the typed request slots: hosted (server) tools, service tier and the slots Anthropic cannot carry.
 
 use crate::codec::keys;
 

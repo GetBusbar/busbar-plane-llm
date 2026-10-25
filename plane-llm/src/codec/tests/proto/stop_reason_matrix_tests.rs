@@ -59,7 +59,7 @@ fn every_writer_emits_only_valid_native_finish_tokens() {
     ];
     let gemini_ok = ["STOP", "MAX_TOKENS", "SAFETY", "OTHER"];
     // `malformed_model_output` is a Converse `StopReason` member: the Bedrock writer's value for
-    // `IrStopReason::Error` (BED-09, IR mapping Q57), where `end_turn` told a client a failed
+    // `IrStopReason::Error`, where `end_turn` told a client a failed
     // generation had finished normally.
     let bedrock_ok = [
         "end_turn",
@@ -79,8 +79,8 @@ fn every_writer_emits_only_valid_native_finish_tokens() {
         "TOOL_CALL",
         "ERROR",
     ];
-    // `failed` is a Responses `status` member: the writer's value for `IrStopReason::Error`
-    // (RSP-11, IR mapping Q57), where `completed` told a client a failed generation had succeeded.
+    // `failed` is a Responses `status` member: the writer's value for `IrStopReason::Error`,
+    // where `completed` told a client a failed generation had succeeded.
     let responses_ok = ["completed", "incomplete", "failed"];
     let cohere_writer = CohereWriter;
     let gemini_writer = GeminiWriter;

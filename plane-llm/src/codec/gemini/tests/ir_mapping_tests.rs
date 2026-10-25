@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! IR mapping (owner directive Q57): a field the Gemini dialect carries that the IR and the other
+//! IR mapping: a field the Gemini dialect carries that the IR and the other
 //! dialect CAN carry must map, never drop. One probe per defect id of the IR mapping audit
 //! (`GEM-nn`), driven through the production seam: reader → `chat_prepare_for_egress` /
 //! `chat_prepare_for_ingress` → writer, and `StreamTranslate` for streams.

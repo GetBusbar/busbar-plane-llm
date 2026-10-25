@@ -64,7 +64,7 @@ fn the_source_holds_nothing_mutable() {
         "UnsafeCell",
         "thread_local",
     ];
-    // THE DOOR'S ABI-MANDATED STATE (ARCHITECT 2026-10-02): the memory-ABI door keeps, per
+    // THE DOOR'S ABI-MANDATED STATE: the memory-ABI door keeps, per
     // instance, the shaping of its current refresh generation and the table of units in flight
     // across their Ready|Pending calls (the design's plugin ABI: plugin-owned memory, valid to its
     // next refresh generation). These lines are that state, named exactly; anything else in the

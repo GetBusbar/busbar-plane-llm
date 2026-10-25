@@ -50,7 +50,7 @@ fn openai_effort_projects_to_anthropic_adaptive_effort() {
 
 /// The same word-form ask on a lane that does NOT declare adaptive thinking (the default — Haiku
 /// 4.5, Sonnet 4.5, Opus 4.5 and older, which reject adaptive) is `thinking.budget_tokens` through
-/// the effort table, and no `output_config.effort` (ANT-10, architect lane-capability ruling).
+/// the effort table, and no `output_config.effort`.
 #[test]
 fn effort_on_a_default_lane_is_budget_tokens() {
     let ir = super::super::openai_chat::OpenAiReader

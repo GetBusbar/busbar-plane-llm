@@ -371,8 +371,7 @@ fn grounding_citations_at(
     // discovery document (Vertex-only surface). It has no neutral IR field of its own (adding one to
     // `IrCitation` is a required field touching every dialect's own citation-construction/test
     // sites); instead the ORIGINAL chunk object is stashed in `raw` at each push site below and
-    // `write_gemini_citation` re-derives `domain` from it — carried per OWNER RULING Q1,
-    // docs/design/1.6.0-QUESTIONS.md Q36, rather than dropped.
+    // `write_gemini_citation` re-derives `domain` from it — carried rather than dropped.
     let chunk_source = |chunk: &serde_json::Value| -> (Option<String>, Option<String>) {
         let inner = chunk
             .get(keys::WEB)
@@ -646,8 +645,7 @@ pub(super) fn write_gemini_citation(
     // `{web: {...}}` / `{retrievedContext: {...}}` chunk in `raw` (this function's short-circuit
     // above does not fire on it: that chunk carries no top-level `uri`/`startIndex`/`endIndex`).
     // Re-derive `domain` from it here and re-emit as an additional sibling key, so a
-    // grounding-sourced domain still SURVIVES the hop rather than being silently dropped (OWNER
-    // RULING Q1, docs/design/1.6.0-QUESTIONS.md Q36); only present when the source carried one, so
+    // grounding-sourced domain still SURVIVES the hop rather than being silently dropped; only present when the source carried one, so
     // an ordinary (non-grounding) citation stays byte-identical.
     if let Some(d) = c
         .raw

@@ -17,7 +17,7 @@ use serde_json::Value;
 /// The codec host these tests hand the plane: a FIXED entropy source and the system clock in whole
 /// seconds. Fixed, because the twin proofs here (one answer judged or relayed twice, compared byte
 /// for byte) need a minted id (a request id, a `chatcmpl-` id) to be the same in both: the plane
-/// draws every id from its host (#1028), and a CSPRNG would answer two different ids. A source that
+/// draws every id from its host, and a CSPRNG would answer two different ids. A source that
 /// answers is still a source: every dialect mints its id as it does in production.
 struct TestHost;
 
@@ -807,7 +807,7 @@ fn a_reply_takes_a_whole_answer_whole() {
     assert_eq!(v["object"], "chat.completion", "{v}");
 }
 
-/// A TRANSLATED WHOLE ANSWER BILLS ON AN EARLY LEAVE (row 159, plane-llm HIGH). The door writes a
+/// A TRANSLATED WHOLE ANSWER BILLS ON AN EARLY LEAVE. The door writes a
 /// whole answer to the caller in windows; a caller that leaves before the last one is a cancel, and
 /// the cancel bills the units the answer stated only when the reply says the caller had a usable
 /// part of it. 1.5.5 billed a buffered translated answer before writing a byte of it, so a delivered
@@ -885,7 +885,7 @@ fn a_reply_judges_a_far_end_error() {
     }
 }
 
-/// THE BREAKER'S READING beside the walk's verdict (ARCHITECT BREAKER OUTCOME):
+/// THE BREAKER'S READING beside the walk's verdict:
 /// a request too large for the window fails over with nothing recorded (RETRY, FAULT_NONE); an
 /// `error_map` entry naming `rate_limit` fails over and counts toward the trip (RETRY,
 /// FAULT_TRANSIENT); the caller's own bad input records nothing (HARD, FAULT_CALLER); a refused
@@ -971,7 +971,7 @@ fn a_reply_that_is_cut_says_so() {
     assert_eq!(cut.fault, Some(Fault::Transient("transport")));
 }
 
-// ── the stream's one drop path (design F3 "Drops", DF-MAP-IR-GAPS section E) ─────────────────────
+// ── the stream's one drop path ─────────────────────
 
 /// A far end's stream of `far`, relayed to a caller of `caller`: the paths the relay dropped.
 fn stream_drops(caller: &str, far: &str, bytes: &[u8]) -> Vec<String> {
@@ -1061,7 +1061,7 @@ fn a_same_dialect_stream_drops_nothing() {
     assert!(stream_drops("openai", "openai", far.as_bytes()).is_empty());
 }
 
-// ── rehomed: the engine's answer tests on the served reply (F25 REHOME, status row 155) ──────────
+// ── rehomed: the engine's answer tests on the served reply ──────────
 
 /// The legacy engine's answer tests (`crates/busbar-llm/src/engine/**`), rehomed onto the served
 /// reply. Each test names the legacy test it replaces, the 1.5.5 behaviour it pins, and its RED.
@@ -1380,7 +1380,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::ungoverned_same_protocol_cohere_error_split_key_faults_the_breaker`
-    /// (map row 11). 1.5.5 (Q31 follow-up): an ungoverned same-dialect body whose stop-reason key
+    /// 1.5.5: an ungoverned same-dialect body whose stop-reason key
     /// arrives split across two pieces (`"finish_re` | `ason":"ERROR"`) still ends as an error and
     /// faults the far end, and the caller reads the far end's bytes unchanged.
     /// RED: a stop-reason scan that keeps no state across pieces (or that runs only when metering)
@@ -1410,7 +1410,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::ungoverned_same_protocol_cohere_complete_split_key_is_no_fault`
-    /// (map row 12). 1.5.5: the same split body ending `COMPLETE` is a clean success, no fault.
+    /// 1.5.5: the same split body ending `COMPLETE` is a clean success, no fault.
     /// RED: a scan that reads a split key as a failure (or any token as one) faults a healthy far
     /// end.
     #[test]
@@ -1438,7 +1438,7 @@ mod rehomed_answers {
     ];
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/client_header_forwarding_tests.rs::a_same_dialect_answer_relays_the_upstream_head`
-    /// (map row 89). 1.5.5 (DIALECT-FIDELITY F2): a same-dialect 2xx answer carries every far head
+    /// 1.5.5 (DIALECT-FIDELITY F2): a same-dialect 2xx answer carries every far head
     /// field (`x-ratelimit-remaining-tokens: 99`, `openai-processing-ms: 12`) but the far end's echo
     /// of the operator's tenant (`openai-organization`, `openai-project`).
     /// RED: a success relay that drops the far head, or one that leaks the operator's tenant.
@@ -1460,7 +1460,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/client_header_forwarding_tests.rs::a_same_dialect_error_relays_the_upstream_head`
-    /// (map row 90). 1.5.5: a same-dialect 400 `invalid_request_error` reaches the caller with the
+    /// 1.5.5: a same-dialect 400 `invalid_request_error` reaches the caller with the
     /// far head's values (`x-ratelimit-remaining-tokens: 99`, `retry-after: 7`) and without
     /// `openai-organization`.
     /// RED: a client-fault relay that keeps only the names, rewrites a value, or leaks the tenant.
@@ -1484,7 +1484,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/client_header_forwarding_tests.rs::a_translated_answer_relays_no_upstream_head`
-    /// (map row 91). 1.5.5: a translated answer is busbar's own answer in the caller's dialect and
+    /// 1.5.5: a translated answer is busbar's own answer in the caller's dialect and
     /// carries none of the far end's head fields.
     /// RED: a translated whole answer that relays the far head (`x-ratelimit-*`, `openai-*`).
     #[test]
@@ -1507,7 +1507,7 @@ mod rehomed_answers {
     // ── the relayed stream (forward_pool_integration_tests.rs) ─────────────────────────────────
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_sse_events_single_data_prefix`
-    /// (map row 154). 1.5.5: each relayed event carries exactly one `data: ` prefix.
+    /// 1.5.5: each relayed event carries exactly one `data: ` prefix.
     /// RED: a relay that re-prefixes a relayed frame (`data: data: event-0`).
     #[test]
     fn test_sse_events_single_data_prefix() {
@@ -1525,7 +1525,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_stream_inspection_tap_usage_parsing`
-    /// (map row 164). 1.5.5: a same-dialect stream reaches the caller byte-identical, its `[DONE]`
+    /// 1.5.5: a same-dialect stream reaches the caller byte-identical, its `[DONE]`
     /// frame included, while its usage is read as it goes by.
     /// RED: a usage tap that rewrites, drops or reorders a frame on the relay.
     #[test]
@@ -1546,7 +1546,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_forward_once_cross_protocol_auth_kinds_match_main_path`
-    /// (map row 183). 1.5.5: a far end of another dialect refusing the deployment's own credential
+    /// 1.5.5: a far end of another dialect refusing the deployment's own credential
     /// with a 401 OR a 403 reaches an anthropic caller as its own refusal (status 401, `type:
     /// "error"`, `error.type: "authentication_error"`), records a hard fault, and never relays the
     /// far end's body; the last-resort attempt runs the same judge.
@@ -1579,7 +1579,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_cross_protocol_stream_openai_lane_to_anthropic_client`
-    /// (map row 201). 1.5.5: a chat-dialect stream reaches an anthropic caller as anthropic events
+    /// 1.5.5: a chat-dialect stream reaches an anthropic caller as anthropic events
     /// (`message_start`, `content_block_delta` with a `text_delta` of "hi", `message_stop`) and no
     /// `chat.completion.chunk` leaks.
     /// RED: a translated stream relaying the far end's frames, or missing the event sequence.
@@ -1610,7 +1610,7 @@ mod rehomed_answers {
     // ── the error shape across dialects (ingress_indistinguishability_tests.rs) ────────────────
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_error_kind_mapping`
-    /// (map row 326). 1.5.5: the kind a far status is reshaped into across dialects: 401
+    /// 1.5.5: the kind a far status is reshaped into across dialects: 401
     /// `authentication_error`, 403 `permission_error`, 429 `rate_limit_error`, 500 and 502
     /// `api_error`, 503 `overloaded`, 504 `timeout`, 400 and 404 `invalid_request_error`.
     /// RED: a 401/403 collapsed into `invalid_request_error`, or a 503 into `api_error`.
@@ -1632,7 +1632,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_shape_cross_protocol_error_auth_kinds`
-    /// (map row 327). 1.5.5: a far 401 / 403 `{"error":{"message":"nope"}}` relayed across
+    /// 1.5.5: a far 401 / 403 `{"error":{"message":"nope"}}` relayed across
     /// dialects to an anthropic caller keeps its status, wears `authentication_error` /
     /// `permission_error`, and carries the far end's message `nope`.
     /// RED: the kind of a 403 taken from the 401 arm, the message dropped for the generic one, or
@@ -1666,7 +1666,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_ingress_stream_content_type_by_protocol`
-    /// (map row 331). 1.5.5: a caller's stream wears its own dialect's content type:
+    /// 1.5.5: a caller's stream wears its own dialect's content type:
     /// `text/event-stream` for the five event-stream dialects, `application/vnd.amazon.eventstream`
     /// for bedrock, none for a dialect the plane does not hold.
     /// RED: the far end's content type kept on a translated stream, or bedrock served as SSE.
@@ -1695,7 +1695,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_response_carries_ingress_ct_and_native_id`
-    /// (map row 332). 1.5.5: a chat-dialect answer with id `chatcmpl-LEAK123` and fingerprint
+    /// 1.5.5: a chat-dialect answer with id `chatcmpl-LEAK123` and fingerprint
     /// `fp_backend` reaches an anthropic caller as 200 `application/json`, `type: "message"`, an id
     /// minted `msg_`, and neither foreign value anywhere in the body.
     /// RED: the far end's id or fingerprint carried across, or the far content type kept.
@@ -1729,7 +1729,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_bedrock_ingress_success_carries_amzn_request_id`
-    /// (map row 344). 1.5.5: a bedrock caller's translated 2xx carries `x-amzn-requestid`, a
+    /// 1.5.5: a bedrock caller's translated 2xx carries `x-amzn-requestid`, a
     /// 36-character UUID, exactly once.
     /// RED: a success head with no request id, or the id attached twice.
     #[test]
@@ -1745,7 +1745,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_ingress_success_carries_request_id_header`
-    /// (map row 345). 1.5.5: an anthropic caller's translated 2xx carries a minted `request-id`
+    /// 1.5.5: an anthropic caller's translated 2xx carries a minted `request-id`
     /// in the native `req_` shape, exactly once.
     /// RED: no request id on a translated success, or a duplicate from a double attach.
     #[test]
@@ -1761,7 +1761,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_ingress_stream_carries_request_id_header`
-    /// (map row 346). 1.5.5: an anthropic caller's streamed 2xx from a far end that sent no id
+    /// 1.5.5: an anthropic caller's streamed 2xx from a far end that sent no id
     /// carries a minted `request-id` in the `req_` shape.
     /// RED: the stream head built without the request id the buffered head carries.
     #[test]
@@ -1776,7 +1776,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_client_fault_reshapes_error_envelope`
-    /// (map row 347). 1.5.5: a chat-dialect 400 (`param`, `code`) reaches an anthropic caller as a
+    /// 1.5.5: a chat-dialect 400 (`param`, `code`) reaches an anthropic caller as a
     /// 400 `application/json` anthropic envelope (`type: "error"`, `error.type:
     /// "invalid_request_error"`) carrying the far message, with no `param` or `code` member.
     /// RED: the far end's own envelope relayed across dialects.
@@ -1812,7 +1812,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_same_proto_error_relays_upstream_request_id_verbatim_once`
-    /// (map row 352). 1.5.5: a same-dialect anthropic 400 carrying `request-id:
+    /// 1.5.5: a same-dialect anthropic 400 carrying `request-id:
     /// upstream-anthropic-rid-0001` reaches the caller as 400 with that `request-id` EXACTLY once.
     /// RED: a minted id in place of the far one, or a second `request-id` appended beside it.
     #[test]
@@ -1835,7 +1835,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_same_proto_passthrough_401_relays_request_id_verbatim_once`
-    /// (map row 353). 1.5.5: the caller's own credential refused by a same-dialect far end (a
+    /// 1.5.5: the caller's own credential refused by a same-dialect far end (a
     /// passthrough 401 carrying `request-id: upstream-rid-passthrough`) is relayed as 401, the far
     /// body as it was, unjudged, and that `request-id` exactly once.
     /// RED: a passthrough 401 judged as the deployment's refusal, or its request id minted or
@@ -1867,7 +1867,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_bedrock_converse_stream_buffered_cross_protocol_emits_binary_eventstream`
-    /// (map row 355). 1.5.5: a bedrock caller that asked to stream, answered one chat-dialect body,
+    /// 1.5.5: a bedrock caller that asked to stream, answered one chat-dialect body,
     /// reads `application/vnd.amazon.eventstream` frames (`messageStart` first, then
     /// `contentBlockDelta`, `messageStop`, `metadata`) under a UUID `x-amzn-requestid`.
     /// RED: the buffered answer written as JSON for a stream caller, or as SSE text.
@@ -1897,7 +1897,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_gemini_json_array_buffered_cross_protocol_emits_one_element_array`
-    /// (map row 357). 1.5.5: a gemini caller that asked for a JSON-array stream, answered one
+    /// 1.5.5: a gemini caller that asked for a JSON-array stream, answered one
     /// chat-dialect body, reads 200 under exactly `application/json` a one-element array whose
     /// element carries `candidates` and no `choices`.
     /// RED: a bare object, SSE frames, or the far end's `choices` inside the array.
@@ -1919,7 +1919,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_gemini_json_array_buffered_via_forward_once_matches_primary`
-    /// (map row 358). 1.5.5: the last-resort attempt delivers the same one-element array under
+    /// 1.5.5: the last-resort attempt delivers the same one-element array under
     /// `application/json` as the primary path; the served reply runs one translate for both.
     /// RED: the attempt's reply answering anything but the one-element `candidates` array.
     #[test]
@@ -1942,7 +1942,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_non_gemini_stream_buffered_cross_protocol_stays_a_plain_object_not_an_array`
-    /// (map row 371). 1.5.5: a chat caller that asked to stream, answered one anthropic body, reads
+    /// 1.5.5: a chat caller that asked to stream, answered one anthropic body, reads
     /// its own `text/event-stream` chunks, each `data:` a JSON object, one carrying `choices`, and
     /// never a JSON array.
     /// RED: the array wrap applied to a caller that did not ask for one.
@@ -1972,7 +1972,7 @@ mod rehomed_answers {
     // ── a bedrock caller (ingress_integration_tests.rs) ────────────────────────────────────────
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_converse_routes_and_returns_json`
-    /// (map row 387). 1.5.5: a bedrock caller's non-stream answer from a chat-dialect far end is
+    /// 1.5.5: a bedrock caller's non-stream answer from a chat-dialect far end is
     /// Converse JSON (`output`/`usage`) under `application/json`, with an `x-amzn-requestid` shaped
     /// 8-4-4-4-12 lowercase hex.
     /// RED: no request id, or one that is not UUID-shaped.
@@ -1997,7 +1997,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_converse_stream_returns_binary_eventstream`
-    /// (map row 388). 1.5.5: a bedrock caller's stream from a chat-dialect far end is
+    /// 1.5.5: a bedrock caller's stream from a chat-dialect far end is
     /// `application/vnd.amazon.eventstream`, a whole sequence of frames (`messageStart`,
     /// `contentBlockDelta`, `messageStop`) with nothing left over, under a UUID-shaped
     /// `x-amzn-requestid`.
@@ -2031,7 +2031,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_same_protocol_stream_passthrough_forwards_upstream_request_id`
-    /// (map row 389). 1.5.5: a same-dialect bedrock stream keeps the far content type, relays the
+    /// 1.5.5: a same-dialect bedrock stream keeps the far content type, relays the
     /// far frames in order (`messageStart`, `contentBlockDelta`, `messageStop`, `metadata`), and
     /// forwards the far `x-amzn-requestid` (`fixed-upstream-amzn-req-id-0001`) once, never minted.
     /// RED: a minted UUID in place of the far id, or a re-encoded or reordered frame sequence.
@@ -2082,7 +2082,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_same_protocol_converse_non_stream_forwards_upstream_request_id`
-    /// (map row 390). 1.5.5: a same-dialect bedrock Converse answer relays under the far
+    /// 1.5.5: a same-dialect bedrock Converse answer relays under the far
     /// `application/json`, its bytes unchanged, with the far `x-amzn-requestid`
     /// (`fixed-upstream-amzn-req-id-nonstream-0001`) once.
     /// RED: the far request id dropped or replaced by a minted one on the non-stream relay.
@@ -2130,7 +2130,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_same_protocol_stream_mid_stream_transport_error_appends_binary_exception`
-    /// (map row 391). 1.5.5: a same-dialect bedrock stream cut after its first frame keeps the
+    /// 1.5.5: a same-dialect bedrock stream cut after its first frame keeps the
     /// eventstream content type and ends on a CRC-valid binary `InternalServerException` frame,
     /// never SSE text.
     /// RED: an SSE error frame spliced into the binary body, or the cut ending with no frame.
@@ -2154,7 +2154,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_ingress_mid_stream_transport_error_appends_binary_exception`
-    /// (map row 392). 1.5.5: a bedrock caller's translated stream cut after its first far event
+    /// 1.5.5: a bedrock caller's translated stream cut after its first far event
     /// ends on a binary `InternalServerException` frame, the body pure frames.
     /// RED: the caller's error written as SSE text over a binary stream.
     #[test]
@@ -2175,7 +2175,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_openai_ingress_mid_stream_transport_error_appends_native_sse`
-    /// (map row 393). 1.5.5: a chat caller's stream cut mid-way ends on a bare `data:` frame (no
+    /// 1.5.5: a chat caller's stream cut mid-way ends on a bare `data:` frame (no
     /// `event:` line) carrying the native `error` envelope.
     /// RED: a named event on a chat stream, or a trailing frame with no `error` member.
     #[test]
@@ -2193,7 +2193,7 @@ mod rehomed_answers {
     // ── a gemini caller ────────────────────────────────────────────────────────────────────────
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_stream_generate_content_alt_sse_is_event_stream`
-    /// (map row 396). 1.5.5: a gemini caller streaming with the event-stream switch reads
+    /// 1.5.5: a gemini caller streaming with the event-stream switch reads
     /// `text/event-stream` frames that are native `GenerateContentResponse`s (`candidates`), none
     /// carrying the far end's `choices`.
     /// RED: the far chunks relayed under the right content type.
@@ -2217,7 +2217,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_alt_sse_mid_stream_transport_error_appends_native_sse_frame`
-    /// (map row 397). 1.5.5: a gemini event-stream caller's cut stream stays `text/event-stream`,
+    /// 1.5.5: a gemini event-stream caller's cut stream stays `text/event-stream`,
     /// carries no `event:` line, no `choices` and no `chat.completion.chunk`, and ends on a
     /// `google.rpc.Status`-shaped frame (`error.status`).
     /// RED: a named error event, a JSON-array close, or a chat-dialect error envelope.
@@ -2242,7 +2242,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_json_array_mid_stream_error_closes_array_no_sse`
-    /// (map row 409). 1.5.5: a gemini JSON-array caller's cut stream is `application/json`, still
+    /// 1.5.5: a gemini JSON-array caller's cut stream is `application/json`, still
     /// one valid JSON array, with no `event:`/`data:` text, closing on an `error.status` element.
     /// RED: an unclosed array, or an SSE error frame inside an array body.
     #[test]
@@ -2275,7 +2275,7 @@ mod rehomed_answers {
     // ── an anthropic caller ────────────────────────────────────────────────────────────────────
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_anthropic_cross_protocol_message_start_full_skeleton`
-    /// (map row 411). 1.5.5: a translated stream's `message_start` carries the full skeleton: an
+    /// 1.5.5: a translated stream's `message_start` carries the full skeleton: an
     /// id minted `msg_`, `type: "message"`, `content: []`, `stop_reason: null`, `stop_sequence:
     /// null`.
     /// RED: a `message_start` missing a skeleton member an SDK reads.
@@ -2312,7 +2312,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_passthrough_401_cross_protocol_reshaped_to_ingress`
-    /// (map row 412). 1.5.5: the caller's own credential refused by a far end of another dialect
+    /// 1.5.5: the caller's own credential refused by a far end of another dialect
     /// keeps its 401 and is reshaped into the caller's envelope (`type: "error"`, `error.type:
     /// "authentication_error"`), unjudged.
     /// RED: the far end's foreign envelope relayed verbatim across dialects.
@@ -2341,7 +2341,7 @@ mod rehomed_answers {
     // ── each caller's own stream vocabulary ────────────────────────────────────────────────────
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_openai_ingress_stream_emits_native_openai_frames`
-    /// (map row 445). 1.5.5: a same-dialect chat stream is `text/event-stream`, bare `data:` frames
+    /// 1.5.5: a same-dialect chat stream is `text/event-stream`, bare `data:` frames
     /// (no `event:` line), every JSON chunk's `object` is `chat.completion.chunk`, and it ends on
     /// `[DONE]`.
     /// RED: a dropped `[DONE]`, a mangled object tag, or a named event injected.
@@ -2375,7 +2375,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_cohere_ingress_stream_emits_native_cohere_frames`
-    /// (map row 446). 1.5.5: a cohere caller's translated stream is `text/event-stream` whose
+    /// 1.5.5: a cohere caller's translated stream is `text/event-stream` whose
     /// frames walk `message-start` before `message-end` with a `content-delta`, and no
     /// `chat.completion.chunk` leaks.
     /// RED: the far chunks relayed, or the cohere vocabulary out of order.
@@ -2409,7 +2409,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_responses_ingress_stream_emits_native_responses_events`
-    /// (map row 447). 1.5.5: a responses caller's translated stream is `text/event-stream` with
+    /// 1.5.5: a responses caller's translated stream is `text/event-stream` with
     /// `response.created` before `response.completed` and a `response.output_text.delta`, and no
     /// `chat.completion.chunk` leaks.
     /// RED: the far chunks relayed, or the responses events out of order.
@@ -2447,7 +2447,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_cohere_ingress_mid_stream_transport_error_appends_native_sse`
-    /// (map row 449). 1.5.5: a cohere caller's cut stream ends on a bare `data:` `message-end`
+    /// 1.5.5: a cohere caller's cut stream ends on a bare `data:` `message-end`
     /// frame whose `delta.finish_reason` is `ERROR`, with no top-level `message`, no `event:` line
     /// and no `chat.completion.chunk`.
     /// RED: a chat-dialect `{"error":…}` frame, or a free-text detail on a cohere wire.
@@ -2473,7 +2473,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_responses_ingress_mid_stream_transport_error_appends_response_failed`
-    /// (map row 450). 1.5.5: a responses caller's cut stream ends on `event: response.failed`
+    /// 1.5.5: a responses caller's cut stream ends on `event: response.failed`
     /// whose data is the stream shape (`response.status: "failed"`, `response.error.message`), with
     /// no top-level `error`.
     /// RED: the non-stream `{"error":…}` envelope written into a responses stream.
@@ -2502,7 +2502,7 @@ mod rehomed_answers {
     // ── the cut stream's frame (mid_stream_error_tests.rs, wire_tests.rs) ─────────────────────
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_mid_stream_generic_detail_has_no_leak_markers`
-    /// (map row 498). 1.5.5: every client-facing fallback detail is free of transport and proxy
+    /// 1.5.5: every client-facing fallback detail is free of transport and proxy
     /// vocabulary; the gemini array close and the four detail-carrying stream errors carry the
     /// generic detail; cohere's `message-end` `ERROR` frame carries no detail at all.
     /// RED: a fallback string naming `upstream`, `proxy`, a URL or a transport library.
@@ -2580,7 +2580,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_bedrock_ingress_mid_stream_error_is_binary_exception_frame`
-    /// (map row 499). 1.5.5: a bedrock caller's cut-stream error is one CRC-valid binary frame
+    /// 1.5.5: a bedrock caller's cut-stream error is one CRC-valid binary frame
     /// (total length, prelude CRC and message CRC all true) whose headers name an `exception`
     /// `:message-type` of `InternalServerException`, and whose JSON payload `message` is the
     /// detail.
@@ -2615,7 +2615,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_sse_ingress_mid_stream_error_uses_native_framing`
-    /// (map row 500). 1.5.5: the cut-stream frame is each dialect's own streaming error: a bare
+    /// 1.5.5: the cut-stream frame is each dialect's own streaming error: a bare
     /// `data:` frame for openai, cohere and gemini (cohere's a `message-end` `ERROR`); `event:
     /// error` with `error.message` for anthropic; `event: response.failed` with the stream shape
     /// (`response.status: "failed"`, `response.error.message`, no top-level `error`) for responses.
@@ -2679,7 +2679,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_client_fault_kind_mapping`
-    /// (map row 501). 1.5.5: a client fault is reshaped with `context_length_exceeded` for the
+    /// 1.5.5: a client fault is reshaped with `context_length_exceeded` for the
     /// context-length class and `invalid_request_error` for a client error.
     /// RED: the context-length kind lost to the generic one.
     #[test]
@@ -2695,7 +2695,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_extract_error_message`
-    /// (map row 502). 1.5.5: the far message is `error.message`, else a top-level `message`, and
+    /// 1.5.5: the far message is `error.message`, else a top-level `message`, and
     /// none for a body that is not JSON or names neither.
     /// RED: a foreign body's text lifted when it names no message.
     #[test]
@@ -2713,7 +2713,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_is_stream_content_type`
-    /// (map row 503). 1.5.5: `text/event-stream` (with parameters too) and
+    /// 1.5.5: `text/event-stream` (with parameters too) and
     /// `application/vnd.amazon.eventstream` stream; `application/json` and an empty type do not.
     /// RED: a parameterized SSE type read as a whole body, or JSON read as a stream.
     #[test]
@@ -2728,7 +2728,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/wire_tests.rs::unknown_ingress_mid_stream_error_is_a_bare_data_frame_from_core`
-    /// (map row 635). 1.5.5: a caller of a dialect the plane does not hold gets a bare `data:`
+    /// 1.5.5: a caller of a dialect the plane does not hold gets a bare `data:`
     /// frame (no `event:` line) of the agnostic envelope: `error.type: "api_error"`,
     /// `error.message` the detail.
     /// RED: some dialect's framing or vocabulary claimed for an unknown caller.
@@ -2759,7 +2759,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/wire_tests.rs::status_word_golden_engine_client_fault_kind`
-    /// (map row 636). 1.5.5's golden column: every class but context length is reshaped as
+    /// 1.5.5's golden column: every class but context length is reshaped as
     /// `invalid_request_error`; context length as `context_length_exceeded`.
     /// RED: any class's kind word moved (a rate limit shaped `rate_limit_error` on a client fault).
     #[test]
@@ -2840,7 +2840,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/plane_reply_parity_tests.rs::the_planes_class_rule_is_the_breakers`
-    /// (map row 559). 1.5.5: over 2 error maps x 8 provider codes x 8 structured types x 15
+    /// 1.5.5: over 2 error maps x 8 provider codes x 8 structured types x 15
     /// statuses x 2 retry-afters = 3840 raw errors, the plane's `failure::normalize` places each
     /// in the class, provider signal and retry-after the breaker's rule does.
     /// RED: any cell where the plane's copy of the rule drifts from the breaker's (a mapped
@@ -2916,7 +2916,7 @@ mod rehomed_answers {
     ];
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/plane_reply_parity_tests.rs::a_far_end_error_reads_the_same_through_the_plane`
-    /// (map row 564). 1.5.5, for every dialect pair and each legacy fixture (400
+    /// 1.5.5, for every dialect pair and each legacy fixture (400
     /// `invalid_request_error`, 422 `{"message":"bad field"}`, 401 `authentication_error`):
     /// within one dialect a client fault is the far status, every far head field and the far bytes
     /// exactly; across dialects it is the far status in the caller's own envelope (kind
@@ -3022,7 +3022,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/plane_reply_parity_tests.rs::a_far_end_errors_relay_is_the_engines`
-    /// (map row 565). 1.5.5, for 5 far statuses (429, 500, 503, 504, 529) x 36 dialect pairs (180
+    /// 1.5.5, for 5 far statuses (429, 500, 503, 504, 529) x 36 dialect pairs (180
     /// cases): the relay the walk ends on keeps the far status; within one dialect its body is the
     /// far body byte for byte; across dialects it is the caller's own envelope with the kind 1.5.5
     /// gave that status (429 `rate_limit_error`, 500 and 529 `api_error`, 503 `overloaded`, 504
@@ -3151,8 +3151,7 @@ fn assert_run_ids(frame: &[u8]) {
     }
 }
 
-/// A STREAM CUT AFTER ITS FIRST BYTE ENDS IN 1.5.5'S BYTES, for every caller dialect (row-159 audit
-/// plane-llm L1#2; ARCHITECT ruling 2026-10-13, condition 5): the in-band error 1.5.5 wrote, in
+/// A STREAM CUT AFTER ITS FIRST BYTE ENDS IN 1.5.5'S BYTES, for every caller dialect: the in-band error 1.5.5 wrote, in
 /// the caller's own framing (an SSE event, a JSON-array element and its `]`, an eventstream
 /// exception frame). RED: a cut written as a clean end (the caller's terminator) or in another
 /// dialect's framing.
@@ -3178,10 +3177,9 @@ fn a_stream_cut_after_its_first_byte_ends_in_1_5_5s_bytes_for_every_caller_diale
         assert_eq!(cut.reason, "mid-stream", "{ingress}");
         let mut got = cut.bytes.expect("the caller's in-band error");
         if ingress == "anthropic" {
-            // R-22 (signed register entry): a translated Anthropic stream's `error` event carries a
+            // A translated Anthropic stream's `error` event carries a
             // minted `request_id`, the one member 1.6.0 adds to 1.5.5's frame. It is checked here
-            // and cut out; every other byte, `error.type` included, is 1.5.5's (ARCHITECT ruling
-            // 2026-10-15: R-22 signs the request_id alone).
+            // and cut out; every other byte, `error.type` included, is 1.5.5's.
             let text = String::from_utf8(got).expect("text");
             let at = text
                 .find(r#""request_id":"req_"#)
@@ -3203,11 +3201,10 @@ fn a_stream_cut_after_its_first_byte_ends_in_1_5_5s_bytes_for_every_caller_diale
     }
 }
 
-/// A RESPONSES STREAM THE FAR END ENDS AS FAILED BILLS NO TOKENS (row-159 audit plane-llm L3#4;
-/// ARCHITECT 2026-10-13: 1.5.5 billed nothing for a stream with a terminal error, v1.5.5
-/// proxy/response_body.rs:550-575), `$`: its `response.failed` event carries usage, and the answer
-/// still reports 0 in and 0 out, as the buffered `status: "failed"` answer does. Not #62: a failure
-/// the far end reports itself is not a cut busbar or the caller made (ARCHITECT ruling 2026-10-17),
+/// A RESPONSES STREAM THE FAR END ENDS AS FAILED BILLS NO TOKENS (`$`: 1.5.5 billed nothing for a stream with a terminal error, v1.5.5
+/// proxy/response_body.rs:550-575): its `response.failed` event carries usage, and the answer
+/// still reports 0 in and 0 out, as the buffered `status: "failed"` answer does. This is not a cut: a failure
+/// the far end reports itself is not a cut busbar or the caller made,
 /// unlike a translation that aborts after the first byte, which bills what streamed
 /// (`rehomed_streaming_translate_abort_trips_breaker_and_skips_billing`). RED: the stream's failed
 /// usage (5 in, 2 out) reported as billable.
@@ -3271,8 +3268,7 @@ fn a_responses_stream_that_fails_bills_no_tokens_and_agrees_with_its_buffered_tw
     );
 }
 
-/// A RESPONSES STREAM'S TOP-LEVEL `error` EVENT ENDS NOTHING AND FAILS NOTHING, as in 1.5.5 (`$`;
-/// ARCHITECT 2026-10-13, codec L3#10 routed to row 155): v1.5.5's Responses reader had no arm for
+/// A RESPONSES STREAM'S TOP-LEVEL `error` EVENT ENDS NOTHING AND FAILS NOTHING, as in 1.5.5 (`$`): v1.5.5's Responses reader had no arm for
 /// it (proto/openai_responses/reader.rs:542-1103, `_ => {}`), so the reader emitted no `Error`,
 /// `terminal_error` stayed clear and the stream billed at its end as a clean one
 /// (proxy/response_body.rs:550-575, `if !billing_failed`). The frames after it are relayed and the
@@ -3321,7 +3317,7 @@ fn a_responses_streams_top_level_error_event_is_neither_terminal_nor_a_failure()
     );
 }
 
-// ── rehomed: the engine's metered-answer tests on the served reply (F25 REHOME, status row 155) ──
+// ── rehomed: the engine's metered-answer tests on the served reply ──
 
 /// The legacy engine's tests that pin what an answer bills (`crates/busbar-llm/src/engine/**`),
 /// rehomed onto the served reply: the far end's reported units each piece carries, and the
@@ -3563,7 +3559,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::buffered_cohere_error_is_an_error_a_breaker_fault_and_charges_10_5`
-    /// (map row 5). 1.5.5 (item 302, Q31): a whole cohere `finish_reason: "ERROR"` to a chat
+    /// 1.5.5: a whole cohere `finish_reason: "ERROR"` to a chat
     /// caller is a 502 with no `finish_reason` in the body, a transient fault on the far end, an
     /// error end, and the far end's reported 10 in / 5 out (15 tokens) still billed.
     /// RED: a failed generation delivered as a 200 success, no breaker fault, or its usage dropped
@@ -3591,7 +3587,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::buffered_cohere_complete_is_a_success_and_charges_10_5`
-    /// (map row 6). 1.5.5: the same body ending `COMPLETE` is a 200 success, no fault, 10 / 5
+    /// 1.5.5: the same body ending `COMPLETE` is a 200 success, no fault, 10 / 5
     /// (15 tokens) billed.
     /// RED: a completed generation faulted, or its usage anything but 10 / 5.
     #[test]
@@ -3609,7 +3605,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::same_protocol_cohere_error_relays_verbatim_faults_the_breaker_and_charges_10_5`
-    /// (map row 7). 1.5.5 (Q31 follow-up): a same-dialect cohere `ERROR` relays the far bytes
+    /// 1.5.5: a same-dialect cohere `ERROR` relays the far bytes
     /// unchanged under the far 200, yet ends as an error, faults the far end, and bills 10 / 5.
     /// RED: the relay counted a success (no fault), or its usage not billed.
     #[test]
@@ -3630,7 +3626,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::same_protocol_cohere_complete_is_a_success_and_charges_10_5`
-    /// (map row 8). 1.5.5: the same-dialect `COMPLETE` relay is a 200 success, no fault, exactly
+    /// 1.5.5: the same-dialect `COMPLETE` relay is a 200 success, no fault, exactly
     /// 10 / 5 (15 tokens) billed.
     /// RED: a same-dialect relay billing presence but not the far figures.
     #[test]
@@ -3647,7 +3643,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::streamed_gemini_malformed_function_call_is_an_error_frame_a_breaker_fault_and_charges`
-    /// (map row 9). 1.5.5 (item 303, #62): a gemini stream ending `MALFORMED_FUNCTION_CALL`, to a
+    /// 1.5.5: a gemini stream ending `MALFORMED_FUNCTION_CALL`, to a
     /// chat caller, is served 200 on its head, ends in an `"error"` frame, faults the far end, and
     /// bills the 10 / 5 it streamed.
     /// RED: a failed generation ending as a normal `stop`, no fault, or its streamed usage not
@@ -3667,7 +3663,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::streamed_gemini_stop_is_a_success_and_charges`
-    /// (map row 10). 1.5.5: the same stream ending `STOP` is 200 with no `"error"` frame, no
+    /// 1.5.5: the same stream ending `STOP` is 200 with no `"error"` frame, no
     /// fault, a complete end, and exactly 10 / 5 (15 tokens) billed.
     /// RED: a clean stream framed or faulted as an error, or billed anything but 10 / 5.
     #[test]
@@ -3687,7 +3683,7 @@ mod rehomed_metering {
     // ── a delivered or undelivered whole answer (crossproto_delivery_billing_tests.rs) ─────────
 
     /// REHOMES `crates/busbar-llm/src/engine/engine_tests/crossproto_delivery_billing_tests.rs::delivered_cross_protocol_response_bills_once`
-    /// (map row 13). 1.5.5: a chat-dialect completion (13 + 9) delivered to an anthropic caller is
+    /// 1.5.5: a chat-dialect completion (13 + 9) delivered to an anthropic caller is
     /// a 200 that bills exactly 22 tokens once and keeps the request's fee (a success status, no
     /// fault).
     /// RED: a delivered answer billed twice, billed short, or its fee refunded.
@@ -3712,7 +3708,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/engine_tests/crossproto_delivery_billing_tests.rs::ingress_unsupported_404_does_not_charge`
-    /// (map row 14). 1.5.5: a chat-dialect embeddings answer (42 prompt tokens) to an anthropic
+    /// 1.5.5: a chat-dialect embeddings answer (42 prompt tokens) to an anthropic
     /// caller, whose dialect serves no embeddings, is a 404 that bills none of the 42 tokens and
     /// refunds the request's fee (a non-success status with no units).
     /// RED: the 42 far tokens billed for an answer the caller never received.
@@ -3736,7 +3732,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/engine_tests/crossproto_delivery_billing_tests.rs::untranslatable_500_does_not_charge`
-    /// (map row 15). 1.5.5: a chat-dialect SPEECH answer (opaque audio bytes) to an anthropic
+    /// 1.5.5: a chat-dialect SPEECH answer (opaque audio bytes) to an anthropic
     /// caller, whose dialect serves no speech, is the caller's 500 that bills nothing and refunds
     /// the request's fee.
     /// RED: the opaque answer metered (a flat or token charge) though nothing was delivered.
@@ -3758,7 +3754,7 @@ mod rehomed_metering {
     const EMPTY_CHOICES: &[u8] = br#"{"id":"chatcmpl-EMPTY","object":"chat.completion","created":1234567890,"model":"glm-4.5","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}"#;
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_once_pool_cell_tests.rs::test_forward_once_untranslatable_2xx_refunds_budget_and_trips_breaker`
-    /// (map row 123). 1.5.5: on the last-resort attempt, an untranslatable 2xx (empty `choices`)
+    /// 1.5.5: on the last-resort attempt, an untranslatable 2xx (empty `choices`)
     /// to an anthropic caller is the caller's 500, a HARD verdict with a transient fault (the
     /// breaker penalised), and no units (the request's fee refunded, the 7 / 3 not billed).
     /// RED: the untranslatable 2xx recorded as a success, or its usage billed.
@@ -3778,7 +3774,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_untranslatable_2xx_refunds_budget_and_trips_breaker`
-    /// (map row 334). 1.5.5: on the main path the same untranslatable 2xx records a breaker
+    /// 1.5.5: on the main path the same untranslatable 2xx records a breaker
     /// transient and returns the request's fee: the whole translate refuses it (no usage), and the
     /// reply is a 500 with a transient fault and no units.
     /// RED: a lane answering undecodable 200s forever never trips, or the 500 bills.
@@ -3802,7 +3798,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_openai_ingress_single_model_anthropic_response_translated`
-    /// (map row 196). 1.5.5: an anthropic answer (`hi there`, `end_turn`, 9 in / 3 out) to a chat
+    /// 1.5.5: an anthropic answer (`hi there`, `end_turn`, 9 in / 3 out) to a chat
     /// caller is 200, `object: "chat.completion"`, `choices[0].message.content: "hi there"`,
     /// `finish_reason: "stop"`, `usage.prompt_tokens: 9`, `usage.completion_tokens: 3`, no
     /// `stop_reason`, and 9 / 3 billed.
@@ -3827,7 +3823,7 @@ mod rehomed_metering {
     // ── a same-dialect whole body's usage (ingress_indistinguishability_tests.rs) ──────────────
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_same_protocol_nonstream_multichunk_counts_usage`
-    /// (map row 335). 1.5.5: a same-dialect whole body split before its trailing `usage` (600 in +
+    /// 1.5.5: a same-dialect whole body split before its trailing `usage` (600 in +
     /// 400 out) reaches the caller byte-identical and bills exactly 1000 tokens.
     /// RED: a per-piece usage read that keeps no state across pieces bills 0.
     #[test]
@@ -3861,7 +3857,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_same_protocol_nonstream_over_cap_body_bills_no_trailing_usage_as_in_1_5_5`
-    /// (map row 336), HELD TO 1.5.5 (coordinator ruling 2026-10-15; the legacy test pinned a
+    /// HELD TO 1.5.5 (the legacy test pinned a
     /// post-1.5.5 tail copy). v1.5.5 `crates/busbar/src/proxy/response_body.rs:229-262` kept a copy
     /// of a same-dialect body capped at `MAX_TRANSLATED_BODY_BYTES`, dropped the overflow, counted
     /// it once on `BILLING_TRUNCATED_TOTAL` and warned that the tokens were undercounted; a `usage`
@@ -3892,7 +3888,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_truncated_beyond_recovery_bills_no_floor_as_in_1_5_5`
-    /// (map row 337), HELD TO 1.5.5 (coordinator ruling 2026-10-15; the legacy test pinned a
+    /// HELD TO 1.5.5 (the legacy test pinned a
     /// post-1.5.5 floor). v1.5.5 `crates/busbar/src/proxy/response_body.rs:229-262`: a same-dialect
     /// body past the usage tap's cap is counted once on `BILLING_TRUNCATED_TOTAL` and its tokens go
     /// unbilled; 1.5.5 billed no floor for it. Under a 4096-byte cap, a body whose `usage` sits at
@@ -3921,7 +3917,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_stream_delivers_trailing_usage_gemini_json_array`
-    /// (map row 339). 1.5.5: a chat-dialect stream whose usage (600 / 400) arrives in its own
+    /// 1.5.5: a chat-dialect stream whose usage (600 / 400) arrives in its own
     /// trailing chunk, to a gemini JSON-array caller, is one JSON array whose terminal
     /// `usageMetadata.promptTokenCount` is 600, and 600 / 400 bill.
     /// RED: the trailing usage chunk dropped by the array close (0 or absent), or not billed.
@@ -3983,7 +3979,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_mid_stream_transport_error_does_not_bill_partial_usage`
-    /// (map row 341). 1.5.5 (#62): an anthropic stream to a chat caller, cut after it reported 100
+    /// 1.5.5: an anthropic stream to a chat caller, cut after it reported 100
     /// input (`message_start`) and 50 output (`message_delta`), bills exactly those 150 tokens.
     /// RED: a cut stream refunded to 0 tokens, or billed more than streamed.
     #[test]
@@ -4010,7 +4006,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_bedrock_to_gemini_carries_total_tokens_and_response_id`
-    /// (map row 343). 1.5.5: a Converse answer (no body identity; 7 in / 3 out) to a gemini
+    /// 1.5.5: a Converse answer (no body identity; 7 in / 3 out) to a gemini
     /// caller is 200 `application/json` with `usageMetadata` 7 / 3 / total 10, a minted
     /// `responseId`, no foreign id, and 7 / 3 billed.
     /// RED: an identity-empty far answer read as same-dialect, dropping `totalTokenCount` and
@@ -4055,7 +4051,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_nonstream_over_cap_body_returns_500_uncharged`
-    /// (map row 359). 1.5.5: under a 4096-byte cap, a chat-dialect body over the cap (5 / 999999
+    /// 1.5.5: under a 4096-byte cap, a chat-dialect body over the cap (5 / 999999
     /// reported) to an anthropic caller is the caller's 500 at once, no units billed, and no fault
     /// on the far end (the cap is ours).
     /// RED: an over-cap answer translated and delivered (its 999999 tokens billed), or the far end
@@ -4102,9 +4098,8 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_streaming_translate_abort_trips_breaker_and_skips_billing`
-    /// (map row 367). #62 governs (OWNER-LOCKED 2026-09-20: a mid-stream cut is not a refund; the
-    /// caller pays for what streamed), ruled for this row on 2026-10-17 over the 2026-10-15 ruling
-    /// that held it to 1.5.5's zero; logged in the accepted-differences register under #62. A
+    /// A mid-stream cut is not a refund; the caller pays for what streamed (logged in the
+    /// accepted-differences register as a 1.6.0 difference from 1.5.5's zero). A
     /// translated stream whose reframing gives up after its first byte records a transient on the
     /// far end (the optimistic success reversed, the breaker cell trips Open) and bills the 600 /
     /// 400 the far end reported before the abort, as its two drop siblings below bill them.
@@ -4133,7 +4128,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cancel_drop_bills_partial_tokens`
-    /// (map row 368). 1.5.5: a caller that leaves mid-stream, after the usage chunk was read, bills
+    /// 1.5.5: a caller that leaves mid-stream, after the usage chunk was read, bills
     /// the 600 / 400 (1000 tokens) captured so far: the piece it last read states them, and the
     /// answer is a usable partial.
     /// RED: a cancel that bills 0 because the stream never reached its end.
@@ -4150,7 +4145,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cancel_drop_bills_streamed_tokens_on_aborted_translate`
-    /// (map row 369). 1.5.5 (#62): a caller that leaves after the reframing gave up still bills the
+    /// 1.5.5: a caller that leaves after the reframing gave up still bills the
     /// 600 / 400 (1000 tokens) streamed before the abort.
     /// RED: an aborted translate's captured usage dropped on the cancel.
     #[test]
@@ -4170,7 +4165,7 @@ mod rehomed_metering {
     // ── a cut stream, every caller (plane_reply_parity_tests.rs) ─────────────────────────────
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/plane_reply_parity_tests.rs::a_cut_stream_reads_the_same_through_the_plane`
-    /// (map row 563). 1.5.5, for far ends of the chat, anthropic and bedrock dialects x all six
+    /// 1.5.5, for far ends of the chat, anthropic and bedrock dialects x all six
     /// callers, a stream cut halfway: the head is 200 under the caller's stream content type, the
     /// cut is HARD with the transient `mid-stream` fault, its bytes are exactly one error frame in
     /// the caller's own framing (bedrock: one binary `InternalServerException` frame, byte-equal to
@@ -4589,7 +4584,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_anthropic_stream`
-    /// (map row 588). 1.5.5: a responses stream over an anthropic stream opens `response.created`,
+    /// 1.5.5: a responses stream over an anthropic stream opens `response.created`,
     /// has no `[DONE]`, ends `response.completed` (a u64 `sequence_number`, `object: "response"`,
     /// `status: "completed"`, a `resp_` id, the text, usage 11 / 7 / 18), and bills 11 / 7 once.
     /// RED: the event sequence broken, the usage figures moved, or the answer billed twice or not
@@ -4600,7 +4595,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_anthropic_buffered`
-    /// (map row 589). 1.5.5: a responses caller that asked to stream, answered one anthropic body,
+    /// 1.5.5: a responses caller that asked to stream, answered one anthropic body,
     /// reads the same responses event stream and bills 11 / 7 once.
     /// RED: the buffered answer delivered as JSON to a stream caller, or not billed.
     #[test]
@@ -4609,7 +4604,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_openai_stream`
-    /// (map row 590). 1.5.5: as row 588 over a chat-dialect stream; 11 / 7 billed once.
+    /// 1.5.5: as the anthropic stream test above, over a chat-dialect stream; 11 / 7 billed once.
     /// RED: the event sequence broken, the usage figures moved, or the answer billed twice.
     #[test]
     fn responses_stream_over_openai_stream() {
@@ -4617,7 +4612,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_openai_buffered`
-    /// (map row 591). 1.5.5: as row 589 over one chat-dialect body; 11 / 7 billed once.
+    /// 1.5.5: as the anthropic body test above, over one chat-dialect body; 11 / 7 billed once.
     /// RED: the buffered answer delivered as JSON to a stream caller, or not billed.
     #[test]
     fn responses_stream_over_openai_buffered() {
@@ -4625,7 +4620,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_cohere_stream`
-    /// (map row 592). 1.5.5: as row 588 over a cohere stream; 11 / 7 billed once.
+    /// 1.5.5: as the anthropic stream test above, over a cohere stream; 11 / 7 billed once.
     /// RED: the event sequence broken, the usage figures moved, or the answer billed twice.
     #[test]
     fn responses_stream_over_cohere_stream() {
@@ -4633,7 +4628,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_cohere_buffered`
-    /// (map row 593). 1.5.5: as row 589 over one cohere body; 11 / 7 billed once.
+    /// 1.5.5: as the anthropic body test above, over one cohere body; 11 / 7 billed once.
     /// RED: the buffered answer delivered as JSON to a stream caller, or not billed.
     #[test]
     fn responses_stream_over_cohere_buffered() {
@@ -4641,7 +4636,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_gemini_stream`
-    /// (map row 594). 1.5.5: as row 588 over a gemini stream; 11 / 7 billed once.
+    /// 1.5.5: as the anthropic stream test above, over a gemini stream; 11 / 7 billed once.
     /// RED: the event sequence broken, the usage figures moved, or the answer billed twice.
     #[test]
     fn responses_stream_over_gemini_stream() {
@@ -4649,7 +4644,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_gemini_buffered`
-    /// (map row 595). 1.5.5: as row 589 over one gemini body; 11 / 7 billed once.
+    /// 1.5.5: as the anthropic body test above, over one gemini body; 11 / 7 billed once.
     /// RED: the buffered answer delivered as JSON to a stream caller, or not billed.
     #[test]
     fn responses_stream_over_gemini_buffered() {
@@ -4657,7 +4652,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_bedrock_stream`
-    /// (map row 596). 1.5.5: as row 588 over a bedrock binary event stream; 11 / 7 billed once.
+    /// 1.5.5: as the anthropic stream test above, over a bedrock binary event stream; 11 / 7 billed once.
     /// RED: the event sequence broken, the usage figures moved, or the answer billed twice.
     #[test]
     fn responses_stream_over_bedrock_stream() {
@@ -4665,7 +4660,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_bedrock_buffered`
-    /// (map row 597). 1.5.5: as row 589 over one Converse body; 11 / 7 billed once.
+    /// 1.5.5: as the anthropic body test above, over one Converse body; 11 / 7 billed once.
     /// RED: the buffered answer delivered as JSON to a stream caller, or not billed.
     #[test]
     fn responses_stream_over_bedrock_buffered() {
@@ -4673,7 +4668,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_responses_stream`
-    /// (map row 598). 1.5.5: as row 588 over a responses stream (relayed within one dialect);
+    /// 1.5.5: as the anthropic stream test above, over a responses stream (relayed within one dialect);
     /// 11 / 7 billed once.
     /// RED: the same-dialect stream rewritten, or its usage billed twice or not at all.
     #[test]
@@ -4682,7 +4677,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_responses_buffered`
-    /// (map row 599). 1.5.5 (DIALECT FIDELITY): a responses far end that answered one body to a
+    /// 1.5.5 (DIALECT FIDELITY): a responses far end that answered one body to a
     /// stream request is relayed under its own content type, bytes unchanged, and bills 11 / 7
     /// once.
     /// RED: the same-dialect body reframed as a stream, or its usage not billed.
@@ -4700,11 +4695,11 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/unreadable_usage_floor_tests.rs::buffered_relay_refused_usage_bills_the_floor_not_zero`
-    /// (map row 620). A same-dialect anthropic body relays verbatim; a readable usage bills exactly
+    /// A same-dialect anthropic body relays verbatim; a readable usage bills exactly
     /// 1500 + 9 = 1509; a count the reader refuses (`"1500"`) is REFUSED ON ITS OWN: it bills
     /// nothing, and the readable `output_tokens` bills as stated: (0, 9), v1.5.5's figure for that
-    /// body. ARCHITECT ruling 2026-10-15: each usage field is judged on its own, no floor stands in
-    /// for a refused one (#77(2)), and the refusal is loud (#42/#81).
+    /// body. Each usage field is judged on its own, no floor stands in
+    /// for a refused one, and the refusal is loud.
     /// RED: the refused count billed as anything, a floor billed, or the readable count dropped.
     #[test]
     fn buffered_relay_refused_usage_bills_only_the_readable_counts() {
@@ -4727,11 +4722,11 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/unreadable_usage_floor_tests.rs::stream_refused_usage_bills_the_floor_not_zero`
-    /// (map row 621). A same-dialect chat stream whose usage chunk carries a count the reader
+    /// A same-dialect chat stream whose usage chunk carries a count the reader
     /// refuses (`"prompt_tokens":"1500"`) is served 200; the refused count bills nothing and the
     /// readable `completion_tokens` bills as stated: (0, 9), v1.5.5's figure for that stream
-    /// (v1.5.5 `proto/openai_chat/reader.rs:678`). ARCHITECT ruling 2026-10-15: each usage field
-    /// is judged on its own; neither #878's floor (bytes / 4) nor #892's (0, 0) is right here.
+    /// (v1.5.5 `proto/openai_chat/reader.rs:678`). Each usage field
+    /// is judged on its own; neither a floor (bytes / 4) nor (0, 0) is right here.
     /// RED: the refused count billed as anything, a floor billed, or the stream billed nothing.
     #[test]
     fn stream_refused_usage_bills_only_the_readable_counts() {
@@ -4758,7 +4753,7 @@ mod rehomed_metering {
         );
     }
 
-    // ── a caller that leaves while a relayed end's last window is written (row 159 LLM1#1) ────
+    // ── a caller that leaves while a relayed end's last window is written ────
 
     /// One answer read to its end in one far-end piece: the reply (for its cancel reading) and
     /// the end.
@@ -4770,12 +4765,12 @@ mod rehomed_metering {
     }
 
     /// A RELAYED END THAT BILLS ITS UNITS BILLS THEM WHEN THE CALLER LEAVES DURING ITS LAST WINDOW
-    /// (row 159, plane-llm LLM1#1, HIGH; "Billing never moves", BUSBAR-1.6.0.md). The door writes
+    /// The door writes
     /// a relayed end to the caller in windows; a caller that leaves before the last one is a
     /// cancel, which bills the units the end stated only when the reply reads as PARTIAL. A
     /// relayed body or stream whose generation FAILED bills its far-end-reported units on
-    /// completion (owner ruling Q31; 1.5.5 billed them at the stream's end), and a translation that
-    /// aborted after the first byte bills what streamed (#62): each is that partial too. A stream
+    /// completion, and a translation that
+    /// aborted after the first byte bills what streamed: each is that partial too. A stream
     /// the far end itself ended as FAILED bills nothing on completion, and nothing on a cancel.
     /// RED on dev: `ended_partial = partial && fault.is_none()`, so every failed end read as
     /// nothing usable, and the cancel billed 0 tokens and no fee for an answer that bills 10 / 5
@@ -4857,7 +4852,7 @@ mod rehomed_metering {
         );
     }
 
-    /// LLM1#7: ZERO HOST CALLS PER CHUNK (Appendix A B.6, `on_piece`). The door reads the host's
+    /// ZERO HOST CALLS PER CHUNK (`on_piece`). The door reads the host's
     /// clock for a far-end piece only when the reply says the piece states the time: the last
     /// piece of an answer taken whole (its creation stamp and elapsed milliseconds). A relayed
     /// answer's pieces, and a whole answer's earlier ones, read none. RED: the door read the clock
@@ -4893,7 +4888,7 @@ mod rehomed_metering {
     }
 }
 
-/// Q128 arch u59: A TRANSLATED STREAM IS TIMED ON THE HOST'S ONE CLOCK. A Bedrock caller's
+/// A TRANSLATED STREAM IS TIMED ON THE HOST'S ONE CLOCK. A Bedrock caller's
 /// `metadata` frame reports `metrics.latencyMs` as the host's monotonic time between the stream's
 /// first byte and that frame, so a host whose clock moved 250 ms reports 250 whatever the process
 /// clock did. RED: the relay read `std::time::Instant::now`, the plane's own clock, and reported the

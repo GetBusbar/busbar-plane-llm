@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! IR mapping Q57 — the IR-CORE half of the typed slots: what the shared stream machinery does with
+//! IR mapping — the IR-CORE half of the typed slots: what the shared stream machinery does with
 //! a slot a reader set. Buffered == stream: a slot the buffered response carries must reach the
 //! synthesized stream a streaming client of a buffered upstream is given.
 
