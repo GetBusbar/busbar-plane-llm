@@ -865,7 +865,7 @@ fn format_uuid_layout(bytes: &[u8; 16]) -> String {
 
 /// Synthesize a Cohere-shaped response id for the cross-protocol case where the backend supplied
 /// none. Native Cohere v2 ids are bare RFC-4122 UUIDv4s (8-4-4-4-12 hex, no prefix), so we emit a
-/// PROPER v4: all 128 bits seeded from the host CSPRNG (`synth_rng`), with the version nibble forced
+/// PROPER v4: all 128 bits seeded from the host CSPRNG, with the version nibble forced
 /// to `4` and the variant bits forced to `10xx`. A client (or any observer) that validates the id
 /// as a UUIDv4 — Cohere's are — sees a well-formed value, so this is no longer a proxy tell, and no
 /// timestamp is embedded (the earlier `secs << 32` layout leaked the server clock in the first
@@ -879,7 +879,7 @@ fn synthesize_cohere_id(host: &dyn busbar_contract::codec::CodecHost) -> String 
     let mut bytes = [0u8; 16];
     // OS CSPRNG. Ignore failure (no unwrap/expect/panic on the request path): the version/variant
     // stamping below still produces a valid v4 even if the buffer stays all-zero.
-    let _ = super::synth_rng::fill_entropy(host, &mut bytes);
+    let _ = host.fill_entropy(&mut bytes);
 
     // RFC-4122 v4: high nibble of byte 6 (the 3rd group's first nibble) = 4; top two bits of byte 8
     // (the 4th group's first nibble) = 10.

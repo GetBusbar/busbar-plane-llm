@@ -69,7 +69,7 @@ pub enum TranslateRespInput<'a> {
 /// [`Self::translate_request`], the engine's non-stream cross-protocol response arm calls
 /// [`Self::translate_response`], and the hook / lazy-body read side calls [`Self::read_facts`] /
 /// [`Self::read_facts_value`]. The streaming half already routes through the registry
-/// `proto::new_stream_translator` factory (G6 step 3).
+/// `proto::new_stream_translator_on` factory (G6 step 3).
 ///
 /// It is a NEUTRAL ENTRYPOINT wrapping the EXISTING concrete `IrReq`/`IrResp` codec pipeline
 /// UNCHANGED — the default methods read/prepare/write through the very same `OperationHandler`

@@ -5957,13 +5957,23 @@ fn a_same_dialect_buffered_answer_gets_no_translator_in_any_dialect() {
         "responses",
     ] {
         assert!(
-            crate::codec::proto_stream::new_stream_translator(d, d, false).is_none(),
+            crate::codec::proto_stream::new_stream_translator_on(
+                d,
+                d,
+                false,
+                busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT
+            )
+            .is_none(),
             "{d}: a same-dialect buffered answer is relayed verbatim"
         );
     }
-    assert!(
-        crate::codec::proto_stream::new_stream_translator("bedrock", "anthropic", false).is_none()
-    );
+    assert!(crate::codec::proto_stream::new_stream_translator_on(
+        "bedrock",
+        "anthropic",
+        false,
+        busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT
+    )
+    .is_none());
 }
 
 #[test]

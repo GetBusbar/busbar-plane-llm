@@ -1442,23 +1442,7 @@ pub fn response_to_ir_events(
 /// cross-protocol builds the reframing translator. Returns `None` (legacy raw passthrough) when the
 /// response is not an incremental stream (`!is_sse`), or for an unknown protocol with no reader to
 /// drive the IR. Byte-identical to the two inlined `StreamTranslate::new*` sites it replaces. Its
-/// writer is bounded at [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`]; a caller that
-/// holds the plane's translation cap builds through [`new_stream_translator_on`].
-pub fn new_stream_translator(
-    ingress: &str,
-    egress: &str,
-    is_sse: bool,
-) -> Option<Box<dyn StreamTranslator>> {
-    new_stream_translator_on(
-        ingress,
-        egress,
-        is_sse,
-        busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
-    )
-}
-
-/// [`new_stream_translator`], its writer bounded at the plane's `translate_cap`
-/// ([`StreamTranslate::with_translate_cap`]).
+/// writer is bounded at the plane's `translate_cap` ([`StreamTranslate::with_translate_cap`]).
 pub fn new_stream_translator_on(
     ingress: &str,
     egress: &str,
