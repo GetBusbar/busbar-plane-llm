@@ -6,42 +6,8 @@
 use super::super::proto_codec::protocol_for;
 use serde_json::{json, Value};
 
-/// Cross-protocol REQUEST: `ingress` reader → the egress seam → `egress` writer.
-fn xreq(ingress: &'static str, egress: &str, body: &Value) -> Value {
-    let ingress_p = protocol_for(ingress).expect("ingress protocol");
-    let egress_p = protocol_for(egress).expect("egress protocol");
-    let mut req = ingress_p
-        .reader()
-        .read_request(body)
-        .expect("request reads");
-    super::super::chat_handle::chat_prepare_for_egress(
-        &mut req,
-        &busbar_contract::ir::egress_prep::EgressPrep {
-            thought_signature_fill: false,
-            ingress_protocol: ingress,
-            egress_requires_max_tokens: true,
-            lane_default_max_tokens: None,
-            global_default_max_tokens: 4096,
-            reasoning_allowed: true,
-            reasoning_budgets: crate::codec::ir::REASONING_BUDGET_DEFAULTS,
-            prompt_caching_allowed: true,
-            cache_control_cap: None,
-            lane_caps: Default::default(),
-        },
-    );
-    egress_p
-        .writer()
-        .write_request(crate::codec::test_host::HOST, &req)
-}
-
-/// [`xreq`] onto a lane with the declared capabilities, through the production lane write.
-fn xreq_lane(
-    ingress: &'static str,
-    egress: &str,
-    body: &Value,
-    caps: &busbar_contract::ir::egress_prep::LaneCaps,
-) -> Value {
-    let egress_p = protocol_for(egress).expect("egress protocol");
+/// `ingress` reader → the egress seam: the IR an egress writer receives.
+fn prepared(ingress: &'static str, body: &Value) -> crate::codec::ir::IrRequest {
     let mut req = protocol_for(ingress)
         .expect("ingress protocol")
         .reader()
@@ -62,14 +28,35 @@ fn xreq_lane(
             lane_caps: Default::default(),
         },
     );
-    egress_p
+    req
+}
+
+/// Cross-protocol REQUEST: `ingress` reader → the egress seam → `egress` writer.
+fn xreq(ingress: &'static str, egress: &str, body: &Value) -> Value {
+    let req = prepared(ingress, body);
+    protocol_for(egress)
+        .expect("egress protocol")
+        .writer()
+        .write_request(crate::codec::test_host::HOST, &req)
+}
+
+/// [`xreq`] onto a lane with the declared capabilities, through the production lane write.
+fn xreq_lane(
+    ingress: &'static str,
+    egress: &str,
+    body: &Value,
+    caps: &busbar_contract::ir::egress_prep::LaneCaps,
+) -> Value {
+    let req = prepared(ingress, body);
+    protocol_for(egress)
+        .expect("egress protocol")
         .writer()
         .write_request_for_lane(crate::codec::test_host::HOST, &req, "claude-x", caps)
 }
 
 /// A lane of the newest Claude generation: declares adaptive thinking AND native structured
 /// outputs (the shipped catalog's model patterns turn both on for Opus 4.7+/5.x, Sonnet 5, Fable).
-fn newest_lane() -> busbar_contract::ir::egress_prep::LaneCaps {
+pub(super) fn newest_lane() -> busbar_contract::ir::egress_prep::LaneCaps {
     busbar_contract::ir::egress_prep::LaneCaps {
         anthropic_adaptive_thinking: true,
         native_structured_output: true,

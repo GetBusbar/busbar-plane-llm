@@ -1,6 +1,5 @@
 use super::*;
 use crate::codec::ir::IrUsage;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 #[test]
 fn stop_reason_reverse_never_leaks_foreign_tokens() {
@@ -11,41 +10,11 @@ fn stop_reason_reverse_never_leaks_foreign_tokens() {
     // Foreign / off-enum reasons degrade to end_turn rather than emit an off-spec Converse
     // `stopReason` a strict client rejects. (A Bedrock `guardrail_intervened` read folds to
     // `Safety`, which writes back as `content_filtered`.)
-    assert_eq!(read_bedrock_stop_reason_guardrail(), S::Safety);
+    assert_eq!(stop_reason_map("guardrail_intervened"), S::Safety);
     // A refusal is a content-policy stop, `content_filtered` (BED-09), not a natural end.
     assert_eq!(stop_reason_reverse(S::Refusal), "content_filtered");
     assert_eq!(stop_reason_reverse(S::Error), "end_turn");
     assert_eq!(stop_reason_reverse(S::Other), "end_turn");
-}
-
-fn read_bedrock_stop_reason_guardrail() -> crate::codec::ir::IrStopReason {
-    stop_reason_map("guardrail_intervened")
-}
-
-// Cross-protocol response-id synthesis is NOT wired into any production path (Bedrock's own
-// body has no id field, and the inverse direction is the consuming ingress writer's job — see
-// `write_response`). The helper trio below was previously shipped in the production binary under
-// `#[cfg_attr(not(test), allow(dead_code))]`; it is now confined to the test module so 1.0 does
-// not carry dead production scaffolding. If/when the cross-protocol id-population seam lands, the
-// trio moves back into production scope (and loses this test-only home).
-
-/// Monotonic per-process counter so two ids minted in the same wall-clock second still differ.
-static SYNTH_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Current unix time in whole seconds; a pre-epoch clock degrades to 0 rather than panicking.
-fn unix_now_secs() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-/// Mint a syntactically-plausible, collision-resistant `<hex16>-<hex16>` token from
-/// (unix seconds + a monotonic counter) — no UUID crate, no panic.
-fn synth_response_id() -> String {
-    let n = SYNTH_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{:016x}-{:016x}", unix_now_secs(), n)
 }
 
 #[test]
@@ -123,14 +92,6 @@ fn bedrock_rich_fixture() -> serde_json::Value {
 #[test]
 fn test_write_request() {
     let ir = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
         system: vec![crate::codec::ir::IrBlock::Text {
             text: "You are a helpful assistant.".to_string(),
             cache_control: None,
@@ -184,27 +145,7 @@ fn test_write_request() {
         }],
         max_tokens: Some(1024),
         temperature: Some(0.7_f64),
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
 
     let writer = BedrockWriter;
@@ -659,9 +600,7 @@ fn test_write_response_event() {
         usage: IrUsage {
             input_tokens: 10,
             output_tokens: 5,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
         stop_detail: None,
     };
@@ -961,24 +900,6 @@ fn test_response_identity_same_protocol_roundtrip_no_synth() {
     );
 }
 
-/// Cross-protocol synthesis: minting a Bedrock-flavored response id never panics and yields a
-/// unique, non-empty token (so an OpenAI/Anthropic ingress fed by a Bedrock egress can always
-/// get a valid body id). Uniqueness comes from the monotonic counter even within one second.
-#[test]
-fn test_synth_response_id_unique_and_nonempty() {
-    let a = synth_response_id();
-    let b = synth_response_id();
-    assert!(!a.is_empty(), "synthesized id must be non-empty");
-    assert!(!b.is_empty(), "synthesized id must be non-empty");
-    assert_ne!(a, b, "two synthesized ids minted back-to-back must differ");
-    // Shape sanity: `<hex16>-<hex16>` (no panic on parse of either half).
-    let (lhs, rhs) = a.split_once('-').expect("synth id has a `-` separator");
-    assert_eq!(lhs.len(), 16, "left half is 16 hex chars");
-    assert_eq!(rhs.len(), 16, "right half is 16 hex chars");
-    assert!(u64::from_str_radix(lhs, 16).is_ok());
-    assert!(u64::from_str_radix(rhs, 16).is_ok());
-}
-
 /// A stream MessageDelta with `stop_reason = None` (the usage-only trailing
 /// delta the reader emits from the Bedrock `metadata` event, or a cross-protocol egress's usage
 /// frame) must be reframed as a native `metadata` frame carrying the real token usage — NOT a
@@ -996,9 +917,7 @@ fn test_write_response_event_usage_delta_is_metadata_frame() {
         usage: IrUsage {
             input_tokens: 11,
             output_tokens: 7,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
         stop_detail: None,
     };
@@ -1033,13 +952,7 @@ fn test_write_response_event_usage_delta_is_metadata_frame() {
     let stop = IrStreamEvent::MessageDelta {
         stop_reason: Some(crate::codec::ir::IrStopReason::ToolUse),
         stop_sequence: None,
-        usage: IrUsage {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
-        },
+        usage: IrUsage::default(),
         stop_detail: None,
     };
     let (et2, payload2) = writer
@@ -1246,15 +1159,6 @@ fn test_read_request_honors_injected_stream_flag() {
 fn test_write_request_skips_system_role_message() {
     let writer = BedrockWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
         messages: vec![
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::System,
@@ -1280,30 +1184,7 @@ fn test_write_request_skips_system_role_message() {
                 }],
             },
         ],
-        tools: vec![],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
 
     let json = writer.write_request(crate::codec::test_host::HOST, &req);
@@ -1336,15 +1217,6 @@ fn test_write_request_skips_system_role_message() {
 fn test_write_request_tool_result_preserves_non_text_content() {
     let writer = BedrockWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::ToolResult {
@@ -1361,30 +1233,7 @@ fn test_write_request_tool_result_preserves_non_text_content() {
                 cache_control: None,
             }],
         }],
-        tools: vec![],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
 
     let json = writer.write_request(crate::codec::test_host::HOST, &req);
@@ -1616,16 +1465,6 @@ fn test_write_request_tool_config_cross_protocol_and_empty() {
 
     // Cross-protocol shape: typed tools, empty extra (seam cleared it).
     let ir_tools = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
-        messages: vec![],
         tools: vec![crate::codec::ir::IrTool {
             name: "f".to_string(),
             description: None,
@@ -1636,29 +1475,7 @@ fn test_write_request_tool_config_cross_protocol_and_empty() {
 
             strict: None,
         }],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let out = writer.write_request(crate::codec::test_host::HOST, &ir_tools);
     let tc = out
@@ -1675,42 +1492,7 @@ fn test_write_request_tool_config_cross_protocol_and_empty() {
     );
 
     // No tools, no raw toolConfig → no toolConfig key at all.
-    let ir_empty = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
-        messages: vec![],
-        tools: vec![],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
-    };
+    let ir_empty = crate::codec::ir::IrRequest::default();
     let out_empty = writer.write_request(crate::codec::test_host::HOST, &ir_empty);
     assert!(
         out_empty.get("toolConfig").is_none(),
@@ -1867,9 +1649,7 @@ fn test_write_response_event_metadata_no_fabricated_metrics() {
         usage: IrUsage {
             input_tokens: 3,
             output_tokens: 2,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
         stop_detail: None,
     };
@@ -1905,9 +1685,7 @@ fn test_write_response_event_total_tokens_saturates() {
         usage: IrUsage {
             input_tokens: u64::MAX,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
         stop_detail: None,
     };
@@ -1978,8 +1756,6 @@ fn bedrock_writer_image_block_stop_is_suppressed() {
 #[test]
 fn eventstream_emits_reasoning_content_for_thinking_block() {
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![
             crate::codec::ir::IrBlock::Thinking {
                 text: "let me think".to_string(),
@@ -2000,18 +1776,8 @@ fn eventstream_emits_reasoning_content_for_thinking_block() {
         usage: IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let bytes = bedrock_response_to_eventstream(crate::codec::test_host::HOST, &resp, Some(5));
@@ -2037,8 +1803,6 @@ fn eventstream_emits_reasoning_content_for_thinking_block() {
 #[test]
 fn eventstream_content_block_index_is_contiguous_when_a_block_is_skipped() {
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![
             crate::codec::ir::IrBlock::Image {
                 source: crate::codec::ir::IrImageSource::Base64 {
@@ -2059,18 +1823,8 @@ fn eventstream_content_block_index_is_contiguous_when_a_block_is_skipped() {
         usage: IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let mut bytes = bedrock_response_to_eventstream(crate::codec::test_host::HOST, &resp, Some(5));
@@ -2108,8 +1862,6 @@ fn eventstream_content_block_index_is_contiguous_when_a_block_is_skipped() {
 #[test]
 fn eventstream_every_content_block_start_has_exactly_one_stop() {
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![
             crate::codec::ir::IrBlock::Image {
                 source: crate::codec::ir::IrImageSource::Base64 {
@@ -2157,18 +1909,8 @@ fn eventstream_every_content_block_start_has_exactly_one_stop() {
         usage: IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let mut bytes = bedrock_response_to_eventstream(crate::codec::test_host::HOST, &resp, Some(5));
@@ -2230,8 +1972,6 @@ fn eventstream_every_content_block_start_has_exactly_one_stop() {
 fn test_write_response_total_tokens_saturates() {
     let writer = BedrockWriter;
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::Text {
             text: "hi".to_string(),
             cache_control: None,
@@ -2242,18 +1982,8 @@ fn test_write_response_total_tokens_saturates() {
         usage: IrUsage {
             input_tokens: u64::MAX - 1,
             output_tokens: 100,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let body = writer.write_response(crate::codec::test_host::HOST, &resp);
@@ -2267,9 +1997,7 @@ fn test_write_response_total_tokens_saturates() {
         usage: IrUsage {
             input_tokens: 10,
             output_tokens: 5,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
         ..resp
     };
@@ -2288,8 +2016,6 @@ fn test_write_response_total_tokens_saturates() {
 fn test_write_response_projects_image_block() {
     let writer = BedrockWriter;
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![
             crate::codec::ir::IrBlock::Text {
                 text: "see image".to_string(),
@@ -2310,18 +2036,8 @@ fn test_write_response_projects_image_block() {
         usage: IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let body = writer.write_response(crate::codec::test_host::HOST, &resp);
@@ -2362,8 +2078,6 @@ fn test_write_response_projects_image_block() {
 fn test_write_response_empty_content_emits_placeholder() {
     let writer = BedrockWriter;
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::ToolResult {
             tool_use_id: "tu_1".to_string(),
             content: Vec::new(),
@@ -2374,18 +2088,8 @@ fn test_write_response_empty_content_emits_placeholder() {
         usage: IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let body = writer.write_response(crate::codec::test_host::HOST, &resp);
@@ -2481,15 +2185,6 @@ fn test_top_k_reaches_bedrock_via_additional_model_request_fields() {
 
     // Cross-protocol shape: top_k set in the IR, extra cleared (as the translate seam leaves it).
     let ir = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::Text {
@@ -2499,30 +2194,9 @@ fn test_top_k_reaches_bedrock_via_additional_model_request_fields() {
                 refusal: false,
             }],
         }],
-        tools: vec![],
         max_tokens: Some(64),
-        temperature: None,
-        top_p: None,
         top_k: Some(40),
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let out = writer.write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(
@@ -2649,15 +2323,6 @@ fn test_inference_config_typed_fields_override_raw_and_cross_protocol() {
         serde_json::json!({"maxTokens": 1, "topP": 0.5}),
     );
     let ir = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::Text {
@@ -2667,30 +2332,9 @@ fn test_inference_config_typed_fields_override_raw_and_cross_protocol() {
                 refusal: false,
             }],
         }],
-        tools: vec![],
         max_tokens: Some(999),
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
         extra,
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let out = writer.write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(
@@ -2708,15 +2352,6 @@ fn test_inference_config_typed_fields_override_raw_and_cross_protocol() {
 
     // Cross-protocol egress: no inferenceConfig in extra → config built purely from typed IR.
     let ir2 = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::Text {
@@ -2726,30 +2361,9 @@ fn test_inference_config_typed_fields_override_raw_and_cross_protocol() {
                 refusal: false,
             }],
         }],
-        tools: vec![],
         max_tokens: Some(42),
         temperature: Some(0.1),
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let out2 = writer.write_request(crate::codec::test_host::HOST, &ir2);
     assert_eq!(
@@ -2877,15 +2491,6 @@ fn test_write_request_url_sentinel_image_not_emitted_as_base64() {
     // Top-level URL-sentinel image → dropped (no image block, no garbage bytes).
     let url = "https://example.com/cat.png";
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![
@@ -2902,30 +2507,7 @@ fn test_write_request_url_sentinel_image_not_emitted_as_base64() {
                 },
             ],
         }],
-        tools: vec![],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let out = writer.write_request(crate::codec::test_host::HOST, &req);
     let wire = serde_json::to_string(&out).unwrap();
@@ -2986,15 +2568,6 @@ fn test_write_request_url_sentinel_image_not_emitted_as_base64() {
 fn test_write_request_all_nonrepresentable_turn_kept_with_placeholder() {
     let writer = BedrockWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
         messages: vec![
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::User,
@@ -3029,30 +2602,7 @@ fn test_write_request_all_nonrepresentable_turn_kept_with_placeholder() {
                 }],
             },
         ],
-        tools: vec![],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let out = writer.write_request(crate::codec::test_host::HOST, &req);
 
@@ -3324,15 +2874,6 @@ fn test_write_request_tool_result_url_sentinel_image_dropped() {
     let writer = BedrockWriter;
     let url = "https://example.com/in-tool.png";
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Tool,
             content: vec![crate::codec::ir::IrBlock::ToolResult {
@@ -3354,30 +2895,7 @@ fn test_write_request_tool_result_url_sentinel_image_dropped() {
                 cache_control: None,
             }],
         }],
-        tools: vec![],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let out = writer.write_request(crate::codec::test_host::HOST, &req);
     let wire = serde_json::to_string(&out).unwrap();
@@ -3811,25 +3329,12 @@ fn test_write_response_emits_cache_tokens_roundtrip() {
 fn test_write_response_omits_absent_cache_tokens() {
     let writer = BedrockWriter;
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
-        content: vec![],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let written = writer.write_response(crate::codec::test_host::HOST, &resp);
@@ -3856,7 +3361,7 @@ fn test_write_stream_metadata_emits_cache_tokens() {
             output_tokens: 7,
             cache_creation_input_tokens: Some(40),
             cache_read_input_tokens: Some(20),
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
         stop_detail: None,
     };
@@ -5214,15 +4719,6 @@ fn consecutive_user_turns_coalesce_for_alternation() {
         }],
     };
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
         messages: vec![
             text_msg(crate::codec::ir::IrRole::User, "q"),
             crate::codec::ir::IrMessage {
@@ -5253,30 +4749,7 @@ fn consecutive_user_turns_coalesce_for_alternation() {
             },
             text_msg(crate::codec::ir::IrRole::User, "thanks"),
         ],
-        tools: vec![],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let writer = BedrockWriter;
     let out = writer.write_request(crate::codec::test_host::HOST, &req);
@@ -5314,16 +4787,6 @@ fn consecutive_user_turns_coalesce_for_alternation() {
 
 fn tool_choice_req(tc: Option<crate::codec::ir::IrToolChoice>) -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
-        messages: vec![],
         tools: vec![crate::codec::ir::IrTool {
             name: "get_weather".to_string(),
             description: None,
@@ -5334,29 +4797,8 @@ fn tool_choice_req(tc: Option<crate::codec::ir::IrToolChoice>) -> crate::codec::
 
             strict: None,
         }],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
         tool_choice: tc,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     }
 }
 
@@ -5553,15 +4995,6 @@ fn test_bedrock_tool_choice_absent_is_none() {
 #[test]
 fn test_bedrock_writer_clamps_temperature_above_one() {
     let ir = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::Text {
@@ -5571,30 +5004,8 @@ fn test_bedrock_writer_clamps_temperature_above_one() {
                 refusal: false,
             }],
         }],
-        tools: vec![],
-        max_tokens: None,
         temperature: Some(1.8),
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let writer = BedrockWriter;
     let out = writer.write_request(crate::codec::test_host::HOST, &ir);
@@ -5617,40 +5028,10 @@ fn cache_ctrl_req(
     tools: Vec<crate::codec::ir::IrTool>,
 ) -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
         system,
         messages,
         tools,
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     }
 }
 
@@ -5914,25 +5295,6 @@ fn test_same_protocol_cache_point_no_double_emit() {
 
 // --- degradations are observable (warn paths) ----------------------------------------------
 
-/// Warn path: `tool_choice = None` has no native Converse directive, so it degrades to an
-/// omitted `toolChoice` and a `tracing::warn!`. The observable degradation (no `toolChoice` key,
-/// tools still emitted) is asserted here; the warn fires on the same branch.
-#[test]
-fn test_tool_choice_none_warns_and_omits() {
-    let req = tool_choice_req(Some(crate::codec::ir::IrToolChoice::None));
-    let writer = BedrockWriter;
-    let out = writer.write_request(crate::codec::test_host::HOST, &req);
-    let tool_config = out.get("toolConfig").expect("toolConfig emitted");
-    assert!(
-        tool_config.get("toolChoice").is_none(),
-        "tool_choice=None must omit toolChoice (warn-and-degrade); got {tool_config:?}"
-    );
-    assert!(
-        tool_config.get("tools").is_some(),
-        "the tools array must still be emitted; got {tool_config:?}"
-    );
-}
-
 /// Warn path: a malformed image media_type (an empty subtype, an unprefixed word) or one outside
 /// Bedrock's `ImageFormat` union (`image/bmp`) is DROPPED with the writer's warn, never coerced to
 /// `format: "png"` (design F3: never a substitution).
@@ -5974,15 +5336,6 @@ fn test_malformed_media_type_warns_and_drops() {
 fn test_write_request_response_format_projects_output_config() {
     let writer = BedrockWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::Text {
@@ -5992,18 +5345,6 @@ fn test_write_request_response_format_projects_output_config() {
                 refusal: false,
             }],
         }],
-        tools: vec![],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
         response_format: Some(crate::codec::ir::IrResponseFormat {
             json: true,
             schema: Some(serde_json::json!({"type": "object"})),
@@ -6011,17 +5352,7 @@ fn test_write_request_response_format_projects_output_config() {
             strict: None,
             description: None,
         }),
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let default_lane = writer.write_request(crate::codec::test_host::HOST, &req);
     assert!(default_lane.get("outputConfig").is_none(), "{default_lane}");
@@ -6066,9 +5397,7 @@ fn bedrock_stream_framing_emits_one_metadata_delta_then_guards_duplicate() {
     let usage = crate::codec::ir::IrUsage {
         input_tokens: 5,
         output_tokens: 2,
-        cache_creation_input_tokens: None,
-        cache_read_input_tokens: None,
-        detail: crate::codec::ir::IrUsageDetail::default(),
+        ..Default::default()
     };
     let mut framing = BedrockStreamFraming::default();
 
@@ -6128,11 +5457,10 @@ fn cache_only_usage_emits_metadata_inline() {
             .count()
     }
     let usage = crate::codec::ir::IrUsage {
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_creation_input_tokens: None,
-        cache_read_input_tokens: Some(4096), // full cache hit
+        cache_read_input_tokens: Some(4096),
+        // full cache hit
         detail: crate::codec::ir::IrUsageDetail::default(),
+        ..Default::default()
     };
     let mut framing = BedrockStreamFraming::default();
     let evs = framing
@@ -6439,52 +5767,6 @@ fn total_tokens_includes_cache_tokens_on_both_write_paths() {
     );
 }
 
-/// `write_response_exception` (the Bedrock-INGRESS stream error path) must fold every error class
-/// onto ONE of the FIVE legal ConverseStream exception-union members, never a request-level name a
-/// native AWS stream decoder can't match. Pins the class→member mapping so a mid-stream error
-/// reaches a Bedrock client as a typed, decodable exception.
-#[test]
-fn write_response_exception_folds_to_stream_union_members() {
-    let mk = |class| busbar_contract::protocol::IrError {
-        class,
-        provider_signal: None,
-        retry_after: None,
-    };
-    let cases = [
-        (StatusClass::RateLimit, "ThrottlingException"),
-        (StatusClass::Overloaded, "ServiceUnavailableException"),
-        (StatusClass::ClientError, "ValidationException"),
-        (StatusClass::ContextLength, "ValidationException"),
-        (StatusClass::Timeout, "ModelStreamErrorException"),
-        (StatusClass::Auth, "InternalServerException"),
-        (StatusClass::Billing, "InternalServerException"),
-        (StatusClass::ServerError, "InternalServerException"),
-        (StatusClass::Network, "InternalServerException"),
-    ];
-    for (class, expect) in cases {
-        let writer = BedrockWriter;
-        let (name, _msg) = writer
-            .write_response_exception(crate::codec::test_host::HOST, &mk(class))
-            .expect("Bedrock always returns Some for a stream exception");
-        assert_eq!(name, expect, "class {class:?} must fold to {expect}");
-    }
-    // The message prefers the upstream provider_signal when present.
-    let err = busbar_contract::protocol::IrError {
-        class: StatusClass::RateLimit,
-        provider_signal: Some("slow down".to_string()),
-        retry_after: None,
-    };
-    let writer = BedrockWriter;
-    let (name, msg) = writer
-        .write_response_exception(crate::codec::test_host::HOST, &err)
-        .unwrap();
-    assert_eq!(name, "ThrottlingException");
-    assert_eq!(
-        msg, "slow down",
-        "message prefers the upstream provider_signal"
-    );
-}
-
 /// REGRESSION: The native AWS Bedrock ConverseStream `ContentBlockStart$start`
 /// union only models `toolUse`, so a real AWS stream sends NO `contentBlockStart` for a text
 /// block; the block is implied by the first `contentBlockDelta` carrying `text`. The reader's
@@ -6711,8 +5993,6 @@ fn streaming_metadata_metrics_is_always_present_and_never_overwrites_upstream() 
 #[test]
 fn buffered_to_eventstream_metadata_carries_metrics_even_without_timing() {
     let ir = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::Text {
             text: "hi".into(),
             cache_control: None,
@@ -6723,18 +6003,8 @@ fn buffered_to_eventstream_metadata_carries_metrics_even_without_timing() {
         usage: IrUsage {
             input_tokens: 3,
             output_tokens: 4,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let mut bytes = bedrock_response_to_eventstream(crate::codec::test_host::HOST, &ir, None);

@@ -4,6 +4,7 @@
 //! the production step list (reader → `chat_prepare_for_egress` / `chat_prepare_for_ingress` →
 //! writer), so the Anthropic egress sees exactly what a foreign ingress's IR would hand it.
 use super::super::proto_codec::protocol_for;
+use super::ir_mapping_q57_tests::newest_lane;
 use serde_json::{json, Value};
 
 fn read(body: &Value) -> crate::codec::ir::IrRequest {
@@ -39,14 +40,6 @@ fn egress(
         .unwrap()
         .writer()
         .write_request_for_lane(crate::codec::test_host::HOST, &req, "claude-x", caps)
-}
-
-fn newest_lane() -> busbar_contract::ir::egress_prep::LaneCaps {
-    busbar_contract::ir::egress_prep::LaneCaps {
-        anthropic_adaptive_thinking: true,
-        native_structured_output: true,
-        ..Default::default()
-    }
 }
 
 fn base() -> Value {

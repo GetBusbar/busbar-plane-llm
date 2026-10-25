@@ -6,11 +6,6 @@
 use super::*;
 
 #[test]
-fn protocol_name_is_gemini() {
-    assert_eq!(GeminiRequestHandler.protocol_name(), "gemini");
-}
-
-#[test]
 fn path_model_extracts_the_segment_before_the_last_colon() {
     let h = GeminiRequestHandler;
     assert_eq!(
