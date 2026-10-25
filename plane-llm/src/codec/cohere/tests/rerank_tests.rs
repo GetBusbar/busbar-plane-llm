@@ -194,7 +194,6 @@ fn embeddings_response_roundtrips_int8_not_dropped() {
         v["embeddings"].get("float").is_none(),
         "no spurious float key: {v}"
     );
-    let _ = EmbeddingsResp::default();
 }
 
 #[test]
