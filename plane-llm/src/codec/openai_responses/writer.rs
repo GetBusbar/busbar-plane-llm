@@ -1466,15 +1466,14 @@ impl ProtocolWriter for ResponsesWriter {
                 // (genuine failures arrive via IrStreamEvent::Error → `response.failed`, never this
                 // arm); the match is over those two with a defensive fallback to `completed` for any
                 // future status string, never a `response.failed` (which would invent a failure).
-                let (event_name, event_type) = match status {
-                    STATUS_FAILED => (EVT_RESPONSE_FAILED, EVT_RESPONSE_FAILED),
-                    STATUS_INCOMPLETE => (EVT_RESPONSE_INCOMPLETE, EVT_RESPONSE_INCOMPLETE),
-                    STATUS_COMPLETED => (EVT_RESPONSE_COMPLETED, EVT_RESPONSE_COMPLETED),
-                    _ => (EVT_RESPONSE_COMPLETED, EVT_RESPONSE_COMPLETED),
+                let event_name = match status {
+                    STATUS_FAILED => EVT_RESPONSE_FAILED,
+                    STATUS_INCOMPLETE => EVT_RESPONSE_INCOMPLETE,
+                    _ => EVT_RESPONSE_COMPLETED,
                 };
                 vec![(
                     event_name.to_string(),
-                    serde_json::json!({ (keys::TYPE): event_type, (keys::RESPONSE): resp_obj }),
+                    serde_json::json!({ (keys::TYPE): event_name, (keys::RESPONSE): resp_obj }),
                 )]
             }
 

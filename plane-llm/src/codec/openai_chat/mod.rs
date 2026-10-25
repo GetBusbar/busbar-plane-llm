@@ -13,11 +13,6 @@ use crate::codec::dialect::{bearer_error_code, context_length_prose_scan};
 // The neutral canonical error-type vocabulary lives in the substrate; read it there, not via core's
 // re-export, so this plugin names no `busbar-core` implementation path for it.
 use busbar_contract::protocol::*;
-use busbar_contract::protocol::{
-    ERR_TYPE_AUTHENTICATION, ERR_TYPE_INSUFFICIENT_QUOTA, ERR_TYPE_INVALID_REQUEST,
-    ERR_TYPE_NOT_FOUND, ERR_TYPE_OVERLOADED, ERR_TYPE_PERMISSION, ERR_TYPE_RATE_LIMIT,
-    ERR_TYPE_SERVER_ERROR,
-};
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
 use busbar_contract::upstream::StatusClass;

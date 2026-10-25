@@ -506,14 +506,11 @@ fn synthesize_item_id(host: &dyn busbar_contract::codec::CodecHost, prefix: &str
 // writing carries none — the thing that made this writer's output different on two identical calls.
 // A codec that fabricates a timestamp cannot be checked against a
 // frozen output and cannot live in a pure kind, so the reading became a value the caller supplies:
+// the buffered path fills `IrResponse::created` in the answer-normalization pass
+// (`chat_handle::chat_prepare_for_ingress`, whose `now_epoch` argument is exactly this), so the
+// writer reads it off the answer.
 //
-//   * the buffered path fills `IrResponse::created` in the answer-normalization pass
-//     (`chat_handle::chat_prepare_for_ingress`, whose `now_epoch` argument is exactly this), so the
-//     writer reads it off the answer;
-//   * the streaming path has no answer to carry it, so the value rides the writer instance
-//     (`ResponsesWriter::stamped_at`), set once by whoever opened the stream.
-//
-// With neither supplied the writer stamps the HOST's wall clock, read once per stream through the
+// With none supplied the writer stamps the HOST's wall clock, read once per stream through the
 // host the caller handed (`CodecHost::wall_clock_now`, the reading the Chat writer's `created`
 // takes too), as 1.5.5 stamped `now_unix_secs()` (v1.5.5
 // `crates/busbar/src/proto/openai_responses/writer.rs:479`); `UNSTAMPED_CREATED_AT` only when the
@@ -2374,11 +2371,6 @@ pub struct ResponsesWriter {
     /// `response_id`; a poisoned lock degrades to the synthesize-fresh (`now_unix_secs`) fallback
     /// rather than panicking on the request path.
     created_at: std::sync::Mutex<Option<u64>>,
-    /// The creation time the CALLER supplied for this writer, in unix seconds — the streaming
-    /// path's counterpart of the buffered path's `IrResponse::created`. Set once, at the point the
-    /// stream is opened, by whoever holds a clock; a plain value, never a clock read of its own.
-    /// `UNSTAMPED_CREATED_AT` means the caller offered none.
-    stamped_created_at: u64,
     /// Per-stream `response.model`. Captured on the opening `MessageStart` (the model written into
     /// `response.created`, after the DEFAULT_MODEL fallback) and replayed verbatim onto EVERY
     /// subsequent lifecycle event (`response.completed`/`response.incomplete`/`response.failed`). A
@@ -2549,7 +2541,6 @@ pub const ResponsesWriter: ResponsesWriter = ResponsesWriter {
     started: AtomicBool::new(false),
     response_id: std::sync::Mutex::new(None),
     created_at: std::sync::Mutex::new(None),
-    stamped_created_at: UNSTAMPED_CREATED_AT,
     model: std::sync::Mutex::new(None),
     open_tool_indices: std::sync::Mutex::new(std::collections::BTreeSet::new()),
     open_text_indices: std::sync::Mutex::new(std::collections::BTreeSet::new()),
@@ -2581,7 +2572,6 @@ impl Clone for ResponsesWriter {
             // Carry the started latch too: a mid-stream `Protocol::clone` is still the SAME stream,
             // so a duplicate `MessageStart` arriving after the clone must not reset it either.
             started: AtomicBool::new(self.started.load(Ordering::Relaxed)),
-            stamped_created_at: self.stamped_created_at,
             response_id: std::sync::Mutex::new(
                 self.response_id.lock().map(|id| id.clone()).unwrap_or(None),
             ),
@@ -2698,6 +2688,20 @@ impl Clone for ResponsesWriter {
             translate_cap: AtomicUsize::new(self.translate_cap.load(Ordering::Relaxed)),
         }
     }
+}
+
+/// Insert `index` into a per-stream open-item set, capped at `MAX_OPEN_TOOLS`. True only when it
+/// was newly inserted; false when already open, at the cap, or the lock is poisoned.
+fn open_bounded(set: &std::sync::Mutex<std::collections::BTreeSet<usize>>, index: usize) -> bool {
+    set.lock()
+        .map(|mut set| {
+            if set.contains(&index) || set.len() >= MAX_OPEN_TOOLS {
+                return false;
+            }
+            set.insert(index);
+            true
+        })
+        .unwrap_or(false)
 }
 
 impl ResponsesWriter {
@@ -2838,31 +2842,13 @@ impl ResponsesWriter {
             .unwrap_or_else(|| self.default_created_at(host))
     }
 
-    /// The `created_at` for an answer that carries none: the caller's stamp when one was given,
-    /// else the wall clock of the HOST the caller handed (`CodecHost::wall_clock_now`, the reading
-    /// the Chat writer stamps), as 1.5.5 stamped `now_unix_secs()` (v1.5.5
+    /// The `created_at` for an answer that carries none: the wall clock of the HOST the caller
+    /// handed (`CodecHost::wall_clock_now`, the reading the Chat writer stamps), as 1.5.5 stamped `now_unix_secs()` (v1.5.5
     /// `crates/busbar/src/proto/openai_responses/writer.rs:479`). A translated stream clears the
     /// upstream's creation time, so without this every translated stream into a Responses client
     /// carried `created_at: 0` (1970). `UNSTAMPED_CREATED_AT` only when the host holds no clock.
     pub(crate) fn default_created_at(&self, host: &dyn busbar_contract::codec::CodecHost) -> u64 {
-        if self.stamped_created_at != UNSTAMPED_CREATED_AT {
-            return self.stamped_created_at;
-        }
         host.wall_clock_now().unwrap_or(UNSTAMPED_CREATED_AT)
-    }
-
-    /// This writer, stamped with the creation time the caller read.
-    ///
-    /// The streaming path has no answer object to carry a creation time on, so it rides the writer:
-    /// whoever opens the stream reads its own clock once and hands the reading here, and every
-    /// event this writer emits stamps that one value. Two writers stamped with the same reading
-    /// produce the same bytes.
-    #[must_use]
-    pub fn stamped_at(created_at_unix: u64) -> ResponsesWriter {
-        ResponsesWriter {
-            stamped_created_at: created_at_unix,
-            ..ResponsesWriter
-        }
     }
 
     /// Store the per-stream `model` captured on `MessageStart` so terminal events replay it
@@ -2926,19 +2912,7 @@ impl ResponsesWriter {
     /// `output_item.added` frame either, or the wire carries a lifecycle open for an item that
     /// never existed and is never closed.
     fn mark_tool_open(&self, index: usize) -> bool {
-        self.open_tool_indices
-            .lock()
-            .map(|mut set| {
-                if set.contains(&index) {
-                    return false;
-                }
-                if set.len() >= MAX_OPEN_TOOLS {
-                    return false;
-                }
-                set.insert(index);
-                true
-            })
-            .unwrap_or(false)
+        open_bounded(&self.open_tool_indices, index)
     }
 
     /// Return true and forget `index` if it was a previously-opened function-call item; false if no
@@ -3144,19 +3118,7 @@ impl ResponsesWriter {
     /// (skip the frames; bounds per-stream memory against a pathological backend). Lock poisoning
     /// degrades to false. Mirrors the cardinality discipline of the reader's `open_tools` cap.
     fn open_text_item(&self, index: usize) -> bool {
-        self.open_text_indices
-            .lock()
-            .map(|mut set| {
-                if set.contains(&index) {
-                    return false;
-                }
-                if set.len() >= MAX_OPEN_TOOLS {
-                    return false;
-                }
-                set.insert(index);
-                true
-            })
-            .unwrap_or(false)
+        open_bounded(&self.open_text_indices, index)
     }
 
     /// IR-02: record that the text item at `index` is a refusal (its BlockStart said so).
@@ -3196,16 +3158,7 @@ impl ResponsesWriter {
     /// returning true when this call performed the open (so the caller emits the `output_item.added`
     /// typed "reasoning" exactly once). Mirrors `open_text_item`'s discipline. Lock poisoning → false.
     fn open_reasoning_item(&self, index: usize) -> bool {
-        self.open_reasoning_indices
-            .lock()
-            .map(|mut set| {
-                if set.contains(&index) || set.len() >= MAX_OPEN_TOOLS {
-                    return false;
-                }
-                set.insert(index);
-                true
-            })
-            .unwrap_or(false)
+        open_bounded(&self.open_reasoning_indices, index)
     }
 
     /// IR-17: remember that the reasoning item at `index` is a summary (`mark`), or ask whether it
@@ -3359,9 +3312,6 @@ const SEARCH: &str = "search";
 const FILE_CITATION: &str = "file_citation";
 const CONTAINER_FILE_CITATION: &str = "container_file_citation";
 const FILE_PATH: &str = "file_path";
-const FILE_ID: &str = "file_id";
-const FILENAME: &str = "filename";
-const INDEX: &str = "index";
 
 /// A `web_search_call` output item -> [`crate::codec::ir::IrBlock::HostedToolRecord`]: its `id`, its
 /// `status`, and its search action's `sources[].url` as results (the query has no IR member).
@@ -3436,9 +3386,9 @@ fn read_file_annotations(
             Some(crate::codec::ir::IrCitation {
                 kind: Some(kind.to_string()),
                 file: Some(crate::codec::ir::IrFileLocation {
-                    file_id: text(FILE_ID),
-                    filename: text(FILENAME),
-                    index: a.get(INDEX).and_then(|v| v.as_i64()),
+                    file_id: text(keys::FILE_ID),
+                    filename: text(keys::FILENAME),
+                    index: a.get(keys::INDEX).and_then(|v| v.as_i64()),
                 }),
                 raw: Some(a.clone()),
                 ..Default::default()
@@ -3460,12 +3410,15 @@ fn file_annotations(citations: &[crate::codec::ir::IrCitation]) -> Vec<serde_jso
             let mut a = serde_json::Map::new();
             a.insert(keys::TYPE.to_string(), serde_json::json!(FILE_CITATION));
             if let Some(id) = &f.file_id {
-                a.insert(FILE_ID.to_string(), serde_json::json!(id));
+                a.insert(keys::FILE_ID.to_string(), serde_json::json!(id));
             }
             if let Some(name) = &f.filename {
-                a.insert(FILENAME.to_string(), serde_json::json!(name));
+                a.insert(keys::FILENAME.to_string(), serde_json::json!(name));
             }
-            a.insert(INDEX.to_string(), serde_json::json!(f.index.unwrap_or(0)));
+            a.insert(
+                keys::INDEX.to_string(),
+                serde_json::json!(f.index.unwrap_or(0)),
+            );
             Some(serde_json::Value::Object(a))
         })
         .collect()
