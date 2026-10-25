@@ -1154,7 +1154,7 @@ pub fn with_reader<T>(name: &str, f: impl FnOnce(&dyn ProtocolReader) -> T) -> O
 /// core's registry only to land back in [`DialectRef::extract_error`] (i.e. right here). Every
 /// operation cell of a dialect answers [`OperationHandler::extract_error`] through this so the
 /// upstream error vocabulary is stated ONCE, in the protocol's reader. Byte-identical to the old core
-/// delegation (same `protocol_for(name).reader().extract_error` path, same status-only fallback) — it
+/// delegation (same reader `extract_error` path, same status-only fallback) — it
 /// just no longer reaches back into the neutral crate to get there (the reverse-edge
 /// rule).
 pub fn protocol_error(
@@ -1162,13 +1162,13 @@ pub fn protocol_error(
     status: u16,
     body: &[u8],
 ) -> busbar_contract::upstream::RawUpstreamError {
-    match protocol_for(name) {
-        Some(p) => p.reader().extract_error(
+    with_reader(name, |r| {
+        r.extract_error(
             StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             body,
-        ),
-        None => busbar_contract::upstream::RawUpstreamError::from_status(status),
-    }
+        )
+    })
+    .unwrap_or_else(|| busbar_contract::upstream::RawUpstreamError::from_status(status))
 }
 
 pub struct DialectRef(&'static str);
@@ -1262,13 +1262,7 @@ impl DialectCodec for DialectRef {
         status: u16,
         body: &[u8],
     ) -> busbar_contract::upstream::RawUpstreamError {
-        with_reader(self.0, |r| {
-            r.extract_error(
-                StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                body,
-            )
-        })
-        .unwrap_or_else(|| busbar_contract::upstream::RawUpstreamError::from_status(status))
+        protocol_error(self.0, status, body)
     }
     fn make_array_stream_framer(&self) -> Option<Box<dyn ArrayStreamFramer>> {
         with_writer(self.0, |w| w.make_array_stream_framer()).flatten()

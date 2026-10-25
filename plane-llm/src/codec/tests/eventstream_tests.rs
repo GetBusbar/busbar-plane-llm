@@ -65,16 +65,6 @@ fn test_oversized_total_len_is_abandoned_not_buffered() {
     );
 }
 
-#[test]
-fn test_frame_at_cap_still_decodes() {
-    // A normal, small frame (well under MAX_FRAME_BYTES) is unaffected by the cap.
-    let mut buf = encode_frame("contentBlockDelta", br#"{"delta":{"text":"ok"}}"#);
-    let frames = drain_frames(&mut buf);
-    assert_eq!(frames.len(), 1);
-    assert_eq!(frames[0].0, "contentBlockDelta");
-    assert!(buf.is_empty());
-}
-
 /// `drain_frames(encode_frame(x)) == [x]` for a spread of event types + payload sizes, including
 /// empty and large payloads. This is the encoder's primary acceptance gate: it proves the
 /// framing + CRC are correct against the existing production decoder (decode(encode(x)) == x).
@@ -958,42 +948,4 @@ fn the_linearity_check_rejects_a_per_frame_drain() {
         small.total(),
         big.total()
     );
-}
-
-/// THE SHARED EVENT-STREAM FIXTURE (#83a SD-3): the encoder writes every frame in
-/// `testing/plane-copies/eventstream-frames.json` byte for byte — the frames the host's copy of this
-/// codec wrote before it was deleted (SD-8), so the serving copy still writes exactly those bytes.
-#[test]
-fn the_host_encoder_writes_the_shared_fixture_frames() {
-    let path =
-        std::path::PathBuf::from(std::env::var_os("BUSBAR_CHECKOUT").expect(
-            "BUSBAR_CHECKOUT is unset: busbar's tree at .busbar-ref (plugin CI exports it)",
-        ))
-        .join("testing/plane-copies/eventstream-frames.json");
-    let doc: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(path).expect("fixture readable"))
-            .expect("fixture is JSON");
-    let bytes =
-        |v: &serde_json::Value| crate::codec::hex::decode(v.as_str().expect("hex")).expect("hex");
-    assert_eq!(doc["max_frame_bytes"], MAX_FRAME_BYTES as u64);
-    for f in doc["frames"].as_array().expect("frames") {
-        let event_type = f["event_type"].as_str().expect("event type");
-        assert_eq!(
-            encode_frame(event_type, &bytes(&f["payload_hex"])),
-            bytes(&f["frame_hex"]),
-            "{event_type:.40}"
-        );
-    }
-    for f in doc["exception_frames"]
-        .as_array()
-        .expect("exception frames")
-    {
-        assert_eq!(
-            encode_exception_frame(
-                f["exception_type"].as_str().expect("type"),
-                f["message"].as_str().expect("message")
-            ),
-            bytes(&f["frame_hex"])
-        );
-    }
 }

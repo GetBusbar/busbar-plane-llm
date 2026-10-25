@@ -43,6 +43,7 @@
 //!   `BUSBAR_BLESS_GOLDEN=1 cargo test -p busbar-core translate_parity_cross_pairs` then commit the
 //!   diff.
 
+use super::translate_parity_golden_tests::check_golden;
 use serde_json::{json, Value};
 
 /// The lane wire model stamped on the egress request (mirrors `rewrite_model_if_needed`); shared with
@@ -50,39 +51,6 @@ use serde_json::{json, Value};
 const LANE_MODEL: &str = "gpt-4o-mini";
 /// Fixed epoch handed to `prepare_for_ingress` for the synthesized `created` boundary signal.
 const FIXED_NOW: u64 = 1_752_000_000;
-
-fn golden_dir() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/codec/tests/proto/golden")
-}
-
-/// Bless mode requires the EXACT value `1`, not mere presence. Under `var_os(..).is_some()` even
-/// `BUSBAR_BLESS_GOLDEN=0` or `=false` — the spellings a reader uses to turn the flag OFF — put the
-/// whole golden suite into rewrite mode, where every test executes zero assertions AND overwrites
-/// the committed goldens with whatever the current translate path emits. One stale `export` left in
-/// a shell (or inherited by a CI runner) silently re-blesses a regression as the new truth.
-fn bless() -> bool {
-    std::env::var("BUSBAR_BLESS_GOLDEN").is_ok_and(|v| v == "1")
-}
-
-/// Compare `actual` to the committed golden `name`, or rewrite it in bless mode. Byte-for-byte with
-/// the sibling harness's `check_golden`.
-fn check_golden(name: &str, actual: &[u8]) {
-    let path = golden_dir().join(name);
-    if bless() {
-        std::fs::create_dir_all(golden_dir()).expect("create golden dir");
-        std::fs::write(&path, actual).expect("write golden");
-        return;
-    }
-    let expected = std::fs::read(&path)
-        .unwrap_or_else(|e| panic!("missing golden {name} ({e}); run with BUSBAR_BLESS_GOLDEN=1"));
-    assert_eq!(
-        expected,
-        actual,
-        "translate output drifted from golden {name}\n--- golden ---\n{}\n--- actual ---\n{}",
-        String::from_utf8_lossy(&expected),
-        String::from_utf8_lossy(actual),
-    );
-}
 
 /// The production REQUEST translate steps for an arbitrary `ingress`→`egress` lane, byte-for-byte.
 /// Mirrors `translate_request_a2o` in the sibling file exactly, parameterized on the two protocols.

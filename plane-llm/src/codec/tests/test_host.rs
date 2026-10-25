@@ -73,3 +73,11 @@ pub fn classified(raw: &RawUpstreamError) -> CanonicalSignal {
         retry_after: raw.retry_after_secs,
     }
 }
+
+/// Every `ContentItem`'s screenable text, in order — the exact strings a `prompt: ro` gate is shown.
+pub fn screened(items: &[busbar_contract::ir::facts::ContentItem<'_>]) -> Vec<String> {
+    items
+        .iter()
+        .map(|i| i.screenable_text().into_owned())
+        .collect()
+}

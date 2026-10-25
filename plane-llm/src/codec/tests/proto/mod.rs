@@ -50,8 +50,8 @@ pub use crate::codec::openai_responses::{ResponsesReader, ResponsesWriter};
 // own home, the frame-boundary scan and the IR-parse vocabulary at the contract.
 pub use crate::codec::dialect::{
     bearer_error_code, context_length_prose_scan, parse_sse_frame, sse_event_type,
-    strip_top_level_usage_member, write_sse_frame, BASE62_ALPHABET, HDR_AUTHORIZATION,
-    SSE_DONE_FRAME, SSE_DONE_SENTINEL,
+    strip_top_level_usage_member, write_sse_frame, BASE62_ALPHABET, SSE_DONE_FRAME,
+    SSE_DONE_SENTINEL,
 };
 pub use busbar_contract::protocol::{find_frame_terminator, IrError, SIGNAL_IR_PARSE};
 // The by-name views the suites read, over THIS PLANE'S OWN declarations (#83a SD-3: the codec's
@@ -92,8 +92,8 @@ pub fn array_stream_shim_keys() -> &'static [&'static str] {
 }
 
 /// The global `max_tokens` fallback a caller hands the egress preparation when neither the request
-/// nor the lane names one (the host's configured default, 4096 unless an operator sets another).
-pub const DEFAULT_MAX_TOKENS: u32 = 4096;
+/// nor the lane names one.
+pub use crate::exchange::shaping::DEFAULT_MAX_TOKENS;
 
 // Substrate atoms the suites name bare (breaker signal + the neutral framing seam types).
 pub use busbar_contract::protocol::{ArrayStreamFramer, DialectCodec};

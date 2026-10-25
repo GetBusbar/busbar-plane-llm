@@ -63,12 +63,7 @@ fn speech_carries_binary_out_and_char_or_token_billing() {
 use busbar_contract::ir::facts::{ContentItem, IrFacts, OPAQUE_CONTENT_MARKER};
 use busbar_contract::operation::OpVerb;
 
-fn screened(items: &[ContentItem<'_>]) -> Vec<String> {
-    items
-        .iter()
-        .map(|i| i.screenable_text().into_owned())
-        .collect()
-}
+use crate::codec::test_host::screened;
 
 #[test]
 fn transcription_projects_prompt_as_text_and_audio_as_opaque() {
