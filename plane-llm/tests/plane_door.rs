@@ -756,3 +756,39 @@ fn the_signed_claims_name_the_paths_the_previous_release_signed() {
         assert_eq!(by_claims, was_signed, "{path}");
     }
 }
+
+/// RED (CREDENTIAL-LOCKDOWN H8): AN AFFINITY HEADER NEVER NAMES A CREDENTIAL. A pool whose
+/// `affinity.header_name` names a header busbar governs as a credential (any dialect's governed
+/// request header, or a carrier the contract governs: `authorization`, `cookie`, `x-api-key`, ...),
+/// in any case, is refused at config time, so the caller's key never becomes the kernel's sticky
+/// routing key; an ordinary header still reads.
+#[test]
+fn red_an_affinity_header_naming_a_credential_is_refused() {
+    let settings = |header: &str| {
+        format!(
+            r#"{{"providers":{{"ant":{{"protocol":"anthropic","base_url":"https://anthropic.example"}}}},
+            "models":{{"claude":{{"provider":"ant"}}}},
+            "pools":{{"u":{{"members":["claude"],"affinity":{{"mode":"session","header_name":"{header}"}}}}}}}}"#
+        )
+    };
+    let mut credentials: Vec<&str> = DIALECTS
+        .iter()
+        .flat_map(|d| d.governed_headers.iter().copied())
+        .collect();
+    credentials.extend(busbar_contract::abi::host::conn::connector::NEVER_KEPT);
+    credentials.extend([
+        "Authorization",
+        "COOKIE",
+        "Proxy-Authorization",
+        "X-Api-Key",
+    ]);
+    for header in credentials {
+        let refused = read_settings(settings(header).as_bytes());
+        assert!(
+            refused.is_err(),
+            "affinity.header_name `{header}` was accepted"
+        );
+    }
+    let ok = read_settings(settings("x-user-id").as_bytes()).expect("an ordinary header reads");
+    assert_eq!(ok.affinity_header("u"), "x-user-id");
+}
