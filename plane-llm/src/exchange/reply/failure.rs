@@ -12,18 +12,12 @@
 use std::collections::HashMap;
 
 use busbar_contract::operation::OpVerb;
-use busbar_contract::protocol::{
-    HeadFields, ProtocolDecl, KIND_AUTHENTICATION, PROVIDER_CODE_CONTEXT_LENGTH,
-};
+use busbar_contract::protocol::{HeadFields, KIND_AUTHENTICATION, PROVIDER_CODE_CONTEXT_LENGTH};
 use busbar_contract::upstream::{CanonicalSignal, Disposition, RawUpstreamError, StatusClass};
 
+use super::super::decl;
 use super::super::refuse::{render, Rendered};
 use super::wire::{self, head_field, head_text, head_value};
-use crate::codec::DECLS;
-
-fn decl(name: &str) -> Option<&'static ProtocolDecl> {
-    DECLS.iter().copied().find(|d| d.name == name)
-}
 
 /// The far end's error answer, as it arrived.
 #[derive(Clone, Copy, Debug)]
