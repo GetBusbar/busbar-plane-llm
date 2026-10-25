@@ -534,14 +534,17 @@ pub fn wire_and_canonical_path(url_path: &str) -> (String, String) {
 ///
 /// The union, not the arrival dialect's own row: busbar reads its caller's credential from any of
 /// these carriers whatever the dialect, so a name another dialect declares a credential is never a
-/// header to hand a far end either.
+/// header to hand a far end either. With them, every credential carrier the contract governs
+/// ([`NEVER_KEPT`](busbar_contract::abi::host::conn::connector::NEVER_KEPT): `cookie`,
+/// `proxy-authorization`, ...), which no dialect declares but which carries the caller's secret all
+/// the same (CREDENTIAL-LOCKDOWN H8; THREAT_MODEL T3).
 #[must_use]
 pub fn governed(name: &str) -> bool {
-    DIALECTS.iter().any(|d| {
-        d.governed_headers
-            .iter()
-            .any(|g| name.eq_ignore_ascii_case(g))
-    })
+    DIALECTS
+        .iter()
+        .flat_map(|d| d.governed_headers.iter())
+        .chain(busbar_contract::abi::host::conn::connector::NEVER_KEPT)
+        .any(|g| name.eq_ignore_ascii_case(g))
 }
 
 /// Whether busbar governs the request query parameter `name` for a caller of `dialect` (its

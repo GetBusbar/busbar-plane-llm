@@ -1970,3 +1970,49 @@ fn an_omitted_max_tokens_is_filled_and_an_explicit_one_is_kept() {
     );
     assert_eq!(explicit["max_tokens"], 7, "{explicit}");
 }
+
+/// RED (CREDENTIAL-LOCKDOWN H8): A SAME-DIALECT ROUTE FORWARDS NO CALLER CREDENTIAL. The caller's
+/// `cookie` and `proxy-authorization` (and every other carrier the contract governs,
+/// `busbar_contract::abi::host::conn::connector::NEVER_KEPT`), sent with a canary value, never reach
+/// the far end; the caller's other fields still go out.
+#[test]
+fn red_a_same_dialect_route_forwards_no_caller_credential() {
+    // The carriers no dialect's table governs, which every same-dialect route must still drop.
+    let ungoverned = [
+        ("Cookie", "session=CANARY-cookie"),
+        ("Proxy-Authorization", "Basic CANARY-proxy-authorization"),
+        ("x-amz-security-token", "CANARY-x-amz-security-token"),
+        ("X-Client-Trace", "kept"),
+    ];
+    for (target, body, model, own) in [
+        (
+            "/v1/messages",
+            r#"{"model":"claude","max_tokens":5,"messages":[]}"#,
+            "claude",
+            ("x-api-key", "CANARY-x-api-key"),
+        ),
+        (
+            "/v1/chat/completions",
+            r#"{"model":"gpt","messages":[]}"#,
+            "gpt",
+            ("authorization", "Bearer CANARY-authorization"),
+        ),
+    ] {
+        let mut pairs = vec![("content-type", "application/json"), own];
+        pairs.extend(ungoverned);
+        let h = head(&pairs);
+        let a = arrived(target, &h, body);
+        let r = build(HOST, &a, &h, &shaping(), "p", model).expect("built");
+        for (name, value) in &r.fields {
+            assert!(
+                !value.windows(6).any(|w| w == b"CANARY"),
+                "{target}: the caller's `{name}` reached the far end"
+            );
+        }
+        assert_eq!(
+            field(&r, "x-client-trace"),
+            [b"kept".as_slice()],
+            "{target}"
+        );
+    }
+}
