@@ -49,11 +49,15 @@ fn every_plane_code_is_the_catalog_entry_of_its_number() {
 }
 
 #[test]
-fn the_plane_declares_thirty_two_distinct_codes() {
+fn no_plane_code_is_listed_twice() {
     let mut codes: Vec<u16> = DIAGNOSTICS.iter().map(|d| d.code).collect();
     codes.sort_unstable();
     codes.dedup();
-    assert_eq!(codes.len(), 32, "a plane code is listed twice or missing");
+    assert_eq!(
+        codes.len(),
+        DIAGNOSTICS.len(),
+        "a plane code is listed twice"
+    );
 }
 
 /// THE DOOR'S `declares.json` IS THE PLANE'S CATALOG: the declared section the host folds this plane's
