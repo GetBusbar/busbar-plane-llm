@@ -107,13 +107,6 @@ impl ProtocolWriter for AnthropicWriter {
             }
             // Already an Anthropic-native type (e.g. "invalid_request_error") or an unmapped value:
             // emit it unchanged rather than collapsing every unknown into one bucket.
-            ERR_TYPE_INVALID_REQUEST
-            | ERR_TYPE_AUTHENTICATION
-            | ERR_TYPE_PERMISSION
-            | ERR_TYPE_NOT_FOUND
-            | ERR_TYPE_RATE_LIMIT
-            | ERR_TYPE_OVERLOADED
-            | ERR_TYPE_TIMEOUT => kind,
             other => other,
         };
         Self::error_envelope(host, anthropic_type, message)

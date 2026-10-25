@@ -773,18 +773,7 @@ impl ProtocolReader for GeminiReader {
                 // already pushed BlockStart(s). Mirror the finishReason path (~793-802) exactly so
                 // the IR stream stays balanced; without this the open BlockStart events never get a
                 // matching BlockStop, producing an unbalanced stream downstream.
-                if state.thinking_block_open {
-                    state.thinking_block_open = false;
-                    out.push(IrStreamEvent::BlockStop { index: 0 });
-                }
-                if state.text_block_open {
-                    state.text_block_open = false;
-                    let ti = state.text_index.take().unwrap_or(0);
-                    out.push(IrStreamEvent::BlockStop { index: ti });
-                }
-                for oai_idx in std::mem::take(&mut state.open_tools) {
-                    out.push(IrStreamEvent::BlockStop { index: oai_idx });
-                }
+                close_open_blocks(state, &mut out);
                 // BILLED COUNTS: an unreadable one REFUSES (#42) — the stream ends in an error.
                 let usage = match read_gemini_usage(data) {
                     Ok(usage) => usage,
@@ -1276,24 +1265,7 @@ impl ProtocolReader for GeminiReader {
                     stop_reason = crate::codec::ir::IrStopReason::ToolUse;
                 }
 
-                // Close a still-open thinking block first (a thinking-only stream never opens a
-                // text block, so the finish path is the only closer).
-                if state.thinking_block_open {
-                    state.thinking_block_open = false;
-                    out.push(IrStreamEvent::BlockStop { index: 0 });
-                }
-                // Close text block next if open, at the index it actually claimed (not a hardcoded
-                // 0 — a thinking block or tool may have taken 0 ahead of it).
-                if state.text_block_open {
-                    state.text_block_open = false;
-                    let ti = state.text_index.take().unwrap_or(0);
-                    out.push(IrStreamEvent::BlockStop { index: ti });
-                }
-
-                // Close tools in ascending order (track via open_tools)
-                for oai_idx in std::mem::take(&mut state.open_tools) {
-                    out.push(IrStreamEvent::BlockStop { index: oai_idx });
-                }
+                close_open_blocks(state, &mut out);
 
                 // Parse usageMetadata if present. BILLED COUNTS: absent is zero, an unreadable one
                 // REFUSES (#42) — the stream ends in an error instead of ledgering zero tokens.
@@ -1687,6 +1659,28 @@ impl ProtocolReader for GeminiReader {
 
     fn unread(&self) -> &'static [&'static str] {
         super::UNREAD
+    }
+}
+
+/// Close every block still open on the stream, in order: a still-open thinking block first (a
+/// thinking-only stream never opens a text block, so a terminal path is the only closer), then the
+/// text block at the index it actually claimed (not a hardcoded 0 — a thinking block or tool may
+/// have taken 0 ahead of it), then the tools in ascending order (tracked via `open_tools`).
+fn close_open_blocks(
+    state: &mut crate::codec::ir::StreamDecodeState,
+    out: &mut Vec<IrStreamEvent>,
+) {
+    if state.thinking_block_open {
+        state.thinking_block_open = false;
+        out.push(IrStreamEvent::BlockStop { index: 0 });
+    }
+    if state.text_block_open {
+        state.text_block_open = false;
+        let ti = state.text_index.take().unwrap_or(0);
+        out.push(IrStreamEvent::BlockStop { index: ti });
+    }
+    for oai_idx in std::mem::take(&mut state.open_tools) {
+        out.push(IrStreamEvent::BlockStop { index: oai_idx });
     }
 }
 

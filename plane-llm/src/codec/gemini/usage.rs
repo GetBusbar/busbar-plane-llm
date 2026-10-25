@@ -14,7 +14,7 @@ use crate::codec::usage_count::{read_usage, CountRead, CountSlot, UsageCount};
 /// (Google's own `totalTokenCount` is prompt + candidates + thoughts), so it is added to
 /// `output_tokens` — what `output_tokens` means for every other provider — and recorded as the
 /// reasoning sub-bucket; the Gemini writer writes the whole output as `candidatesTokenCount`, as
-/// 1.5.5 did (`insert_gemini_output_counts`). The AUDIO entries of
+/// 1.5.5 did (`gemini_usage_metadata`). The AUDIO entries of
 /// the per-modality lists are attribution slices (GEM-12).
 ///
 /// THE LEDGER RECORDS EXACTLY WHAT GOOGLE REPORTS (owner 2026-10-02: ledger what the plane

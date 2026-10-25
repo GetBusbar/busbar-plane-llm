@@ -793,9 +793,6 @@ const STATUS_HTTP: &[(&str, u16)] = &[
     (GRPC_DEADLINE_EXCEEDED, 504),
 ];
 
-/// Busbar/Anthropic internal error kind for an overloaded upstream (maps to GRPC_UNAVAILABLE).
-const ERR_TYPE_OVERLOADED: &str = busbar_contract::protocol::ERR_TYPE_OVERLOADED;
-
 // ── ErrorInfo tokens ──────────────────────────────────────────────────────────
 /// The machine-readable `reason` value carried in `google.rpc.ErrorInfo` for an invalid API key.
 const GEMINI_ERROR_REASON_API_KEY_INVALID: &str = "API_KEY_INVALID";
