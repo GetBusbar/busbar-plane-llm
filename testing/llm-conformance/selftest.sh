@@ -433,6 +433,49 @@ else
   say FAIL "(v5) widened ping rc=$rc: $(fail_rows "$W/v5")"
 fi
 RUN_ARGS=""
+# (w) A caller that asked to stream, answered one whole body by its far end (`ok_stream_whole_answer`),
+# is judged on what it was ANSWERED WITH: busbar re-framing it as the caller's own stream is judged event
+# by event, and is not "a non-stream request answered with a stream". (w2) The same cell with a corrupt
+# event is still RED: accepting the stream never meant not reading it.
+whole_cell() {  # whole_cell <case> <python replacing text in body s, or ''>
+  local d="$W/$1-rec"
+  cp -R "$FIX3" "$d"
+  python3 - "$d" "$2" <<'PY'
+import os, sys
+d, code = sys.argv[1], sys.argv[2]
+old, new = "ok_stream", "ok_stream_whole_answer"
+for root, dirs, files in os.walk(d, topdown=False):
+    for n in files + dirs:
+        if old in n and new not in n:
+            os.rename(os.path.join(root, n), os.path.join(root, n.replace(old, new)))
+for root, _, files in os.walk(d):
+    for n in files:
+        p = os.path.join(root, n)
+        if n in ("cells.json", "ledger.tsv") or n.endswith(".json"):
+            t = open(p).read()
+            if old in t and new not in t:
+                open(p, "w").write(t.replace(old, new))
+if code:
+    p = os.path.join(d, "raw", "llm__anthropic__openai__request__ok_stream_whole_answer", "body")
+    s = open(p).read(); n = {"s": s}; exec(code, n)
+    assert n["s"] != s, "mutation changed nothing"
+    open(p, "w").write(n["s"])
+PY
+}
+whole_cell w ""
+rc="$(run "$W/w-rec" "$W/w")"
+if [ "$rc" = 0 ] && [ "$(count "$W/w" FAIL)" = 0 ] && [ "$(count "$W/w" SKIP)" = 0 ] && [ "$(count "$W/w" PASS)" = 3 ]; then
+  say PASS "(w) a stream-intent cell answered with a valid stream -> GREEN, judged event by event"
+else
+  say FAIL "(w) whole-answer stream rc=$rc pass=$(count "$W/w" PASS) fail=$(count "$W/w" FAIL): $(fail_rows "$W/w")"
+fi
+whole_cell w2 's = s.replace("event: ping\ndata: {\"type\":\"ping\"}", "event: keepalive\ndata: {\"type\":\"keepalive\"}")'
+rc="$(run "$W/w2-rec" "$W/w2")"
+if [ "$rc" != 0 ] && [ "$(count "$W/w2" FAIL)" = 1 ] && grep -q "'keepalive' is not one of" "$W/w2/ledger.tsv"; then
+  say PASS "(w2) the same cell with an undocumented event -> RED, the stream is still read"
+else
+  say FAIL "(w2) corrupted whole-answer stream rc=$rc: $(fail_rows "$W/w2")"
+fi
 
 # ── STREAMS THAT FAIL OR END EARLY (stream_upstream_error, stream_upstream_cut) ─────────────────
 # The mock's in-band failure for each dialect, as a same-dialect relay hands it on, and a stream the

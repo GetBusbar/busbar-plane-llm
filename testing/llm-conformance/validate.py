@@ -104,6 +104,12 @@ STREAM_ERROR_ENVELOPE = {"openai": "#/components/schemas/ErrorResponse",
 # The outcomes whose request asks for a stream and whose answer is one: the happy stream, a stream
 # the upstream fails part way through (an in-band error), and one it cuts after the first event.
 STREAM_OUTCOMES = {"ok_stream", "stream_upstream_error", "stream_upstream_cut"}
+# A caller that ASKED to stream (stream:true, or the stream path) whose far end answered one whole body.
+# Either answer is judged against its own schema: a stream (busbar re-framing the whole body into the
+# caller's own stream) is judged event by event, and a whole body (a same-dialect relay of what the far end
+# said) as the response object. What is NOT accepted is the stream being unjudged: the `non-stream
+# request answered with a stream` rule must not fire on a request that asked for one.
+STREAM_INTENT_EITHER = {"ok_stream_whole_answer"}
 
 # Per-dialect schema addresses. Error schemas for a given status are derived from the OpenAPI path
 # item where the spec declares them (see error_schema_for); `error` here is the fallback envelope.
@@ -379,6 +385,9 @@ class Violation:
 # the file counted as a gap and checked by nothing (the three gemini-vertex-* entries did exactly
 # that: they named rows of a hand-copied fixture no gate runs). All are load-time errors, not warnings.
 PRODUCTION_CELLS = os.path.join(REPO, "testing", "shadow-oracle", "cells.json")
+if not os.path.exists(PRODUCTION_CELLS) and os.environ.get("BUSBAR_CHECKOUT"):
+    # busbar owns the cell universe; a plugin repo reads it from its checkout at the pin.
+    PRODUCTION_CELLS = os.path.join(os.environ["BUSBAR_CHECKOUT"], "testing", "shadow-oracle", "cells.json")
 
 
 class NamedGaps:
@@ -979,7 +988,7 @@ class Judge:
             if want_stream and ct != stream_ct:
                 out.append(Violation("/", "stream.content-type", f"stream=true request answered with content-type '{ct or '(none)'}'; the spec streams as {stream_ct}"))
             if ct == stream_ct:
-                if not want_stream:
+                if not want_stream and outcome not in STREAM_INTENT_EITHER:
                     out.append(Violation("/", "content-type", f"non-stream request answered with a {ct} stream"))
                 if cfg["stream_kind"] == "sse":
                     self.judge_sse(dialect, body_bytes, out)
@@ -1231,7 +1240,10 @@ def main():
         dialect, outcome = c["ingress_dialect"], c["outcome"]
         pd = per_dialect.setdefault(dialect, dict(cells=0, request=dict(PASS=0, FAIL=0, SKIP=0), response=dict(PASS=0, FAIL=0, SKIP=0)))
         rec_status = rec.ledger.get(cid)
-        cell = rec.cell(safe) if safe in known else None
+        # The recorder writes the normalized cell file with '@' (a cell's variant marker) as '_', while
+        # raw/<cell>/ keeps the '@': find the cell by either spelling, read raw by the id's own.
+        cfile = safe if safe in known else safe.replace("@", "_")
+        cell = rec.cell(cfile) if cfile in known else None
         if cell is None:
             why = f"recorder: {rec_status[0]} {rec_status[1][:120]}" if rec_status else "cell not in the recording"
             for d in ("request", "response"):
