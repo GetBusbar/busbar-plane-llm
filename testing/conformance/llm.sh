@@ -177,7 +177,7 @@ if other:
     problems.append(f"{len(other)} row(s) with an unknown status")
 gate = [r for r in rows if r[0] == "gate|llm-conformance|named-gaps"]
 if not gate or gate[0][1] != "PASS":
-    problems.append("the named-gaps reconciliation did not pass: " + (gate[0][3] if gate and len(gate) > 3 else "no row"))
+    problems.append("the named-gaps reconciliation did not pass: " + (gate[0][3] if gate and len(gate[0]) > 3 else "no row"))
 if os.path.exists(os.path.join(OUT, "stale-gaps.txt")) and os.path.getsize(os.path.join(OUT, "stale-gaps.txt")):
     problems.append("named-gaps.json has stale entries")
 if problems:
