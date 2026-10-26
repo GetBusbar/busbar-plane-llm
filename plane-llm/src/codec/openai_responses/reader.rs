@@ -865,9 +865,6 @@ impl ProtocolReader for ResponsesReader {
                                 });
                             }
                         }
-                    } else if item_obj.get(keys::TYPE).and_then(|t| t.as_str())
-                        == Some(ITEM_TYPE_MESSAGE)
-                    {
                     }
                 }
             }
@@ -1411,14 +1408,8 @@ impl ProtocolReader for ResponsesReader {
                     // body-present `incomplete`/no-details precedent above and the non-streaming
                     // `read_response`). Only a `completed` event maps to end_turn. (`failed` is
                     // handled by the branch above; this else covers `completed`/`incomplete`.)
-                    let stop_reason = match event_type {
-                        EVT_RESPONSE_COMPLETED => Some(crate::codec::ir::IrStopReason::EndTurn),
-                        EVT_RESPONSE_INCOMPLETE => None,
-                        // No other event_type reaches this arm (the outer match guards the set and
-                        // `response.failed` is handled above), so anything else is an unrecognized
-                        // terminal with no specific reason.
-                        _ => None,
-                    };
+                    let stop_reason = (event_type == EVT_RESPONSE_COMPLETED)
+                        .then_some(crate::codec::ir::IrStopReason::EndTurn);
                     let usage = crate::codec::ir::IrUsage {
                         input_tokens: 0,
                         output_tokens: 0,

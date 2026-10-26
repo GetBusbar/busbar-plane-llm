@@ -62,7 +62,6 @@ pub struct TranscriptionReq {
     pub prompt: Option<String>,
     pub response_format: Option<String>, // json/text/srt/verbose_json/vtt/diarized_json
     pub temperature: Option<f32>,
-    pub timestamp_granularities: Vec<TimestampGranularity>,
     pub stream: bool,
     pub extra: SourceScopedExtra,
 }

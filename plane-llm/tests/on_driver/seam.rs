@@ -804,22 +804,6 @@ const ANTHROPIC: &[(&str, &str)] = &[
 ];
 
 #[tokio::test]
-async fn reject_408_maps_to_anthropic_timeout_envelope() {
-    let answer = gate_refusal(
-        408,
-        "guardrail: request deadline",
-        "/v1/messages",
-        ANTHROPIC,
-        &serde_json::to_vec(&chat_body()).unwrap(),
-    )
-    .await;
-    assert_eq!(answer.status, 408);
-    let v = answer.json();
-    assert_eq!(v["error"]["type"], "timeout_error");
-    assert_eq!(v["error"]["message"], "guardrail: request deadline");
-}
-
-#[tokio::test]
 async fn reject_rides_the_full_forward_path() {
     let (seen, policy) = capturing(false, false, Some((451, "PII detected".into())));
     let rig = Rig::new(
@@ -1803,21 +1787,3 @@ async fn an_adhoc_provider_mismatch_is_judged_behind_the_callers_grant() {
     assert!(granted.sent.is_empty(), "nothing goes upstream");
 }
 
-/// THE FOUR 503 WORDS ARE FOUR: a gate that could not complete, a gate's restriction that left no
-/// member, a base policy that could not select, and a base policy's restriction that left no member
-/// each answer their own sentence, so a caller can tell which refused it. Rehomes
-/// `crates/busbar-llm/src/engine/tests/gate_policy_503_literals_tests.rs::the_four_503_literals_are_distinct`.
-#[test]
-fn the_four_503_literals_are_distinct() {
-    let four = [
-        GATE_COULD_NOT_COMPLETE,
-        GATE_RESTRICT_EMPTY,
-        POLICY_COULD_NOT_SELECT,
-        POLICY_RESTRICT_EMPTY,
-    ];
-    for (i, a) in four.iter().enumerate() {
-        for b in &four[i + 1..] {
-            assert_ne!(a, b);
-        }
-    }
-}

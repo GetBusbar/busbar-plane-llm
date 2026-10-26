@@ -41,7 +41,6 @@ fn the_constants_are_the_fixture_constants() {
         c["SSE_DONE_FRAME"].as_str().map(str::as_bytes),
         Some(SSE_DONE_FRAME)
     );
-    assert_eq!(c["HDR_AUTHORIZATION"], HDR_AUTHORIZATION);
     assert_eq!(
         c["BASE62_ALPHABET"].as_str().map(str::as_bytes),
         Some(&BASE62_ALPHABET[..])

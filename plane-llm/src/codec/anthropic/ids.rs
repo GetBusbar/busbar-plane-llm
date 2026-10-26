@@ -107,14 +107,8 @@ pub(super) fn fill_base62(
     'outer: while filled < len {
         let mut batch = [0u8; 32];
         let batch = &mut batch[..len];
-        // Draw from the thread-local OS-entropy pool (same OS-CSPRNG bytes, syscall amortised across
-        // ~130 ids per `getentropy` instead of one syscall per id — the whole `rb_finish` cost on the
-        // anthropic-ingress hot path). Same false-on-CSPRNG-failure contract as the host entropy source.
-        // `super::super::synth_rng` (not `crate::codec::`) so this resolves in BOTH the native busbar-llm
-        // build (`crate::codec::synth_rng`) and the `#[path]` dual-compile into busbar-core
-        // (`crate::codec::proto::synth_rng`), matching the `super::super::usage_tail` convention the readers
-        // use (this file sits one module below the dialect root).
-        if !super::super::synth_rng::fill_entropy(host, batch) {
+        // Draw from the host's entropy source; false on CSPRNG failure.
+        if !host.fill_entropy(batch) {
             return false;
         }
         for &byte in batch.iter() {

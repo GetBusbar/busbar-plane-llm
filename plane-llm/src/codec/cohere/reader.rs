@@ -792,19 +792,12 @@ impl ProtocolReader for CohereReader {
             // `type`) streams into the open thinking block — opening one if the upstream skipped the
             // `content-start` — never into the text block (COH-02).
             ET_CONTENT_DELTA
-                if data
+                if let Some(text) = data
                     .get(keys::DELTA)
                     .and_then(|d| d.get(keys::MESSAGE))
                     .and_then(|m| m.get(keys::CONTENT))
-                    .and_then(cohere_thinking_part)
-                    .is_some() =>
+                    .and_then(cohere_thinking_part) =>
             {
-                let text = data
-                    .get(keys::DELTA)
-                    .and_then(|d| d.get(keys::MESSAGE))
-                    .and_then(|m| m.get(keys::CONTENT))
-                    .and_then(cohere_thinking_part)
-                    .unwrap_or("");
                 let index = match cohere_open_thinking_index(state) {
                     Some(index) => Some(index),
                     None => {
@@ -1079,7 +1072,7 @@ impl ProtocolReader for CohereReader {
             // its end. Instead the IR index is ASSIGNED ONCE at tool-call-start by
             // insertion order (`cohere_assign_tool_ir_index`), recorded in `state.tool_ir_index`
             // keyed by frame index (membership also tracked in `state.open_tools`), and looked up
-            // VERBATIM on delta/end (`cohere_lookup_tool_ir_index`) via an O(log n) `BTreeMap`
+            // VERBATIM on delta/end (`state.tool_ir_index`) via an O(log n) `BTreeMap`
             // lookup rather than a linear scan. Neither map is ever shrunk, so the assignment
             // survives the stream and start/delta/end for a tool all resolve to the same IR index
             // regardless of wire-index ordering.
@@ -1145,10 +1138,10 @@ impl ProtocolReader for CohereReader {
                 let frame_idx = clamp_frame_index(data);
                 // Only forward deltas for a frame we actually tracked (and therefore opened a
                 // BlockStart for); resolve its immutable, ASSIGNED IR index. A frame past
-                // MAX_TRACKED_TOOL_FRAMES was never recorded and `cohere_lookup_tool_ir_index`
+                // MAX_TRACKED_TOOL_FRAMES was never recorded and its `state.tool_ir_index` lookup
                 // returns None, so its delta is dropped rather than corrupting another block's
                 // arguments. Mirrors the tool-call-end guard.
-                if let Some(ir_idx) = cohere_lookup_tool_ir_index(state, frame_idx) {
+                if let Some(ir_idx) = state.tool_ir_index.get(&frame_idx).copied() {
                     if let Some(args) = data
                         .get(keys::DELTA)
                         .and_then(|d| d.get(keys::MESSAGE))
@@ -1171,7 +1164,7 @@ impl ProtocolReader for CohereReader {
                 // do NOT remove the frame's entry from `open_tools`/`tool_ir_index` — the recorded
                 // entry is what keeps each tool's IR index stable for the stream's lifetime, and
                 // removing it would let a later tool reuse a freed insertion slot.
-                if let Some(ir_idx) = cohere_lookup_tool_ir_index(state, frame_idx) {
+                if let Some(ir_idx) = state.tool_ir_index.get(&frame_idx).copied() {
                     out.push(IrStreamEvent::BlockStop { index: ir_idx });
                 }
             }
@@ -1234,10 +1227,6 @@ impl ProtocolReader for CohereReader {
 
     fn request_map(&self) -> crate::codec::carry::Table {
         super::map::REQUEST
-    }
-
-    fn parked(&self) -> &'static [crate::codec::drops::Parked] {
-        super::PARKED
     }
 
     fn request_blocks(&self) -> &'static [crate::codec::drops::Blocks] {

@@ -89,15 +89,6 @@ fn responses_input_file_degrades_with_warn_not_silent_drop() {
 #[test]
 fn write_request_drops_top_k_with_warn() {
     let mk = |top_k: Option<u32>| crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::Text {
@@ -107,30 +98,10 @@ fn write_request_drops_top_k_with_warn() {
                 refusal: false,
             }],
         }],
-        tools: vec![],
         max_tokens: Some(64),
-        temperature: None,
         top_p: Some(0.9),
         top_k,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
 
     let writer = ResponsesWriter;
@@ -151,20 +122,12 @@ fn write_request_drops_top_k_with_warn() {
 #[test]
 fn test_write_request() {
     let ir = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
         system: vec![crate::codec::ir::IrBlock::Text {
             text: "You are helpful.".to_string(),
             cache_control: None,
             citations: Vec::new(),
             refusal: false,
         }],
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::User,
@@ -209,34 +172,12 @@ fn test_write_request() {
                 "required": ["city"]
             }),
             cache_control: None,
-
             hosted: None,
-
             strict: None,
         }],
         max_tokens: Some(1024),
         temperature: Some(0.7),
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
 
     let writer = ResponsesWriter;
@@ -428,20 +369,12 @@ fn test_read_request_bare_string_content_survives() {
 #[test]
 fn test_roundtrip_identity() {
     let ir = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
         system: vec![crate::codec::ir::IrBlock::Text {
             text: "You are helpful.".to_string(),
             cache_control: None,
             citations: Vec::new(),
             refusal: false,
         }],
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::User,
@@ -462,30 +395,9 @@ fn test_roundtrip_identity() {
                 }],
             },
         ],
-        tools: Vec::new(),
         max_tokens: Some(500),
         temperature: Some(0.7),
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
 
     let reader = ResponsesReader;
@@ -1770,15 +1682,6 @@ fn test_typed_item_with_role_not_duplicated() {
 #[test]
 fn test_tool_only_assistant_turn_no_empty_message_wrapper() {
     let ir = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Assistant,
             content: vec![crate::codec::ir::IrBlock::ToolUse {
@@ -1789,30 +1692,7 @@ fn test_tool_only_assistant_turn_no_empty_message_wrapper() {
                 cache_control: None,
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let writer = ResponsesWriter;
     let json = writer.write_request(crate::codec::test_host::HOST, &ir);
@@ -1848,15 +1728,6 @@ fn test_tool_only_assistant_turn_no_empty_message_wrapper() {
 #[test]
 fn test_assistant_text_then_tool_call_order() {
     let ir = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Assistant,
             content: vec![
@@ -1875,30 +1746,7 @@ fn test_assistant_text_then_tool_call_order() {
                 },
             ],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let writer = ResponsesWriter;
     let json = writer.write_request(crate::codec::test_host::HOST, &ir);
@@ -2206,43 +2054,11 @@ fn write_request_tool_result_multi_text_concatenates_without_separator() {
 
     // Tool-role path.
     let req = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Tool,
             content: vec![multi()],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let out = writer.write_request(crate::codec::test_host::HOST, &req);
     let item = out["input"]
@@ -2257,43 +2073,11 @@ fn write_request_tool_result_multi_text_concatenates_without_separator() {
 
     // Assistant-role inline tool_result path.
     let req = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Assistant,
             content: vec![multi()],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let out = writer.write_request(crate::codec::test_host::HOST, &req);
     let item = out["input"]
@@ -2513,15 +2297,6 @@ fn test_input_image_roundtrip_lossless() {
     let payload = "QUJDMTIzKz0=";
     let media_type = "image/jpeg";
     let ir = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::Image {
@@ -2533,30 +2308,7 @@ fn test_input_image_roundtrip_lossless() {
                 detail: None,
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let writer = ResponsesWriter;
     let reader = ResponsesReader;
@@ -2603,15 +2355,6 @@ fn test_input_image_https_url_sentinel_roundtrip() {
 
     // Round-trip through the writer reconstructs the exact original image_url.
     let ir = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::Image {
@@ -2620,30 +2363,7 @@ fn test_input_image_https_url_sentinel_roundtrip() {
                 detail: None,
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let writer = ResponsesWriter;
     let json = writer.write_request(crate::codec::test_host::HOST, &ir);
@@ -2658,15 +2378,6 @@ fn test_input_image_https_url_sentinel_roundtrip() {
 #[test]
 fn test_write_request_emits_stream() {
     let make = |stream: bool| crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::Text {
@@ -2676,30 +2387,8 @@ fn test_write_request_emits_stream() {
                 refusal: false,
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
         stream,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let writer = ResponsesWriter;
     assert_eq!(

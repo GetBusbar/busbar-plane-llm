@@ -2,16 +2,10 @@ use super::*;
 use crate::codec::ir::{IrBlockMeta, IrStreamEvent};
 use busbar_contract::http::StatusCode;
 
-/// STRUCTURAL ROUND-TRIP MATRIX (the test class that would have caught the cohere object-shape
-/// and openai usage bugs): for EVERY protocol, writing a canonical IR stream through that
-/// protocol's WRITER and reading the frames back through its OWN READER must preserve the streamed
-/// text and a terminal signal. A writer that emits a shape its own reader can't decode (the exact
-/// cohere content-delta defect: text round-tripped to ZERO events) fails here.
-#[test]
-fn test_all_protocols_stream_write_read_roundtrip_preserves_text_and_terminal() {
-    let text = "Hello, world";
-    // Canonical IR stream: start → open text block → text delta → close → terminal delta → stop.
-    let events = [
+/// The canonical IR text stream: start → open text block → `text` delta → close → terminal delta
+/// (EndTurn, 7 in / 3 out) → stop.
+fn canonical_text_events(text: &str) -> [IrStreamEvent; 6] {
+    [
         crate::codec::ir::IrStreamEvent::MessageStart {
             role: crate::codec::ir::IrRole::Assistant,
             usage: None,
@@ -42,7 +36,19 @@ fn test_all_protocols_stream_write_read_roundtrip_preserves_text_and_terminal() 
             stop_detail: None,
         },
         crate::codec::ir::IrStreamEvent::MessageStop,
-    ];
+    ]
+}
+
+/// STRUCTURAL ROUND-TRIP MATRIX (the test class that would have caught the cohere object-shape
+/// and openai usage bugs): for EVERY protocol, writing a canonical IR stream through that
+/// protocol's WRITER and reading the frames back through its OWN READER must preserve the streamed
+/// text and a terminal signal. A writer that emits a shape its own reader can't decode (the exact
+/// cohere content-delta defect: text round-tripped to ZERO events) fails here.
+#[test]
+fn test_all_protocols_stream_write_read_roundtrip_preserves_text_and_terminal() {
+    let text = "Hello, world";
+    // Canonical IR stream: start → open text block → text delta → close → terminal delta → stop.
+    let events = canonical_text_events(text);
 
     for proto in [
         Protocol::anthropic(),
@@ -52,7 +58,7 @@ fn test_all_protocols_stream_write_read_roundtrip_preserves_text_and_terminal() 
         Protocol::responses(),
         Protocol::cohere(),
     ] {
-        let name = proto.name().to_string();
+        let name = proto.name_static().to_string();
         // WRITE: each IR event → its native (event_type, json) frame (skip events a protocol
         // intentionally has no frame for).
         let frames: Vec<(String, serde_json::Value)> = events
@@ -296,38 +302,7 @@ fn decode_wire_frames(is_eventstream: bool, bytes: &[u8]) -> Vec<(String, serde_
 #[test]
 fn test_all_protocol_pairs_stream_translate_roundtrip_preserves_text_and_terminal() {
     let text = "Hello, world";
-    let events = [
-        crate::codec::ir::IrStreamEvent::MessageStart {
-            role: crate::codec::ir::IrRole::Assistant,
-            usage: None,
-            id: None,
-            created: None,
-            model: Some("test-model".to_string()),
-        },
-        crate::codec::ir::IrStreamEvent::BlockStart {
-            index: 0,
-            block: crate::codec::ir::IrBlockMeta::Text,
-            refusal: false,
-        },
-        crate::codec::ir::IrStreamEvent::BlockDelta {
-            index: 0,
-            delta: crate::codec::ir::IrDelta::TextDelta(text.to_string()),
-        },
-        crate::codec::ir::IrStreamEvent::BlockStop { index: 0 },
-        crate::codec::ir::IrStreamEvent::MessageDelta {
-            stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
-            stop_sequence: None,
-            usage: crate::codec::ir::IrUsage {
-                input_tokens: 7,
-                output_tokens: 3,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-                detail: crate::codec::ir::IrUsageDetail::default(),
-            },
-            stop_detail: None,
-        },
-        crate::codec::ir::IrStreamEvent::MessageStop,
-    ];
+    let events = canonical_text_events(text);
 
     let protocol_names = [
         "anthropic",
@@ -471,7 +446,7 @@ fn test_all_protocols_nonstream_write_read_roundtrip_preserves_text() {
         Protocol::responses(),
         Protocol::cohere(),
     ] {
-        let name = proto.name().to_string();
+        let name = proto.name_static().to_string();
         let resp = crate::codec::ir::IrResponse {
             logprobs: Vec::new(),
             role: crate::codec::ir::IrRole::Assistant,
@@ -4664,7 +4639,7 @@ fn test_gemini_roundtrip_identity() {
 #[test]
 fn test_gemini_protocol_resolves() {
     let proto = Protocol::gemini();
-    assert_eq!(proto.name(), "gemini");
+    assert_eq!(proto.name_static(), "gemini");
 
     let reader = proto.reader();
     let writer = proto.writer();
@@ -4738,7 +4713,7 @@ fn test_bedrock_and_responses_register() {
 
     // Responses: bearer auth + the /v1/responses egress path (fully usable).
     let responses = Protocol::responses();
-    assert_eq!(responses.name(), "responses");
+    assert_eq!(responses.name_static(), "responses");
     assert_eq!(responses.writer().upstream_path(), "/v1/responses");
     // Auth read off THE RESPONSES DECLARATION. `bearer_auth_headers("responses", …)` uses its first
     // argument only for a diagnostic string and returns `authorization: Bearer {key}`
@@ -4782,7 +4757,7 @@ fn test_bedrock_and_responses_register() {
     // Bedrock: model-in-path Converse URL + native SigV4 auth + ConverseStream
     // event-stream decoding. Fully first-class.
     let bedrock = Protocol::bedrock();
-    assert_eq!(bedrock.name(), "bedrock");
+    assert_eq!(bedrock.name_static(), "bedrock");
     assert_eq!(
         bedrock.writer().upstream_path_for("anthropic.claude-3"),
         "/model/anthropic.claude-3/converse"

@@ -13,13 +13,13 @@
 
 use busbar_contract::abi::plane::{class_of_word, reason_of, RefusalClass};
 use busbar_contract::protocol::{
-    ProtocolDecl, APPLICATION_JSON, KIND_API_ERROR, KIND_AUTHENTICATION, KIND_INSUFFICIENT_QUOTA,
+    APPLICATION_JSON, KIND_API_ERROR, KIND_AUTHENTICATION, KIND_INSUFFICIENT_QUOTA,
     KIND_INVALID_REQUEST, KIND_NOT_FOUND, KIND_OVERLOADED, KIND_PERMISSION, KIND_RATE_LIMIT,
     KIND_REQUEST_TOO_LARGE, KIND_TIMEOUT,
 };
 use serde_json::Value;
 
-use crate::codec::DECLS;
+use super::decl;
 
 /// What the caller reads.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,10 +30,6 @@ pub struct Rendered {
     pub fields: Vec<(String, Vec<u8>)>,
     /// The body.
     pub body: Vec<u8>,
-}
-
-fn decl(name: &str) -> Option<&'static ProtocolDecl> {
-    DECLS.iter().copied().find(|d| d.name == name)
 }
 
 /// The agnostic envelope: `{"error": {"message", "type"}}`.

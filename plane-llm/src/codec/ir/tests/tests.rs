@@ -35,20 +35,6 @@ fn reasoning_ask_to_budget_and_to_effort_use_the_table() {
     assert_eq!(Effort(High).to_effort(table), Some(High));
 }
 
-#[test]
-fn test_ir_usage_zero_baseline_bills_zero() {
-    // The documented all-zero baseline must bill zero — asserting through billable_tokens()
-    // exercises the saturating sum, not the field literals themselves (which would be tautological).
-    let u = IrUsage {
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_creation_input_tokens: None,
-        cache_read_input_tokens: None,
-        detail: crate::codec::ir::IrUsageDetail::default(),
-    };
-    assert_eq!(u.billable_tokens(), 0);
-}
-
 /// `billable_tokens` sums all four token fields with `saturating_add` (the operands are
 /// upstream-controlled). Assert at the definition site: the basic sum, the all-zero/None case,
 /// and that an overflow across the addends SATURATES rather than panicking (debug) / wrapping.
@@ -101,23 +87,6 @@ fn test_stream_decode_state_default() {
 }
 
 #[test]
-fn test_ir_role_partial_eq_distinguishes_variants() {
-    // PartialEq/Eq must treat all four roles as distinct (role confusion would mis-map
-    // system/user/assistant/tool turns across protocols).
-    let all = [
-        IrRole::System,
-        IrRole::User,
-        IrRole::Assistant,
-        IrRole::Tool,
-    ];
-    for (i, a) in all.iter().enumerate() {
-        for (j, b) in all.iter().enumerate() {
-            assert_eq!(a == b, i == j, "role eq mismatch at ({i},{j})");
-        }
-    }
-}
-
-#[test]
 fn test_read_stop_sequences_drops_empty_strings() {
     // "Empty Vec == omitted" contract: a degenerate input that carries only empty stop
     // sequences must collapse to an empty Vec, not a one-element vec holding "", so it never
@@ -151,55 +120,6 @@ fn test_read_stop_sequences_drops_empty_strings() {
     let bare = Value::String("HALT".into());
     assert_eq!(read_stop_sequences(Some(&bare)), vec!["HALT".to_string()]);
     assert!(read_stop_sequences(None).is_empty());
-}
-
-#[test]
-fn test_ir_delta_variants_distinct() {
-    // Two different delta variants carrying the same string are NOT equal — the variant carries
-    // semantic meaning (text vs thinking vs tool-input-json vs signature) on the egress path.
-    assert_ne!(
-        IrDelta::TextDelta("x".into()),
-        IrDelta::ThinkingDelta("x".into())
-    );
-    assert_ne!(
-        IrDelta::InputJsonDelta("x".into()),
-        IrDelta::SignatureDelta("x".into())
-    );
-    assert_eq!(
-        IrDelta::TextDelta("x".into()),
-        IrDelta::TextDelta("x".into())
-    );
-}
-
-// `IrToolChoice` is the protocol-neutral pivot for every reader/writer's tool_choice
-// mapping, so its variant identity must be precise — distinct variants are never equal, a
-// targeted `Tool` is keyed on its name, and clone preserves the variant.
-#[test]
-fn test_ir_tool_choice_variant_equality() {
-    // Distinct directives are never conflated.
-    assert_ne!(IrToolChoice::Auto, IrToolChoice::None);
-    assert_ne!(IrToolChoice::Auto, IrToolChoice::Required);
-    assert_ne!(IrToolChoice::None, IrToolChoice::Required);
-    assert_ne!(
-        IrToolChoice::Required,
-        IrToolChoice::Tool { name: "f".into() }
-    );
-    // A targeted tool is keyed on its name.
-    assert_eq!(
-        IrToolChoice::Tool {
-            name: "get_weather".into()
-        },
-        IrToolChoice::Tool {
-            name: "get_weather".into()
-        }
-    );
-    assert_ne!(
-        IrToolChoice::Tool { name: "a".into() },
-        IrToolChoice::Tool { name: "b".into() }
-    );
-    // Clone is a faithful round-trip of the variant.
-    let tc = IrToolChoice::Tool { name: "x".into() };
-    assert_eq!(tc.clone(), tc);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────

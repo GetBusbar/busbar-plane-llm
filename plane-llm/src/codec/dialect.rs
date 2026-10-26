@@ -265,10 +265,6 @@ pub const SSE_DONE_SENTINEL: &str = "[DONE]";
 /// The full framed `data: [DONE]\n\n` bytes emitted on egress. See [`SSE_DONE_SENTINEL`].
 pub const SSE_DONE_FRAME: &[u8] = b"data: [DONE]\n\n";
 
-/// The HTTP `Authorization` header name (lowercase, canonical). Emitted by the bearer/SigV4 auth-header
-/// builders across protocols; named once so no builder re-spells it.
-pub const HDR_AUTHORIZATION: &str = "authorization";
-
 /// Fallback `model` the two bearer-envelope dialects (Chat Completions and Responses, one provider
 /// family) stamp on a cross-protocol answer whose egress supplied none: both published schemas make
 /// `model` a REQUIRED string, so an absent one fails the official SDKs' decoders and is a proxy

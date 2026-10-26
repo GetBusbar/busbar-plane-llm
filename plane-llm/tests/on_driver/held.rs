@@ -19,7 +19,7 @@ use busbar_kernel::config::PolicyOnError;
 use busbar_kernel::hooks::{FallbackHook, ResolvedPolicy};
 use serde_json::{json, Value};
 
-use super::policies::capturing;
+use super::policies::{capturing, RewritingGate};
 use crate::rig::{member, Answered, Hooks, Pool, Rig};
 
 // ── the access amendment ─────────────────────────────────────────────────────────────────────────
@@ -582,31 +582,6 @@ async fn responses_instructions_are_system_and_a_system_item_is_a_turn() {
 
 // ── F25 REHOME: the per-dialect rewrite write-back (coverage map v2) ─────────────────────────────
 
-/// A rw hook answering a fixed rewrite.
-struct FixedRewrite(Vec<Value>);
-
-#[async_trait::async_trait]
-impl RoutingPolicy for FixedRewrite {
-    async fn decide(
-        &self,
-        _: &RoutingRequest<'_>,
-        _: &[Candidate<'_>],
-        _: &RoutingContext<'_>,
-        _: Duration,
-    ) -> PolicyResult {
-        Ok(RoutingDecision::Abstain)
-    }
-    fn name(&self) -> &'static str {
-        "fixed-rewrite"
-    }
-    async fn transform(&self, _: &RoutingRequest<'_>, _: Duration) -> TransformOutcome {
-        TransformOutcome::Rewrite(RewriteReply {
-            messages: self.0.clone(),
-            tools: vec![],
-        })
-    }
-}
-
 /// `v` posted to `path` in a same-dialect pool served by `provider`, under a rw hook answering
 /// `messages`: the body the far end was sent.
 async fn rewritten(path: &str, provider: &'static str, v: Value, messages: Vec<Value>) -> Value {
@@ -617,7 +592,7 @@ async fn rewritten(path: &str, provider: &'static str, v: Value, messages: Vec<V
         },
         None,
         Hooks {
-            rewrites: vec![(Duration::from_millis(500), Arc::new(FixedRewrite(messages)))],
+            rewrites: vec![(Duration::from_millis(500), Arc::new(RewritingGate(messages)))],
             ..Hooks::default()
         },
     );

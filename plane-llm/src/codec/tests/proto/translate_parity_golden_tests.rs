@@ -48,7 +48,7 @@ fn bless() -> bool {
 }
 
 /// Compare `actual` to the committed golden `name`, or rewrite the golden in bless mode.
-fn check_golden(name: &str, actual: &[u8]) {
+pub(super) fn check_golden(name: &str, actual: &[u8]) {
     let path = golden_dir().join(name);
     if bless() {
         std::fs::create_dir_all(golden_dir()).expect("create golden dir");

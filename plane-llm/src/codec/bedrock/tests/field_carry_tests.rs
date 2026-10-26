@@ -326,88 +326,46 @@ fn bedrock_carry_request_additional_model_request_fields() {
     );
 }
 
-/// `bedrock/request/additionalModelResponseFieldPaths` — the array of response paths the caller
-/// wants echoed. No cross-protocol analog; captured into `extra` and re-emitted verbatim.
+/// Bedrock-specific request members with no cross-protocol analog, each captured into `extra` and
+/// re-emitted verbatim on a Bedrock->Bedrock hop:
+/// - `bedrock/request/additionalModelResponseFieldPaths` — the response paths the caller wants echoed.
+/// - `bedrock/request/promptVariables` — prompt-management template variables.
+/// - `bedrock/request/requestMetadata` — the caller's key/value request tags.
+/// - `bedrock/request/performanceConfig` — the latency/cost optimization selector.
 #[test]
-fn bedrock_carry_request_additional_model_response_field_paths() {
+fn bedrock_carry_request_verbatim_extras() {
     let reader = BedrockReader;
     let writer = BedrockWriter;
-    let body = serde_json::json!({
-        "messages": [{"role": "user", "content": [{"text": "hi"}]}],
-        "additionalModelResponseFieldPaths": ["/foo/bar", "/baz"]
-    });
-    let ir = reader.read_request(&body).expect("read");
-    let out = writer.write_request(crate::codec::test_host::HOST, &ir);
-    assert_eq!(
-        out.pointer("/additionalModelResponseFieldPaths"),
-        Some(&serde_json::json!(["/foo/bar", "/baz"])),
-        "additionalModelResponseFieldPaths must round-trip verbatim; got {out}"
-    );
-}
-
-/// `bedrock/request/promptVariables` — prompt-management template variables. Bedrock-specific;
-/// captured into `extra` and re-emitted verbatim.
-#[test]
-fn bedrock_carry_request_prompt_variables() {
-    let reader = BedrockReader;
-    let writer = BedrockWriter;
-    let body = serde_json::json!({
-        "messages": [{"role": "user", "content": [{"text": "hi"}]}],
-        "promptVariables": {"topic": {"text": "weather"}}
-    });
-    let ir = reader.read_request(&body).expect("read");
-    let out = writer.write_request(crate::codec::test_host::HOST, &ir);
-    assert_eq!(
-        out.pointer("/promptVariables/topic/text")
-            .and_then(|v| v.as_str()),
-        Some("weather"),
-        "promptVariables must round-trip verbatim; got {out}"
-    );
-}
-
-/// `bedrock/request/requestMetadata` — the caller's key/value request tags. Bedrock-specific;
-/// captured into `extra` and re-emitted verbatim.
-#[test]
-fn bedrock_carry_request_request_metadata() {
-    let reader = BedrockReader;
-    let writer = BedrockWriter;
-    let body = serde_json::json!({
-        "messages": [{"role": "user", "content": [{"text": "hi"}]}],
-        "requestMetadata": {"team": "search", "env": "prod"}
-    });
-    let ir = reader.read_request(&body).expect("read");
-    let out = writer.write_request(crate::codec::test_host::HOST, &ir);
-    assert_eq!(
-        out.pointer("/requestMetadata/team")
-            .and_then(|v| v.as_str()),
-        Some("search"),
-        "requestMetadata must round-trip verbatim; got {out}"
-    );
-    assert_eq!(
-        out.pointer("/requestMetadata/env").and_then(|v| v.as_str()),
-        Some("prod"),
-        "requestMetadata must round-trip verbatim; got {out}"
-    );
-}
-
-/// `bedrock/request/performanceConfig` — the latency/cost optimization selector. Bedrock-specific;
-/// captured into `extra` and re-emitted verbatim.
-#[test]
-fn bedrock_carry_request_performance_config() {
-    let reader = BedrockReader;
-    let writer = BedrockWriter;
-    let body = serde_json::json!({
-        "messages": [{"role": "user", "content": [{"text": "hi"}]}],
-        "performanceConfig": {"latency": "optimized"}
-    });
-    let ir = reader.read_request(&body).expect("read");
-    let out = writer.write_request(crate::codec::test_host::HOST, &ir);
-    assert_eq!(
-        out.pointer("/performanceConfig/latency")
-            .and_then(|v| v.as_str()),
-        Some("optimized"),
-        "performanceConfig must round-trip verbatim; got {out}"
-    );
+    for (key, value) in [
+        (
+            "additionalModelResponseFieldPaths",
+            serde_json::json!(["/foo/bar", "/baz"]),
+        ),
+        (
+            "promptVariables",
+            serde_json::json!({"topic": {"text": "weather"}}),
+        ),
+        (
+            "requestMetadata",
+            serde_json::json!({"team": "search", "env": "prod"}),
+        ),
+        (
+            "performanceConfig",
+            serde_json::json!({"latency": "optimized"}),
+        ),
+    ] {
+        let mut body = serde_json::json!({
+            "messages": [{"role": "user", "content": [{"text": "hi"}]}]
+        });
+        body[key] = value.clone();
+        let ir = reader.read_request(&body).expect("read");
+        let out = writer.write_request(crate::codec::test_host::HOST, &ir);
+        assert_eq!(
+            out.get(key),
+            Some(&value),
+            "{key} must round-trip verbatim; got {out}"
+        );
+    }
 }
 
 /// `bedrock/request/content[].image.source.s3Location` — an S3-referenced image (no inline bytes).
@@ -793,48 +751,39 @@ fn bedrock_carry_response_trace_documented_drop() {
     }
 }
 
-/// `bedrock/response/additionalModelResponseFields` — model-specific echoed fields with no
-/// neutral-IR carrier. DOCUMENTED cross-protocol drop; the reader warns.
+/// Bedrock response members with no neutral-IR carrier. DOCUMENTED cross-protocol drop; the
+/// reader warns:
+/// - `bedrock/response/additionalModelResponseFields` — model-specific echoed fields.
+/// - `bedrock/response/performanceConfig` — the echoed latency/cost selector.
 #[test]
-fn bedrock_carry_response_additional_model_response_fields_documented_drop() {
+fn bedrock_carry_response_documented_drops() {
     let reader = BedrockReader;
     let writer = BedrockWriter;
-    let body = serde_json::json!({
-        "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
-        "stopReason": "end_turn",
-        "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
-        "additionalModelResponseFields": {"foo": "bar"}
-    });
-    let resp = reader
-        .read_response(crate::codec::test_host::HOST, &body)
-        .expect("read");
-    let out = writer.write_response(crate::codec::test_host::HOST, &resp);
-    assert!(
-        out.pointer("/additionalModelResponseFields").is_none(),
-        "additionalModelResponseFields has no cross-protocol carrier and must drop; got {out}"
-    );
-}
-
-/// `bedrock/response/performanceConfig` — the echoed latency/cost selector with no neutral-IR
-/// carrier. DOCUMENTED cross-protocol drop; the reader warns.
-#[test]
-fn bedrock_carry_response_performance_config_documented_drop() {
-    let reader = BedrockReader;
-    let writer = BedrockWriter;
-    let body = serde_json::json!({
-        "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
-        "stopReason": "end_turn",
-        "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
-        "performanceConfig": {"latency": "optimized"}
-    });
-    let resp = reader
-        .read_response(crate::codec::test_host::HOST, &body)
-        .expect("read");
-    let out = writer.write_response(crate::codec::test_host::HOST, &resp);
-    assert!(
-        out.pointer("/performanceConfig").is_none(),
-        "response performanceConfig has no cross-protocol carrier and must drop; got {out}"
-    );
+    for (key, value) in [
+        (
+            "additionalModelResponseFields",
+            serde_json::json!({"foo": "bar"}),
+        ),
+        (
+            "performanceConfig",
+            serde_json::json!({"latency": "optimized"}),
+        ),
+    ] {
+        let mut body = serde_json::json!({
+            "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2}
+        });
+        body[key] = value;
+        let resp = reader
+            .read_response(crate::codec::test_host::HOST, &body)
+            .expect("read");
+        let out = writer.write_response(crate::codec::test_host::HOST, &resp);
+        assert!(
+            out.get(key).is_none(),
+            "{key} has no cross-protocol carrier and must drop; got {out}"
+        );
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

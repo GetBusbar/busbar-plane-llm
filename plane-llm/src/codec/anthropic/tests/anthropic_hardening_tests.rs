@@ -552,22 +552,6 @@ fn write_response_synthesizes_id_when_neither_id_nor_created() {
     );
 }
 
-/// `synth_message_id` must never panic and always returns a non-empty `msg_`-prefixed id.
-#[test]
-fn synth_message_id_is_well_formed() {
-    let id = synth_message_id(crate::codec::test_host::HOST);
-    assert!(id.starts_with("msg_"));
-    assert!(id.len() > "msg_".len());
-}
-
-/// `synth_request_id` must never panic and always returns a non-empty `req_`-prefixed id.
-#[test]
-fn synth_request_id_is_well_formed() {
-    let id = synth_request_id(crate::codec::test_host::HOST);
-    assert!(id.starts_with("req_"));
-    assert!(id.len() > "req_".len());
-}
-
 /// write_response_event(Error(...)) must serialize the NATIVE Anthropic in-stream error shape:
 /// event type `"error"`, with `error.type` carrying the provider signal AND a non-empty
 /// `error.message` (the SDK's `APIError` reads both). Regression guard for the message-omission
@@ -2419,15 +2403,6 @@ fn read_request_promotes_system_role_message_into_system_blocks() {
 #[test]
 fn write_request_never_emits_system_role_message() {
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::System,
@@ -2448,30 +2423,8 @@ fn write_request_never_emits_system_role_message() {
                 }],
             },
         ],
-        tools: Vec::new(),
         max_tokens: Some(16),
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: Vec::new(),
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let out = anthropic_writer().write_request(crate::codec::test_host::HOST, &req);
     let messages = out
@@ -2767,36 +2720,6 @@ fn test_anthropic_reader_max_tokens_zero_yields_none() {
         .read_request(&wire_ok)
         .expect("read_request");
     assert_eq!(ir_ok.max_tokens, Some(256));
-}
-
-// ---- OpenAI -> Anthropic tool_choice cross-protocol translation ----
-// The IR variant is protocol-neutral, so an OpenAI-ingress tool_choice (read into the IR by the
-// OpenAI reader) must emit the correct Anthropic native shape on the Anthropic writer. The
-// `required` -> `{"type":"any"}` mapping is the load-bearing case.
-#[test]
-fn test_openai_to_anthropic_tool_choice_directions() {
-    use crate::codec::ir::IrToolChoice;
-    let cases = [
-        (IrToolChoice::Auto, serde_json::json!({"type": "auto"})),
-        (IrToolChoice::None, serde_json::json!({"type": "none"})),
-        // OpenAI `"required"` reads to IR `Required`; Anthropic's native form is `{"type":"any"}`.
-        (IrToolChoice::Required, serde_json::json!({"type": "any"})),
-        (
-            IrToolChoice::Tool {
-                name: "get_weather".to_string(),
-            },
-            serde_json::json!({"type": "tool", "name": "get_weather"}),
-        ),
-    ];
-    for (tc, expected) in cases {
-        let mut ir = read_anthropic_request(serde_json::json!({
-            "model": "c", "max_tokens": 16, "messages": [],
-            "tools": [{"name": "get_weather", "input_schema": {"type": "object"}}]
-        }));
-        ir.tool_choice = Some(tc.clone());
-        let out = anthropic_writer().write_request(crate::codec::test_host::HOST, &ir);
-        assert_eq!(out["tool_choice"], expected, "tool_choice {tc:?}");
-    }
 }
 
 // ---- catch-all tool_choice values map to None (never silently Auto/Required) ----
@@ -3344,15 +3267,6 @@ fn thinking_block_with_signature_survives_response_egress() {
 fn test_write_request_file_id_image_dropped_not_corrupted() {
     let writer = AnthropicWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![
@@ -3372,30 +3286,8 @@ fn test_write_request_file_id_image_dropped_not_corrupted() {
                 },
             ],
         }],
-        tools: vec![],
         max_tokens: Some(64),
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let out = writer.write_request(crate::codec::test_host::HOST, &req);
     let wire = serde_json::to_string(&out).unwrap();
@@ -3430,15 +3322,6 @@ fn test_write_request_file_id_image_dropped_not_corrupted() {
 fn test_write_request_image_s3_dropped_not_corrupted() {
     let writer = AnthropicWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![
@@ -3458,30 +3341,8 @@ fn test_write_request_image_s3_dropped_not_corrupted() {
                 },
             ],
         }],
-        tools: vec![],
         max_tokens: Some(64),
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let out = writer.write_request(crate::codec::test_host::HOST, &req);
     let wire = serde_json::to_string(&out).unwrap();

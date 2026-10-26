@@ -225,30 +225,17 @@ impl ProtocolWriter for GeminiWriter {
                         // string) the same way `functionResponse.response` is coerced below. The
                         // call's id rides Gemini's optional `functionCall.id` (GEM-08), paired with
                         // the same id on its `functionResponse`.
-                        let args_val = coerce_tool_args(input);
-                        let mut fc_obj = serde_json::Map::new();
-                        if !id.is_empty() {
-                            fc_obj.insert(keys::ID.to_string(), serde_json::json!(id));
-                        }
-                        fc_obj.insert(keys::NAME.to_string(), serde_json::json!(name));
-                        fc_obj.insert(FIELD_ARGS.to_string(), args_val);
-                        let mut part_obj = serde_json::Map::new();
-                        part_obj.insert(
-                            FIELD_FUNCTION_CALL.to_string(),
-                            serde_json::Value::Object(fc_obj),
-                        );
-                        // `thoughtSignature` is a sibling of `functionCall` on the `Part` object, NOT
-                        // nested inside it — same placement as the Thinking block's signature below.
-                        // Gemini 3 REQUIRES this echoed back verbatim on the next turn or the backend
-                        // 400s. By the time this writer runs, `thought_signature` already carries the
-                        // right value — either a real one captured by Gemini's own reader, or a
-                        // sentinel injected upstream by `IrReq::prepare_for_egress` for cross-protocol
-                        // traffic — so this writer stays dumb and just emits what it's given. Omit the
-                        // key entirely when absent rather than emit an empty string.
-                        if let Some(sig) = thought_signature {
-                            part_obj.insert(FIELD_THOUGHT_SIGNATURE.to_string(), serde_json::json!(sig));
-                        }
-                        parts_arr.push(serde_json::Value::Object(part_obj))
+                        // `thoughtSignature`: by the time this writer runs, `thought_signature`
+                        // already carries the right value — either a real one captured by Gemini's
+                        // own reader, or a sentinel injected upstream by `IrReq::prepare_for_egress`
+                        // for cross-protocol traffic — so this writer stays dumb and just emits what
+                        // it's given.
+                        parts_arr.push(function_call_part(
+                            id,
+                            name,
+                            coerce_tool_args(input),
+                            thought_signature.as_deref(),
+                        ))
                     }
                     crate::codec::ir::IrBlock::ToolResult {
                         tool_use_id,
@@ -1220,19 +1207,8 @@ impl ProtocolWriter for GeminiWriter {
                         crate::codec::json::parse_str(&args_str)
                             .unwrap_or_else(|_| serde_json::json!({}))
                     };
-                    let mut fc_obj = serde_json::Map::new();
                     // The streamed call's id, as on the buffered path (GEM-08).
-                    if !id.is_empty() {
-                        fc_obj.insert(keys::ID.to_string(), serde_json::json!(id));
-                    }
-                    fc_obj.insert(keys::NAME.to_string(), serde_json::json!(name));
-                    fc_obj.insert(FIELD_ARGS.to_string(), args);
-                    let mut part_obj = serde_json::Map::new();
-                    part_obj.insert(
-                        FIELD_FUNCTION_CALL.to_string(),
-                        serde_json::Value::Object(fc_obj),
-                    );
-                    model_part_frame(serde_json::Value::Object(part_obj))
+                    model_part_frame(function_call_part(&id, &name, args, None))
                 })
             }
 
@@ -1255,58 +1231,7 @@ impl ProtocolWriter for GeminiWriter {
                 // never reach this writer), so emitting the total here cannot disturb a same-protocol
                 // round-trip. Saturating add avoids an overflow panic on the request path for
                 // pathological/garbage counts.
-                // RECONSTRUCT the native WIRE shape from the normalized IR: the IR stores UNCACHED
-                // input, but Gemini's `promptTokenCount` is a TOTAL that includes the cached prefix,
-                // so add `cache_read` back. Emit `cachedContentTokenCount` only when a cache read is
-                // present (native shape — no spurious field otherwise). `totalTokenCount` is the
-                // full prompt total + candidates.
-                let cache_read = usage.cache_read_input_tokens.unwrap_or(0);
-                // The tool-use prompt term rides INSIDE `input_tokens` in the IR (1.6.0 money
-                // change) but sits BESIDE `promptTokenCount` on the wire, where it is re-emitted as
-                // its own field below. Subtract it back out here or a native google-genai client
-                // would count it twice and read a `usageMetadata` that no longer reconciles.
-                let tool_use = usage.detail.tool_use_prompt_tokens.unwrap_or(0);
-                // cache_creation is ALSO part of the TOTAL prompt count (cross-protocol ingress only).
-                let prompt_total = usage
-                    .input_tokens
-                    .saturating_sub(tool_use)
-                    .saturating_add(cache_read)
-                    .saturating_add(usage.cache_creation_input_tokens.unwrap_or(0));
-                let total = prompt_total
-                    .saturating_add(usage.output_tokens)
-                    .saturating_add(tool_use);
-                let mut usage_metadata = serde_json::Map::new();
-                usage_metadata.insert(
-                    FIELD_PROMPT_TOKEN_COUNT.to_string(),
-                    serde_json::json!(prompt_total),
-                );
-                insert_gemini_output_counts(&mut usage_metadata, usage);
-                usage_metadata.insert(
-                    FIELD_TOTAL_TOKEN_COUNT.to_string(),
-                    serde_json::json!(total),
-                );
-                if usage.cache_read_input_tokens.is_some() {
-                    usage_metadata.insert(
-                        FIELD_CACHED_CONTENT_TOKEN_COUNT.to_string(),
-                        serde_json::json!(cache_read),
-                    );
-                }
-                // field carry: re-emit the tool-use prompt sub-bucket on the
-                // streaming terminal chunk too (buffered twin above), when the IR carried it.
-                if let Some(tool_use_prompt) = usage.detail.tool_use_prompt_tokens {
-                    usage_metadata.insert(
-                        FIELD_TOOL_USE_PROMPT_TOKEN_COUNT.to_string(),
-                        serde_json::json!(tool_use_prompt),
-                    );
-                }
-                // `usageMetadata.trafficType` — informational billing-lane marker, re-emitted on the
-                // streaming terminal chunk too when the IR carried it (OWNER RULING Q1).
-                if let Some(traffic_type) = &usage.detail.traffic_type {
-                    usage_metadata.insert(
-                        FIELD_TRAFFIC_TYPE.to_string(),
-                        serde_json::json!(traffic_type),
-                    );
-                }
+                let (usage_metadata, _) = gemini_usage_metadata(usage, true);
                 let mut candidate_obj = serde_json::Map::new();
                 candidate_obj.insert(
                     FIELD_FINISH_REASON.to_string(),
@@ -1430,30 +1355,18 @@ impl ProtocolWriter for GeminiWriter {
                     thought_signature,
                     ..
                 } => {
-                    let args_val = coerce_tool_args(input);
-                    let mut fc_obj = serde_json::Map::new();
                     // The call's id rides Gemini's optional `functionCall.id` (GEM-08), so the
                     // client answers it with a `functionResponse.id` busbar pairs back to the call.
-                    if !id.is_empty() {
-                        fc_obj.insert(keys::ID.to_string(), serde_json::json!(id));
-                    }
-                    fc_obj.insert(keys::NAME.to_string(), serde_json::json!(name));
-                    fc_obj.insert(FIELD_ARGS.to_string(), args_val);
-                    let mut part_obj = serde_json::Map::new();
-                    part_obj.insert(
-                        FIELD_FUNCTION_CALL.to_string(),
-                        serde_json::Value::Object(fc_obj),
-                    );
-                    // `thoughtSignature` sibling of `functionCall`, mirroring `write_request`. This
-                    // writer talks to a real client and `prepare_for_egress` is request-side only, so
-                    // this path never gets sentinel-injected — it only ever carries a real value, when
-                    // Gemini was the response SOURCE and its own reader captured one. Never fabricate
-                    // one here; omit the key when absent.
-                    if let Some(sig) = thought_signature {
-                        part_obj
-                            .insert(FIELD_THOUGHT_SIGNATURE.to_string(), serde_json::json!(sig));
-                    }
-                    parts_arr.push(serde_json::Value::Object(part_obj));
+                    // `thoughtSignature`, mirroring `write_request`: this writer talks to a real
+                    // client and `prepare_for_egress` is request-side only, so this path never gets
+                    // sentinel-injected — it only ever carries a real value, when Gemini was the
+                    // response SOURCE and its own reader captured one. Never fabricate one here.
+                    parts_arr.push(function_call_part(
+                        id,
+                        name,
+                        coerce_tool_args(input),
+                        thought_signature.as_deref(),
+                    ));
                 }
 
                 // Thinking → Gemini `{text, thought:true, thoughtSignature?}`. Gemini DOES
@@ -1520,62 +1433,11 @@ impl ProtocolWriter for GeminiWriter {
         // BOTH `None` and no `totalTokenCount` is injected — the round-trip stays byte-identical.
         // (`write_response` only ever runs on cross-protocol egress in production — same-protocol
         // passthrough is byte-exact and bypasses the writer — so this gate is conservative there.)
-        // RECONSTRUCT the native WIRE shape from the normalized IR: the IR stores UNCACHED input,
-        // but Gemini's `promptTokenCount` is a TOTAL that includes the cached prefix, so add
-        // `cache_read` back. Emit `cachedContentTokenCount` only when a cache read is present (native
-        // shape — no spurious field on a no-cache roundtrip).
-        let cache_read = resp.usage.cache_read_input_tokens.unwrap_or(0);
-        // The tool-use prompt term rides INSIDE `input_tokens` in the IR (1.6.0 money change) but
-        // sits BESIDE `promptTokenCount` on the wire, where it is re-emitted as its own field below.
-        // Subtract it back out here or the reconstructed prompt count double-counts it.
-        let tool_use = resp.usage.detail.tool_use_prompt_tokens.unwrap_or(0);
-        // cache_creation is ALSO part of the TOTAL prompt count (cross-protocol ingress only).
-        let prompt_total = resp
-            .usage
-            .input_tokens
-            .saturating_sub(tool_use)
-            .saturating_add(cache_read)
-            .saturating_add(resp.usage.cache_creation_input_tokens.unwrap_or(0));
-        let mut usage_metadata = serde_json::Map::new();
-        usage_metadata.insert(
-            FIELD_PROMPT_TOKEN_COUNT.to_string(),
-            serde_json::json!(prompt_total),
-        );
-        insert_gemini_output_counts(&mut usage_metadata, &resp.usage);
-        if resp.usage.cache_read_input_tokens.is_some() {
-            usage_metadata.insert(
-                FIELD_CACHED_CONTENT_TOKEN_COUNT.to_string(),
-                serde_json::json!(cache_read),
-            );
-        }
-        // field carry: re-emit the tool-use prompt sub-bucket when the IR
-        // carried it (a same-protocol Gemini read set it; a foreign backend leaves it None), so the
-        // native `toolUsePromptTokenCount` survives a read→write round-trip. Only emitted when
-        // present, so an ordinary response stays byte-identical.
-        if let Some(tool_use_prompt) = resp.usage.detail.tool_use_prompt_tokens {
-            usage_metadata.insert(
-                FIELD_TOOL_USE_PROMPT_TOKEN_COUNT.to_string(),
-                serde_json::json!(tool_use_prompt),
-            );
-        }
-        // `usageMetadata.trafficType` — informational billing-lane marker (OWNER RULING Q1,
-        // docs/design/1.6.0-QUESTIONS.md Q36). Only emitted when the IR carried one, so an ordinary
-        // response stays byte-identical.
-        if let Some(traffic_type) = &resp.usage.detail.traffic_type {
-            usage_metadata.insert(
-                FIELD_TRAFFIC_TYPE.to_string(),
-                serde_json::json!(traffic_type),
-            );
-        }
+        let (mut usage_metadata, total) = gemini_usage_metadata(&resp.usage, false);
         if let Some(m) = &resp.usage.detail.by_modality {
             super::usage::write_by_modality(m, &mut usage_metadata);
         }
         if resp.created.is_some() || resp.model.is_some() {
-            // Four additive terms, exactly as Google states them: prompt (cache-inclusive) +
-            // candidates + the tool-use prompt term. Thinking is already inside `output_tokens`.
-            let total = prompt_total
-                .saturating_add(resp.usage.output_tokens)
-                .saturating_add(tool_use);
             usage_metadata.insert(
                 FIELD_TOTAL_TOKEN_COUNT.to_string(),
                 serde_json::json!(total),
@@ -1686,17 +1548,106 @@ impl ProtocolWriter for GeminiWriter {
     }
 }
 
-/// `candidatesTokenCount` from the IR usage: the WHOLE output count, reasoning included, exactly
-/// as 1.5.5 wrote it (v1.5.5 `crates/busbar/src/proto/gemini/writer.rs:962-964`,
-/// `serde_json::json!(usage.output_tokens)`). A Gemini client reconciling usage against its bill
-/// reads the figure 1.5.5 gave it; splitting the reasoning out into `thoughtsTokenCount` lowered the
-/// answer count a 1.5.5 client read, and no register entry signs that value change.
-fn insert_gemini_output_counts(
-    usage_metadata: &mut serde_json::Map<String, serde_json::Value>,
+/// One native `functionCall` part: `{functionCall: {id?, name, args}, thoughtSignature?}`. The id
+/// rides Gemini's optional `functionCall.id` (GEM-08) and is omitted when empty. `thoughtSignature`
+/// is a sibling of `functionCall` on the `Part` object, NOT nested inside it — same placement as the
+/// Thinking block's signature; Gemini 3 REQUIRES it echoed back verbatim on the next turn or the
+/// backend 400s. The key is omitted entirely when absent rather than emitted as an empty string.
+fn function_call_part(
+    id: &str,
+    name: &str,
+    args: serde_json::Value,
+    thought_signature: Option<&str>,
+) -> serde_json::Value {
+    let mut fc_obj = serde_json::Map::new();
+    if !id.is_empty() {
+        fc_obj.insert(keys::ID.to_string(), serde_json::json!(id));
+    }
+    fc_obj.insert(keys::NAME.to_string(), serde_json::json!(name));
+    fc_obj.insert(FIELD_ARGS.to_string(), args);
+    let mut part_obj = serde_json::Map::new();
+    part_obj.insert(
+        FIELD_FUNCTION_CALL.to_string(),
+        serde_json::Value::Object(fc_obj),
+    );
+    if let Some(sig) = thought_signature {
+        part_obj.insert(FIELD_THOUGHT_SIGNATURE.to_string(), serde_json::json!(sig));
+    }
+    serde_json::Value::Object(part_obj)
+}
+
+/// The native `usageMetadata` RECONSTRUCTED from the normalized IR usage, shared by the stream's
+/// terminal chunk and `write_response`, with the `totalTokenCount` it states: four additive terms,
+/// exactly as Google states them — prompt (cache-inclusive) + candidates + the tool-use prompt term
+/// (thinking is already inside `output_tokens`). `totalTokenCount` is inserted only when
+/// `emit_total`; `write_response` gates and places it itself.
+///
+/// - `promptTokenCount`: the IR stores UNCACHED input, but Gemini's `promptTokenCount` is a TOTAL
+///   that includes the cached prefix, so `cache_read` is added back; cache_creation is ALSO part of
+///   the TOTAL prompt count (cross-protocol ingress only). The tool-use prompt term rides INSIDE
+///   `input_tokens` in the IR (1.6.0 money change) but sits BESIDE `promptTokenCount` on the wire,
+///   where it is re-emitted as its own field, so it is subtracted back out here or a native
+///   google-genai client would count it twice and read a `usageMetadata` that no longer reconciles.
+/// - `candidatesTokenCount`: the WHOLE output count, reasoning included, exactly as 1.5.5 wrote it
+///   (v1.5.5 `crates/busbar/src/proto/gemini/writer.rs:962-964`,
+///   `serde_json::json!(usage.output_tokens)`). A Gemini client reconciling usage against its bill
+///   reads the figure 1.5.5 gave it; splitting the reasoning out into `thoughtsTokenCount` lowered
+///   the answer count a 1.5.5 client read, and no register entry signs that value change.
+/// - `cachedContentTokenCount`: only when a cache read is present (native shape — no spurious field
+///   on a no-cache roundtrip).
+/// - `toolUsePromptTokenCount` (field carry): only when the IR carried it (a same-protocol Gemini
+///   read set it; a foreign backend leaves it None), so the native field survives a read→write
+///   round-trip and an ordinary response stays byte-identical.
+/// - `trafficType`: the informational billing-lane marker (OWNER RULING Q1,
+///   docs/design/1.6.0-QUESTIONS.md Q36), only when the IR carried one.
+///
+/// Saturating arithmetic avoids an overflow panic on the request path for pathological counts.
+fn gemini_usage_metadata(
     usage: &crate::codec::ir::IrUsage,
-) {
+    emit_total: bool,
+) -> (serde_json::Map<String, serde_json::Value>, u64) {
+    let cache_read = usage.cache_read_input_tokens.unwrap_or(0);
+    let tool_use = usage.detail.tool_use_prompt_tokens.unwrap_or(0);
+    let prompt_total = usage
+        .input_tokens
+        .saturating_sub(tool_use)
+        .saturating_add(cache_read)
+        .saturating_add(usage.cache_creation_input_tokens.unwrap_or(0));
+    let total = prompt_total
+        .saturating_add(usage.output_tokens)
+        .saturating_add(tool_use);
+    let mut usage_metadata = serde_json::Map::new();
+    usage_metadata.insert(
+        FIELD_PROMPT_TOKEN_COUNT.to_string(),
+        serde_json::json!(prompt_total),
+    );
     usage_metadata.insert(
         FIELD_CANDIDATES_TOKEN_COUNT.to_string(),
         serde_json::json!(usage.output_tokens),
     );
+    if emit_total {
+        usage_metadata.insert(
+            FIELD_TOTAL_TOKEN_COUNT.to_string(),
+            serde_json::json!(total),
+        );
+    }
+    if usage.cache_read_input_tokens.is_some() {
+        usage_metadata.insert(
+            FIELD_CACHED_CONTENT_TOKEN_COUNT.to_string(),
+            serde_json::json!(cache_read),
+        );
+    }
+    if let Some(tool_use_prompt) = usage.detail.tool_use_prompt_tokens {
+        usage_metadata.insert(
+            FIELD_TOOL_USE_PROMPT_TOKEN_COUNT.to_string(),
+            serde_json::json!(tool_use_prompt),
+        );
+    }
+    if let Some(traffic_type) = &usage.detail.traffic_type {
+        usage_metadata.insert(
+            FIELD_TRAFFIC_TYPE.to_string(),
+            serde_json::json!(traffic_type),
+        );
+    }
+    (usage_metadata, total)
 }

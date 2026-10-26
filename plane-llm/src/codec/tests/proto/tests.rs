@@ -756,7 +756,7 @@ fn test_registry_resolves_anthropic() {
     // Anthropic should be present
     let protocol =
         crate::codec::proto_codec::protocol_for("anthropic").expect("anthropic should exist");
-    assert_eq!(protocol.name(), "anthropic");
+    assert_eq!(protocol.name_static(), "anthropic");
     assert_eq!(protocol.writer().upstream_path(), "/v1/messages");
 
     // Non-existent should return None
@@ -1331,7 +1331,7 @@ fn test_protocol_clone_works() {
     let cloned_openai = openai_proto.clone();
 
     // Clone must PRESERVE the protocol identity (golden values), not merely equal itself.
-    assert_eq!(cloned_openai.name(), "openai");
+    assert_eq!(cloned_openai.name_static(), "openai");
     assert_eq!(
         cloned_openai.writer().upstream_path(),
         "/v1/chat/completions"
@@ -1341,7 +1341,7 @@ fn test_protocol_clone_works() {
     let anthropic_proto = Protocol::anthropic();
     let cloned_anthropic = anthropic_proto.clone();
 
-    assert_eq!(cloned_anthropic.name(), "anthropic");
+    assert_eq!(cloned_anthropic.name_static(), "anthropic");
     assert_eq!(cloned_anthropic.writer().upstream_path(), "/v1/messages");
 
     // Verify clone_box works for trait objects (just check it doesn't panic and returns same type)

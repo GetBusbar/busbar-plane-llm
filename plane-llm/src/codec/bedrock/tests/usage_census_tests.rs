@@ -177,9 +177,11 @@ fn read_of(u: &crate::codec::ir::IrUsage) -> Read {
     )
 }
 
-/// The read on each path: buffered, the stream's `metadata` frame, a truncated-body recovery (units
-/// only).
-fn read_all_paths(usage: &serde_json::Value, trace: Option<&serde_json::Value>) -> [Read; 3] {
+/// The usage the buffered read and the stream's `metadata` frame each carry.
+fn read_buffered_and_streamed(
+    usage: &serde_json::Value,
+    trace: Option<&serde_json::Value>,
+) -> [crate::codec::ir::IrUsage; 2] {
     let mut body = serde_json::json!({
         "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
         "stopReason": "end_turn",
@@ -209,9 +211,16 @@ fn read_all_paths(usage: &serde_json::Value, trace: Option<&serde_json::Value>) 
             _ => None,
         })
         .expect("the metadata frame emits a MessageDelta");
+    [buffered, streamed]
+}
+
+/// The read on each path: buffered, the stream's `metadata` frame, a truncated-body recovery (units
+/// only).
+fn read_all_paths(usage: &serde_json::Value, trace: Option<&serde_json::Value>) -> [Read; 3] {
+    let [buffered, streamed] = read_buffered_and_streamed(usage, trace);
     // The tail in the wire's member order: Converse writes `trace` after `usage`.
     let mut wire = serde_json::json!({
-        "output": body["output"].clone(),
+        "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
         "stopReason": "end_turn",
         "usage": usage
     })
@@ -405,36 +414,7 @@ fn usage_on_both_paths(
     usage: &serde_json::Value,
     trace: Option<&serde_json::Value>,
 ) -> [busbar_contract::billing::TokenUsage; 2] {
-    let mut body = serde_json::json!({
-        "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
-        "stopReason": "end_turn",
-        "usage": usage
-    });
-    let mut metadata = serde_json::json!({"type": "metadata", "usage": usage});
-    if let Some(trace) = trace {
-        body["trace"] = trace.clone();
-        metadata["trace"] = trace.clone();
-    }
-    let buffered = BedrockReader
-        .read_response(crate::codec::test_host::HOST, &body)
-        .expect("read")
-        .usage;
-    let mut state = crate::codec::ir::StreamDecodeState::default();
-    BedrockReader.read_response_events(
-        crate::codec::test_host::HOST,
-        "",
-        &serde_json::json!({"type": "messageStop", "stopReason": "end_turn"}),
-        &mut state,
-    );
-    let streamed = BedrockReader
-        .read_response_events(crate::codec::test_host::HOST, "", &metadata, &mut state)
-        .into_iter()
-        .find_map(|e| match e {
-            IrStreamEvent::MessageDelta { usage, .. } => Some(usage),
-            _ => None,
-        })
-        .expect("the metadata frame emits a MessageDelta");
-    [buffered.to_token_usage(), streamed.to_token_usage()]
+    read_buffered_and_streamed(usage, trace).map(|u| u.to_token_usage())
 }
 
 /// THE REPORTED UNITS TRAVEL ON THE USAGE, BILLED (owner LEDGER-100, 2026-10-03). Guardrail policy
