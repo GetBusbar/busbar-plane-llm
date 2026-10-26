@@ -239,7 +239,11 @@ env:
     [ "$PLUGIN_LANG" = c ] && step always "C: the kind's conformance through load_dropped" s_cconf
     exit $fail
 on:
-  move: [pin, linux]
+  move:
+    - checks: [pin, linux]
+    - checks: [conformance]
+      blocks: false
+  landed: [conformance]
 checks:
   pin:
     # ci / the busbar pin is one commit
@@ -256,3 +260,17 @@ checks:
     needs: [pin]
     run: |
       exec bash -c "$PLUGIN_CI" plugin-ci linux
+  conformance:
+    priority: low
+    requires: [cc, git, curl, docker, python3-venv]
+    run: |
+      # Non-blocking by ruling (owner 2026-10-26): a suite that did not pass is reported in its verdict
+      # (target/conformance/verdicts/), not as this check's exit. Only a driver failure (exit 2: no
+      # busbar, no tools, no verdicts written) fails the check. ModernCI's `blocks: false` on a move
+      # entry still dooms the move on a red, so the exit carries the ruling here.
+      # WORKAROUND: exit 0 on a suite non-pass is a workaround for ModernCI not honouring
+      # blocks:false; restore `exec bash testing/conformance/run.sh` when fixed. It is NOT a pass:
+      # the verdict file records the fail/not-run, and the manifest and site show it.
+      rc=0; bash testing/conformance/run.sh || rc=$?
+      [ "$rc" -le 1 ] || exit "$rc"
+    outputs: [target/conformance/]
