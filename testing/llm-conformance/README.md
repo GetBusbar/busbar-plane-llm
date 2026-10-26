@@ -42,7 +42,7 @@ fetches with curl into `~/.cache/busbar-llm-specs/<spec>/<digest>/` and **refuse
 (exit 3, download deleted), exactly as `testing/shadow-oracle/fetch-golden.sh` pins the 1.5.5
 binary. The documents are not vendored into the repository (about 7 MB); the digests are.
 
-**Except gemini, which is vendored.** Google serves only the live discovery document and bumps its
+**Except gemini and anthropic, which are vendored (anthropic since 2026-10-26: Stainless removed the content-addressed object, so its URL answers 403; the committed `specs/anthropic-e50cf35b.yml` is the document the digest pins).** Google serves only the live discovery document and bumps its
 `revision` field every few days, so a URL pin turned the gate RED on every branch at every bump and
 the judge could judge nothing (item 116). The reviewed copy is committed at
 `specs/gemini-v1beta-20260923.json`; its row reads `vendored:specs/...` with the live URL in a fifth
