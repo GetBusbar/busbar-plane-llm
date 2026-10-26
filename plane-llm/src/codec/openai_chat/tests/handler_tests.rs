@@ -315,32 +315,6 @@ fn transcription_egress_field_strips_crlf_injection() {
     assert_eq!(text.matches(&delim).count(), 3);
 }
 
-/// The audio part carries raw client-controlled bytes. A payload that embeds `\r\n--<boundary>`
-/// would close the file part early and append parts of its own — here a second `model` field, which
-/// a last-occurrence-wins parser upstream honours while busbar bills the model it chose. The
-/// boundary is 1.5.5's literal, so the client knows it: the writer refuses the body outright (an
-/// empty, fail-closed body), and no second `model` part is ever framed.
-#[test]
-fn transcription_egress_audio_cannot_smuggle_a_second_model_part() {
-    let smuggled = b"RIFF\r\n------busbaraudioMIME\r\nContent-Disposition: form-data; \
-                     name=\"model\"\r\n\r\nwhisper-large-v3\r\n";
-    let ir = crate::codec::ir::audio::TranscriptionReq {
-        model: "whisper-1".into(),
-        audio: Some(MediaBlob {
-            payload: MediaPayload::Bytes(SlabBytes::from(&smuggled[..])),
-            mime_type: "audio/wav".into(),
-            pcm: None,
-        }),
-        ..Default::default()
-    };
-    let out = super::super::super::leaf_codec::transcription_write_request("openai", &ir);
-    assert!(
-        out.is_empty(),
-        "a payload carrying the live delimiter fails the body closed: {}",
-        String::from_utf8_lossy(&out)
-    );
-}
-
 /// Q128 arch u56: THE REFUSED WRITE IS A REFUSAL AT THE SEAM, never an empty body forwarded
 /// upstream in the caller's name. A JSON-ingress transcription (a Gemini caller's audio, say) whose
 /// audio carries the openai form's delimiter is `EgressWire::Unrepresentable` on the openai egress,

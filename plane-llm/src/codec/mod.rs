@@ -158,14 +158,6 @@ pub mod json_splice;
 /// The cross-dialect translate pipeline (`TranslateCodec`).
 pub mod translate;
 
-/// Thread-local entropy pool (filled from the host's source) shared by the writers' synthesized-wire-id paths.
-///
-/// PUBLIC because the plane needs the same source the reference path uses when it mints a wire id
-/// the codec would otherwise mint for it — and because the anthropic ERROR envelope, which is the
-/// one minted value on a refusal, takes its entropy as an INPUT (see
-/// [`anthropic::error_envelope_with_request_id`]) rather than drawing from here.
-pub mod synth_rng;
-
 /// The dialect-neutral tail-usage isolation helper shared by every reader's
 /// `recover_truncated_usage` override. PUBLIC: the plane's metering locators name the same
 /// isolation the reference path performs.

@@ -362,7 +362,7 @@ pub fn error_kind_to_bedrock_type(kind: &str) -> &'static str {
 /// copies.
 pub fn synth_amzn_request_id(host: &dyn busbar_contract::codec::CodecHost) -> Option<String> {
     let mut buf = [0u8; 16];
-    if !super::synth_rng::fill_entropy(host, &mut buf) {
+    if !host.fill_entropy(&mut buf) {
         return None;
     }
     // RFC 4122 v4 layout (version + variant bits) so the value is a well-formed UUID.
@@ -1595,7 +1595,6 @@ fn stop_reason_map(ward: &str) -> crate::codec::ir::IrStopReason {
         // `_ => S::Other`): the answer is served and billed as 1.5.5 served and billed it. Reading
         // it as `Error` turned a translated buffered answer into a billed 502 and a lane fault, a
         // money and serving change no owner ruling signs.
-        "malformed_model_output" | "malformed_tool_use" => S::Other,
         _ => S::Other,
     }
 }
@@ -2050,13 +2049,7 @@ impl super::proto_codec::StreamFraming for BedrockStreamFraming {
         let mut events = vec![crate::codec::ir::IrStreamEvent::MessageDelta {
             stop_reason: Some(stop_reason),
             stop_sequence: stop_sequence.clone(),
-            usage: crate::codec::ir::IrUsage {
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-                detail: crate::codec::ir::IrUsageDetail::default(),
-            },
+            usage: crate::codec::ir::IrUsage::default(),
             stop_detail: None,
         }];
         // Frame 2: `metadata` carrying the token usage — but a native ConverseStream emits EXACTLY ONE
@@ -2127,13 +2120,7 @@ impl super::proto_codec::StreamFraming for BedrockStreamFraming {
         Some(crate::codec::ir::IrStreamEvent::MessageDelta {
             stop_reason: None,
             stop_sequence: None,
-            usage: crate::codec::ir::IrUsage {
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-                detail: crate::codec::ir::IrUsageDetail::default(),
-            },
+            usage: crate::codec::ir::IrUsage::default(),
             stop_detail: None,
         })
     }
@@ -2418,13 +2405,7 @@ pub fn bedrock_response_to_eventstream(
     push(
         &IrStreamEvent::MessageDelta {
             stop_reason: ir.stop_reason.or(Some(default_stop_reason)),
-            usage: IrUsage {
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-                detail: crate::codec::ir::IrUsageDetail::default(),
-            },
+            usage: IrUsage::default(),
             stop_sequence: None,
             // IR-16: the refinement rides the stop-bearing frame, so a buffered context-window stop
             // synthesizes the same `messageStop` a streamed one does (buffered == stream).

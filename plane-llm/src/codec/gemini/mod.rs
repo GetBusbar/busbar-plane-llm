@@ -793,9 +793,6 @@ const STATUS_HTTP: &[(&str, u16)] = &[
     (GRPC_DEADLINE_EXCEEDED, 504),
 ];
 
-/// Busbar/Anthropic internal error kind for an overloaded upstream (maps to GRPC_UNAVAILABLE).
-const ERR_TYPE_OVERLOADED: &str = busbar_contract::protocol::ERR_TYPE_OVERLOADED;
-
 // ── ErrorInfo tokens ──────────────────────────────────────────────────────────
 /// The machine-readable `reason` value carried in `google.rpc.ErrorInfo` for an invalid API key.
 const GEMINI_ERROR_REASON_API_KEY_INVALID: &str = "API_KEY_INVALID";
@@ -842,7 +839,7 @@ const RESPONSE_ID_REJECT_THRESHOLD: u8 = crate::codec::dialect::BASE62_REJECT_TH
 /// counts: (a) the `-` separator plus `[0-9a-f]`-only character class is a shape no native id has,
 /// and (b) the leading hex segment leaked the proxy host's wall-clock second to anyone holding a
 /// response id. This mints an opaque CSPRNG-backed base62 token of native length instead: the WHOLE
-/// token is filled from the host entropy pool (`synth_rng`) with NO counter overlay. A counter overlaid into any fixed
+/// token is filled from the host entropy source with NO counter overlay. A counter overlaid into any fixed
 /// region of the token leaves those characters predictable/low-entropy (the counter stays small, so
 /// its high base62 digits are constant '0') — a structural tell at whatever position it occupies. A
 /// 16-char base62 token is ~95 bits of entropy, collision-free in practice for a per-process id
@@ -869,7 +866,7 @@ fn synth_response_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
         // Draw a generous batch so a single entropy draw typically fills the whole token even after
         // rejections (RESPONSE_ID_TOKEN_LEN*2 bytes leave ample headroom for the ~1.6% reject rate).
         let mut batch = [0u8; RESPONSE_ID_TOKEN_LEN * 2];
-        if !super::synth_rng::fill_entropy(host, &mut batch) {
+        if !host.fill_entropy(&mut batch) {
             break;
         }
         for &byte in batch.iter() {

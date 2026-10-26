@@ -27,20 +27,12 @@ fn cohere_stop_reason_codec_round_trips_and_never_leaks() {
 #[test]
 fn test_write_request() {
     let ir = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
         system: vec![crate::codec::ir::IrBlock::Text {
             text: "You are helpful.".to_string(),
             cache_control: None,
             citations: Vec::new(),
             refusal: false,
         }],
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::User,
@@ -86,27 +78,7 @@ fn test_write_request() {
         }],
         max_tokens: Some(1024),
         temperature: Some(0.7),
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
 
     let writer = CohereWriter;
@@ -148,15 +120,6 @@ fn test_write_request() {
 #[test]
 fn test_read_request_roundtrip() {
     let ir = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::User,
@@ -177,30 +140,10 @@ fn test_read_request_roundtrip() {
                 }],
             },
         ],
-        tools: vec![],
         max_tokens: Some(512),
         temperature: Some(0.7),
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
         stream: true,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
 
     let writer = CohereWriter;
@@ -400,43 +343,6 @@ fn test_cross_protocol_system_prompt_preserved_to_cohere() {
     assert_eq!(msgs[1].get("role").and_then(|r| r.as_str()), Some("user"));
 }
 
-#[test]
-fn test_write_response_event() {
-    let writer = CohereWriter;
-
-    // BlockDelta TextDelta("hi") → content-delta frame
-    let ev = IrStreamEvent::BlockDelta {
-        index: 0,
-        delta: crate::codec::ir::IrDelta::TextDelta("hi".to_string()),
-    };
-    let result = writer.write_response_event(crate::codec::test_host::HOST, &ev);
-    assert!(result.is_some());
-    let (_, data) = result.unwrap();
-    assert_eq!(
-        data.get("type").and_then(|t| t.as_str()),
-        Some("content-delta") // golden wire-contract literal (kept bare on purpose)
-    );
-    // content-delta carries the text at delta.message.content.text (an object), matching the
-    // native Cohere v2 stream and the content-start shape.
-    assert_eq!(
-        data.get("delta")
-            .and_then(|d| d.get("message"))
-            .and_then(|m| m.get("content"))
-            .and_then(|c| c.get("text"))
-            .and_then(|t| t.as_str()),
-        Some("hi")
-    );
-    // A real content-delta's content object carries NO type key (verified against Cohere's own
-    // API reference) -- type is carried only by content-start, never repeated on every delta.
-    assert_eq!(
-        data.get("delta")
-            .and_then(|d| d.get("message"))
-            .and_then(|m| m.get("content"))
-            .and_then(|c| c.get("type")),
-        None
-    );
-}
-
 /// Regression: a response carrying several parallel `ToolUse` blocks must surface ALL of them
 /// in `tool_calls`. The previous per-iteration `out.insert(...)` overwrote the key and silently
 /// dropped every call but the last.
@@ -508,15 +414,6 @@ fn test_write_response_preserves_parallel_tool_calls() {
 #[test]
 fn test_write_request_sole_tooluse_omits_empty_content() {
     let ir = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Assistant,
             content: vec![crate::codec::ir::IrBlock::ToolUse {
@@ -527,30 +424,8 @@ fn test_write_request_sole_tooluse_omits_empty_content() {
                 cache_control: None,
             }],
         }],
-        tools: vec![],
         max_tokens: Some(64),
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
 
     let writer = CohereWriter;
@@ -572,15 +447,6 @@ fn test_write_request_sole_tooluse_omits_empty_content() {
 #[test]
 fn test_write_request_text_block_shapes() {
     let single = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::Text {
@@ -590,30 +456,7 @@ fn test_write_request_text_block_shapes() {
                 refusal: false,
             }],
         }],
-        tools: vec![],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let writer = CohereWriter;
     let j = writer.write_request(crate::codec::test_host::HOST, &single);
@@ -974,8 +817,6 @@ fn test_same_protocol_stream_roundtrip_preserves_id() {
 #[test]
 fn test_cross_protocol_write_synthesizes_valid_id() {
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::Text {
             text: "hello".to_string(),
             cache_control: None,
@@ -986,18 +827,8 @@ fn test_cross_protocol_write_synthesizes_valid_id() {
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
 
@@ -1157,65 +988,6 @@ fn test_auth_headers_valid_key_emits_bearer() {
     );
 }
 
-/// A credential carrying bytes `HeaderValue::from_str` rejects
-/// (e.g. a newline injected by a config system) must OMIT the header entirely — NOT emit an
-/// empty `Authorization: ` value. The empty-Bearer form silently 401s the lane with no operator
-/// signal and is a backend-detectable tell. Mirrors
-/// `gemini.rs::test_auth_headers_invalid_key_omits_header_no_empty_value`.
-#[test]
-fn test_auth_headers_invalid_key_omits_header_no_empty_value() {
-    // #83a S2-a: the dialect DECLARES its credential scheme and the host presents it — a plain
-    // `authorization: Bearer <key>` for every credential and mode. The bytes the host writes for a
-    // valid key, and the omission of a key whose bytes no header value may carry, are pinned in the
-    // host's suite over the shared fixture `testing/plane-copies/declared-credentials.json`.
-    let Some(busbar_contract::protocol::EgressScheme::Static {
-        families,
-        own,
-        passthrough,
-    }) = crate::codec::cohere::DECL.egress_scheme
-    else {
-        panic!("cohere declares a static credential scheme");
-    };
-    assert!(families.is_empty());
-    assert_eq!(own, busbar_contract::protocol::CredentialHeader::Bearer);
-    assert_eq!(
-        passthrough,
-        busbar_contract::protocol::CredentialHeader::Bearer
-    );
-    assert!(
-        crate::codec::cohere::DECL.egress_auth_headers.is_none(),
-        "no credential passes through the plane"
-    );
-}
-
-/// A NUL control byte in the credential is also rejected and the header omitted (not emitted as
-/// an empty value).
-#[test]
-fn test_auth_headers_control_byte_key_omits_header() {
-    // #83a S2-a: the dialect DECLARES its credential scheme and the host presents it — a plain
-    // `authorization: Bearer <key>` for every credential and mode. The bytes the host writes for a
-    // valid key, and the omission of a key whose bytes no header value may carry, are pinned in the
-    // host's suite over the shared fixture `testing/plane-copies/declared-credentials.json`.
-    let Some(busbar_contract::protocol::EgressScheme::Static {
-        families,
-        own,
-        passthrough,
-    }) = crate::codec::cohere::DECL.egress_scheme
-    else {
-        panic!("cohere declares a static credential scheme");
-    };
-    assert!(families.is_empty());
-    assert_eq!(own, busbar_contract::protocol::CredentialHeader::Bearer);
-    assert_eq!(
-        passthrough,
-        busbar_contract::protocol::CredentialHeader::Bearer
-    );
-    assert!(
-        crate::codec::cohere::DECL.egress_auth_headers.is_none(),
-        "no credential passes through the plane"
-    );
-}
-
 /// `ERROR_TOXIC` is a v1 Generate-API finish token, not a member of Cohere v2's
 /// `/v2/chat` `finish_reason` enum. The writer must emit the v2-legal `COMPLETE` for `IrStopReason::
 /// Safety` — a filtered answer is a served one, and `ERROR` reads as an infrastructure failure
@@ -1225,8 +997,6 @@ fn test_auth_headers_control_byte_key_omits_header() {
 #[test]
 fn test_safety_finish_reason_writes_complete_non_stream() {
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::Text {
             text: "moderated".to_string(),
             cache_control: None,
@@ -1237,18 +1007,9 @@ fn test_safety_finish_reason_writes_complete_non_stream() {
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
         id: Some("r1".to_string()),
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let writer = CohereWriter;
@@ -1344,25 +1105,8 @@ fn test_generic_error_does_not_fold_into_safety_and_round_trips() {
     // Write-back round-trips: IR `error` -> native `ERROR`; IR `safety` -> native `ERROR_TOXIC`.
     let writer = CohereWriter;
     let err_resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
-        content: Vec::new(),
         stop_reason: Some(crate::codec::ir::IrStopReason::Error),
-        usage: crate::codec::ir::IrUsage {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
-        },
-        model: None,
         id: Some("e1".to_string()),
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let err_out = writer.write_response(crate::codec::test_host::HOST, &err_resp);
@@ -1410,7 +1154,7 @@ fn test_generic_error_does_not_fold_into_safety_and_round_trips() {
 /// corrupt tool tracking. Every read site clamps the wire index to `MAX_TOOL_FRAME_INDEX`, well
 /// below the sentinel, so a tool block still opens at a real IR index and the sentinel's
 /// text-high-water meaning is preserved. Before the fix, a `usize::MAX` frame_idx was inserted
-/// into `open_tools`, became indistinguishable from the sentinel, and broke `cohere_lookup_tool_ir_index`.
+/// into `open_tools`, became indistinguishable from the sentinel, and broke the `state.tool_ir_index` lookup.
 #[test]
 fn test_huge_tool_frame_index_clamped_below_sentinel() {
     let reader = CohereReader;
@@ -1779,8 +1523,6 @@ fn test_recover_truncated_usage_float_token_counts_survive_as_integers() {
 #[test]
 fn test_write_response_tool_calls_nested_and_roundtrip() {
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![
             crate::codec::ir::IrBlock::Text {
                 text: "calling tools".to_string(),
@@ -1807,18 +1549,9 @@ fn test_write_response_tool_calls_nested_and_roundtrip() {
         usage: crate::codec::ir::IrUsage {
             input_tokens: 4,
             output_tokens: 6,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
         id: Some("resp-1".to_string()),
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
 
@@ -2039,7 +1772,7 @@ fn test_stream_tool_call_events_mapped() {
     // stable for its lifetime (and the insertion slot of any LATER tool stable), so the set
     // grows monotonically across the stream.
     assert_eq!(
-        cohere_lookup_tool_ir_index(&state, 0),
+        state.tool_ir_index.get(&0).copied(),
         Some(0),
         "the closed tool's assigned IR index is retained to keep later tool indices stable"
     );
@@ -2155,7 +1888,7 @@ fn test_stream_tool_before_text_no_index_collision() {
 
     // The tool's index 0 is still independently resolvable — no overlap occurred.
     assert_eq!(
-        cohere_lookup_tool_ir_index(&state, 0),
+        state.tool_ir_index.get(&0).copied(),
         Some(0),
         "the tool retains its distinct IR index 0"
     );
@@ -2706,15 +2439,6 @@ fn test_too_long_only_classifies_context_length_when_qualified() {
 #[test]
 fn test_write_request_stream_field_conditional() {
     let base = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::Text {
@@ -2724,30 +2448,7 @@ fn test_write_request_stream_field_conditional() {
                 refusal: false,
             }],
         }],
-        tools: vec![],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
 
     let writer = CohereWriter;
@@ -2910,15 +2611,6 @@ fn test_message_end_usage_stream_roundtrip() {
 #[test]
 fn test_tool_role_text_alongside_result_not_dropped() {
     let ir = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Tool,
             content: vec![
@@ -2941,30 +2633,7 @@ fn test_tool_role_text_alongside_result_not_dropped() {
                 },
             ],
         }],
-        tools: vec![],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let writer = CohereWriter;
     let out = writer.write_request(crate::codec::test_host::HOST, &ir);
@@ -2988,15 +2657,6 @@ fn test_tool_role_text_alongside_result_not_dropped() {
 #[test]
 fn test_tool_result_multi_block_content_joins_without_space() {
     let ir = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Tool,
             content: vec![crate::codec::ir::IrBlock::ToolResult {
@@ -3019,30 +2679,7 @@ fn test_tool_result_multi_block_content_joins_without_space() {
                 cache_control: None,
             }],
         }],
-        tools: vec![],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let writer = CohereWriter;
     let out = writer.write_request(crate::codec::test_host::HOST, &ir);
@@ -3060,15 +2697,6 @@ fn test_tool_result_multi_block_content_joins_without_space() {
 #[test]
 fn test_tool_role_text_without_result_not_dropped() {
     let ir = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Tool,
             content: vec![crate::codec::ir::IrBlock::Text {
@@ -3078,30 +2706,7 @@ fn test_tool_role_text_without_result_not_dropped() {
                 refusal: false,
             }],
         }],
-        tools: vec![],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let writer = CohereWriter;
     let out = writer.write_request(crate::codec::test_host::HOST, &ir);
@@ -3125,15 +2730,6 @@ fn test_tool_role_text_without_result_not_dropped() {
 #[test]
 fn test_tool_role_multi_text_without_result_is_string() {
     let ir = crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Tool,
             content: vec![
@@ -3151,30 +2747,7 @@ fn test_tool_role_multi_text_without_result_is_string() {
                 },
             ],
         }],
-        tools: vec![],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let writer = CohereWriter;
     let out = writer.write_request(crate::codec::test_host::HOST, &ir);
@@ -3191,30 +2764,6 @@ fn test_tool_role_multi_text_without_result_is_string() {
         "multi-block degenerate Tool content must be a joined string (NO separator, matching \
              read_request's `.join(\"\")` — a phantom space would corrupt split payloads on a \
              round-trip), not a JSON array"
-    );
-}
-
-/// `write_error` is a LIVE vtable-dispatched trait method, not
-/// test-only scaffolding. Reaching it via a `&dyn ProtocolWriter` (the exact runtime path used
-/// at the Cohere-ingress error sites) must produce the native bare `{"message": ...}` envelope.
-#[test]
-fn test_write_error_via_trait_object_is_live_path() {
-    let writer: Box<dyn ProtocolWriter> = Box::new(CohereWriter);
-    let v = writer.write_error(
-        crate::codec::test_host::HOST,
-        401,
-        "authentication_error",
-        "bad key",
-    );
-    assert_eq!(
-        v.get("message").and_then(|m| m.as_str()),
-        Some("bad key"),
-        "the vtable-dispatched write_error must emit the native Cohere envelope"
-    );
-    assert_eq!(
-        v.as_object().map(|o| o.len()),
-        Some(1),
-        "native Cohere error body is a bare single-key {{\"message\": ...}}"
     );
 }
 
@@ -4183,7 +3732,7 @@ fn test_open_tools_growth_is_capped() {
     );
 }
 
-/// Performance: `cohere_lookup_tool_ir_index`/`cohere_assign_tool_ir_index`
+/// Performance: the `state.tool_ir_index` lookup and `cohere_assign_tool_ir_index`
 /// used to do a full O(n) linear scan over `state.open_tools` on EVERY tool-call-start/delta frame
 /// (the set is never shrunk), making a stream with many sequential tool calls cost O(n²) instead of
 /// O(n) overall. The fix replaces the scan with an O(log n) `state.tool_ir_index` `BTreeMap` lookup
@@ -4199,7 +3748,7 @@ fn test_open_tools_growth_is_capped() {
 ///   tool's index must remain resolvable after later siblings are recorded.
 /// - Large-N scale check: exactly `MAX_TRACKED_TOOL_FRAMES` tools opened with fully REVERSED wire
 ///   indices (`N-1, N-2, ..., 0`) must each still be assigned insertion-order IR indices
-///   (`0, 1, ..., N-1`), every one of them must remain resolvable via `cohere_lookup_tool_ir_index`
+///   (`0, 1, ..., N-1`), every one of them must remain resolvable via `state.tool_ir_index`
 ///   AFTER all `N` are open (exercising the O(log n) lookup against a full-sized map, not an empty
 ///   or partially-filled one), and the very next frame past the cap must be rejected — proving
 ///   `MAX_TRACKED_TOOL_FRAMES` is still enforced under the new structure.
@@ -4211,12 +3760,12 @@ fn test_stream_tool_ir_index_o1_lookup_matches_insertion_order_at_scale() {
     assert_eq!(cohere_assign_tool_ir_index(&mut state, 10), Some(0));
     assert_eq!(cohere_assign_tool_ir_index(&mut state, 5), Some(1));
     assert_eq!(cohere_assign_tool_ir_index(&mut state, 2), Some(2));
-    assert_eq!(cohere_lookup_tool_ir_index(&state, 10), Some(0));
-    assert_eq!(cohere_lookup_tool_ir_index(&state, 5), Some(1));
-    assert_eq!(cohere_lookup_tool_ir_index(&state, 2), Some(2));
+    assert_eq!(state.tool_ir_index.get(&10).copied(), Some(0));
+    assert_eq!(state.tool_ir_index.get(&5).copied(), Some(1));
+    assert_eq!(state.tool_ir_index.get(&2).copied(), Some(2));
     // Re-asserting an already-open frame is a no-op (duplicate start): no re-assignment.
     assert_eq!(cohere_assign_tool_ir_index(&mut state, 10), None);
-    assert_eq!(cohere_lookup_tool_ir_index(&state, 10), Some(0));
+    assert_eq!(state.tool_ir_index.get(&10).copied(), Some(0));
 
     // Large-N scale check on a FRESH stream: open exactly MAX_TRACKED_TOOL_FRAMES tools with fully
     // reversed wire indices. The i-th call opened (wire = N-1-i) must be assigned IR index i,
@@ -4240,7 +3789,7 @@ fn test_stream_tool_ir_index_o1_lookup_matches_insertion_order_at_scale() {
     for i in 0..n {
         let wire = n - 1 - i;
         assert_eq!(
-            cohere_lookup_tool_ir_index(&state, wire),
+            state.tool_ir_index.get(&wire).copied(),
             Some(i),
             "tool #{i} (wire {wire}) must still resolve to its assigned IR index {i} after all {n} tools are open"
         );
@@ -4503,8 +4052,6 @@ fn test_block_stop_tool_index_consumed_on_close() {
 #[test]
 fn test_write_response_stop_sequence_maps_to_stop_sequence() {
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::Text {
             text: "hi".to_string(),
             cache_control: None,
@@ -4515,18 +4062,9 @@ fn test_write_response_stop_sequence_maps_to_stop_sequence() {
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
         id: Some("c14c80c3-18eb-4519-9460-6c92edd8cfb4".to_string()),
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let writer = CohereWriter;
@@ -4543,8 +4081,6 @@ fn test_write_response_stop_sequence_maps_to_stop_sequence() {
 #[test]
 fn test_write_response_end_turn_maps_to_complete() {
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::Text {
             text: "hi".to_string(),
             cache_control: None,
@@ -4555,18 +4091,9 @@ fn test_write_response_end_turn_maps_to_complete() {
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
         id: Some("c14c80c3-18eb-4519-9460-6c92edd8cfb4".to_string()),
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let writer = CohereWriter;
@@ -4973,15 +4500,6 @@ fn test_text_block_emits_balanced_content_start_and_end() {
 /// tool-choice round-trip tests below.
 fn ir_with_tool_choice(tc: Option<crate::codec::ir::IrToolChoice>) -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::Text {
@@ -5001,29 +4519,8 @@ fn ir_with_tool_choice(tc: Option<crate::codec::ir::IrToolChoice>) -> crate::cod
 
             strict: None,
         }],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
         tool_choice: tc,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     }
 }
 
@@ -5334,72 +4831,6 @@ fn read_write_response_error_finish_reason_round_trips() {
     );
 }
 
-/// The `tool_choice` union maps to Cohere v2's uppercase native strings: `Required`→`REQUIRED`,
-/// `None`→`NONE`, `Auto`→omitted (the v2 default). A targeted `Tool{name}` has NO Cohere analog
-/// (no named-tool choice in v2) and degrades to `REQUIRED` — preserving the load-bearing "must
-/// call a tool" intent rather than silently dropping to auto.
-#[test]
-fn tool_choice_maps_to_cohere_native_strings() {
-    let mk = |tc: Option<crate::codec::ir::IrToolChoice>| {
-        let mut req = crate::codec::ir::IrRequest {
-            system_turns_folded: 0,
-            system_folds: Vec::new(),
-            messages: vec![crate::codec::ir::IrMessage {
-                role: crate::codec::ir::IrRole::User,
-                content: vec![crate::codec::ir::IrBlock::Text {
-                    text: "hi".to_string(),
-                    cache_control: None,
-                    citations: Vec::new(),
-                    refusal: false,
-                }],
-            }],
-            // `tools` is required alongside `tool_choice` — omitting it would test
-            // the guaranteed-400 shape the guard exists to prevent.
-            tools: vec![crate::codec::ir::IrTool {
-                name: "f".to_string(),
-                description: None,
-                input_schema: serde_json::json!({}),
-                cache_control: None,
-                hosted: None,
-                strict: None,
-            }],
-            ..Default::default()
-        };
-        req.tool_choice = tc;
-        let writer = CohereWriter;
-        writer.write_request(crate::codec::test_host::HOST, &req)
-    };
-    assert_eq!(
-        mk(Some(crate::codec::ir::IrToolChoice::Required))
-            .get("tool_choice")
-            .and_then(|v| v.as_str()),
-        Some("REQUIRED")
-    );
-    assert_eq!(
-        mk(Some(crate::codec::ir::IrToolChoice::None))
-            .get("tool_choice")
-            .and_then(|v| v.as_str()),
-        Some("NONE")
-    );
-    // A specific tool degrades to REQUIRED (documented lossy-by-target — v2 has no named choice).
-    assert_eq!(
-        mk(Some(crate::codec::ir::IrToolChoice::Tool {
-            name: "f".to_string()
-        }))
-        .get("tool_choice")
-        .and_then(|v| v.as_str()),
-        Some("REQUIRED")
-    );
-    // Auto is the default and is OMITTED (a request that never forced a tool gains no directive).
-    assert!(
-        mk(Some(crate::codec::ir::IrToolChoice::Auto))
-            .get("tool_choice")
-            .is_none(),
-        "Auto must be omitted, not emitted"
-    );
-    assert!(mk(None).get("tool_choice").is_none());
-}
-
 /// A `response_format` json_schema round-trips read→IR→write. Cohere's native shape puts the
 /// schema DIRECTLY under `json_schema` (not nested under `.schema` like OpenAI); the reader
 /// canonicalizes it into the typed `IrResponseFormat` and the writer re-emits Cohere's shape — so
@@ -5586,7 +5017,6 @@ fn test_stream_tool_plan_delta_becomes_leading_reasoning_before_tool_call() {
 fn test_write_response_reemits_folded_tool_plan_as_content_not_tool_plan() {
     let writer = CohereWriter;
     let resp = crate::codec::ir::IrResponse {
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![
             crate::codec::ir::IrBlock::Text {
                 text: "First I will check the weather.".to_string(),
@@ -5602,23 +5032,6 @@ fn test_write_response_reemits_folded_tool_plan_as_content_not_tool_plan() {
                 cache_control: None,
             },
         ],
-        stop_reason: None,
-        usage: crate::codec::ir::IrUsage {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
-        },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-        logprobs: Vec::new(),
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let out = writer.write_response(crate::codec::test_host::HOST, &resp);

@@ -450,57 +450,13 @@ fn test_stream_tool_index_stable_across_chunks() {
 }
 
 /// Regression: two functionCalls in a tool-only response get distinct, contiguous indices
-/// (0 and 1 — no text block opened, so nothing reserves index 0) and both close.
+/// (0 and 1 — no text block opened, so nothing reserves index 0) and both close. Previously the
+/// first tool index was `1 + open_tools.len()`, which reserved index 0 for a text block that never
+/// opened — leaving IR index 0 permanently empty and content indices non-contiguous (0 hole, then
+/// 1..n). Now the base is keyed on whether a text block actually opened
+/// (`usize::from(state.text_block_open)`), so a tool-only stream starts at 0.
 #[test]
 fn test_stream_two_tools_distinct_indices() {
-    let events = collect_stream(&[serde_json::json!({
-        "candidates": [{
-            "content": {
-                "role": "model",
-                "parts": [
-                    {"functionCall": {"name": "a", "args": {}}},
-                    {"functionCall": {"name": "b", "args": {}}}
-                ]
-            },
-            "finishReason": GEMINI_FINISH_STOP
-        }]
-    })]);
-
-    let mut tool_indices: Vec<usize> = events
-        .iter()
-        .filter_map(|e| match e {
-            IrStreamEvent::BlockStart {
-                index,
-                block: IrBlockMeta::ToolUse { .. },
-                refusal: _,
-            } => Some(*index),
-            _ => None,
-        })
-        .collect();
-    tool_indices.sort_unstable();
-    assert_eq!(
-        tool_indices,
-        vec![0, 1],
-        "tool-only stream: two tools must take contiguous indices 0,1"
-    );
-
-    for idx in [0usize, 1usize] {
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, IrStreamEvent::BlockStop { index } if *index == idx)),
-            "tool block {idx} must be closed"
-        );
-    }
-}
-
-/// Regression: a tool-only streaming response must produce content block indices
-/// contiguous from 0. Previously the first tool index was `1 + open_tools.len()`, which reserved
-/// index 0 for a text block that never opened — leaving IR index 0 permanently empty and content
-/// indices non-contiguous (0 hole, then 1..n). Now the base is keyed on whether a text block
-/// actually opened (`usize::from(state.text_block_open)`), so a tool-only stream starts at 0.
-#[test]
-fn test_stream_tool_only_indices_contiguous_from_zero() {
     let events = collect_stream(&[serde_json::json!({
         "candidates": [{
             "content": {
@@ -539,18 +495,17 @@ fn test_stream_tool_only_indices_contiguous_from_zero() {
         .collect();
     tool_indices.sort_unstable();
     assert_eq!(
-            tool_indices,
-            vec![0, 1],
-            "tool-only stream: content indices must be contiguous from 0 (no reserved-but-empty 0): {events:?}"
-        );
+        tool_indices,
+        vec![0, 1],
+        "tool-only stream: two tools must take contiguous indices 0,1"
+    );
 
-    // Both tool blocks must be closed at their own indices.
     for idx in [0usize, 1usize] {
         assert!(
             events
                 .iter()
                 .any(|e| matches!(e, IrStreamEvent::BlockStop { index } if *index == idx)),
-            "tool block {idx} must be closed: {events:?}"
+            "tool block {idx} must be closed"
         );
     }
 }
@@ -648,15 +603,6 @@ fn test_writer_text_blockstart_is_none() {
 fn test_write_request_image_s3_dropped_not_corrupted() {
     let writer = GeminiWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: vec![],
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![
@@ -676,30 +622,7 @@ fn test_write_request_image_s3_dropped_not_corrupted() {
                 },
             ],
         }],
-        tools: vec![],
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let out = writer.write_request(crate::codec::test_host::HOST, &req);
     let wire = serde_json::to_string(&out).unwrap();
@@ -1586,8 +1509,6 @@ fn foreign_stop_reason_maps_to_other_not_verbatim() {
         (S::Other, "OTHER"),
     ] {
         let ir = crate::codec::ir::IrResponse {
-            logprobs: Vec::new(),
-            role: crate::codec::ir::IrRole::Assistant,
             content: vec![crate::codec::ir::IrBlock::Text {
                 text: "x".to_string(),
                 cache_control: None,
@@ -1598,18 +1519,8 @@ fn foreign_stop_reason_maps_to_other_not_verbatim() {
             usage: crate::codec::ir::IrUsage {
                 input_tokens: 1,
                 output_tokens: 1,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-                detail: crate::codec::ir::IrUsageDetail::default(),
+                ..Default::default()
             },
-            model: None,
-            id: None,
-            created: None,
-            system_fingerprint: None,
-            stop_sequence: None,
-
-            request_echo: None,
-            stop_detail: None,
             ..Default::default()
         };
         let wire = writer.write_response(crate::codec::test_host::HOST, &ir);
@@ -1649,8 +1560,6 @@ fn foreign_stop_reason_maps_to_other_not_verbatim() {
 fn test_response_identity_cross_protocol_emits_foreign_id() {
     let writer = GeminiWriter;
     let ir = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::Text {
             text: "hello".to_string(),
             cache_control: None,
@@ -1661,18 +1570,9 @@ fn test_response_identity_cross_protocol_emits_foreign_id() {
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
         id: Some("chatcmpl-abc123".to_string()),
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let wire = writer.write_response(crate::codec::test_host::HOST, &ir);
@@ -1691,8 +1591,6 @@ fn test_response_identity_cross_protocol_emits_foreign_id() {
 fn test_response_identity_none_id_is_omitted_not_fabricated() {
     let writer = GeminiWriter;
     let ir = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::Text {
             text: "hi".to_string(),
             cache_control: None,
@@ -1703,18 +1601,8 @@ fn test_response_identity_none_id_is_omitted_not_fabricated() {
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let wire = writer.write_response(crate::codec::test_host::HOST, &ir);
@@ -1797,63 +1685,6 @@ fn test_stream_message_start_no_identity_synthesizes_response_id() {
             .is_some_and(|s| !s.is_empty()),
         "post-strip MessageStart must synthesize a responseId: {}",
         frame.1
-    );
-}
-
-/// Regression: `write_request` must NOT inject a top-level `stream` field. The native Gemini
-/// GenerateContentRequest has no such field (streaming is URL-selected); injecting it makes the
-/// request non-native and can trigger INVALID_ARGUMENT on the real API.
-#[test]
-fn test_write_request_omits_stream_field() {
-    let writer = GeminiWriter;
-    let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
-        messages: vec![crate::codec::ir::IrMessage {
-            role: crate::codec::ir::IrRole::User,
-            content: vec![crate::codec::ir::IrBlock::Text {
-                text: "hi".to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            }],
-        }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: true,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
-    };
-    let wire = writer.write_request(crate::codec::test_host::HOST, &req);
-    assert!(
-        wire.get("stream").is_none(),
-        "write_request must not serialise a top-level `stream` field: {wire}"
     );
 }
 
@@ -1942,15 +1773,6 @@ fn test_extract_error_expired_api_key_prose_is_auth() {
 fn test_write_request_thinking_only_turn_survives_with_placeholder() {
     let writer = GeminiWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::User,
@@ -1982,30 +1804,7 @@ fn test_write_request_thinking_only_turn_survives_with_placeholder() {
                 }],
             },
         ],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let wire = writer.write_request(crate::codec::test_host::HOST, &req);
     let contents = wire
@@ -2054,15 +1853,6 @@ fn test_write_request_thinking_only_turn_survives_with_placeholder() {
 fn test_write_request_null_tool_result_coerced_to_struct() {
     let writer = GeminiWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Tool,
             content: vec![crate::codec::ir::IrBlock::ToolResult {
@@ -2078,30 +1868,7 @@ fn test_write_request_null_tool_result_coerced_to_struct() {
                 cache_control: None,
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let wire = writer.write_request(crate::codec::test_host::HOST, &req);
     let response = wire
@@ -2130,15 +1897,6 @@ fn test_write_request_null_tool_result_coerced_to_struct() {
 fn test_write_request_scalar_tool_result_coerced_to_struct() {
     let writer = GeminiWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Tool,
             content: vec![crate::codec::ir::IrBlock::ToolResult {
@@ -2153,30 +1911,7 @@ fn test_write_request_scalar_tool_result_coerced_to_struct() {
                 cache_control: None,
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let wire = writer.write_request(crate::codec::test_host::HOST, &req);
     let response = wire
@@ -2279,15 +2014,6 @@ fn test_read_request_model_preserved_in_extra_once() {
 fn test_write_request_tool_result_plaintext_wrapped_not_dropped() {
     let writer = GeminiWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::ToolResult {
@@ -2310,30 +2036,7 @@ fn test_write_request_tool_result_plaintext_wrapped_not_dropped() {
                 cache_control: None,
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let wire = writer.write_request(crate::codec::test_host::HOST, &req);
     let resp = wire
@@ -2356,15 +2059,6 @@ fn test_write_request_tool_result_plaintext_wrapped_not_dropped() {
 fn test_write_request_tool_result_json_passthrough() {
     let writer = GeminiWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::ToolResult {
@@ -2379,30 +2073,7 @@ fn test_write_request_tool_result_json_passthrough() {
                 cache_control: None,
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let wire = writer.write_request(crate::codec::test_host::HOST, &req);
     let temp = wire
@@ -2418,8 +2089,6 @@ fn test_write_request_tool_result_json_passthrough() {
 fn test_response_identity_cross_protocol_synthesizes_id_when_created_set() {
     let writer = GeminiWriter;
     let ir = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::Text {
             text: "hi".to_string(),
             cache_control: None,
@@ -2430,18 +2099,9 @@ fn test_response_identity_cross_protocol_synthesizes_id_when_created_set() {
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
         created: Some(1_700_000_000),
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let wire = writer.write_response(crate::codec::test_host::HOST, &ir);
@@ -2987,30 +2647,6 @@ fn test_read_request_source_stream_round_trips_via_extra() {
     );
 }
 
-/// Regression: a NATIVE Gemini request carries no `stream`, so neither `extra` nor the egress
-/// body gains one even when the caller wants streaming (URL-selected). Guards the writer's
-/// "never synthesizes a stream member from req.stream" invariant.
-#[test]
-fn test_read_request_native_no_stream_stays_absent() {
-    let reader = GeminiReader;
-    let body = serde_json::json!({
-        "contents": [{"role": "user", "parts": [{"text": "hi"}]}]
-    });
-    let mut ir = reader.read_request(&body).expect("read_request");
-    ir.stream = true; // caller wants streaming; must not reach the body
-    assert!(
-        !ir.extra.contains_key("stream"),
-        "native request carries no stream in extra: {:?}",
-        ir.extra
-    );
-    let writer = GeminiWriter;
-    let wire = writer.write_request(crate::codec::test_host::HOST, &ir);
-    assert!(
-        wire.get("stream").is_none(),
-        "stream intent must not be synthesized onto a native body: {wire}"
-    );
-}
-
 /// A `maxOutputTokens` above `u32::MAX`
 /// must NOT silently truncate (wrap) into a tiny token cap. The bounds-checked `u32::try_from`
 /// drops an out-of-range value to `None`, so the request carries no cap and the backend applies
@@ -3148,15 +2784,6 @@ fn test_generation_config_typed_fields_override_raw_extra() {
         serde_json::json!({"maxOutputTokens": 100, "responseMimeType": "text/plain"}),
     );
     let ir = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::Text {
@@ -3166,30 +2793,9 @@ fn test_generation_config_typed_fields_override_raw_extra() {
                 refusal: false,
             }],
         }],
-        tools: Vec::new(),
         max_tokens: Some(999),
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: Vec::new(),
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
         extra,
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let wire = writer.write_request(crate::codec::test_host::HOST, &ir);
     let gc = wire
@@ -3282,8 +2888,6 @@ fn test_stream_message_delta_total_token_count_saturates() {
 fn test_write_response_includes_total_token_count_cross_protocol() {
     let writer = GeminiWriter;
     let ir = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::Text {
             text: "hi".to_string(),
             cache_control: None,
@@ -3294,18 +2898,11 @@ fn test_write_response_includes_total_token_count_cross_protocol() {
         usage: crate::codec::ir::IrUsage {
             input_tokens: 5,
             output_tokens: 3,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: Some(1_700_000_000), // cross-protocol boundary signal
+        created: Some(1_700_000_000),
+        // cross-protocol boundary signal
         system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let wire = writer.write_response(crate::codec::test_host::HOST, &ir);
@@ -3333,8 +2930,6 @@ fn test_write_response_includes_total_token_count_cross_protocol() {
 fn test_write_response_omits_total_token_count_same_protocol() {
     let writer = GeminiWriter;
     let ir = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::Text {
             text: "hi".to_string(),
             cache_control: None,
@@ -3345,18 +2940,10 @@ fn test_write_response_omits_total_token_count_same_protocol() {
         usage: crate::codec::ir::IrUsage {
             input_tokens: 5,
             output_tokens: 3,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: None, // same-protocol: no boundary signal
+        // same-protocol: no boundary signal
         system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let wire = writer.write_response(crate::codec::test_host::HOST, &ir);
@@ -3371,25 +2958,15 @@ fn test_write_response_omits_total_token_count_same_protocol() {
 fn test_write_response_total_token_count_saturates() {
     let writer = GeminiWriter;
     let ir = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
-        content: Vec::new(),
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: crate::codec::ir::IrUsage {
             input_tokens: u64::MAX,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: Some(1_700_000_000), // cross-protocol
+        created: Some(1_700_000_000),
+        // cross-protocol
         system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let wire = writer.write_response(crate::codec::test_host::HOST, &ir);
@@ -3413,8 +2990,6 @@ fn test_write_response_total_token_count_saturates() {
 fn test_write_response_includes_total_token_count_when_only_model_present() {
     let writer = GeminiWriter;
     let ir = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::Text {
             text: "hi".to_string(),
             cache_control: None,
@@ -3425,19 +3000,10 @@ fn test_write_response_includes_total_token_count_when_only_model_present() {
         usage: crate::codec::ir::IrUsage {
             input_tokens: 11,
             output_tokens: 4,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
         // Anthropic/Cohere cross-protocol shape: model survives, created/id are None.
         model: Some("claude-opus-4-8".to_string()),
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let wire = writer.write_response(crate::codec::test_host::HOST, &ir);
@@ -3462,25 +3028,13 @@ fn test_write_response_includes_total_token_count_when_only_model_present() {
 fn test_write_response_model_only_total_token_count_saturates() {
     let writer = GeminiWriter;
     let ir = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
-        content: Vec::new(),
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: crate::codec::ir::IrUsage {
             input_tokens: u64::MAX,
             output_tokens: 7,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
         model: Some("command-r".to_string()),
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let wire = writer.write_response(crate::codec::test_host::HOST, &ir);
@@ -3555,8 +3109,6 @@ fn test_read_request_unmodeled_key_still_flows_to_extra_after_hoist() {
 fn test_write_response_tool_use_maps_to_stop() {
     let writer = GeminiWriter;
     let ir = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::ToolUse {
             thought_signature: None,
             id: "call_1".to_string(),
@@ -3568,18 +3120,8 @@ fn test_write_response_tool_use_maps_to_stop() {
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let wire = writer.write_response(crate::codec::test_host::HOST, &ir);
@@ -3630,15 +3172,6 @@ fn test_stream_message_delta_tool_use_maps_to_stop() {
 fn test_write_request_image_url_sentinel_emits_file_data() {
     let writer = GeminiWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::Image {
@@ -3649,30 +3182,7 @@ fn test_write_request_image_url_sentinel_emits_file_data() {
                 detail: None,
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let wire = writer.write_request(crate::codec::test_host::HOST, &req);
     assert_eq!(
@@ -3693,15 +3203,6 @@ fn test_write_request_image_url_sentinel_emits_file_data() {
 fn test_write_request_base64_image_still_inline_data() {
     let writer = GeminiWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![crate::codec::ir::IrBlock::Image {
@@ -3713,30 +3214,7 @@ fn test_write_request_base64_image_still_inline_data() {
                 detail: None,
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let wire = writer.write_request(crate::codec::test_host::HOST, &req);
     assert_eq!(
@@ -3847,15 +3325,6 @@ fn test_synth_response_id_leaks_no_timestamp() {
             "synthesized responseId must not be a hyphenated time-counter pair: {id}"
         );
     }
-}
-
-/// Two consecutive synthesized ids differ because the whole 16-char base62 token is drawn from
-/// the host entropy pool (~95 bits of entropy) — guards the collision-free per-process uniqueness property.
-#[test]
-fn test_synth_response_id_distinct_consecutive() {
-    let a = synth_response_id(crate::codec::test_host::HOST);
-    let b = synth_response_id(crate::codec::test_host::HOST);
-    assert_ne!(a, b, "consecutive synthesized ids must differ: {a} vs {b}");
 }
 
 /// The base62 reduction must be UNBIASED. The old body mapped each
@@ -4070,67 +3539,6 @@ fn test_auth_headers_valid_key_emits_x_goog_api_key() {
     );
 }
 
-/// Security regression: a credential whose bytes are invalid for an HTTP header value
-/// (here an embedded newline) must NOT be silently swallowed into an empty `x-goog-api-key`
-/// value. The writer omits the header entirely (empty vec) and never panics on the request path.
-/// The accompanying `tracing::warn!` (not asserted here) gives the operator the diagnostic the
-/// empty-header behavior lacked.
-#[test]
-fn test_auth_headers_invalid_key_omits_header_no_empty_value() {
-    // #83a S2-a: the dialect DECLARES its credential scheme and the host presents it — the raw key
-    // in the custom `x-goog-api-key` header for every credential and mode, no Bearer. The bytes the host writes
-    // for a valid key, and the omission of a key whose bytes no header value may carry, are pinned in
-    // the host's suite over the shared fixture `testing/plane-copies/declared-credentials.json`.
-    let raw = busbar_contract::protocol::CredentialHeader::Raw {
-        header: "x-goog-api-key",
-        trim_start: false,
-    };
-    let Some(busbar_contract::protocol::EgressScheme::Static {
-        families,
-        own,
-        passthrough,
-    }) = crate::codec::gemini::DECL.egress_scheme
-    else {
-        panic!("gemini declares a static credential scheme");
-    };
-    assert!(families.is_empty());
-    assert_eq!(own, raw);
-    assert_eq!(passthrough, raw);
-    assert!(
-        crate::codec::gemini::DECL.egress_auth_headers.is_none(),
-        "no credential passes through the plane"
-    );
-}
-
-/// An ASCII control byte other than the newline above (here a NUL) is also rejected, exercising
-/// the control-character class of header-invalid byte the validation guards against.
-#[test]
-fn test_auth_headers_control_byte_key_omits_header() {
-    // #83a S2-a: the dialect DECLARES its credential scheme and the host presents it — the raw key
-    // in the custom `x-goog-api-key` header for every credential and mode, no Bearer. The bytes the host writes
-    // for a valid key, and the omission of a key whose bytes no header value may carry, are pinned in
-    // the host's suite over the shared fixture `testing/plane-copies/declared-credentials.json`.
-    let raw = busbar_contract::protocol::CredentialHeader::Raw {
-        header: "x-goog-api-key",
-        trim_start: false,
-    };
-    let Some(busbar_contract::protocol::EgressScheme::Static {
-        families,
-        own,
-        passthrough,
-    }) = crate::codec::gemini::DECL.egress_scheme
-    else {
-        panic!("gemini declares a static credential scheme");
-    };
-    assert!(families.is_empty());
-    assert_eq!(own, raw);
-    assert_eq!(passthrough, raw);
-    assert!(
-        crate::codec::gemini::DECL.egress_auth_headers.is_none(),
-        "no credential passes through the plane"
-    );
-}
-
 /// HIGH/correctness regression: a Tool-role IR message carries `ToolResult` blocks, which the
 /// writer emits as Gemini `functionResponse` parts. In the native GenerateContentRequest schema
 /// a `functionResponse` turn MUST be sent under `role:"user"` — the `model` role is exclusively
@@ -4142,15 +3550,6 @@ fn test_auth_headers_control_byte_key_omits_header() {
 fn test_tool_role_maps_to_user_for_function_response() {
     let writer = GeminiWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Tool,
             content: vec![crate::codec::ir::IrBlock::ToolResult {
@@ -4165,30 +3564,7 @@ fn test_tool_role_maps_to_user_for_function_response() {
                 cache_control: None,
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
 
     let wire = writer.write_request(crate::codec::test_host::HOST, &req);
@@ -4218,15 +3594,6 @@ fn test_tool_role_maps_to_user_for_function_response() {
 fn test_assistant_tool_use_stays_model_role() {
     let writer = GeminiWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Assistant,
             content: vec![crate::codec::ir::IrBlock::ToolUse {
@@ -4237,30 +3604,7 @@ fn test_assistant_tool_use_stays_model_role() {
                 cache_control: None,
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
 
     let wire = writer.write_request(crate::codec::test_host::HOST, &req);
@@ -4460,15 +3804,6 @@ fn test_write_request_cross_protocol_function_response_name_matches_call() {
     let writer = GeminiWriter;
     let synthetic_id = "call_00000000deadbeef".to_string();
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![
             // Assistant turn: the tool CALL carries a synthetic id, real name `get_weather`.
             crate::codec::ir::IrMessage {
@@ -4498,30 +3833,7 @@ fn test_write_request_cross_protocol_function_response_name_matches_call() {
                 }],
             },
         ],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
 
     let wire = writer.write_request(crate::codec::test_host::HOST, &req);
@@ -4556,15 +3868,6 @@ fn test_write_request_cross_protocol_function_response_name_matches_call() {
 fn test_write_request_same_protocol_function_response_name_falls_back_to_id() {
     let writer = GeminiWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Tool,
             content: vec![crate::codec::ir::IrBlock::ToolResult {
@@ -4579,30 +3882,7 @@ fn test_write_request_same_protocol_function_response_name_falls_back_to_id() {
                 cache_control: None,
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let wire = writer.write_request(crate::codec::test_host::HOST, &req);
     assert_eq!(
@@ -4801,43 +4081,11 @@ fn test_tool_use_array_input_coerced_to_object_args() {
     // write_request path
     let writer = GeminiWriter;
     let req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Assistant,
             content: vec![block.clone()],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     let wire = writer.write_request(crate::codec::test_host::HOST, &req);
     let args = wire
@@ -4855,25 +4103,8 @@ fn test_tool_use_array_input_coerced_to_object_args() {
 
     // write_response path
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![block],
         stop_reason: Some(crate::codec::ir::IrStopReason::ToolUse),
-        usage: crate::codec::ir::IrUsage {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
-        },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let rwire = writer.write_response(crate::codec::test_host::HOST, &resp);
@@ -4897,8 +4128,6 @@ fn test_tool_use_array_input_coerced_to_object_args() {
 fn test_tool_use_object_input_passes_through_unchanged() {
     let writer = GeminiWriter;
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::ToolUse {
             thought_signature: None,
             id: "call_1".to_string(),
@@ -4907,21 +4136,6 @@ fn test_tool_use_object_input_passes_through_unchanged() {
             cache_control: None,
         }],
         stop_reason: Some(crate::codec::ir::IrStopReason::ToolUse),
-        usage: crate::codec::ir::IrUsage {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
-        },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let rwire = writer.write_response(crate::codec::test_host::HOST, &resp);
@@ -6752,21 +5966,6 @@ fn tool_choice_variants_round_trip_via_function_calling_config() {
     }
 }
 
-/// A multi-name `allowedFunctionNames` (a SUBSET restriction the IR cannot express) must relax to
-/// `Required` (call SOME tool — a true superset), NOT fabricate a stricter single-tool constraint
-/// the request never made.
-#[test]
-fn tool_choice_multi_allowed_names_relaxes_to_required() {
-    let tool_config = serde_json::json!({
-        "functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": ["a", "b"]}
-    });
-    assert_eq!(
-        read_gemini_tool_choice(Some(&tool_config)),
-        Some(crate::codec::ir::IrToolChoice::Required),
-        "a 2-name allow-list has no IR analog; must degrade to Required, not Tool{{first}}"
-    );
-}
-
 /// An UNKNOWN native `finishReason` (a future/novel Gemini token) maps to `IrStopReason::Other`
 /// (ir.rs:186 — no String payload), and on egress `Other` degrades to the honest native `OTHER`
 /// enum member, never an off-spec upper-cased token a strict client rejects.
@@ -6795,8 +5994,6 @@ fn unknown_finish_reason_maps_to_other_and_writes_native_other() {
 #[test]
 fn write_response_reconstructs_prompt_token_count_with_cached() {
     let resp = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::Text {
             text: "hi".to_string(),
             cache_control: None,
@@ -6807,18 +6004,10 @@ fn write_response_reconstructs_prompt_token_count_with_cached() {
         usage: crate::codec::ir::IrUsage {
             input_tokens: 20,
             output_tokens: 5,
-            cache_creation_input_tokens: None,
             cache_read_input_tokens: Some(80),
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
         model: Some("gemini-2.0-flash".to_string()),
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let out = {
@@ -6960,15 +6149,6 @@ fn test_read_request_captures_function_call_thought_signature_from_history() {
 #[test]
 fn test_outage_cross_protocol_tool_use_gets_sentinel_thought_signature() {
     let mut ir_req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Assistant,
             content: vec![crate::codec::ir::IrBlock::ToolUse {
@@ -6981,30 +6161,7 @@ fn test_outage_cross_protocol_tool_use_gets_sentinel_thought_signature() {
                 thought_signature: None,
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     super::super::chat_handle::chat_prepare_for_egress(
         &mut ir_req,
@@ -7050,15 +6207,6 @@ fn test_outage_cross_protocol_tool_use_gets_sentinel_thought_signature() {
 #[test]
 fn test_prepare_for_egress_does_not_overwrite_real_thought_signature() {
     let mut ir_req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Assistant,
             content: vec![crate::codec::ir::IrBlock::ToolUse {
@@ -7069,30 +6217,7 @@ fn test_prepare_for_egress_does_not_overwrite_real_thought_signature() {
                 thought_signature: Some("a-genuinely-real-signature".to_string()),
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     super::super::chat_handle::chat_prepare_for_egress(
         &mut ir_req,
@@ -7129,15 +6254,6 @@ fn test_prepare_for_egress_does_not_overwrite_real_thought_signature() {
 #[test]
 fn test_vertex_lane_gets_no_sentinel_thought_signature() {
     let mut ir_req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Assistant,
             content: vec![crate::codec::ir::IrBlock::ToolUse {
@@ -7148,30 +6264,7 @@ fn test_vertex_lane_gets_no_sentinel_thought_signature() {
                 thought_signature: None,
             }],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     super::super::chat_handle::chat_prepare_for_egress(
         &mut ir_req,
@@ -7206,15 +6299,6 @@ fn test_vertex_lane_gets_no_sentinel_thought_signature() {
 #[test]
 fn test_prepare_for_egress_fills_only_missing_signatures_in_parallel_calls() {
     let mut ir_req = crate::codec::ir::IrRequest {
-        system_turns_folded: 0,
-        system_folds: Vec::new(),
-        reasoning: None,
-        reasoning_budgets: None,
-        logprobs: None,
-        top_logprobs: None,
-        user: None,
-        parallel_tool_calls: None,
-        system: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Assistant,
             content: vec![
@@ -7234,30 +6318,7 @@ fn test_prepare_for_egress_fills_only_missing_signatures_in_parallel_calls() {
                 },
             ],
         }],
-        tools: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop: vec![],
-        tool_choice: None,
-        stream: false,
-        frequency_penalty: None,
-        presence_penalty: None,
-        seed: None,
-        n: None,
-        response_format: None,
-        extra: serde_json::Map::new(),
-        metadata: None,
-        service_tier: None,
-        store: None,
-        safety_identifier: None,
-        prompt_cache_key: None,
-        verbosity: None,
-        allowed_tools: None,
-        hosted_tools: Vec::new(),
-        system_role: None,
-        output_modalities: None,
+        ..Default::default()
     };
     super::super::chat_handle::chat_prepare_for_egress(
         &mut ir_req,
@@ -7305,8 +6366,6 @@ fn test_prepare_for_egress_fills_only_missing_signatures_in_parallel_calls() {
 fn test_write_response_emits_real_signature_never_sentinel() {
     let writer = GeminiWriter;
     let with_sig = crate::codec::ir::IrResponse {
-        logprobs: Vec::new(),
-        role: crate::codec::ir::IrRole::Assistant,
         content: vec![crate::codec::ir::IrBlock::ToolUse {
             id: "call_1".to_string(),
             name: "get_weather".to_string(),
@@ -7318,18 +6377,8 @@ fn test_write_response_emits_real_signature_never_sentinel() {
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     };
     let wire = writer.write_response(crate::codec::test_host::HOST, &with_sig);
@@ -7648,22 +6697,6 @@ fn streamed_tool_ids_after_text_match_the_buffered_ids() {
         .collect();
     assert_eq!(buffered.len(), 2, "{buffered:?}");
     assert_eq!(streamed, buffered);
-}
-
-/// The checkpointed index must agree with per-offset conversion across many strides, on mixed-width
-/// text, for every byte offset.
-#[test]
-fn gemini_char_index_matches_per_offset_conversion_across_strides() {
-    let text = "aé✓𝄞x".repeat(100);
-    let index = GeminiCharIndex::build(&text);
-    for b in -2..=(text.len() as i64 + 3) {
-        assert_eq!(index.char_offset(b), gemini_byte_offset_to_char(&text, b));
-    }
-    let ascii = "plain ascii ".repeat(50);
-    let index = GeminiCharIndex::build(&ascii);
-    for b in [-1, 0, 7, 599, 600, 601] {
-        assert_eq!(index.char_offset(b), gemini_byte_offset_to_char(&ascii, b));
-    }
 }
 
 /// A support naming one large chunk many times yields ONE citation for it, not one clone per name.

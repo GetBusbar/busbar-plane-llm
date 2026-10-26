@@ -14,22 +14,18 @@ use busbar_contract::billing::Billing;
 use busbar_contract::codec::{OperationHandler, TranslatedResponse};
 use busbar_contract::operation::OpVerb;
 use busbar_contract::protocol::{
-    ProtocolDecl, APPLICATION_JSON, KIND_API_ERROR, KIND_NOT_FOUND, TEXT_EVENT_STREAM,
+    APPLICATION_JSON, KIND_API_ERROR, KIND_NOT_FOUND, TEXT_EVENT_STREAM,
 };
 use serde_json::Value;
 
 use super::super::attempt::DETAIL_ENDPOINT_UNSUPPORTED_OPERATION;
+use super::super::decl;
 use super::super::refuse::{render, Rendered};
 use super::failure::request_id_field;
 use super::wire;
 use super::wire::head_field;
 use crate::codec::drops;
 use crate::codec::translate::{TranslateCodec as _, TranslateRespInput};
-use crate::codec::DECLS;
-
-fn decl(name: &str) -> Option<&'static ProtocolDecl> {
-    DECLS.iter().copied().find(|d| d.name == name)
-}
 
 fn handler(dialect: &str, operation: OpVerb) -> Option<&'static dyn OperationHandler> {
     decl(dialect)

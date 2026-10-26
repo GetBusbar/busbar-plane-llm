@@ -958,7 +958,6 @@ impl IrBlock {
         matches!(self, IrBlock::Text { text, citations, .. } if text.is_empty() && !citations.is_empty())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn is_opaque(&self) -> bool {
         match self {
             // `text` holds the opaque bytes (Anthropic `redacted_thinking`, Bedrock

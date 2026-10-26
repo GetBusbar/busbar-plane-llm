@@ -7,7 +7,7 @@
 //! re-pin that moves a clause moves the test with it.
 
 use super::*;
-use crate::codec::ir::{IrBlock, IrResponse, IrRole, IrTokenLogprob, IrUsage};
+use crate::codec::ir::{IrBlock, IrResponse, IrTokenLogprob, IrUsage};
 
 /// A minimal assistant response carrying `text`, the given stop reason and the given logprobs —
 /// the smallest IR a writer will project into a full native response body.
@@ -18,7 +18,6 @@ fn resp(
 ) -> IrResponse {
     IrResponse {
         logprobs,
-        role: IrRole::Assistant,
         content: vec![IrBlock::Text {
             text: text.to_string(),
             cache_control: None,
@@ -29,17 +28,8 @@ fn resp(
         usage: IrUsage {
             input_tokens: 1,
             output_tokens: 1,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
+            ..Default::default()
         },
-        model: None,
-        id: None,
-        created: None,
-        system_fingerprint: None,
-        stop_sequence: None,
-        request_echo: None,
-        stop_detail: None,
         ..Default::default()
     }
 }
@@ -173,27 +163,9 @@ fn anthropic_image_block_start_emits_no_frame() {
             .is_none(),
         "image is not a member of the content_block discriminator; emit no frame"
     );
-}
-
-/// …and the matching `BlockStop` must be suppressed with it: a `content_block_stop` for an index a
-/// client never saw a `content_block_start` for is an orphan the SDK accumulator cannot close. This
-/// mirrors `BedrockWriter`'s open-index guard.
-#[test]
-fn anthropic_image_block_stop_is_suppressed_with_its_start() {
-    let writer = AnthropicWriter;
-    assert!(
-        writer
-            .write_response_event(
-                crate::codec::test_host::HOST,
-                &crate::codec::ir::IrStreamEvent::BlockStart {
-                    index: 0,
-                    block: crate::codec::ir::IrBlockMeta::Image,
-                    refusal: false,
-                }
-            )
-            .is_none(),
-        "image BlockStart stays suppressed"
-    );
+    // …and the matching `BlockStop` must be suppressed with it: a `content_block_stop` for an index
+    // a client never saw a `content_block_start` for is an orphan the SDK accumulator cannot close.
+    // This mirrors `BedrockWriter`'s open-index guard.
     assert!(
         writer
             .write_response_event(

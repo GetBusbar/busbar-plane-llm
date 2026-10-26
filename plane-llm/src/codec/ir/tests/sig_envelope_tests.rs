@@ -94,6 +94,24 @@ fn sse_payloads(out: &str) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Feed each Anthropic SSE `data` payload through `t` as a framed event and collect every byte it
+/// writes, including the finish flush.
+fn feed_frames(
+    t: &mut crate::codec::proto_stream::StreamTranslate,
+    frames: impl IntoIterator<Item = String>,
+) -> String {
+    let mut out = String::new();
+    for data in frames {
+        let v: serde_json::Value = serde_json::from_str(&data).unwrap();
+        let frame = format!("event: {}\ndata: {data}\n\n", v["type"].as_str().unwrap());
+        out.push_str(
+            &String::from_utf8(t.feed(crate::codec::test_host::HOST, frame.as_bytes())).unwrap(),
+        );
+    }
+    out.push_str(&String::from_utf8(t.finish(crate::codec::test_host::HOST)).unwrap());
+    out
+}
+
 #[test]
 fn ir18_envelope_round_trips_bytes_and_origin() {
     for origin in [
@@ -177,15 +195,7 @@ fn ir18_claude_signature_survives_a_responses_client_round_trip_stream() {
         r#"{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":5}}"#.to_string(),
         r#"{"type":"message_stop"}"#.to_string(),
     ];
-    let mut out = String::new();
-    for data in frames {
-        let v: serde_json::Value = serde_json::from_str(&data).unwrap();
-        let frame = format!("event: {}\ndata: {data}\n\n", v["type"].as_str().unwrap());
-        out.push_str(
-            &String::from_utf8(t.feed(crate::codec::test_host::HOST, frame.as_bytes())).unwrap(),
-        );
-    }
-    out.push_str(&String::from_utf8(t.finish(crate::codec::test_host::HOST)).unwrap());
+    let out = feed_frames(&mut t, frames);
 
     let item = sse_payloads(&out)
         .into_iter()
@@ -337,15 +347,7 @@ fn ir19_claude_signature_survives_a_gemini_client_round_trip_stream() {
         r#"{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":5}}"#.to_string(),
         r#"{"type":"message_stop"}"#.to_string(),
     ];
-    let mut out = String::new();
-    for data in frames {
-        let v: serde_json::Value = serde_json::from_str(&data).unwrap();
-        let frame = format!("event: {}\ndata: {data}\n\n", v["type"].as_str().unwrap());
-        out.push_str(
-            &String::from_utf8(t.feed(crate::codec::test_host::HOST, frame.as_bytes())).unwrap(),
-        );
-    }
-    out.push_str(&String::from_utf8(t.finish(crate::codec::test_host::HOST)).unwrap());
+    let out = feed_frames(&mut t, frames);
     let sigs = gemini_thought_signatures(&sse_payloads(&out));
     assert_eq!(sigs.len(), 1, "{out}");
     assert!(sigs[0].starts_with(ENVELOPE_PREFIX), "{out}");

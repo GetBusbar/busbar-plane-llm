@@ -22,7 +22,7 @@ const SEAM: Seam<'static> = Seam {
     egress: "anthropic",
 };
 
-fn prep(ingress: &str) -> EgressPrep<'_> {
+pub(super) fn prep(ingress: &str) -> EgressPrep<'_> {
     EgressPrep {
         ingress_protocol: ingress,
         egress_requires_max_tokens: true,
@@ -270,7 +270,11 @@ fn parked_members_are_named_as_the_reader_declares_them() {
 
 /// Translate `body` from `ingress` onto `egress`: the far end's body, what the seam audits, and the
 /// warns.
-fn translate(ingress: &str, egress: &str, body: &Value) -> (Value, Vec<String>, WarnCapture) {
+pub(super) fn translate(
+    ingress: &str,
+    egress: &str,
+    body: &Value,
+) -> (Value, Vec<String>, WarnCapture) {
     let _ = protocol_for(ingress);
     let handler = crate::codec::decl_of(ingress)
         .and_then(|d| d.handler)

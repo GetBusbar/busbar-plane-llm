@@ -738,11 +738,6 @@ pub fn keep_unmodelled(table: Table, obj: &Map<String, Value>, extra: &mut Map<S
     }
 }
 
-/// Whether `table` has a row at the wire path `path` (`["generationConfig", "topK"]`).
-pub fn maps(table: Table, path: &[&str]) -> bool {
-    rows(table).any(|f| f.path == path)
-}
-
 /// Whether `table` carries the wire path `path` ACROSS dialects: a row that names a slot. A `prim`
 /// row names a member the dialect's own structural code reads and writes; whether that member
 /// crosses is that code's declaration (`codec::drops::Parked`), not the row's.

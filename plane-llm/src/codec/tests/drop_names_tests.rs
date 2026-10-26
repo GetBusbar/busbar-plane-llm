@@ -8,6 +8,7 @@
 //! `generationConfig.candidateCount`, not the IR slot `n`. A slot the caller's map file has no row
 //! for keeps the slot's name.
 
+use super::tests::prep;
 use crate::codec::proto_codec::protocol_for;
 use crate::codec::translate::{TranslateCodec as _, TranslateReqInput};
 use busbar_contract::ir::egress_prep::EgressPrep;
@@ -45,16 +46,9 @@ fn translate(
         .and_then(|h| h.operation_handler(OpVerb::CHAT))
         .expect("a chat handler");
     let prep = EgressPrep {
-        ingress_protocol: ingress,
-        egress_requires_max_tokens: true,
-        lane_default_max_tokens: None,
-        global_default_max_tokens: 4096,
         reasoning_allowed: gates.reasoning,
-        reasoning_budgets: crate::codec::ir::REASONING_BUDGET_DEFAULTS,
         prompt_caching_allowed: gates.caching,
-        cache_control_cap: None,
-        lane_caps: Default::default(),
-        thought_signature_fill: false,
+        ..prep(ingress)
     };
     let cap = WarnCapture::default();
     let out = tracing::subscriber::with_default(cap.clone(), || {

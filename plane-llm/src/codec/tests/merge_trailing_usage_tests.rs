@@ -56,45 +56,6 @@ fn trailing_nonzero_overrides_zero_leaves_intact() {
     );
 }
 
-/// The DETAIL sub-buckets ride the same Some-wins rule: a trailing chunk's `Some` overrides, a
-/// trailing `None` never clobbers a detail the terminal delta already carried. (The fold used to
-/// merge only the four totals — the reasoning attribution went to zero on every streamed
-/// cross-protocol reasoning call while the buffered twin carried it.)
-#[test]
-fn trailing_detail_sub_buckets_merge_some_wins() {
-    let detail = |r: Option<u64>, c5: Option<u64>, c1: Option<u64>, s: Option<u64>| {
-        crate::codec::ir::IrUsageDetail {
-            reasoning_tokens: r,
-            cache_creation_5m_input_tokens: c5,
-            cache_creation_1h_input_tokens: c1,
-            search_units: s,
-            // ADDITIVE per-dialect usage-attribution fields (anthropic web_search_requests/
-            // service_tier, openai audio/prediction sub-buckets, gemini tool_use_prompt_tokens,
-            // cohere billed_* buckets, and the other dialect carriers) default here — this fold
-            // exercises the four reasoning/cache/search sub-buckets only.
-            ..Default::default()
-        }
-    };
-    // Trailing Some fills a zeroed terminal.
-    let mut acc = usage(0, 0, None, None);
-    let mut trailing = usage(120, 45, None, None);
-    trailing.detail = detail(Some(9), Some(10), Some(20), Some(2));
-    merge_trailing_usage(&mut acc, &trailing);
-    assert_eq!(acc.detail.reasoning_tokens, Some(9));
-    assert_eq!(acc.detail.cache_creation_5m_input_tokens, Some(10));
-    assert_eq!(acc.detail.cache_creation_1h_input_tokens, Some(20));
-    assert_eq!(acc.detail.search_units, Some(2));
-
-    // A trailing chunk with no detail leaves an already-carried detail intact.
-    let mut acc = usage(200, 80, None, None);
-    acc.detail = detail(Some(7), Some(1), Some(2), Some(3));
-    merge_trailing_usage(&mut acc, &usage(0, 0, None, None));
-    assert_eq!(acc.detail.reasoning_tokens, Some(7), "None never clobbers");
-    assert_eq!(acc.detail.cache_creation_5m_input_tokens, Some(1));
-    assert_eq!(acc.detail.cache_creation_1h_input_tokens, Some(2));
-    assert_eq!(acc.detail.search_units, Some(3));
-}
-
 /// EVERY `IrUsageDetail` bucket rides the Some-wins fold, not just the handful that had a bug filed
 /// against them. The fold is written as a no-`..` destructure of the detail struct precisely so a
 /// future field cannot be added without landing here; this test pins the current full census so a

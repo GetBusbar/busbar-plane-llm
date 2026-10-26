@@ -9,9 +9,9 @@
 //! an attempt (a direct writer call) the writer's own warn is emitted unchanged and nothing is
 //! audited.
 
+use super::tests::{prep, translate as translate_body};
 use crate::codec::proto_codec::protocol_for;
 use crate::codec::translate::{TranslateCodec as _, TranslateReqInput};
-use busbar_contract::ir::egress_prep::EgressPrep;
 use busbar_contract::operation::OpVerb;
 use busbar_contract::testkit::WarnCapture;
 use serde_json::{json, Value};
@@ -23,18 +23,7 @@ fn translate(ingress: &str, egress: &str, body: &Value) -> (Vec<String>, WarnCap
         .and_then(|d| d.handler)
         .and_then(|h| h.operation_handler(OpVerb::CHAT))
         .expect("a chat handler");
-    let prep = EgressPrep {
-        ingress_protocol: ingress,
-        egress_requires_max_tokens: true,
-        lane_default_max_tokens: None,
-        global_default_max_tokens: 4096,
-        reasoning_allowed: true,
-        reasoning_budgets: crate::codec::ir::REASONING_BUDGET_DEFAULTS,
-        prompt_caching_allowed: true,
-        cache_control_cap: None,
-        lane_caps: Default::default(),
-        thought_signature_fill: false,
-    };
+    let prep = prep(ingress);
     let cap = WarnCapture::default();
     let out = tracing::subscriber::with_default(cap.clone(), || {
         handler.translate_request(
@@ -274,44 +263,6 @@ fn outside_an_attempt_the_writers_own_warn_is_said() {
 // row); wrong-typed input to a mapped field is the caller's error in its own dialect's envelope
 // (spec Part 2 #76). Never a value put in the dropped one's place.
 
-/// Translate `body`, keeping the egress body: the body, what the seam audits, and the warns.
-fn translate_body(ingress: &str, egress: &str, body: &Value) -> (Value, Vec<String>, WarnCapture) {
-    let _ = protocol_for(ingress);
-    let handler = crate::codec::decl_of(ingress)
-        .and_then(|d| d.handler)
-        .and_then(|h| h.operation_handler(OpVerb::CHAT))
-        .expect("a chat handler");
-    let prep = EgressPrep {
-        ingress_protocol: ingress,
-        egress_requires_max_tokens: true,
-        lane_default_max_tokens: None,
-        global_default_max_tokens: 4096,
-        reasoning_allowed: true,
-        reasoning_budgets: crate::codec::ir::REASONING_BUDGET_DEFAULTS,
-        prompt_caching_allowed: true,
-        cache_control_cap: None,
-        lane_caps: Default::default(),
-        thought_signature_fill: false,
-    };
-    let cap = WarnCapture::default();
-    let out = tracing::subscriber::with_default(cap.clone(), || {
-        handler.translate_request(
-            crate::codec::test_host::HOST,
-            TranslateReqInput::Json(body),
-            Some(egress),
-            &prep,
-            "m",
-        )
-    });
-    let Ok(out) = out else {
-        panic!("{ingress} -> {egress}: the request must translate");
-    };
-    let busbar_contract::codec::EgressWire::Json(wire) = out.wire else {
-        panic!("{ingress} -> {egress}: a JSON egress body");
-    };
-    (wire, out.dropped_controls, cap)
-}
-
 /// The caller's request is refused by its own dialect's reader: the seam answers in that
 /// dialect's error envelope (`ingress_reject_response`), and nothing goes upstream.
 fn refused_natively(ingress: &str, egress: &str, body: &Value) {
@@ -320,18 +271,7 @@ fn refused_natively(ingress: &str, egress: &str, body: &Value) {
         .and_then(|d| d.handler)
         .and_then(|h| h.operation_handler(OpVerb::CHAT))
         .expect("a chat handler");
-    let prep = EgressPrep {
-        ingress_protocol: ingress,
-        egress_requires_max_tokens: true,
-        lane_default_max_tokens: None,
-        global_default_max_tokens: 4096,
-        reasoning_allowed: true,
-        reasoning_budgets: crate::codec::ir::REASONING_BUDGET_DEFAULTS,
-        prompt_caching_allowed: true,
-        cache_control_cap: None,
-        lane_caps: Default::default(),
-        thought_signature_fill: false,
-    };
+    let prep = prep(ingress);
     let out = handler.translate_request(
         crate::codec::test_host::HOST,
         TranslateReqInput::Json(body),
