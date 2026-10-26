@@ -26,8 +26,13 @@
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "${here}/../.." && pwd)"
+# The cell universe (testing/shadow-oracle/cells.json) and the shared verdict
+# (testing/fleet-fixtures/verdict.sh) live in busbar, not in this plugin repo: when this checkout does
+# not carry them they are read from $BUSBAR_CHECKOUT (busbar at the .busbar-ref pin).
+core="$repo"
+[ -f "${core}/testing/fleet-fixtures/verdict.sh" ] || core="${BUSBAR_CHECKOUT:-$repo}"
 
-RECORDING="${repo}/target/oracle/recordings/candidate" OUT="" CELLS="${repo}/testing/shadow-oracle/cells.json" VENDOR=1
+RECORDING="${repo}/target/oracle/recordings/candidate" OUT="" CELLS="${core}/testing/shadow-oracle/cells.json" VENDOR=1
 # One file, two sections: the FAIL -> named-gap list (`gaps`) and the SKIP ceiling
 # (`expected`/`accepted`). Both loaders below read it, so both flag spellings point here.
 GAPS="${here}/named-gaps.json"
@@ -232,4 +237,4 @@ fi
 echo
 
 # 4. the verdict — the ONLY place anything is decided
-GATE_NAME="llm spec conformance" EXPECTED_IDS="$OWED" LEDGER="$LEDGER" bash "${repo}/testing/fleet-fixtures/verdict.sh"
+GATE_NAME="llm spec conformance" EXPECTED_IDS="$OWED" LEDGER="$LEDGER" bash "${core}/testing/fleet-fixtures/verdict.sh"
