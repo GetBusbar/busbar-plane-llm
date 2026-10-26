@@ -33,8 +33,8 @@ case "$dialect" in anthropic|openai|responses|gemini|bedrock|cohere) ;; *) say "
 
 # The cache key: everything the answer depends on.
 key="$( { printf 'pin=%s\n' "$BUSBAR_PIN"
-          git -C "$repo" ls-files -s -- plane-llm testing/llm-conformance testing/conformance/requirements-llm.txt
-          git -C "$repo" diff HEAD -- plane-llm testing/llm-conformance testing/conformance/requirements-llm.txt
+          git -C "$repo" ls-files -s -- plane-llm testing/llm-conformance testing/conformance/requirements-llm.txt testing/conformance/llm.sh
+          git -C "$repo" diff HEAD -- plane-llm testing/llm-conformance testing/conformance/requirements-llm.txt testing/conformance/llm.sh
         } | sha | cut -c1-16)"
 D="$TGT/llm-conformance/$key"
 mkdir -p "$D"
@@ -73,7 +73,7 @@ shared_run() {
   if [ -z "$fail" ]; then
     say "=== control and negative control: selftest.sh"
     BUSBAR_CHECKOUT="$SRC" bash "$H/selftest.sh" >"$D/selftest.log" 2>&1 || st_rc=$?
-    tail -3 "$D/selftest.log" >&2
+    grep -vE '^PASS' "$D/selftest.log" | head -60 >&2
   fi
 
   # 3. SUBJECT: build, record the llm cells, validate.
@@ -86,6 +86,17 @@ shared_run() {
   if [ -z "$fail" ]; then
     say "=== subject: record the llm cells"
     export MODERNCI_CACHE_DIR="${MODERNCI_CACHE_DIR:-$TGT/llm-conformance/oracle-cache}"
+    # Under ModernCI the judge (the recorder) is named by environment, never by a file a candidate wrote
+    # (bin/oracle: NO JUDGE otherwise). The pin read here is busbar's oracle-rust.pin at the .busbar-ref
+    # sha, an immutable commit this change did not author, so the environment says exactly what that pin
+    # says and the shim's equality check holds.
+    pinf="$SRC/testing/shadow-oracle/oracle-rust.pin"
+    for pair in BUSBAR_ORACLE_RELEASE_REPO=release_repo BUSBAR_ORACLE_RELEASE_REF=release_ref \
+                BUSBAR_ORACLE_SHA256_LINUX_X86_64=sha256_linux_x86_64 BUSBAR_ORACLE_SHA256_LINUX_AARCH64=sha256_linux_aarch64 \
+                BUSBAR_ORACLE_CRATE=crate BUSBAR_ORACLE_BIN=bin; do
+      var="${pair%%=*}"; k="${pair#*=}"
+      [ -n "${!var:-}" ] || export "$var=$(sed -n "s/^$k=//p" "$pinf" | head -1)"
+    done
     rm -rf "$D/recording"
     "$SRC/bin/oracle" record --bin "$TGT/release/busbar" --plane llm --out "$D/recording" >"$D/record.log" 2>&1 || rec_rc=$?
     if [ "$rec_rc" -ne 0 ]; then tail -15 "$D/record.log" >&2; fail="the llm cells could not be recorded (exit $rec_rc; see record.log)"; fi
@@ -104,9 +115,24 @@ PY
   rm -rf "$SRC"   # the staged tree is large and only this run needed it
 }
 
-if [ ! -s "$D/shared.json" ]; then shared_run; else say "shared run cached at $D"; fi
+# A cached run answers when it is a COMPLETE one (the subject was built, recorded and judged, the controls
+# held) or when this very check run made it (the other five lines of the same run). A cached infrastructure
+# failure from an earlier check run is not an answer: the line tries again.
+marker="$(dirname "$CONFORMANCE_OUT")/.llm-shared-$key"
+complete() { python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if not d["fail"] and d["selftest_rc"]==0 else 1)' "$D/shared.json" 2>/dev/null; }
+if [ -s "$D/shared.json" ] && { [ -e "$marker" ] || complete; }; then
+  say "shared run cached at $D"
+else
+  rm -f "$D/shared.json"; shared_run; : > "$marker"
+fi
 
 # ── this suite's verdict, from the shared ledger ─────────────────────────────────────────────────
+# The evidence this suite's verdict rests on, kept with the check's outputs (target/conformance/<id>/).
+for f in selftest.log build.log record.log run.log venv.log out/report.md out/ledger.tsv shared.json; do
+  if [ -f "$D/$f" ]; then
+    case "$f" in build.log) tail -n 200 "$D/$f" ;; *) cat "$D/$f" ;; esac > "$CONFORMANCE_OUT/$(basename "$f")" 2>/dev/null || true
+  fi
+done
 python3 -I - "$dialect" "$D" "$H/spec-digests.tsv" "$CONFORMANCE_OUT/verdict.json" <<'PY'
 import json, os, sys
 dialect, D, digests, out = sys.argv[1:5]
