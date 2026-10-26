@@ -1,4 +1,4 @@
-//! DF-MAP (ARCHITECT ruling 2026-10-02 item 2): an Anthropic `web_search_tool_result` is the IR's
+//! DF-MAP: an Anthropic `web_search_tool_result` is the IR's
 //! hosted web-search record, in an answer and in replayed history. Before this, the reader degraded
 //! it to an EMPTY text block.
 use super::super::proto_codec::protocol_for;

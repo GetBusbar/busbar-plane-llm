@@ -126,7 +126,7 @@ leaf_op! {
 }
 
 /// IR → cohere v2 embed request wire (the body of [`CohereEmbeddings::write_request`], moved behind
-/// the `(embeddings, cohere)` key so a dissolved leaf-op handle can reach it — G6 A4b option-a).
+/// the `(embeddings, cohere)` key so a dissolved leaf-op handle can reach it).
 /// Byte-identical to the pre-cutover inline write.
 pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
     let texts = match &r.input {
@@ -175,7 +175,7 @@ pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
 }
 
 /// IR → cohere v2 embed response wire (the body of [`CohereEmbeddings::write_response`], moved behind
-/// the `(embeddings, cohere)` key — G6 A4b option-a). Byte-identical to the pre-cutover inline write.
+/// the `(embeddings, cohere)` key). Byte-identical to the pre-cutover inline write.
 pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
     // Emit every encoding the IR carries under its own Cohere key (`float`, `base64`, `int8`,
     // ...), so an int8/base64/etc. response (e.g. from a cross-protocol backend) is not silently
@@ -237,7 +237,7 @@ leaf_op! {
 }
 
 /// IR → cohere v2 rerank request wire (the body of [`CohereRerank::write_request`], moved behind the
-/// `(rerank, cohere)` key — G6 A4b option-a). Byte-identical to the pre-cutover inline write.
+/// `(rerank, cohere)` key). Byte-identical to the pre-cutover inline write.
 pub fn write_rerank_request(r: &crate::codec::ir::rerank::RerankReq) -> Bytes {
     let mut body = json!({
         (keys::MODEL): r.model,
@@ -259,7 +259,7 @@ pub fn write_rerank_request(r: &crate::codec::ir::rerank::RerankReq) -> Bytes {
 }
 
 /// IR → cohere v2 rerank response wire (the body of [`CohereRerank::write_response`], moved behind the
-/// `(rerank, cohere)` key — G6 A4b option-a). Byte-identical to the pre-cutover inline write.
+/// `(rerank, cohere)` key). Byte-identical to the pre-cutover inline write.
 pub fn write_rerank_response(r: &crate::codec::ir::rerank::RerankResp) -> WireBody {
     let results: Vec<Value> = r
         .results
@@ -290,8 +290,7 @@ pub fn write_rerank_response(r: &crate::codec::ir::rerank::RerankResp) -> WireBo
 mod rerank_tests;
 
 /// Wire -> concrete `EmbeddingsReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_embeddings_request(
     body: &[u8],
     _content_type: &str,
@@ -346,8 +345,7 @@ pub fn read_embeddings_request(
     })
 }
 
-/// One billed usage count that is present and unreadable, REFUSED ON ITS OWN (ARCHITECT ruling
-/// 2026-10-15, the per-field rule `usage_count::read_usage` holds for the chat table): said loudly,
+/// One billed usage count that is present and unreadable, REFUSED ON ITS OWN (the per-field rule `usage_count::read_usage` holds for the chat table): said loudly,
 /// it bills nothing, nothing stands in for it, and the answer it rode on is served. v1.5.5 read
 /// these counts as `.and_then(Value::as_u64)` and served every such answer; refusing the whole
 /// answer over one count was a 500 with no usage where 1.5.5 delivered it.
@@ -362,8 +360,7 @@ fn refused_count(unreadable: &crate::codec::usage_count::UnreadableCount) {
 }
 
 /// Wire -> concrete `EmbeddingsResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_embeddings_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::embeddings::EmbeddingsResp, CodecError> {
@@ -442,8 +439,7 @@ pub fn read_embeddings_response(
 }
 
 /// Wire -> concrete `RerankReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_rerank_request(
     body: &[u8],
     _content_type: &str,
@@ -483,8 +479,7 @@ pub fn read_rerank_request(
 }
 
 /// Wire -> concrete `RerankResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_rerank_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::rerank::RerankResp, CodecError> {

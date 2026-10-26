@@ -119,8 +119,8 @@ fn sparse_zero_and_absent_cache_tiers_are_both_omitted() {
 
 /// END TO END, through a real dialect reader this crate owns (not cohere/openai_responses): a
 /// present-but-unparseable top-level `cache_read_input_tokens`/`cache_creation_input_tokens` is
-/// REFUSED on its own (item 133's path over `usage_count::billed_count`; ARCHITECT ruling
-/// 2026-10-15: each usage field is judged on its own): it bills nothing, the readable counts beside
+/// REFUSED on its own (the path over `usage_count::billed_count`: each usage
+/// field is judged on its own): it bills nothing, the readable counts beside
 /// it bill as stated, and it never reaches `tier_usage()` as a priced tier. Nothing in this crate's existing suites drove an unreadable
 /// TOP-LEVEL cache count through a buffered response before this test (the item-133 refusal suite,
 /// `anthropic/tests/unreadable_count_refusal_tests.rs`, covers `input_tokens`/`output_tokens` and the

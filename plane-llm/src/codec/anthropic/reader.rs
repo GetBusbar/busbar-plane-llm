@@ -7,8 +7,7 @@ impl ProtocolReader for AnthropicReader {
         let v = super::super::usage_tail::isolate_tail_usage_object(tail, b"\"usage\"")?;
         // The whole usage table, as the buffered read takes it: a truncated turn that ran web
         // searches ledgers them exactly as its complete twin does. An unreadable billed count is
-        // refused on its own and bills nothing; the readable counts recover (#42; ARCHITECT
-        // ruling 2026-10-15).
+        // refused on its own and bills nothing; the readable counts recover.
         Some(
             crate::codec::usage_count::read_usage(COUNT_LABEL, Some(&v), USAGE)
                 .ok()?
@@ -480,7 +479,7 @@ impl ProtocolReader for AnthropicReader {
                     keys::ASSISTANT => crate::codec::ir::IrRole::Assistant,
                     _ => return None,
                 };
-                // BILLED COUNTS: absent is zero, UNREADABLE REFUSES (#42) — the stream ends in an
+                // BILLED COUNTS: absent is zero, UNREADABLE REFUSES — the stream ends in an
                 // error instead of ledgering "no work happened" for a count the provider sent.
                 let usage = match data
                     .get(keys::MESSAGE)
@@ -615,7 +614,7 @@ impl ProtocolReader for AnthropicReader {
                 // the `message_start` reader above, which already maps a missing `usage` to defaults
                 // rather than bailing.
                 // An ABSENT count still zero-defaults (above); a present-but-UNREADABLE one refuses
-                // (#42) — the stream ends in an error rather than billing the count as zero.
+                // — the stream ends in an error rather than billing the count as zero.
                 let usage_val = data.get(keys::USAGE);
                 let usage = match read_anthropic_usage(usage_val) {
                     Ok(usage) => usage,
@@ -785,7 +784,7 @@ impl ProtocolReader for AnthropicReader {
         // streaming readers (`message_start`/`message_delta` above already zero-default a missing
         // `usage` rather than bailing) and with the gemini/cohere reader tolerance. When `usage` is
         // absent each counter defaults to zero (`Some` → parse, `None` → 0). A counter that is
-        // PRESENT and unreadable is not absent: it refuses (#42) instead of ledgering zero.
+        // PRESENT and unreadable is not absent: it refuses instead of ledgering zero.
         let usage_val = obj.get(keys::USAGE);
         // The 5m/1h cache-creation TIER SPLIT rides the same table as the totals (see `USAGE`):
         // the kernel counts the two tiers separately, so collapsing them would leave a total that

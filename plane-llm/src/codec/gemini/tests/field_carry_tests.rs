@@ -838,8 +838,8 @@ fn gemini_response_provider_specific_fields_drop_cross_proto_without_corruption(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RESPONSE — the three Vertex-only fields OWNER RULING Q1 carries in the IR
-// (docs/design/1.6.0-QUESTIONS.md Q36) rather than declares as gaps:
+// RESPONSE — the three Vertex-only fields carried in the IR
+// rather than declares as gaps:
 // `usageMetadata.trafficType`, top-level `createTime`, `groundingChunks[].web.domain`.
 // ─────────────────────────────────────────────────────────────────────────────
 

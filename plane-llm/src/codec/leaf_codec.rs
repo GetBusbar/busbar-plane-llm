@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! **G6 A4b, option (a) — the per-`(operation, egress-protocol)` LEAF-OP writer dispatch.**
+//! **The per-`(operation, egress-protocol)` LEAF-OP writer dispatch.**
 //!
 //! The chat operation already selects its writer by egress-protocol string
 //! (`proto_codec::protocol_for(proto).writer()`); the six non-chat leaf ops
 //! (embeddings/image/rerank/transcription/speech/moderation) did not — each dialect's write body
 //! lived inline in its `OperationHandler::{write_request,write_response}`, reachable only by holding
-//! that dialect's handler instance. That is exactly the coupling the A4b dissolve cannot cross without
+//! that dialect's handler instance. That is exactly the coupling the dissolve cannot cross without
 //! a `Box<dyn Any>` downcast (owner-forbidden): once `IrReq`/`IrResp` dissolve onto `Box<dyn IrHandle>`
 //! a leaf-op handle cannot pattern-match its way back to `&EmbeddingsReq` to feed the egress writer.
 //!
@@ -17,7 +17,7 @@
 //! ([`crate::codec::proto_codec::DialectEntry::leaf`]). The dispatchers below find the egress
 //! dialect's row by name and call the fn it declared; no dispatcher names a dialect (design F3
 //! SELF-CONTAINED: central name-`match` registries become per-dialect registration). Today the dialect `OperationHandler`s
-//! route their own writes through these (byte-identical — same bytes out, same order); at A4b the
+//! route their own writes through these (byte-identical — same bytes out, same order); the
 //! leaf-op `IrHandle::write_egress_request` calls the SAME dispatcher keyed by the egress protocol, so
 //! the write no longer needs the concrete enum. Prep only: names no `IrReq`/`IrResp`, moves no bytes.
 
@@ -142,7 +142,7 @@ pub fn moderation_write_response(proto: &str, r: &ModerationResp) -> WireBody {
     (write_cell(proto, |l| l.moderation.as_ref()).write_response)(r)
 }
 
-// ── G6 A4b, owner ruling (b): the (op, protocol) READ dispatch, TEST/`test-support` ONLY ─────────
+// ── The (op, protocol) READ dispatch, TEST/`test-support` ONLY ─────────
 // Symmetric to the write dispatchers above. Production reads flow through the dialect vtable and the
 // `Box<dyn IrHandle>` seam; these expose the SAME concrete parse the trait `read_*` delegates to
 // (each dialect's `read_<op>_<dir>` free fn, as its `LeafCodecs` row declares it), so a leaf-op

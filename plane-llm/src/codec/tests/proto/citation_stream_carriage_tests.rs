@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! CITATION CARRIAGE, STREAM ≡ NON-STREAM, END TO END (owner ruling Q57: upstream citations reach
+//! CITATION CARRIAGE, STREAM ≡ NON-STREAM, END TO END (upstream citations reach
 //! clients; the IR maps a field wherever the target dialect can carry it). 1.5.5 dropped the
 //! citations a STREAMED Cohere or Responses upstream sent; its buffered answers kept them. This is
 //! the fixture the oracle corpus does not have (no cell carries a citation-bearing streamed

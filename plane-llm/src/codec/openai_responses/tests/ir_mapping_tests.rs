@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! IR MAPPING (owner directive Q57): every field the Responses dialect carries that the IR and the
+//! IR MAPPING: every field the Responses dialect carries that the IR and the
 //! other dialect can also carry must cross the seam. One probe per defect id (RSP-xx), each driving
 //! the production step list — reader → `chat_prepare_for_egress`/`_ingress` → writer on a real body,
 //! or `StreamTranslate` on a real SSE stream — and asserting the field arrives.
@@ -517,7 +517,7 @@ fn rsp11_error_stop_reason_message_delta_writes_response_failed() {
 
 /// RSP-12, held to 1.5.5: the Responses stream's top-level `error` event is not a stream error
 /// (v1.5.5 proto/openai_responses/reader.rs:542-1103 had no arm for it). The reader emits nothing for
-/// it, so `terminal_error` stays clear and the stream ends and bills as 1.5.5's did (row 155).
+/// it, so `terminal_error` stays clear and the stream ends and bills as 1.5.5's did.
 #[test]
 fn rsp12_top_level_error_event_is_not_a_stream_error() {
     let raw = sse(&[

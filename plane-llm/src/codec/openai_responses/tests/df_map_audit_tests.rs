@@ -1,4 +1,4 @@
-//! DF-MAP audit (ARCHITECT rulings 2026-10-02 items 1, 2, 5): the Responses answer slots.
+//! DF-MAP audit: the Responses answer slots.
 use super::super::proto_codec::protocol_for;
 use crate::codec::ir::{IrBlock, IrHostedToolKind, IrSearchResult};
 use serde_json::json;

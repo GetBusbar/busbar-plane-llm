@@ -6,15 +6,14 @@
 //! `safety_identifier`, `prompt_cache_key`. Parking changed where the SAME-dialect raw member
 //! lives (`extra` only when the slot cannot reproduce it); it must not change what crosses.
 //!
-//! What crosses is the typed slot, exactly as before the move: these slots are the Q57 IR wave
-//! (`ir-slots-landed.md` IR-03..06), already carried cross-dialect by the readers before this lane
-//! (pinned by `openai_responses::ir_slot_wiring_tests::ir03_07_shared_request_members_cross_the_seam`
+//! What crosses is the typed slot, exactly as before the move: these slots are typed IR slots,
+//! already carried cross-dialect by the readers (pinned by `openai_responses::ir_slot_wiring_tests::ir03_07_shared_request_members_cross_the_seam`
 //! and `anthropic::ir_slot_wiring_tests::ir04_service_tier_is_carried`). v1.5.5 had no such slots
 //! (`crates/busbar/src/ir/mod.rs` `IrRequest`) and cleared `extra` on the seam
 //! (`crates/busbar/src/ir/variant.rs:295`), so in v1.5.5 every one of these members was DROPPED
-//! cross-dialect; the carry below is the Q57 wave's, not this lane's.
+//! cross-dialect; the carry below is the typed slots'.
 //!
-//! That carry is the signed-off 1.6.0 behaviour: docs/design/1.6.0-QUESTIONS.md Q61 (owner) —
+//! That carry is the 1.6.0 behaviour:
 //! "the IR maps 100% wherever a target dialect can carry a field — a drop is a defect". Every drop
 //! pinned below is a target with no member for the field.
 
@@ -58,7 +57,7 @@ const MOVED: [&str; 5] = [
     "prompt_cache_key",
 ];
 
-/// Responses → every dialect: each member as the Q57 slot carries it, or dropped.
+/// Responses → every dialect: each member as the typed slot carries it, or dropped.
 #[test]
 fn responses_parked_members_cross_as_their_slots_or_drop() {
     let body = json!({"model": "gpt", "input": "hi",

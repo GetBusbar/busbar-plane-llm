@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! IR MAPPING (owner directive Q57) — the Bedrock reasoning ask (dropped both ways, as in 1.5.5)
+//! IR MAPPING — the Bedrock reasoning ask (dropped both ways, as in 1.5.5)
 //! and structured output (BED-08). Split from `ir_mapping_tests.rs`; BED-08 moves a committed
 //! request golden (`req_o2b_tools.json`).
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! IR mapping Q57 — the cross-protocol SEAM (IR-CORE): what `chat_prepare_for_ingress` and the
+//! IR mapping — the cross-protocol SEAM: what `chat_prepare_for_ingress` and the
 //! shared OpenAI annotation mapping keep. Probe-style: a real upstream body goes through the egress
 //! dialect's reader, the production seam step, and the ingress dialect's writer, exactly as the
 //! forward path runs them.

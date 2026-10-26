@@ -1,4 +1,4 @@
-//! DF-MAP audit (ARCHITECT rulings 2026-10-02): what the Chat reader now maps into the IR's answer
+//! DF-MAP audit: what the Chat reader now maps into the IR's answer
 //! slots, and the reader-tolerance fix for a replayed custom-tool call.
 use super::super::proto_codec::protocol_for;
 use serde_json::json;

@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE LIST-MODELS CATALOG, rendered: `GET /v1/models` and `GET /v1beta/models` answer the names the
-//! kernel lists for the caller in the envelope of the dialect the request names (ARCHITECT ruling
-//! 2026-10-16, 3b C: a catalog route is answered with no unit; the plane renders, the kernel lists).
+//! kernel lists for the caller in the envelope of the dialect the request names (a catalog route is answered with no unit; the plane renders, the kernel
+//! lists).
 //!
 //! Several dialects list their models on the same noun, each with its own envelope. Their primary
 //! surfaces are disjoint by path, so this is the one place a dialect is told apart by its PROTOCOL

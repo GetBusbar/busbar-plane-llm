@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE DECLARED EGRESS SCHEMES, AS THIS PLANE DECLARES THEM (#83a SD-2b, SD-3; O7, S2-a). All six
+//! THE DECLARED EGRESS SCHEMES, AS THIS PLANE DECLARES THEM. All six
 //! dialects state their egress credential as DECLARED DATA — a credential-family table, or a SigV4
 //! signature whose region is a pure function of the host — and carry no builder, so the lane key is
 //! presented by the host's egress-auth unit and never passes through this plane. The one

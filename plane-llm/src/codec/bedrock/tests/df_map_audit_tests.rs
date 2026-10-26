@@ -1,4 +1,4 @@
-//! DF-MAP audit: the Bedrock answer slots (ARCHITECT ruling 2026-10-02 item 1) and the served tier
+//! DF-MAP audit: the Bedrock answer slots and the served tier
 //! (a real miss: the IR home existed, the reader did not fill it).
 use super::super::proto_codec::protocol_for;
 use serde_json::json;

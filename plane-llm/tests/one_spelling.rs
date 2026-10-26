@@ -1,4 +1,4 @@
-//! ONE SPELLING PER WIRE WORD (OWNER 2026-10-01: "anything written more than once is a smell,
+//! ONE SPELLING PER WIRE WORD ("anything written more than once is a smell,
 //! especially field names").
 //!
 //! Within each dialect's production source (`src/codec/<dialect>/`, tests and the generated

@@ -166,7 +166,7 @@ pub(super) fn read_block(
                     });
                 }
                 // A present `media_type` that is not a string is the caller's error, answered in
-                // Anthropic's own error envelope (spec Part 2 #76), never read as "" and
+                // Anthropic's own error envelope, never read as "" and
                 // projected onto some format downstream.
                 let media_type = match src_obj.get(super::MEDIA_TYPE) {
                     None => String::new(),
@@ -365,7 +365,7 @@ pub(super) fn read_block(
                 signature_origin: None,
             })
         }
-        // A provider-run web search's results (DF-MAP, ARCHITECT ruling 2026-10-02 item 2): the
+        // A provider-run web search's results: the
         // IR's hosted-tool record. A `web_search_tool_result_error` content carries its error code
         // as the record's status and no results.
         WEB_SEARCH_TOOL_RESULT => Ok(read_web_search_tool_result(obj)),

@@ -627,11 +627,11 @@ const ACCEPT: &str = "accept";
 /// The head fields a native client of `lane`'s dialect sends,
 /// then, when the caller speaks that dialect, every field the caller sent but the ones busbar
 /// governs ([`governed`]):
-/// busbar is invisible to upstreams (OWNER HARD RULE 2026-10-02). The caller's value of a name
+/// busbar is invisible to upstreams. The caller's value of a name
 /// replaces busbar's native default; the per-connection mechanics are the kernel's to drop as it
 /// writes the head. A translated route forwards no caller field: none maps between dialects.
 ///
-/// `user-agent` (OWNER RULING Q10, LLM-UA): a translated route writes the far dialect's declared
+/// `user-agent`: a translated route writes the far dialect's declared
 /// `egress_user_agent`. A same-dialect route carries the caller's own unchanged, and a caller that
 /// sent none gets the far dialect's declared fingerprint, as 1.5.5 sent.
 fn head_fields(

@@ -53,7 +53,7 @@ use busbar_contract::protocol::*;
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
 use busbar_contract::upstream::StatusClass;
-// G6 A4b: the wire-codec surface (ProtocolReader/Writer/Protocol/StreamFraming/ToolIdRemap/
+// The wire-codec surface (ProtocolReader/Writer/Protocol/StreamFraming/ToolIdRemap/
 // protocol_for) relocated to this plugin's `proto_codec`; reach it RELATIVELY so it resolves both
 // standalone (crate::codec::proto_codec) and netted into core (core::proto::proto_codec).
 #[allow(unused_imports)]
@@ -197,7 +197,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     // Anthropic Python SDK is Stainless-generated and emits `<Title>/Python <ver>`. RELEASE
     // OBLIGATION: re-verify each version against the latest published SDK before a release and bump
     // (the `test_egress_ua_versions_are_pinned_and_present` guard forces the change to be conscious).
-    // OWNER RULING Q10: the plane writes this on a translated route into this dialect, on a
+    // The plane writes this on a translated route into this dialect, on a
     // same-dialect route whose caller sent no user-agent (1.5.5's bytes), and on the
     // kernel-originated health probe; a same-dialect caller's own user-agent replaces it.
     egress_user_agent: "Anthropic/Python 0.39.0",
@@ -439,7 +439,7 @@ const RESPONSE_CODE: &[&str] = &[STOP_DETAILS];
 const STREAM_CODE: &[&str] = &["type=content_block_delta.index", "type=ping", "type=error"];
 
 /// The answer paths INSIDE a subtree this dialect carries that its code does not carry, named by the
-/// drop walk (DF-MAP-IR-GAPS section E: its A, B and C paths that a coarse map row covers).
+/// drop walk.
 const RESPONSE_DROPS: &[&str] = &[
     "content[].type=bash_code_execution_tool_result",
     "content[].type=code_execution_tool_result",
@@ -652,7 +652,7 @@ const ERR_TYPE_NOT_FOUND: &str = busbar_contract::protocol::ERR_TYPE_NOT_FOUND;
 const ERR_TYPE_PERMISSION: &str = busbar_contract::protocol::ERR_TYPE_PERMISSION;
 const ERR_TYPE_REQUEST_TOO_LARGE: &str = busbar_contract::protocol::ERR_TYPE_REQUEST_TOO_LARGE;
 
-// One spelling per wire word (OWNER 2026-10-01): each word this dialect speaks more than once is
+// One spelling per wire word: each word this dialect speaks more than once is
 // spelled here, once, and referenced everywhere else; words shared with other dialects live in
 // `crate::codec::keys`.
 /// Wire word `batch`.
@@ -980,7 +980,7 @@ fn write_anthropic_stop_reason(reason: crate::codec::ir::IrStopReason) -> &'stat
     }
 }
 
-/// The IR-16 / IR-02 refinement of an Anthropic stop (`ir-slots-landed.md`): the raw
+/// The refinement of an Anthropic stop: the raw
 /// `model_context_window_exceeded` token becomes [`crate::codec::ir::IrStopDetail::ContextWindowExceeded`]
 /// beside the coarse `MaxTokens` (ANT-11), and a `refusal` stop's
 /// `stop_details:{type:"refusal", category, explanation}` becomes

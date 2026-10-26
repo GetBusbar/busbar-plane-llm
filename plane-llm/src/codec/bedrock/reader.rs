@@ -18,7 +18,7 @@ impl ProtocolReader for BedrockReader {
             {
                 if TOKEN_USAGE_MEMBERS.iter().any(|k| v.get(*k).is_some()) {
                     // An unreadable billed count is refused on its own and bills nothing; the
-                    // readable counts recover (#42; ARCHITECT ruling 2026-10-15).
+                    // readable counts recover.
                     // The per-TTL cache-write split rides the same `usage` object a truncated
                     // body still carries, so a body too large to buffer whole reports the same
                     // breakdown a small one does.
@@ -782,7 +782,7 @@ impl ProtocolReader for BedrockReader {
         // `thinking` and `output_config.effort`, Nova `reasoningConfig`) are NOT promoted to the
         // IR, exactly as 1.5.5 read none (v1.5.5 `crates/busbar/src/proto/bedrock/reader.rs:678`,
         // `reasoning: None`): carrying them switched on billed thinking on a foreign lane for a
-        // request 1.5.5 billed without it, and no owner ruling signs that. The raw object stays in
+        // request 1.5.5 billed without it. The raw object stays in
         // `extra` for the same-protocol passthrough; the one registered crossing, Converse's
         // top-level `outputConfig.effort` (CHANGELOG 1.6.0), is the map file's row.
         let reasoning = None;
@@ -1201,7 +1201,7 @@ impl ProtocolReader for BedrockReader {
                 // `metadata` with neither usage nor a buffered stop_reason yields a zero-usage,
                 // stop_reason-less delta, which is benign.
                 // BILLED COUNTS: absent is zero (as above), a present-but-UNREADABLE count REFUSES
-                // (#42) — the stream ends in an error instead of ledgering zero tokens. That holds
+                // — the stream ends in an error instead of ledgering zero tokens. That holds
                 // for the cache counts and the per-TTL split as much as for input/output (item 133):
                 // an unreadable cache count used to read as "no cache", ledgering none.
                 //
@@ -1444,7 +1444,7 @@ impl ProtocolReader for BedrockReader {
         // error, so a spurious `ClientError` here would mislabel the cause and confuse retry logic.
         let usage_obj = obj.get(keys::USAGE);
         // `cacheDetails` — the per-TTL breakdown of `cacheWriteInputTokens` — rides the same table
-        // as the totals (see `USAGE`). Absent is zero, a present-but-UNREADABLE count REFUSES (#42).
+        // as the totals (see `USAGE`). Absent is zero, a present-but-UNREADABLE count REFUSES.
         let mut usage = read_bedrock_usage(usage_obj)?;
         if let Some(tier) = read_served_tier(body) {
             usage.detail.service_tier = Some(tier);

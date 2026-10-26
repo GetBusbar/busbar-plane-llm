@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE LIST-MODELS CATALOG (ARCHITECT ruling 2026-10-16, 3b C): `GET /v1/models` and
+//! THE LIST-MODELS CATALOG: `GET /v1/models` and
 //! `GET /v1beta/models` are the plane's CATALOG claims, answered with no unit, and the plane renders
 //! the kernel's names in the envelope of the dialect the request names, byte for byte as the
 //! previous release answered (the oracle's `neutrality|models-empty|surface` cell holds the same

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE EVENT-STREAM DRIFT GUARD (#83a SD-3): the plane's copy of the framing codec encodes every
+//! THE EVENT-STREAM DRIFT GUARD: the plane's copy of the framing codec encodes every
 //! frame in the shared fixture `testing/plane-copies/eventstream-frames.json` byte for byte —
 //! prelude, headers, payload and both CRC-32s — and decodes the same frames back from their
 //! concatenation, including a trailing partial frame at every split and a malformed prelude. The

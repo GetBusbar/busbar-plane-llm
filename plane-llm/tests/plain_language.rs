@@ -33,8 +33,7 @@ fn manifest() -> String {
 /// `[crate::LlmPlane]` and its `Plugin` impl carry no `#[cfg(feature = …)]` of their own — that
 /// property is what this test actually protects, and it is asserted directly at the bottom.
 ///
-/// ONE NAMED EXCEPTION: `test-support`, EMPTY, carried in unchanged by the codec fold (owner ruling
-/// R7, 2026-09-27, THE DESIGN section 9/#39) — it gates `codec`'s own test-only constructors, never
+/// ONE NAMED EXCEPTION: `test-support`, EMPTY, carried in unchanged by the codec fold — it gates `codec`'s own test-only constructors, never
 /// anything this crate's own `plane.rs`/`dialect.rs`/`lib.rs` read. A second feature, or a non-empty
 /// one, is not this exception and must fail below.
 #[test]
@@ -148,8 +147,8 @@ fn the_manifest_names_only_what_a_plane_may_name() {
         .nth(1)
         .expect("the manifest has a dependency section");
     let deps = deps.split("\n[").next().unwrap_or_default();
-    // The codecs are this crate's own `codec` module now (THE DESIGN section 9/#39: no `busbar-*-codec`
-    // crate), not a named dependency — `busbar-contract` is the only workspace crate a plane names.
+    // The codecs are this crate's own `codec` module now: no `busbar-*-codec`
+    // crate, not a named dependency — `busbar-contract` is the only workspace crate a plane names.
     let allowed = ["busbar-contract"];
     for line in deps.lines() {
         let line = line.trim();
