@@ -300,8 +300,7 @@ fn part_carries_delimiter(part: &[u8], boundary: &str) -> bool {
 }
 
 /// IR → openai multipart transcription request wire (the body of
-/// [`OpenAiTranscription::write_request`], moved behind the `(transcription, openai)` key — G6 A4b
-/// option-a). OpenAI-as-egress rebuilds the multipart form around [`TRANSCRIPTION_BOUNDARY`]; not on
+/// [`OpenAiTranscription::write_request`], moved behind the `(transcription, openai)` key). OpenAI-as-egress rebuilds the multipart form around [`TRANSCRIPTION_BOUNDARY`]; not on
 /// the harness path (openai is always ingress there), kept for cross-protocol symmetry.
 ///
 /// Returns an EMPTY body if any part carries the delimiter. The leaf writer is typed infallible
@@ -372,7 +371,7 @@ pub fn write_transcription_request(r: &TranscriptionReq) -> Bytes {
 }
 
 /// IR → openai transcription response wire (the body of [`OpenAiTranscription::write_response`], moved
-/// behind the `(transcription, openai)` key — G6 A4b option-a). Byte-identical to the inline write.
+/// behind the `(transcription, openai)` key). Byte-identical to the inline write.
 pub fn write_transcription_response(r: &TranscriptionResp) -> WireBody {
     // OpenAI serves the plain response formats (`text`/`srt`/`vtt`) as a raw `text/plain` body, not
     // a JSON envelope. When the response IR records one of those (the reader saw a non-JSON body),
@@ -448,8 +447,7 @@ pub fn write_transcription_response(r: &TranscriptionResp) -> WireBody {
     ))
 }
 
-/// One billed usage count that is present and unreadable, REFUSED ON ITS OWN (ARCHITECT ruling
-/// 2026-10-15, the per-field rule `usage_count::read_usage` holds for the chat tables): said loudly,
+/// One billed usage count that is present and unreadable, REFUSED ON ITS OWN (the per-field rule `usage_count::read_usage` holds for the chat tables): said loudly,
 /// it bills nothing, nothing stands in for it, and the answer it rode on is served. v1.5.5 read
 /// these counts as `.and_then(Value::as_u64)` and served every such answer (v1.5.5
 /// `crates/busbar/src/handlers/openai.rs:369-372`, `:586`); refusing the whole answer over one count
@@ -477,7 +475,7 @@ fn refused_count(unreadable: &crate::codec::usage_count::UnreadableCount) {
 fn parse_transcription_usage(wire: &[u8], u: &Value) -> Result<Option<Billing>, CodecError> {
     match u.get(keys::TYPE).and_then(Value::as_str) {
         // THE DURATION IS A MEASUREMENT, so it is read from the wire's DECIMAL TEXT and never
-        // through an `f64` (#81). `u.get("seconds")` would hand back a `Value` whose number is
+        // through an `f64`. `u.get("seconds")` would hand back a `Value` whose number is
         // already a double and has already lost the exactness no later conversion can give back, so
         // the read goes to the ORIGINAL BYTES by pointer and `u` only says whether it is there.
         Some(super::W_DURATION) => {
@@ -525,7 +523,7 @@ leaf_op! {
 }
 
 /// IR → openai speech (TTS) request wire (the body of [`OpenAiSpeech::write_request`], moved behind
-/// the `(speech, openai)` key — G6 A4b option-a). Byte-identical to the pre-cutover inline write.
+/// the `(speech, openai)` key). Byte-identical to the pre-cutover inline write.
 pub fn write_speech_request(r: &SpeechReq) -> Bytes {
     let mut body = json!({ (keys::MODEL): r.model, (keys::INPUT): r.input, "voice": r.timbre });
     if let Some(f) = &r.response_format {
@@ -543,7 +541,7 @@ pub fn write_speech_request(r: &SpeechReq) -> Bytes {
 }
 
 /// IR → openai speech (TTS) response wire (the body of [`OpenAiSpeech::write_response`], moved behind
-/// the `(speech, openai)` key — G6 A4b option-a): raw audio bytes with the blob's own content-type.
+/// the `(speech, openai)` key): raw audio bytes with the blob's own content-type.
 /// Byte-identical to the pre-cutover inline write.
 pub fn write_speech_response(r: &SpeechResp) -> WireBody {
     let Some(blob) = &r.audio else {
@@ -579,7 +577,7 @@ leaf_op! {
 }
 
 /// IR → openai embeddings request wire (the body of [`OpenAiEmbeddings::write_request`], moved behind
-/// the `(embeddings, openai)` key — G6 A4b option-a). Byte-identical to the pre-cutover inline write.
+/// the `(embeddings, openai)` key). Byte-identical to the pre-cutover inline write.
 pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
     let input = match &r.input {
         EmbInput::Text(v) if v.len() == 1 => json!(v[0]),
@@ -616,7 +614,7 @@ pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
 }
 
 /// IR → openai embeddings response wire (the body of [`OpenAiEmbeddings::write_response`], moved
-/// behind the `(embeddings, openai)` key — G6 A4b option-a). Byte-identical to the inline write.
+/// behind the `(embeddings, openai)` key). Byte-identical to the inline write.
 pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
     let data: Vec<Value> = r
         .embeddings
@@ -665,7 +663,7 @@ leaf_op! {
 }
 
 /// IR → openai image request wire (the body of [`OpenAiImage::write_request`], moved behind the
-/// `(image, openai)` key — G6 A4b option-a). Byte-identical to the pre-cutover inline write.
+/// `(image, openai)` key). Byte-identical to the pre-cutover inline write.
 pub fn write_image_request(r: &ImageReq) -> Bytes {
     let mut body = json!({ (keys::MODEL): r.model });
     if let Some(p) = &r.prompt {
@@ -713,7 +711,7 @@ pub fn write_image_request(r: &ImageReq) -> Bytes {
 }
 
 /// IR → openai image response wire (the body of [`OpenAiImage::write_response`], moved behind the
-/// `(image, openai)` key — G6 A4b option-a). Byte-identical to the pre-cutover inline write.
+/// `(image, openai)` key). Byte-identical to the pre-cutover inline write.
 pub fn write_image_response(r: &ImageResp) -> WireBody {
     let data: Vec<Value> = r
         .images
@@ -772,14 +770,14 @@ leaf_op! {
 }
 
 /// IR → openai moderation request wire (the body of [`OpenAiModeration::write_request`], moved behind
-/// the `(moderation, openai)` key — G6 A4b option-a). Byte-identical to the pre-cutover inline write.
+/// the `(moderation, openai)` key). Byte-identical to the pre-cutover inline write.
 pub fn write_moderation_request(r: &ModerationReq) -> Bytes {
     let body = json!({ (keys::MODEL): r.model, (keys::INPUT): input_to_value(&r.input) });
     Bytes::from(serde_json::to_vec(&body).unwrap_or_default())
 }
 
 /// IR → openai moderation response wire (the body of [`OpenAiModeration::write_response`], moved
-/// behind the `(moderation, openai)` key — G6 A4b option-a). Byte-identical to the inline write.
+/// behind the `(moderation, openai)` key). Byte-identical to the inline write.
 pub fn write_moderation_response(r: &ModerationResp) -> WireBody {
     let results: Vec<Value> = r
         .results
@@ -901,8 +899,7 @@ mod tests;
 mod speech_mime_regression_tests;
 
 /// Wire -> concrete `TranscriptionReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_transcription_request(
     body: &[u8],
     content_type: &str,
@@ -945,8 +942,7 @@ pub fn read_transcription_request(
 }
 
 /// Wire -> concrete `TranscriptionResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_transcription_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::audio::TranscriptionResp, CodecError> {
@@ -1034,8 +1030,7 @@ pub fn read_transcription_response(
 }
 
 /// Wire -> concrete `SpeechReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_speech_request(
     body: &[u8],
     _content_type: &str,
@@ -1069,8 +1064,7 @@ pub fn read_speech_request(
 }
 
 /// Wire -> concrete `SpeechResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_speech_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::audio::SpeechResp, CodecError> {
@@ -1135,8 +1129,7 @@ fn sniff_speech_audio_mime(wire: &[u8]) -> &'static str {
 }
 
 /// Wire -> concrete `EmbeddingsReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_embeddings_request(
     body: &[u8],
     _content_type: &str,
@@ -1196,8 +1189,7 @@ pub fn read_embeddings_request(
 }
 
 /// Wire -> concrete `EmbeddingsResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_embeddings_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::embeddings::EmbeddingsResp, CodecError> {
@@ -1262,8 +1254,7 @@ pub fn read_embeddings_response(
 }
 
 /// Wire -> concrete `ImageReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_image_request(
     body: &[u8],
     _content_type: &str,
@@ -1349,8 +1340,7 @@ pub fn read_image_request(
 }
 
 /// Wire -> concrete `ImageResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::ImageResp, CodecError> {
     let v: Value =
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
@@ -1381,7 +1371,7 @@ pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::Image
     // A recorded count is still a ledger row, so it is read through the one count seam
     // (`usage_count::recorded_count`): absent is zero; a present count this build cannot read is
     // UNKNOWN, left out of the record and named on `warnings` and in the log. It is never a 0
-    // (#81, OWNER rule 21) and never a refusal: 1.5.5 served the answer whatever its usage said.
+    // and never a refusal: 1.5.5 served the answer whatever its usage said.
     let mut warnings = Vec::new();
     let usage = v
         .get(keys::USAGE)
@@ -1416,8 +1406,7 @@ pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::Image
 }
 
 /// Wire -> concrete `ModerationReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_moderation_request(
     body: &[u8],
     _content_type: &str,
@@ -1438,8 +1427,7 @@ pub fn read_moderation_request(
 }
 
 /// Wire -> concrete `ModerationResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_moderation_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::moderation::ModerationResp, CodecError> {

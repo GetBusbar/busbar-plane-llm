@@ -1,5 +1,5 @@
 //! ITEM 133 — A PRESENT-BUT-UNREADABLE BILLED COUNT IS REFUSED ON ITS OWN; IT IS NEVER LEDGERED AS
-//! ZERO (#42), AND IT REFUSES NOTHING ELSE (ARCHITECT ruling 2026-10-15).
+//! ZERO, AND IT REFUSES NOTHING ELSE.
 //!
 //! The OpenAI Responses reader used to read every billed count as `.and_then(read_count_u64).unwrap_or(0)`,
 //! so a stringified `"1500"` from a compatible self-hosted backend reached the ledger as ZERO tokens
@@ -103,7 +103,7 @@ fn truncated_recovery_refuses_a_stringified_count_and_recovers_the_readable_ones
 // `read_cached_tokens` read `input_tokens_details.cached_tokens` as `.and_then(read_count_u64)`,
 // so an unreadable spelling became `None` silently. It is now REFUSED on its own, loudly, on every
 // path: it bills nothing (no cache read, and no slice taken out of the stated `input_tokens`) and
-// the readable counts bill as stated (ARCHITECT ruling 2026-10-15). `input_tokens_details.cache_write_tokens` is not a ledgered count:
+// the readable counts bill as stated. `input_tokens_details.cache_write_tokens` is not a ledgered count:
 // it is a slice of `input_tokens` billed at the input tier, as 1.5.5 billed it (v1.5.5
 // `crates/busbar/src/proto/openai_responses/reader.rs:1022`, `:1341`), so no spelling of it moves
 // the bill or refuses the answer.

@@ -122,7 +122,7 @@ fn every_dialect(condition: &str, reason: ReasonCode) -> Vec<(String, &'static s
 }
 
 /// LEGACY `crates/busbar-llm/tests/llm_refusal_statuses.rs::every_recorded_llm_refusal_wears_the_status_the_driver_chooses`
-/// (coverage map v2 row 743). 1.5.5: every recorded llm refusal wears the status the driver now
+/// 1.5.5: every recorded llm refusal wears the status the driver now
 /// chooses: unauthenticated 401 (403 on bedrock, 400 on gemini), a spend cap 429 (1.5.5 answered
 /// 400 on bedrock; 1.6.0 answers 429 there too, PR #958, see `ACCEPTED`), a count cap 429, an unreadable body 400, every member down 503 for every ingress and far
 /// dialect, an oversized body 413, and a model no rate prices 400.
@@ -185,7 +185,7 @@ fn every_recorded_llm_refusal_wears_the_status_the_driver_chooses() {
 }
 
 /// LEGACY `crates/busbar-llm/tests/llm_refusal_statuses.rs::every_stated_row_differs_from_the_kernel_default`
-/// (coverage map v2 row 744). 1.5.5's statuses are kept with no dead row: every row the plane
+/// 1.5.5's statuses are kept with no dead row: every row the plane
 /// states differs from the kernel's default for its reason, so each one is needed.
 ///
 /// RED: a row restates the kernel default (dead weight that hides a later default change).
@@ -204,7 +204,7 @@ fn every_stated_row_differs_from_the_kernel_default() {
 }
 
 /// LEGACY `crates/busbar-llm/tests/llm_refusal_statuses.rs::p_item_refusal_reason_collapse_no_llm_refusal_reads_as_an_internal_error`
-/// (coverage map v2 row 746). 1.5.5 answered every limit reason with its own status and kind and
+/// 1.5.5 answered every limit reason with its own status and kind and
 /// none of them as an internal error: for every dialect and every reason the driver can refuse
 /// for, the status it chooses is never a bare 500, and the kind the plane renders is the generic
 /// `api_error` only for the node's own faults and for a timeout (whose 504 is its own status).

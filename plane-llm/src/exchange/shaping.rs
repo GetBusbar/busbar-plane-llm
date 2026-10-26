@@ -1,5 +1,5 @@
 //! THE PLANE'S SHAPING TABLES: what it reads, once per open or refresh, out of the settings the
-//! kernel hands it (ARCHITECT ruling Q1, 2026-09-30).
+//! kernel hands it.
 //!
 //! `OpenIn::settings` is ONE JSON object `{section: value}` holding the sections the plane's tail
 //! names, as the kernel validated them, with secret references stripped: `providers` (declaring),
@@ -74,8 +74,7 @@ pub struct Lane {
     pub caps: LaneCaps,
     /// The provider's error-code map.
     pub error_map: HashMap<String, String>,
-    /// The far end's dialect's declared static fields (`ProtocolDecl::static_headers`, ARCHITECT
-    /// SD-3 (1) "anthropic S2-a"), written on every far request of a lane presented under the
+    /// The far end's dialect's declared static fields (`ProtocolDecl::static_headers`,), written on every far request of a lane presented under the
     /// dialect's own credential scheme; none under an operator's `auth:` override that is not the
     /// dialect's scheme (`api-key`, `jwt-bearer`, `oauth-client-credentials`), whose declaration
     /// carries none, as the previous release wrote them.
@@ -221,7 +220,7 @@ struct ModelCfg {
     reasoning: Option<bool>,
     #[serde(default)]
     prompt_caching: Option<bool>,
-    /// The model's dialect override (#51): the wire protocol this model is spoken in when it
+    /// The model's dialect override: the wire protocol this model is spoken in when it
     /// differs from its provider's; absent = the provider's.
     #[serde(default)]
     protocol: Option<String>,
@@ -436,7 +435,7 @@ impl Shaping {
                     m.provider
                 )
             })?;
-            // #51: the model's own `protocol` overrides its provider's default; the plane serves the
+            // The model's own `protocol` overrides its provider's default; the plane serves the
             // resolved dialect only if it knows it (fail-closed).
             let asked = m
                 .protocol

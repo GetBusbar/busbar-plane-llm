@@ -615,7 +615,7 @@ fn cohere_tool_plan_is_reasoning_not_visible_text() {
     );
 
     // Written back as a Cohere RESPONSE, reasoning is a `{type:"thinking"}` content part ahead of
-    // the answer — never `message.tool_plan`, and never visible text (COH-08, IR mapping Q57). (A
+    // the answer — never `message.tool_plan`, and never visible text. (A
     // Cohere -> Cohere answer is relayed verbatim in production; this pins the writer's contract
     // for a Thinking block, whichever dialect read it.)
     let out = entry

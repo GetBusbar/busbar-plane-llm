@@ -62,7 +62,7 @@ const UPSTREAMS: &[Upstream] = &[
         host: "bedrock.invalid",
         dialect: "bedrock",
         // A CLAUDE model id: the plane now writes for the lane's model, and the Bedrock writer sends
-        // Claude's `thinking` only to a model that names Claude (BED-06) — which is what the frozen
+        // Claude's `thinking` only to a model that names Claude — which is what the frozen
         // Bedrock goldens record. Bedrock carries the model in the URL, so no body byte names it.
         model: BEDROCK_LANE_MODEL,
         caps: busbar_contract::ir::egress_prep::LaneCaps::NONE,

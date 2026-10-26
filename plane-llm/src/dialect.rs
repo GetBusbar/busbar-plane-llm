@@ -50,17 +50,16 @@ pub struct Dialect {
     /// The egress-auth scheme that decorates a request to an upstream of this dialect.
     pub egress_scheme: &'static str,
     /// THE DIALECT'S DEFAULT OUTBOUND AUTH STYLE (the design's auth points: a member's style is its
-    /// provider's `auth:`, else its plane's default for its dialect; ARCHITECT Q-L1-AUTH (A)): the
+    /// provider's `auth:`, else its plane's default for its dialect): the
     /// style an auth plugin serves, stated in the plane tail's `dialect_auth`.
     pub egress_style: &'static str,
     /// THE DEFAULT STYLE'S PARAMETERS for this dialect, a JSON object (`""`: none), stated in the
     /// plane tail's `dialect_auth.params` and handed the auth plugin's `open_outbound` as its
-    /// settings at seal, under the provider's own (ARCHITECT RULING 2026-10-03, Q-L6-AUTHPARAMS).
+    /// settings at seal, under the provider's own.
     pub egress_params: &'static str,
     /// The request headers busbar GOVERNS for this dialect (lower-case): its credential headers and
     /// its tenant selectors. A same-dialect route forwards every other client header unchanged; these
-    /// never pass, because busbar's upstream credential and configuration replace them (OWNER HARD
-    /// RULE 2026-10-02, "BUSBAR IS INVISIBLE TO UPSTREAMS", governed fields (1) and (2)).
+    /// never pass, because busbar's upstream credential and configuration replace them.
     pub governed_headers: &'static [&'static str],
     /// The request URL query parameters busbar GOVERNS for this dialect: its credential parameters.
     /// A same-dialect route forwards every other caller parameter unchanged; these never pass.

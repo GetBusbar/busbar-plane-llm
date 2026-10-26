@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! IR MAPPING (owner directive Q57): a field the Bedrock Converse wire carries, that the neutral IR
+//! IR MAPPING: a field the Bedrock Converse wire carries, that the neutral IR
 //! and the other dialect can carry, must map. One test per defect id from the 1.6.0 IR-mapping audit
 //! (`BED-xx`). Each drives the production seam — reader → `chat_prepare_for_egress` /
 //! `chat_prepare_for_ingress` → writer, and `StreamTranslate` for streams — on a real body, so a

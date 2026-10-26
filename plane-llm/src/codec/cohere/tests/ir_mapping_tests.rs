@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! IR mapping (owner directive Q57): every field a Cohere v2 body carries that the IR and the other
+//! IR mapping: every field a Cohere v2 body carries that the IR and the other
 //! dialect can carry must map, in both directions, buffered and streamed. One section per defect id
 //! of the 1.6.0 IR mapping audit (`COH-nn`). The tests drive the production step list end to end —
 //! reader → `chat_prepare_for_egress`/`_ingress` → writer, and `StreamTranslate` for streams — on
@@ -789,7 +789,7 @@ fn timeout_is_served_and_billed_as_in_1_5_5() {
 /// COH-04 (document half): a user `document` part used to be dropped silently. A plain text document
 /// reaches a foreign backend as a text/plain document; any other document's `data` is a JSON map of
 /// fields and reaches it as a text/plain document holding that JSON (it rode this dialect's own
-/// `Vendor` document at first, which every foreign writer drops — Q57, "map where it can").
+/// `Vendor` document at first, which every foreign writer drops).
 #[test]
 fn coh04_request_user_document_part_is_carried() {
     let body = json!({

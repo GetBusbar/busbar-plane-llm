@@ -1,5 +1,5 @@
 //! THE HOOK PROJECTION, sans I/O: what a hook is shown of an arrival (`BUSBAR-1.6.0.md` Part 3,
-//! section 12, "Hooks"; THE DESIGN section 11.7), and a request-stage hook's rewrite applied to
+//! section 12, "Hooks"), and a request-stage hook's rewrite applied to
 //! the arrival in its own dialect.
 //!
 //! One read, through the operation's own reader, as the previous release's hook seam read it: the
@@ -7,7 +7,7 @@
 //! (the system field and one `(role, text)` entry per wire turn, an in-band system turn at its wire
 //! position, a turn with nothing readable still an entry). A body the reader refuses is projected
 //! off its raw JSON as 1.5.5 projected every body (`project_raw.rs`): 1.5.5's projection never
-//! failed, and the request went on (row 155, F25 row 250). A body there is no reader for projects
+//! failed, and the request went on. A body there is no reader for projects
 //! the zeroed shape.
 //!
 //! The output-cap signal is the previous release's own read (`max_tokens_for` at `v1.5.5`): the
@@ -63,8 +63,7 @@ const BEDROCK_CAP: &str = "/inferenceConfig/maxTokens";
 /// responses dialect, `max_tokens` for every other) off the caller's body, saturated.
 ///
 /// A Bedrock Converse body spells its cap `inferenceConfig.maxTokens`, where 1.5.5's top-level read
-/// found nothing and showed a hook `None`; the pre-door engine read it (its
-/// `max_tokens_signal_is_dialect_aware_for_responses`, coverage map v2 row 254), and the driver
+/// found nothing and showed a hook `None`; the pre-door engine read it, and the driver
 /// proof `max_tokens_signal_reads_the_bedrock_inference_config` pins it. It is read when the
 /// top-level key is absent, so every body 1.5.5 showed a cap for shows the same cap.
 #[must_use]
@@ -219,8 +218,7 @@ fn read_rewrite(rewrite: &[u8]) -> Option<RewriteReply> {
 /// it applied; `None` leaves the arrival untouched (the previous release: a rewrite that cannot be
 /// applied leaves the request unmodified).
 ///
-/// THE REWRITE IS SPLICED, NEVER RE-SERIALIZED (OWNER 2026-10-02 LLM DIALECT FIDELITY RULE,
-/// BUSBAR-1.6.0.md: "hook `rw` edits, spliced per changed block. Never parse-edit-reserialize"):
+/// THE REWRITE IS SPLICED, NEVER RE-SERIALIZED ("hook `rw` edits, spliced per changed block. Never parse-edit-reserialize"):
 /// only the top-level members the dialect's framing changed are written into the caller's own
 /// bytes ([`json_splice::apply_top`]); every member it did not touch reaches the far end byte for
 /// byte, in the caller's order, spacing and number spelling.

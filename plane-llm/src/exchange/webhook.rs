@@ -1,6 +1,5 @@
 //! THE OPENAI RESPONSES WEBHOOK RECEIVER, sans I/O: the plane's inbound leg for a background
-//! Responses turn's completion webhook (BUSBAR-1.6.0.md F26 l.4642-4643, D4 l.4664; ARCHITECT
-//! 2026-10-14, option A).
+//! Responses turn's completion webhook.
 //!
 //! A client that creates a Responses turn with `background: true` gets a `resp_…` id at once; when
 //! the turn finishes, the provider delivers a SIGNED webhook to a URL the operator registered. This

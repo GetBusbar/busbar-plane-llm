@@ -145,7 +145,7 @@ fn same_dialect_relay_does_not_reparse_the_request() {
     );
 }
 
-// ── F25 REHOME: the whole forward the served door runs, bounded (coverage map v2) ─────────────────
+// ── the whole forward the served door runs, bounded ─────────────────
 
 /// The generation the served door holds: one openai far end, under a pool that names it.
 fn served_generation() -> busbar_plane_llm::exchange::shaping::Shaping {
@@ -215,7 +215,7 @@ fn one_forward(shaping: &busbar_plane_llm::exchange::shaping::Shaping, body: &[u
 const FORWARD_PASSTHROUGH_MAX_ALLOCS: u64 = 107;
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/alloc_gate_tests.rs::alloc_gate_openai_passthrough_forward`
-/// (coverage map v2 row 39). 1.5.5: one warmed, steady-state openai->openai chat forward through the
+/// 1.5.5: one warmed, steady-state openai->openai chat forward through the
 /// served path (the arrival, the far-end exchange and the relay of the answer, 200 each) allocates
 /// at most 107 times, the minimum over the measured iterations.
 ///
@@ -266,7 +266,7 @@ fn openai_stream_body(n: usize) -> Vec<u8> {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/alloc_gate_tests.rs::alloc_gate_request_echo_body_materialized_once`
-/// (coverage map v2 row 40). 1.5.5: on the buffered delivery arm (an openai caller asking to
+/// 1.5.5: on the buffered delivery arm (an openai caller asking to
 /// stream, answered one JSON body, 200 each), a body of 4000 messages costs at most 92000
 /// allocations more than the same body with one: the client-chosen node count multiplies no added
 /// per-node wave (the deep clone of the parsed request it once paid).
@@ -299,7 +299,7 @@ fn alloc_gate_request_echo_body_materialized_once() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/alloc_gate_tests.rs::alloc_gate_dialect_seam_resolution_is_free_for_every_dialect`
-/// (coordinator ruling 2026-10-18: no-alloc is a Law). RESOLVING A DIALECT BY NAME COSTS NOTHING,
+/// RESOLVING A DIALECT BY NAME COSTS NOTHING,
 /// for all six: the same stateless question (`requested_candidate_count`) asked through this plane's
 /// own resolution (`codec::decl_of(name)` then its codec) and on the dialect's writer directly
 /// allocates the same number of times. The difference is the resolution's own per-call cost, and

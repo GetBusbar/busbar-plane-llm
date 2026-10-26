@@ -490,7 +490,7 @@ fn the_providers_tenant_goes_out_and_the_callers_does_not() {
     assert_eq!(field(&r, "openai-project"), [b"proj-cfg".as_slice()]);
 }
 
-/// THE DIALECT'S STATIC FIELDS (ARCHITECT SD-3 (1), "anthropic S2-a": anthropic declares
+/// THE DIALECT'S STATIC FIELDS (anthropic declares
 /// `anthropic-version`, written verbatim; byte-identical upstream requests): a caller that sends no
 /// field of its own still reaches an anthropic far end with the pinned version and the native
 /// client's user-agent, same-dialect or translated; under an operator's `auth: api-key` override,
@@ -1711,8 +1711,7 @@ fn a_huge_body_is_written_like_a_small_one() {
 /// Rehomes `crates/busbar-llm/src/engine/attempt/tests/assemble.rs::a_wrong_typed_stream_options_is_refused_before_any_send`.
 /// 1.5.5 behaviour pinned: a streamed openai request whose `stream_options` is present but cannot
 /// hold `include_usage` (a string, a number, a bool or an array) cannot be metered, so it is
-/// refused with a 400 naming the field and nothing reaches the far end (owner ruling Q33c keeps
-/// the 400). Every one of the four wrong types is driven, not one standing in for the rest.
+/// refused with a 400 naming the field and nothing reaches the far end (the 400 is kept). Every one of the four wrong types is driven, not one standing in for the rest.
 /// RED if any of the four is forwarded, or refused with another status or sentence.
 #[test]
 fn every_wrong_typed_stream_options_is_refused_before_any_send() {

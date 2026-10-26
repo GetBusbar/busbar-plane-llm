@@ -104,7 +104,7 @@ impl TransportView for HttpStack {
 
 /// The marker the kernel-built constructors take.
 ///
-/// The blessed TEST seal (#65). `KernelSeal` is SEALED — no crate outside `busbar-contract` can
+/// The blessed TEST seal. `KernelSeal` is SEALED — no crate outside `busbar-contract` can
 /// implement it — so a fixture names the contract's own `test-seal` type instead of forging one.
 /// The type system stops a plugin now, not the manifest allow-list alone.
 pub use busbar_contract::plugin::TestKernelSeal as TestSeal;

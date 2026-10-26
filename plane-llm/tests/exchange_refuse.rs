@@ -43,7 +43,7 @@ impl busbar_contract::codec::CodecHost for SevensHost {
 /// The handle every codec call here is handed.
 const HOST: &dyn busbar_contract::codec::CodecHost = &SevensHost;
 
-/// The bedrock spend-cap cell 1.6.0 answers differently from 1.5.5 (PR #958): accepted difference
+/// The bedrock spend-cap cell 1.6.0 answers differently from 1.5.5: accepted difference
 /// "C-22 bedrock budget refusal is a declared Converse error" moves its status 400 -> 429 and its
 /// `__type` / `x-amzn-errortype` `ServiceQuotaExceededException` -> `ThrottlingException`.
 const C22_CELL: &str = "llm__bedrock__bedrock__request__over_budget_total";
@@ -1000,7 +1000,7 @@ fn every_decode_refusal_reads_the_released_bytes_in_every_dialect_and_none() {
     }
 }
 
-/// THE KERNEL-SHAPED REFUSALS, RENDERED BY THE PLANE (ARCHITECT ruling 2026-10-16, 3b B): the kernel
+/// THE KERNEL-SHAPED REFUSALS, RENDERED BY THE PLANE: the kernel
 /// decides the reason, the status and the words — a method no route at the path takes
 /// (`MethodNotAllowed`, 405), a body over the cap (`BodyTooLarge`, 413) — and the plane renders the
 /// body in the dialect its path rule reads off the target, byte for byte the previous release's
@@ -1058,7 +1058,7 @@ fn the_kernels_method_and_size_refusals_read_as_the_previous_release_answered() 
     }
 }
 
-/// EVERY DIALECT, AS THE PREVIOUS RELEASE'S KERNEL WROTE IT (ARCHITECT ruling 2026-10-16, 3b B): the
+/// EVERY DIALECT, AS THE PREVIOUS RELEASE'S KERNEL WROTE IT: the
 /// previous release answered these three refusals with the dialect's own error writer over
 /// `(status, kind, message)` — 405 `invalid_request` "method not allowed for this resource", 413
 /// `request_too_large` "request body exceeds the maximum allowed size", and a handler panic's 500

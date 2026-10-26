@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! OWNER RULING Q10 (LLM-UA): the far end's `user-agent`. On a same-dialect route the caller's
+//! The far end's `user-agent`. On a same-dialect route the caller's
 //! passes through unchanged, and a caller that sent none gets the dialect's declared native-SDK
 //! fingerprint, as 1.5.5 sent. On a translated route the plane writes the far dialect's declared
 //! fingerprint, and no caller value reaches the far end.
@@ -152,7 +152,7 @@ fn every_dialect() -> Shaping {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_egress_ua_versions_are_pinned_and_present`
-/// (coverage map v2 row 325). 1.5.5: every egress request carries the pinned native-SDK
+/// 1.5.5: every egress request carries the pinned native-SDK
 /// `user-agent` of its far dialect, as a golden literal: anthropic `Anthropic/Python 0.39.0`,
 /// openai and responses `OpenAI/Python 1.54.0`, gemini `google-genai-sdk/0.8.0 gl-python/3.11`,
 /// bedrock `Boto3/1.35.0 md/Botocore#1.35.0`, cohere `cohere-python/5.11.0`, and a far end no

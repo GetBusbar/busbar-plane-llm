@@ -173,7 +173,7 @@ const TRANSCRIBE_INSTRUCTION: &str = "Transcribe the following audio verbatim.";
 const TRANSLATE_INSTRUCTION: &str = "Translate the following audio to text.";
 
 /// IR → gemini candidates transcription request wire (the body of [`GeminiTranscription::write_request`],
-/// moved behind the `(transcription, gemini)` key — G6 A4b option-a). Byte-identical to the inline write.
+/// moved behind the `(transcription, gemini)` key). Byte-identical to the inline write.
 pub fn write_transcription_request(r: &crate::codec::ir::audio::TranscriptionReq) -> Bytes {
     let (mime, data) = match &r.audio {
         Some(blob) => {
@@ -216,8 +216,7 @@ pub fn write_transcription_request(r: &crate::codec::ir::audio::TranscriptionReq
 }
 
 /// IR → gemini candidates transcription response wire (the body of
-/// [`GeminiTranscription::write_response`], moved behind the `(transcription, gemini)` key — G6 A4b
-/// option-a). Byte-identical to the pre-cutover inline write.
+/// [`GeminiTranscription::write_response`], moved behind the `(transcription, gemini)` key). Byte-identical to the pre-cutover inline write.
 pub fn write_transcription_response(r: &crate::codec::ir::audio::TranscriptionResp) -> WireBody {
     let mut body = json!({
         (FIELD_CANDIDATES): [{
@@ -276,7 +275,7 @@ fn prebuilt_speaker(name: &str) -> Value {
 }
 
 /// IR → gemini TTS request wire (the body of [`GeminiSpeech::write_request`], moved behind the
-/// `(speech, gemini)` key — G6 A4b option-a). Byte-identical to the pre-cutover inline write.
+/// `(speech, gemini)` key). Byte-identical to the pre-cutover inline write.
 pub fn write_speech_request(r: &crate::codec::ir::audio::SpeechReq) -> Bytes {
     // Gemini multi-speaker TTS: when the request names per-speaker voices, emit
     // `multiSpeakerVoiceConfig.speakerVoiceConfigs[]` (the native shape) instead of the single
@@ -312,7 +311,7 @@ pub fn write_speech_request(r: &crate::codec::ir::audio::SpeechReq) -> Bytes {
 }
 
 /// IR → gemini TTS response wire (the body of [`GeminiSpeech::write_response`], moved behind the
-/// `(speech, gemini)` key — G6 A4b option-a). Byte-identical to the pre-cutover inline write.
+/// `(speech, gemini)` key). Byte-identical to the pre-cutover inline write.
 pub fn write_speech_response(r: &SpeechResp) -> WireBody {
     let (data, mime) = match &r.audio {
         Some(blob) => {
@@ -354,7 +353,7 @@ leaf_op! {
 }
 
 /// IR → Imagen `:predict` request wire (the body of [`GeminiImage::write_request`], moved behind the
-/// `(image, gemini)` key — G6 A4b option-a). Byte-identical to the pre-cutover inline write.
+/// `(image, gemini)` key). Byte-identical to the pre-cutover inline write.
 pub fn write_image_request(r: &crate::codec::ir::image::ImageReq) -> Bytes {
     let mut params = json!({ (FIELD_SAMPLE_COUNT): r.n.unwrap_or(1) });
     // Carry the Imagen generation controls the reader captures; dropping them fell back to
@@ -388,7 +387,7 @@ pub fn write_image_request(r: &crate::codec::ir::image::ImageReq) -> Bytes {
 }
 
 /// IR → Imagen `:predict` response wire (the body of [`GeminiImage::write_response`], moved behind
-/// the `(image, gemini)` key — G6 A4b option-a). Byte-identical to the pre-cutover inline write.
+/// the `(image, gemini)` key). Byte-identical to the pre-cutover inline write.
 pub fn write_image_response(r: &crate::codec::ir::image::ImageResp) -> WireBody {
     let predictions: Vec<Value> = r
         .images
@@ -433,7 +432,7 @@ leaf_op! {
 }
 
 /// IR → gemini `:embedContent` request wire (the body of the gemini embeddings
-/// `OperationHandler::write_request`, moved behind the `(embeddings, gemini)` key — G6 A4b option-a).
+/// `OperationHandler::write_request`, moved behind the `(embeddings, gemini)` key).
 /// Byte-identical to the pre-cutover inline write.
 pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
     let text = match &r.input {
@@ -480,8 +479,7 @@ pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
 }
 
 /// IR → gemini `:embedContent` response wire (the body of the gemini embeddings
-/// `OperationHandler::write_response`, moved behind the `(embeddings, gemini)` key — G6 A4b
-/// option-a). Byte-identical to the pre-cutover inline write.
+/// `OperationHandler::write_response`, moved behind the `(embeddings, gemini)` key). Byte-identical to the pre-cutover inline write.
 pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
     let values: Vec<f32> = r
         .embeddings
@@ -502,8 +500,7 @@ pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
 mod tests;
 
 /// Wire -> concrete `TranscriptionReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_transcription_request(
     body: &[u8],
     _content_type: &str,
@@ -576,8 +573,7 @@ pub fn read_transcription_request(
     })
 }
 
-/// One billed usage count that is present and unreadable, REFUSED ON ITS OWN (ARCHITECT ruling
-/// 2026-10-15, the per-field rule `usage_count::read_usage` holds for the chat table): said loudly,
+/// One billed usage count that is present and unreadable, REFUSED ON ITS OWN (the per-field rule `usage_count::read_usage` holds for the chat table): said loudly,
 /// it bills nothing, nothing stands in for it, and the answer it rode on is served. v1.5.5 read
 /// these counts as `.and_then(Value::as_u64)` and served every such answer (v1.5.5
 /// `crates/busbar/src/handlers/gemini.rs:229-241`, `:605-612`); refusing the whole answer over one
@@ -620,8 +616,7 @@ fn transcription_residual_units(usage: &Value) -> std::collections::BTreeMap<Str
 }
 
 /// Wire -> concrete `TranscriptionResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_transcription_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::audio::TranscriptionResp, CodecError> {
@@ -657,8 +652,7 @@ pub fn read_transcription_response(
 }
 
 /// Wire -> concrete `SpeechReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_speech_request(
     body: &[u8],
     _content_type: &str,
@@ -703,8 +697,7 @@ pub fn read_speech_request(
 }
 
 /// Wire -> concrete `SpeechResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_speech_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::audio::SpeechResp, CodecError> {
@@ -778,8 +771,7 @@ pub fn read_speech_response(
 }
 
 /// Wire -> concrete `ImageReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_image_request(
     body: &[u8],
     _content_type: &str,
@@ -823,8 +815,7 @@ pub fn read_image_request(
 }
 
 /// Wire -> concrete `ImageResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::ImageResp, CodecError> {
     let v: Value =
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
@@ -854,7 +845,7 @@ pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::Image
     // A recorded count is still a ledger row, so it is read through the one count seam
     // (`usage_count::recorded_count`): absent is zero; a present count this build cannot read is
     // UNKNOWN, left out of the record and named on `warnings` and in the log. It is never a 0
-    // (#81, OWNER rule 21) and never a refusal: 1.5.5 served the answer whatever its usage said.
+    // and never a refusal: 1.5.5 served the answer whatever its usage said.
     let mut warnings = Vec::new();
     let usage = v
         .get(FIELD_USAGE_METADATA)
@@ -892,8 +883,7 @@ pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::Image
 }
 
 /// Wire -> concrete `EmbeddingsReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_embeddings_request(
     body: &[u8],
     _content_type: &str,
@@ -928,8 +918,7 @@ pub fn read_embeddings_request(
 }
 
 /// Wire -> concrete `EmbeddingsResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch (G6 A4b,
-/// owner ruling b) can recover the concrete IR without a downcast. Byte-identical parse.
+/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_embeddings_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::embeddings::EmbeddingsResp, CodecError> {

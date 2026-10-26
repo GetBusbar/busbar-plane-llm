@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE USAGE-TAP FAULT PIN (#83a SD-3, architect ruling R-USAGE; row 155): every way a same-protocol
+//! THE USAGE-TAP FAULT PIN: every way a same-protocol
 //! usage tap can fail to read a 2xx body is RETURNED as its fault, under the reason that says which
 //! way, whether the tap is the chat cell's own (unknown protocol / bad JSON / a body its reader
 //! refuses) or a leaf cell's default (a decode failure). The door carries the fault out on its

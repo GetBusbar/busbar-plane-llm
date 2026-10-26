@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! DF-MAP audit, Cohere (ARCHITECT rulings 2026-10-02 items 1-5). The /v2/chat answer has NO member
+//! DF-MAP audit, Cohere. The /v2/chat answer has NO member
 //! for any of the five answer slots (safety verdicts, the hosted web-search record, audio output,
 //! usage by modality, file citations), so a Cohere answer reads none of them and a Cohere client is
 //! written none of them: translate what maps, drop what doesn't. The one carried path this audit

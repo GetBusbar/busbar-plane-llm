@@ -1,4 +1,4 @@
-//! DF-MAP audit (ARCHITECT rulings 2026-10-02 items 1, 2, 4; and the served tier, a real miss with
+//! DF-MAP audit (and the served tier, a real miss with
 //! an existing IR home): what the Gemini reader and writer now map.
 use super::super::proto_codec::protocol_for;
 use crate::codec::ir::IrBlock;

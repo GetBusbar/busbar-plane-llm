@@ -161,7 +161,7 @@ fn citation_span(text: &str, base: usize, c: &crate::codec::ir::IrCitation) -> O
 /// written in the flat shape the spec requires. The nested object wins when present, so a Chat entry
 /// is never re-read as a flat one.
 ///
-/// OFFSETS ARE CARRIED (SHR-01, IR mapping Q57). `IrCitation::start_index`/`end_index` are
+/// OFFSETS ARE CARRIED. `IrCitation::start_index`/`end_index` are
 /// CHARACTER offsets into the response text by contract, and OpenAI documents its own the same
 /// way: both the Chat `annotations[].url_citation` and the Responses `UrlCitationBody` define
 /// `start_index` as "the index of the first character of the URL citation in the message" — a

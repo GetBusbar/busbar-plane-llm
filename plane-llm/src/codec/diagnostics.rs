@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE LLM PLANE'S OWN CODED DIAGNOSTICS (#83a O4): the thirty-two codes only this plane's code
+//! THE LLM PLANE'S OWN CODED DIAGNOSTICS: the thirty-two codes only this plane's code
 //! emits — the nine cross-protocol IR normalizations, the two usage-tap faults a same-protocol tap
 //! reads before it decodes, the three event-stream framing guards, the dropped provider-metadata
 //! report, and the sixteen lane-engine codes (the usage-tap reassembly cap, the two upstream

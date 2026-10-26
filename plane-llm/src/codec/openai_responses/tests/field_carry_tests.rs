@@ -7,7 +7,7 @@
 //! genuine WATCHER: it drives a real read→IR→write hop (or a same-protocol byte-identity check, or a
 //! documented drop+warn) and asserts the named field SURVIVES. If a future edit drops or ignores the
 //! field, the corresponding assertion fails. A field with no target equivalent is carried as a
-//! documented drop+warn+test (per the owner ruling: ZERO waivers), never silently and never waived.
+//! documented drop+warn+test, never silently and never waived.
 
 use super::*;
 use busbar_contract::testkit::WarnCapture;
