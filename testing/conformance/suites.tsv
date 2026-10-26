@@ -1,0 +1,6 @@
+llm-anthropic	bash testing/conformance/llm.sh
+llm-openai	bash testing/conformance/llm.sh
+llm-responses	bash testing/conformance/llm.sh
+llm-gemini	bash testing/conformance/llm.sh
+llm-bedrock	bash testing/conformance/llm.sh
+llm-cohere	bash testing/conformance/llm.sh
