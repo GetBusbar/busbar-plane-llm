@@ -263,6 +263,9 @@ checks:
   conformance:
     priority: low
     requires: [cc, git, curl, docker, python3-venv]
+    # The recorder's judge (busbar-oracle) is private to busbar-release: ModernCI's tool slot hands it over
+    # as BUSBAR_ORACLE_JUDGE_PATH, which bin/oracle takes at the config's sha256; no token is read.
+    tools: [busbar-oracle-judge]
     run: |
       # Non-blocking by ruling (owner 2026-10-26): a suite that did not pass is reported in its verdict
       # (target/conformance/verdicts/), not as this check's exit. Only a driver failure (exit 2: no
