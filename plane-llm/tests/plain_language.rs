@@ -11,7 +11,7 @@
 //!
 //! `src/codec/` IS EXCLUDED FROM EVERY SCAN BELOW. It is the dialect codecs, which were not written
 //! to these four properties as a rule. These checks are about
-//! THIS PLANE's own adapter prose and structure — `claims.rs`, `dialect.rs`, `meta.rs`,
+//! THIS PLANE's own adapter prose and structure — `dialect.rs`, `meta.rs`,
 //! `lib.rs` — never about the codec it wraps, which the plane calls read-only and never edits.
 
 use std::path::{Path, PathBuf};
@@ -30,7 +30,7 @@ fn manifest() -> String {
 /// The manifest declares no feature that could compile the PLANE two ways.
 ///
 /// A plane compiled two ways is two planes, and the registry has no way to tell which one it holds.
-/// `[crate::LlmPlane]` and its `Plugin` impl carry no `#[cfg(feature = …)]` of their own — that
+/// The plane's own files carry no `#[cfg(feature = …)]` of their own — that
 /// property is what this test actually protects, and it is asserted directly at the bottom.
 ///
 /// ONE NAMED EXCEPTION: `test-support`, EMPTY, carried in unchanged by the codec fold — it gates `codec`'s own test-only constructors, never
@@ -55,11 +55,11 @@ fn the_crate_declares_no_features() {
 }
 
 /// The registered plane itself is never behind a `#[cfg(feature = …)]`: the one named exception
-/// above may gate codec test helpers, but never `LlmPlane`, `Upstream` or their impls.
+/// above may gate codec test helpers, but never the plane's own files.
 #[test]
 fn the_plane_type_itself_is_never_feature_gated() {
     let mut offenders = Vec::new();
-    for name in ["lib.rs", "dialect.rs", "claims.rs", "meta.rs"] {
+    for name in ["lib.rs", "dialect.rs", "meta.rs"] {
         let text = std::fs::read_to_string(src_dir().join(name)).expect("plane file is readable");
         for (n, line) in text.lines().enumerate() {
             if line.trim_start().starts_with("#[cfg(feature")

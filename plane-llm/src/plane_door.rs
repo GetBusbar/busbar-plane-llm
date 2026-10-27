@@ -84,8 +84,7 @@ use busbar_contract::abi::sdk::{
     StaticServices,
 };
 use busbar_contract::abi::transport::{FAULT_CALLER, FAULT_HARD, FAULT_NONE, FAULT_TRANSIENT};
-use busbar_contract::ids::{MeterClassDecl, OpClassId};
-use busbar_contract::plane::PlaneMeta;
+use busbar_contract::ids::OpClassId;
 use busbar_contract::provider_keys::EXT_PROVIDER_KEYS;
 use busbar_contract::upstream::{Disposition, StatusClass};
 use serde_json::Value;
@@ -98,7 +97,6 @@ use crate::exchange::shaping::{sections, Shaping};
 use crate::exchange::webhook::{self, Webhooks};
 use crate::exchange::{handler_of, probe, project, refuse};
 use crate::meta::PROVIDER_KEYS;
-use crate::LlmPlane;
 
 // ── the Statement ────────────────────────────────────────────────────────────────────────────────
 
@@ -139,8 +137,7 @@ const SECTIONS: &[Section] = &[
     section(webhook::SECTION, 0),
 ];
 
-const OPS: &[OpClassId] = <LlmPlane as PlaneMeta>::OP_CLASSES;
-const METER: &[MeterClassDecl] = <LlmPlane as PlaneMeta>::METER_CLASSES;
+const OPS: &[OpClassId] = crate::meta::OP_CLASSES;
 
 const fn dialect(i: usize) -> AbiStr {
     abi_str(DIALECTS[i].name)
@@ -153,8 +150,7 @@ const fn op(i: usize) -> OpClass {
 
 /// THE TOKEN CLASSES, THE ONE SOURCE of this plane's token class names (ARCHITECT, `$` meter
 /// classes: "The door's billable classes, which are what the dispatcher checks, are the source"):
-/// the first four of the tail's billable classes, and every key of the plane's `MeterClassDecl` list
-/// ([`crate::meta`]'s `CLASS_*`, read from here, never spelled there). They are 1.5.5's own names,
+/// the first four of the tail's billable classes. They are 1.5.5's own names,
 /// byte for byte: the tiers its `rate_card:` prices (`input_utok`, `output_utok`, `cache_read_utok`,
 /// `cache_write_utok`), its ledger's `TierTokens` fields and its spend metrics' `tier` label, so a
 /// door-served count is priced by the card as written and ledgered under the tier 1.5.5 wrote.
@@ -171,28 +167,6 @@ const fn billable(i: usize) -> BillableClass {
         family: abi_str(busbar_contract::plane::TOKEN_FAMILY),
     }
 }
-
-/// The plane's `MeterClassDecl` list is DERIVED from the token classes above: the same keys, in the
-/// same order, in the token family. A second spelling of a class is refused at compile time.
-const fn meter_derives_from_the_tail() -> bool {
-    if METER.len() != TOKEN_CLASSES.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i < METER.len() {
-        if !const_eq(METER[i].key.as_str(), TOKEN_CLASSES[i])
-            || !const_eq(METER[i].family, busbar_contract::plane::TOKEN_FAMILY)
-        {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
-const _: () = assert!(
-    meter_derives_from_the_tail(),
-    "the plane's meter classes are the door's token classes, one source"
-);
 
 const DIALECT_NAMES: &[AbiStr] = &[
     dialect(0),
@@ -400,7 +374,7 @@ const EXTENSIONS: &[u8] = &extensions::entry::<
 
 /// THE STATEMENT: the plane's key and version, its sections, its needs, its tail and its extensions.
 pub const STATEMENT: Statement = {
-    let mut s = statement(<LlmPlane as PlaneMeta>::KEY, VERSION, MAX_INFLIGHT)
+    let mut s = statement(crate::meta::KEY, VERSION, MAX_INFLIGHT)
         .with_kind_tail(TAIL)
         .with_sections(SECTIONS)
         .with_needs(NEEDS);

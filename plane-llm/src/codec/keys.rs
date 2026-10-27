@@ -11,8 +11,6 @@ pub const ALLOWED_DOMAINS: &str = "allowed_domains";
 pub const ALLOWED_TOOLS: &str = "allowed_tools";
 pub const ANNOTATIONS: &str = "annotations";
 pub const ANY: &str = "any";
-/// The JSON media type: the contract's, not a second spelling.
-pub use busbar_contract::protocol::APPLICATION_JSON;
 pub const APPLICATION_OCTET_STREAM: &str = "application/octet-stream";
 pub const APPLICATION_PDF: &str = "application/pdf";
 pub const ARGUMENTS: &str = "arguments";
@@ -159,7 +157,6 @@ pub const URL: &str = "url";
 pub const USAGE: &str = "usage";
 pub const USER: &str = "user";
 pub const USER_LOCATION: &str = "user_location";
-pub const VIDEO_MP4: &str = "video/mp4";
 pub const WAV: &str = "wav";
 pub const WEB: &str = "web";
 pub const WEB_SEARCH: &str = "web_search";

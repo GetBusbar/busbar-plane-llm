@@ -118,8 +118,16 @@ fn the_tail_is_one_the_contract_accepts() {
         ]
     );
     let stated = unsafe { TAIL.billable_classes() };
-    for (k, (class, family)) in OPEN_CLASSES.iter().enumerate() {
-        let b = &stated[4 + k];
+    // The four token classes are 1.5.5's own tier names, byte for byte: the `rate_card:` tiers
+    // (`input_utok`, ...), the ledger's `TierTokens` fields and the spend metrics' `tier` label.
+    let tokens = [
+        ("input", "token"),
+        ("output", "token"),
+        ("cache_read", "token"),
+        ("cache_write", "token"),
+    ];
+    for (k, (class, family)) in tokens.iter().chain(OPEN_CLASSES).enumerate() {
+        let b = &stated[k];
         // SAFETY: each `AbiStr` names a `'static` string of `len` bytes.
         let (c, f) = unsafe {
             (
@@ -130,8 +138,7 @@ fn the_tail_is_one_the_contract_accepts() {
         assert_eq!(
             (c, f),
             (class.as_bytes(), family.as_bytes()),
-            "tail class {}",
-            4 + k
+            "tail class {k}"
         );
     }
     // THE FEE UNIT: one per billable request, the last billable class.
