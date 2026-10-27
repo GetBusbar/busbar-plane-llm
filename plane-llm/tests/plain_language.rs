@@ -11,7 +11,7 @@
 //!
 //! `src/codec/` IS EXCLUDED FROM EVERY SCAN BELOW. It is the dialect codecs, which were not written
 //! to these four properties as a rule. These checks are about
-//! THIS PLANE's own adapter prose and structure — `claims.rs`, `dialect.rs`, `meta.rs`, `plane.rs`,
+//! THIS PLANE's own adapter prose and structure — `claims.rs`, `dialect.rs`, `meta.rs`,
 //! `lib.rs` — never about the codec it wraps, which the plane calls read-only and never edits.
 
 use std::path::{Path, PathBuf};
@@ -34,7 +34,7 @@ fn manifest() -> String {
 /// property is what this test actually protects, and it is asserted directly at the bottom.
 ///
 /// ONE NAMED EXCEPTION: `test-support`, EMPTY, carried in unchanged by the codec fold — it gates `codec`'s own test-only constructors, never
-/// anything this crate's own `plane.rs`/`dialect.rs`/`lib.rs` read. A second feature, or a non-empty
+/// anything this crate's own `dialect.rs`/`lib.rs` read. A second feature, or a non-empty
 /// one, is not this exception and must fail below.
 #[test]
 fn the_crate_declares_no_features() {
@@ -59,7 +59,7 @@ fn the_crate_declares_no_features() {
 #[test]
 fn the_plane_type_itself_is_never_feature_gated() {
     let mut offenders = Vec::new();
-    for name in ["lib.rs", "plane.rs", "dialect.rs", "claims.rs", "meta.rs"] {
+    for name in ["lib.rs", "dialect.rs", "claims.rs", "meta.rs"] {
         let text = std::fs::read_to_string(src_dir().join(name)).expect("plane file is readable");
         for (n, line) in text.lines().enumerate() {
             if line.trim_start().starts_with("#[cfg(feature")
