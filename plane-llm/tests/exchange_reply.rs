@@ -1173,6 +1173,7 @@ mod rehomed_answers {
             tap_fault: piece.tap_fault,
             done: piece.done,
             dropped: piece.dropped,
+            synthesized: piece.synthesized,
         }
     }
 
@@ -1502,6 +1503,42 @@ mod rehomed_answers {
         ] {
             assert_eq!(read.count(name), 0, "{name}: {:?}", read.fields);
         }
+    }
+
+    /// OWNER 2026-10-27 (busbar answers in the caller's dialect AND mode): a caller that asked for a
+    /// stream, served by a far end that answered one whole body, reads a stream synthesised from
+    /// that body, marked `synthesized` (the door writes its `egress.stream_synthesized` audit row),
+    /// and billed the body's own reported usage (7 in, 3 out).
+    /// RED: a synthesised stream left unmarked, or billed anything but the far end's report.
+    #[test]
+    fn a_stream_synthesised_from_a_whole_answer_is_marked_and_billed_from_the_body() {
+        let body = chat_completion("hi");
+        let (arrived, lane) = ask("anthropic", "openai", true);
+        let ctx = reply_ctx(&arrived, &lane, false);
+        let read = answer(&ctx, 200, JSON_HEAD, &[&body], false);
+        assert_eq!(read.status, 200);
+        assert_eq!(
+            read.value("content-type").as_deref(),
+            Some("text/event-stream"),
+            "{:?}",
+            read.fields
+        );
+        let end = read.end();
+        assert!(end.synthesized, "the synthesised stream is marked");
+        assert_eq!(
+            (end.units.tokens_in, end.units.tokens_out),
+            (7, 3),
+            "billed from the far end's whole body"
+        );
+        // a caller that asked for no stream reads the whole answer, unmarked, billed the same
+        let (arrived, lane) = ask("anthropic", "openai", false);
+        let ctx = reply_ctx(&arrived, &lane, false);
+        let read = answer(&ctx, 200, JSON_HEAD, &[&body], false);
+        assert!(!read.end().synthesized);
+        assert_eq!(
+            (read.end().units.tokens_in, read.end().units.tokens_out),
+            (7, 3)
+        );
     }
 
     // ── the relayed stream (forward_pool_integration_tests.rs) ─────────────────────────────────
@@ -3439,6 +3476,7 @@ mod rehomed_metering {
             tap_fault: piece.tap_fault,
             done: piece.done,
             dropped: piece.dropped,
+            synthesized: piece.synthesized,
         }
     }
 
