@@ -860,9 +860,12 @@ impl ProtocolWriter for CohereWriter {
                         (keys::OUTPUT_TOKENS): usage.output_tokens
                     }
                 });
-                if let (Some(cached), Some(uo)) =
-                    (usage.cache_read_input_tokens, usage_obj.as_object_mut())
-                {
+                // A reported cache read of zero is no cache hit: 1.5.5 wrote no `cached_tokens`, and
+                // neither does this.
+                if let (Some(cached), Some(uo)) = (
+                    usage.cache_read_input_tokens.filter(|n| *n > 0),
+                    usage_obj.as_object_mut(),
+                ) {
                     uo.insert(keys::CACHED_TOKENS.to_string(), serde_json::json!(cached));
                 }
                 // The separately-billed search units, in Cohere's native `billed_units` slot — the
@@ -1159,8 +1162,9 @@ impl ProtocolWriter for CohereWriter {
         );
         // The prompt-cache hit, in Cohere's native `usage.cached_tokens` slot (beside `tokens`, the
         // same member this dialect's reader reads it from). Emitted only when the source reported a
-        // cache read, so an uncached response does not acquire a fabricated `cached_tokens: 0`.
-        if let Some(cached) = resp.usage.cache_read_input_tokens {
+        // cache read, so an uncached response does not acquire a fabricated `cached_tokens: 0`. A
+        // reported read of zero is no hit either (1.5.5 wrote none): only a real hit is carried.
+        if let Some(cached) = resp.usage.cache_read_input_tokens.filter(|n| *n > 0) {
             usage_map.insert(keys::CACHED_TOKENS.to_string(), serde_json::json!(cached));
         }
         // Cohere's native `billed_units` slot: the separately-metered BILLED attribution, distinct
