@@ -103,9 +103,12 @@ pub(super) fn read_block(
             let content = if let Some(arr) = content_val.as_array() {
                 read_blocks(arr)?
             } else {
-                vec![crate::codec::ir::IrBlock::text(
-                    content_val.as_str().unwrap_or("").to_string(),
-                )]
+                vec![crate::codec::ir::IrBlock::Text {
+                    text: content_val.as_str().unwrap_or("").to_string(),
+                    cache_control: None,
+                    citations: Vec::new(),
+                    refusal: false,
+                }]
             };
             let is_error = obj
                 .get(super::IS_ERROR)
@@ -433,9 +436,12 @@ pub(super) fn read_message(
     let content = if let Some(arr) = content_val.as_array() {
         read_blocks(arr)?
     } else {
-        vec![crate::codec::ir::IrBlock::text(
-            content_val.as_str().unwrap_or("").to_string(),
-        )]
+        vec![crate::codec::ir::IrBlock::Text {
+            text: content_val.as_str().unwrap_or("").to_string(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }]
     };
 
     Ok(crate::codec::ir::IrMessage { role, content })

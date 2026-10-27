@@ -157,7 +157,12 @@ impl ProtocolReader for ResponsesReader {
         if let Some(instructions) = obj.get(keys::INSTRUCTIONS).and_then(|v| v.as_str()) {
             if !instructions.is_empty() {
                 saw_instructions = true;
-                system_blocks.push(crate::codec::ir::IrBlock::text(instructions.to_string()));
+                system_blocks.push(crate::codec::ir::IrBlock::Text {
+                    text: instructions.to_string(),
+                    cache_control: None,
+                    citations: Vec::new(),
+                    refusal: false,
+                });
             }
         }
 
@@ -283,7 +288,12 @@ impl ProtocolReader for ResponsesReader {
                             let output_val = item.get(keys::OUTPUT);
                             let content_blocks: Vec<crate::codec::ir::IrBlock> = match output_val {
                                 Some(serde_json::Value::String(out_str)) => {
-                                    vec![crate::codec::ir::IrBlock::text(out_str.clone())]
+                                    vec![crate::codec::ir::IrBlock::Text {
+                                        text: out_str.clone(),
+                                        cache_control: None,
+                                        citations: Vec::new(),
+                                        refusal: false,
+                                    }]
                                 }
                                 _ => output_val
                                     .and_then(|o| o.as_array())
@@ -1424,7 +1434,13 @@ impl ProtocolReader for ResponsesReader {
                     // handled by the branch above; this else covers `completed`/`incomplete`.)
                     let stop_reason = (event_type == EVT_RESPONSE_COMPLETED)
                         .then_some(crate::codec::ir::IrStopReason::EndTurn);
-                    let usage = crate::codec::ir::IrUsage::default();
+                    let usage = crate::codec::ir::IrUsage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        cache_creation_input_tokens: None,
+                        cache_read_input_tokens: None,
+                        detail: crate::codec::ir::IrUsageDetail::default(),
+                    };
                     close_open_blocks(&mut out, state);
                     out.push(IrStreamEvent::MessageDelta {
                         stop_reason,

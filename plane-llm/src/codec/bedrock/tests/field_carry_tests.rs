@@ -959,7 +959,13 @@ fn bedrock_carry_stream_frame_types() {
                 &IrStreamEvent::MessageDelta {
                     stop_reason: Some(crate::codec::ir::IrStopReason::ToolUse),
                     stop_sequence: None,
-                    usage: crate::codec::ir::IrUsage::default(),
+                    usage: crate::codec::ir::IrUsage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        cache_creation_input_tokens: None,
+                        cache_read_input_tokens: None,
+                        detail: crate::codec::ir::IrUsageDetail::default(),
+                    },
                     stop_detail: None,
                 }
             )

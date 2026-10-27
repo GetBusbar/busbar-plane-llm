@@ -219,7 +219,12 @@ impl ProtocolReader for CohereReader {
                     let blocks_before = system_blocks.len();
                     if let Some(content_val) = msg_val.get(keys::CONTENT) {
                         if let Some(s) = content_val.as_str() {
-                            system_blocks.push(crate::codec::ir::IrBlock::text(s.to_string()));
+                            system_blocks.push(crate::codec::ir::IrBlock::Text {
+                                text: s.to_string(),
+                                cache_control: None,
+                                citations: Vec::new(),
+                                refusal: false,
+                            });
                         } else if let Some(arr) = content_val.as_array() {
                             for block_val in arr {
                                 if let Some(bo) = block_val.as_object() {
@@ -229,9 +234,12 @@ impl ProtocolReader for CohereReader {
                                         if let Some(text) =
                                             bo.get(keys::TEXT).and_then(|t| t.as_str())
                                         {
-                                            system_blocks.push(crate::codec::ir::IrBlock::text(
-                                                text.to_string(),
-                                            ));
+                                            system_blocks.push(crate::codec::ir::IrBlock::Text {
+                                                text: text.to_string(),
+                                                cache_control: None,
+                                                citations: Vec::new(),
+                                                refusal: false,
+                                            });
                                         }
                                     } else {
                                         // Cohere's system message is text-only natively, so a
@@ -277,9 +285,12 @@ impl ProtocolReader for CohereReader {
                 if role != crate::codec::ir::IrRole::Tool {
                     if let Some(content_val) = msg_val.get(keys::CONTENT) {
                         if content_val.is_string() {
-                            msg_content.push(crate::codec::ir::IrBlock::text(
-                                content_val.as_str().unwrap_or("").to_string(),
-                            ));
+                            msg_content.push(crate::codec::ir::IrBlock::Text {
+                                text: content_val.as_str().unwrap_or("").to_string(),
+                                cache_control: None,
+                                citations: Vec::new(),
+                                refusal: false,
+                            });
                         } else if let Some(arr) = content_val.as_array() {
                             for block_val in arr {
                                 if let Some(block_obj) = block_val.as_object() {
@@ -288,9 +299,12 @@ impl ProtocolReader for CohereReader {
                                             if let Some(text) =
                                                 block_obj.get(keys::TEXT).and_then(|t| t.as_str())
                                             {
-                                                msg_content.push(crate::codec::ir::IrBlock::text(
-                                                    text.to_string(),
-                                                ));
+                                                msg_content.push(crate::codec::ir::IrBlock::Text {
+                                                    text: text.to_string(),
+                                                    cache_control: None,
+                                                    citations: Vec::new(),
+                                                    refusal: false,
+                                                });
                                             }
                                         }
                                         // Cohere v2 multimodal input: an image content part is
@@ -522,7 +536,12 @@ impl ProtocolReader for CohereReader {
                     };
                     let mut result_content: Vec<crate::codec::ir::IrBlock> = Vec::new();
                     if !content_text.is_empty() {
-                        result_content.push(crate::codec::ir::IrBlock::text(content_text));
+                        result_content.push(crate::codec::ir::IrBlock::Text {
+                            text: content_text,
+                            cache_control: None,
+                            citations: Vec::new(),
+                            refusal: false,
+                        });
                     }
                     // The `document` parts, captured STRUCTURALLY (never folded into the text join
                     // above, which turned a document into a literal JSON STRING the model read as
@@ -546,7 +565,12 @@ impl ProtocolReader for CohereReader {
                     // downstream writers project a tool result's content, and an empty vec would
                     // emit a result with no content where the old code emitted an empty string.
                     if result_content.is_empty() {
-                        result_content.push(crate::codec::ir::IrBlock::text(String::new()));
+                        result_content.push(crate::codec::ir::IrBlock::Text {
+                            text: String::new(),
+                            cache_control: None,
+                            citations: Vec::new(),
+                            refusal: false,
+                        });
                     }
                     msg_content.push(crate::codec::ir::IrBlock::ToolResult {
                         tool_use_id: tool_call_id,
@@ -1034,7 +1058,13 @@ impl ProtocolReader for CohereReader {
                     .map(|u| read_cohere_usage(Some(u)))
                     .transpose();
                 let usage = match usage {
-                    Ok(usage) => usage.unwrap_or(crate::codec::ir::IrUsage::default()),
+                    Ok(usage) => usage.unwrap_or(crate::codec::ir::IrUsage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        cache_creation_input_tokens: None,
+                        cache_read_input_tokens: None,
+                        detail: crate::codec::ir::IrUsageDetail::default(),
+                    }),
                     Err(refusal) => {
                         out.push(IrStreamEvent::Error(refusal));
                         return out;

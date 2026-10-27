@@ -91,7 +91,12 @@ fn write_request_drops_top_k_with_warn() {
     let mk = |top_k: Option<u32>| crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
-            content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
+            content: vec![crate::codec::ir::IrBlock::Text {
+                text: "hi".to_string(),
+                cache_control: None,
+                citations: Vec::new(),
+                refusal: false,
+            }],
         }],
         max_tokens: Some(64),
         top_p: Some(0.9),
@@ -117,13 +122,21 @@ fn write_request_drops_top_k_with_warn() {
 #[test]
 fn test_write_request() {
     let ir = crate::codec::ir::IrRequest {
-        system: vec![crate::codec::ir::IrBlock::text(
-            "You are helpful.".to_string(),
-        )],
+        system: vec![crate::codec::ir::IrBlock::Text {
+            text: "You are helpful.".to_string(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
         messages: vec![
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::User,
-                content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
+                content: vec![crate::codec::ir::IrBlock::Text {
+                    text: "hi".to_string(),
+                    cache_control: None,
+                    citations: Vec::new(),
+                    refusal: false,
+                }],
             },
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::Assistant,
@@ -139,7 +152,12 @@ fn test_write_request() {
                 role: crate::codec::ir::IrRole::Tool,
                 content: vec![crate::codec::ir::IrBlock::ToolResult {
                     tool_use_id: "fc_1".to_string(),
-                    content: vec![crate::codec::ir::IrBlock::text("sunny".to_string())],
+                    content: vec![crate::codec::ir::IrBlock::Text {
+                        text: "sunny".to_string(),
+                        cache_control: None,
+                        citations: Vec::new(),
+                        refusal: false,
+                    }],
                     is_error: false,
                     cache_control: None,
                 }],
@@ -351,17 +369,30 @@ fn test_read_request_bare_string_content_survives() {
 #[test]
 fn test_roundtrip_identity() {
     let ir = crate::codec::ir::IrRequest {
-        system: vec![crate::codec::ir::IrBlock::text(
-            "You are helpful.".to_string(),
-        )],
+        system: vec![crate::codec::ir::IrBlock::Text {
+            text: "You are helpful.".to_string(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
         messages: vec![
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::User,
-                content: vec![crate::codec::ir::IrBlock::text("Hello!".to_string())],
+                content: vec![crate::codec::ir::IrBlock::Text {
+                    text: "Hello!".to_string(),
+                    cache_control: None,
+                    citations: Vec::new(),
+                    refusal: false,
+                }],
             },
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::Assistant,
-                content: vec![crate::codec::ir::IrBlock::text("Hi there!".to_string())],
+                content: vec![crate::codec::ir::IrBlock::Text {
+                    text: "Hi there!".to_string(),
+                    cache_control: None,
+                    citations: Vec::new(),
+                    refusal: false,
+                }],
             },
         ],
         max_tokens: Some(500),
@@ -737,7 +768,12 @@ fn test_write_response_preserves_text_after_tool_order() {
                 input: serde_json::json!({"city": "SF"}),
                 cache_control: None,
             },
-            crate::codec::ir::IrBlock::text("Here is the weather.".to_string()),
+            crate::codec::ir::IrBlock::Text {
+                text: "Here is the weather.".to_string(),
+                cache_control: None,
+                citations: Vec::new(),
+                refusal: false,
+            },
         ],
         stop_reason: Some(crate::codec::ir::IrStopReason::ToolUse),
         stop_sequence: None,
@@ -921,7 +957,12 @@ fn test_cross_protocol_write_synthesizes_valid_id() {
     let make_ir = || crate::codec::ir::IrResponse {
         logprobs: Vec::new(),
         role: crate::codec::ir::IrRole::Assistant,
-        content: vec![crate::codec::ir::IrBlock::text("answer".to_string())],
+        content: vec![crate::codec::ir::IrBlock::Text {
+            text: "answer".to_string(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
@@ -1659,7 +1700,12 @@ fn test_assistant_text_then_tool_call_order() {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Assistant,
             content: vec![
-                crate::codec::ir::IrBlock::text("Let me check.".to_string()),
+                crate::codec::ir::IrBlock::Text {
+                    text: "Let me check.".to_string(),
+                    cache_control: None,
+                    citations: Vec::new(),
+                    refusal: false,
+                },
                 crate::codec::ir::IrBlock::ToolUse {
                     thought_signature: None,
                     id: "fc_9".to_string(),
@@ -1960,7 +2006,12 @@ fn test_stream_incomplete_without_details_is_none() {
 #[test]
 fn write_request_tool_result_multi_text_concatenates_without_separator() {
     fn text_block(s: &str) -> crate::codec::ir::IrBlock {
-        crate::codec::ir::IrBlock::text(s.to_string())
+        crate::codec::ir::IrBlock::Text {
+            text: s.to_string(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }
     }
     let writer = ResponsesWriter;
     let multi = || crate::codec::ir::IrBlock::ToolResult {
@@ -2082,7 +2133,12 @@ fn test_unknown_stop_reason_maps_to_completed() {
     let resp = crate::codec::ir::IrResponse {
         logprobs: Vec::new(),
         role: crate::codec::ir::IrRole::Assistant,
-        content: vec![crate::codec::ir::IrBlock::text("ok".to_string())],
+        content: vec![crate::codec::ir::IrBlock::Text {
+            text: "ok".to_string(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
         stop_reason: Some(crate::codec::ir::IrStopReason::Refusal),
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
@@ -2293,7 +2349,12 @@ fn test_write_request_emits_stream() {
     let make = |stream: bool| crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
-            content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
+            content: vec![crate::codec::ir::IrBlock::Text {
+                text: "hi".to_string(),
+                cache_control: None,
+                citations: Vec::new(),
+                refusal: false,
+            }],
         }],
         stream,
         ..Default::default()
@@ -4932,7 +4993,12 @@ fn test_write_response_emits_model_fallback() {
     let make_resp = |model: Option<String>| crate::codec::ir::IrResponse {
         logprobs: Vec::new(),
         role: crate::codec::ir::IrRole::Assistant,
-        content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
+        content: vec![crate::codec::ir::IrBlock::Text {
+            text: "hi".to_string(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
@@ -5068,7 +5134,12 @@ fn test_write_response_emits_error_null_for_completed_and_incomplete() {
     let make_resp = |stop: crate::codec::ir::IrStopReason| crate::codec::ir::IrResponse {
         logprobs: Vec::new(),
         role: crate::codec::ir::IrRole::Assistant,
-        content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
+        content: vec![crate::codec::ir::IrBlock::Text {
+            text: "hi".to_string(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
         stop_reason: Some(stop),
         usage: usage_fixture(),
         model: Some("gpt-4o-mini".to_string()),
@@ -6090,7 +6161,12 @@ fn test_stop_not_emitted_on_responses() {
     let mut req = empty_ir_request();
     req.messages.push(crate::codec::ir::IrMessage {
         role: crate::codec::ir::IrRole::User,
-        content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
+        content: vec![crate::codec::ir::IrBlock::Text {
+            text: "hi".to_string(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
     });
     req.stop = vec!["STOP".to_string(), "END".to_string()];
     let writer = ResponsesWriter;
@@ -6112,7 +6188,12 @@ fn test_unsupported_sampling_params_omitted() {
     let mut req = empty_ir_request();
     req.messages.push(crate::codec::ir::IrMessage {
         role: crate::codec::ir::IrRole::User,
-        content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
+        content: vec![crate::codec::ir::IrBlock::Text {
+            text: "hi".to_string(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
     });
     req.frequency_penalty = Some(0.5);
     req.presence_penalty = Some(0.3);
@@ -6435,7 +6516,12 @@ fn write_response_reconstructs_input_tokens_total_with_cached_details() {
     let resp = crate::codec::ir::IrResponse {
         logprobs: Vec::new(),
         role: crate::codec::ir::IrRole::Assistant,
-        content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
+        content: vec![crate::codec::ir::IrBlock::Text {
+            text: "hi".to_string(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: crate::codec::ir::IrUsage {
             input_tokens: 50,
@@ -6960,7 +7046,12 @@ fn responses_spec_required_members_present_on_every_response_shape() {
         crate::codec::test_host::HOST,
         &crate::codec::ir::IrResponse {
             role: crate::codec::ir::IrRole::Assistant,
-            content: vec![crate::codec::ir::IrBlock::text("hi")],
+            content: vec![crate::codec::ir::IrBlock::Text {
+                text: "hi".into(),
+                cache_control: None,
+                citations: Vec::new(),
+                refusal: false,
+            }],
             stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
             usage: usage_fixture(),
             model: None,

@@ -679,7 +679,12 @@ fn read_cohere_image_detail(
 /// with no foreign analog. A document with no `data` keeps the opaque cohere `Vendor` escape.
 fn read_cohere_tool_result_document(doc: &serde_json::Value) -> crate::codec::ir::IrBlock {
     match doc.get(keys::DATA) {
-        Some(serde_json::Value::String(text)) => crate::codec::ir::IrBlock::text(text.clone()),
+        Some(serde_json::Value::String(text)) => crate::codec::ir::IrBlock::Text {
+            text: text.clone(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        },
         Some(data) if !data.is_null() => crate::codec::ir::IrBlock::Json(data.clone()),
         _ => crate::codec::ir::IrBlock::Media {
             kind: crate::codec::ir::IrMediaKind::Document,

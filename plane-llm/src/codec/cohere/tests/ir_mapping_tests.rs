@@ -1093,7 +1093,12 @@ fn ir10_allowed_tools_send_only_the_listed_tools() {
     let req = crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
-            content: vec![crate::codec::ir::IrBlock::text("go".to_string())],
+            content: vec![crate::codec::ir::IrBlock::Text {
+                text: "go".to_string(),
+                cache_control: None,
+                citations: Vec::new(),
+                refusal: false,
+            }],
         }],
         tools: vec![function_tool("a"), function_tool("b"), function_tool("c")],
         allowed_tools: Some(vec!["b".to_string(), "c".to_string()]),

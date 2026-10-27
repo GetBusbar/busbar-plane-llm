@@ -144,7 +144,12 @@ fn test_folded_usage_without_a_finish_reason_still_unfolds() {
 }
 
 fn text_block(text: &str) -> IrBlock {
-    IrBlock::text(text.to_string())
+    IrBlock::Text {
+        text: text.to_string(),
+        cache_control: None,
+        citations: Vec::new(),
+        refusal: false,
+    }
 }
 
 // --- Streaming: parallel tool calls must keep distinct, stable indices (fix: index passthrough)
@@ -1957,7 +1962,13 @@ fn stream_message_delta_none_stop_reason_serializes_null_not_empty_string() {
     let ev = IrStreamEvent::MessageDelta {
         stop_reason: None,
         stop_sequence: None,
-        usage: IrUsage::default(),
+        usage: IrUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+            detail: crate::codec::ir::IrUsageDetail::default(),
+        },
         stop_detail: None,
     };
     let (_, chunk) = openai_writer()
@@ -1983,7 +1994,13 @@ fn stream_message_delta_maps_stop_reasons_to_openai_enum() {
         let ev = IrStreamEvent::MessageDelta {
             stop_reason,
             stop_sequence: None,
-            usage: IrUsage::default(),
+            usage: IrUsage {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+                detail: crate::codec::ir::IrUsageDetail::default(),
+            },
             stop_detail: None,
         };
         let (_, chunk) = openai_writer()
@@ -3141,7 +3158,13 @@ fn stream_message_delta_omits_usage_when_all_counts_zero() {
     let ev = IrStreamEvent::MessageDelta {
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         stop_sequence: None,
-        usage: IrUsage::default(),
+        usage: IrUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+            detail: crate::codec::ir::IrUsageDetail::default(),
+        },
         stop_detail: None,
     };
     let (_, chunk) = openai_writer()
@@ -4467,7 +4490,12 @@ fn test_write_request_file_id_image_dropped_not_corrupted() {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![
-                crate::codec::ir::IrBlock::text("describe this".to_string()),
+                crate::codec::ir::IrBlock::Text {
+                    text: "describe this".to_string(),
+                    cache_control: None,
+                    citations: Vec::new(),
+                    refusal: false,
+                },
                 crate::codec::ir::IrBlock::Image {
                     source: crate::codec::ir::IrImageSource::Vendor {
                         vendor: "responses",
@@ -4548,7 +4576,12 @@ fn test_write_request_image_s3_dropped_not_corrupted() {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![
-                crate::codec::ir::IrBlock::text("describe this".to_string()),
+                crate::codec::ir::IrBlock::Text {
+                    text: "describe this".to_string(),
+                    cache_control: None,
+                    citations: Vec::new(),
+                    refusal: false,
+                },
                 crate::codec::ir::IrBlock::Image {
                     source: crate::codec::ir::IrImageSource::Vendor {
                         vendor: "bedrock",
@@ -5192,7 +5225,12 @@ fn write_response_omits_annotations_when_there_are_no_citations() {
         id: Some("chatcmpl-n".into()),
         model: Some("gpt-4o".into()),
         created: Some(1_700_000_000),
-        content: vec![IrBlock::text("plain")],
+        content: vec![IrBlock::Text {
+            text: "plain".into(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: IrUsage {
             input_tokens: 1,

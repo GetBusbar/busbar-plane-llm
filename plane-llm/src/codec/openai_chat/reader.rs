@@ -228,7 +228,12 @@ impl ProtocolReader for OpenAiReader {
                     let blocks_before = system_blocks.len();
                     if let Some(content) = content_val {
                         if let Some(text) = content.as_str() {
-                            system_blocks.push(crate::codec::ir::IrBlock::text(text.to_string()));
+                            system_blocks.push(crate::codec::ir::IrBlock::Text {
+                                text: text.to_string(),
+                                cache_control: None,
+                                citations: Vec::new(),
+                                refusal: false,
+                            });
                         } else if let Some(arr) = content.as_array() {
                             for block_val in arr {
                                 system_blocks.extend(read_openai_part(block_val)?);
@@ -246,7 +251,12 @@ impl ProtocolReader for OpenAiReader {
                         .and_then(|c| c.as_array())
                         .is_some_and(|a| !a.is_empty());
                     if system_blocks.len() == blocks_before && !had_parts {
-                        system_blocks.push(crate::codec::ir::IrBlock::text(String::new()));
+                        system_blocks.push(crate::codec::ir::IrBlock::Text {
+                            text: String::new(),
+                            cache_control: None,
+                            citations: Vec::new(),
+                            refusal: false,
+                        });
                     }
                     crate::codec::ir::IrSystemFold::record(
                         &mut system_folds,
@@ -272,7 +282,12 @@ impl ProtocolReader for OpenAiReader {
                     if role != crate::codec::ir::IrRole::Tool {
                         if let Some(cv) = content_val {
                             if let Some(text) = cv.as_str() {
-                                msg_content.push(crate::codec::ir::IrBlock::text(text.to_string()));
+                                msg_content.push(crate::codec::ir::IrBlock::Text {
+                                    text: text.to_string(),
+                                    cache_control: None,
+                                    citations: Vec::new(),
+                                    refusal: false,
+                                });
                             } else if let Some(arr) = cv.as_array() {
                                 for block_val in arr {
                                     msg_content.extend(read_openai_part(block_val)?);
@@ -421,7 +436,12 @@ impl ProtocolReader for OpenAiReader {
 
                         msg_content.push(crate::codec::ir::IrBlock::ToolResult {
                             tool_use_id: tool_call_id,
-                            content: vec![crate::codec::ir::IrBlock::text(content_text)],
+                            content: vec![crate::codec::ir::IrBlock::Text {
+                                text: content_text,
+                                cache_control: None,
+                                citations: Vec::new(),
+                                refusal: false,
+                            }],
                             is_error: false,
                             cache_control: None,
                         });

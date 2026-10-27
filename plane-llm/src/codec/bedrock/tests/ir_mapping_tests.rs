@@ -344,7 +344,12 @@ fn bed07_cache_control_on_image_document_thinking_projects_a_cache_point() {
 fn bed09_refusal_writes_content_filtered() {
     let resp = crate::codec::ir::IrResponse {
         role: crate::codec::ir::IrRole::Assistant,
-        content: vec![crate::codec::ir::IrBlock::text("I can't help")],
+        content: vec![crate::codec::ir::IrBlock::Text {
+            text: "I can't help".into(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
         stop_reason: Some(crate::codec::ir::IrStopReason::Refusal),
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
