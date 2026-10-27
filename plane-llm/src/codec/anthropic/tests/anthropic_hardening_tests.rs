@@ -593,11 +593,11 @@ fn write_response_event_error_serializes_native_shape() {
     let _: serde_json::Value = serde_json::from_str(&s).expect("must be valid JSON");
 }
 
-/// When the upstream error event carries no `type`, the writer emits `error.type: null` (never
-/// `""`, never a class token), exactly as v1.5.5 `crates/busbar/src/proto/anthropic/writer.rs:626-666`
-/// did, and a non-empty `message`. Guards that a message is always present.
+/// When the error event carries no signal, `error.type` is the published token for the error's class
+/// (v1.5.5 wrote JSON `null`, which is not a member of the ErrorResponse discriminator; owner-approved
+/// fidelity fix, 2026-10-26) and `error.message` is still present and non-empty.
 #[test]
-fn write_response_event_error_null_type_when_signal_absent() {
+fn write_response_event_error_type_is_the_class_token_when_signal_absent() {
     let err = IrError {
         class: StatusClass::ClientError,
         provider_signal: None,
@@ -607,20 +607,11 @@ fn write_response_event_error_null_type_when_signal_absent() {
         .write_response_event(crate::codec::test_host::HOST, &IrStreamEvent::Error(err))
         .expect("error event must serialize");
     assert_eq!(event_type, "error");
-    assert_eq!(
-            data.get("type").and_then(|t| t.as_str()),
-            Some("error"),
-            "data body must carry the top-level `type`:\"error\" discriminator even when no signal was carried"
-        );
+    assert_eq!(data.get("type").and_then(|t| t.as_str()), Some("error"));
     let error_obj = data.get("error").expect("error sub-object present");
     assert_eq!(
         error_obj.get("type").and_then(|t| t.as_str()),
-        None,
-        "a signal-less error writes error.type null (v1.5.5 writer.rs:626-666), not a class token"
-    );
-    assert!(
-        error_obj.get("type").is_some_and(|t| t.is_null()),
-        "error.type must be present and JSON null"
+        Some("invalid_request_error")
     );
     assert!(
         error_obj
@@ -632,12 +623,11 @@ fn write_response_event_error_null_type_when_signal_absent() {
     );
 }
 
-/// v1.5.5 `crates/busbar/src/proto/anthropic/writer.rs:626-666`: an in-stream error event writes
-/// `error.type` = the provider signal VERBATIM, even when it is free text, and keeps the same text
-/// as `error.message`. The class-derived spec token is not a signed difference (R-22 signs only the
-/// `request_id`), so the class never reaches `error.type`.
+/// An in-stream error whose signal is FREE TEXT writes the text as `error.message` and the class's
+/// published token as `error.type` (v1.5.5 put the text in `type` as well; owner-approved fidelity
+/// fix, 2026-10-26).
 #[test]
-fn write_response_event_error_type_is_the_signal_verbatim_even_free_text() {
+fn write_response_event_free_text_signal_is_the_message_not_the_type() {
     let sentence = "You have exceeded your requests per minute.";
     let err = IrError {
         class: StatusClass::RateLimit,
@@ -650,13 +640,11 @@ fn write_response_event_error_type_is_the_signal_verbatim_even_free_text() {
     let error_obj = data.get("error").expect("error sub-object present");
     assert_eq!(
         error_obj.get("type").and_then(|t| t.as_str()),
-        Some(sentence),
-        "error.type is the signal verbatim (v1.5.5 writer.rs:626-666), never a class token"
+        Some("rate_limit_error")
     );
     assert_eq!(
         error_obj.get("message").and_then(|m| m.as_str()),
-        Some(sentence),
-        "the signal is also error.message"
+        Some(sentence)
     );
 }
 

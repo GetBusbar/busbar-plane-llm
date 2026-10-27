@@ -461,6 +461,13 @@ pub fn encode_exception_frame(exception_type: &str, message: &str) -> Vec<u8> {
     let payload = crate::codec::json::to_vec(&serde_json::json!({ "message": message }))
         .unwrap_or_else(|_| b"{\"message\":\"An internal server error occurred.\"}".to_vec());
     // Build headers straight into the single frame buffer (see `encode_frame`) — one allocation.
+    //
+    // `:exception-type` names a MEMBER of the ConverseStreamOutput union (botocore bedrock-runtime
+    // service-2.json), and the members are lowerCamel (`internalServerException`): the PascalCase
+    // shape name a caller may hand in is spelled as the member on the wire (owner-approved fidelity
+    // fix, 2026-10-26; v1.5.5 sent the shape name). Idempotent: already-lowerCamel names are unchanged.
+    let exception_type = lowercase_first(exception_type);
+    let exception_type = exception_type.as_str();
     let mut frame = frame_open();
     if !push_string_header(&mut frame, HDR_EXCEPTION_TYPE, exception_type)
         || !push_string_header(
@@ -589,3 +596,7 @@ mod tests;
 #[cfg(test)]
 #[path = "tests/eventstream_tests.rs"]
 mod unit_tests;
+
+#[cfg(test)]
+#[path = "tests/eventstream_member_tests.rs"]
+mod member_tests;
