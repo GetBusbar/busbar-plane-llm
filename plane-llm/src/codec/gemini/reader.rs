@@ -2,6 +2,29 @@ use super::*;
 use crate::codec::dialect::ir_parse_error;
 use crate::codec::keys;
 
+/// What a translate attempt cannot carry from this dialect (`codec::drops`).
+static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
+    request_map: super::map::REQUEST,
+    parked: super::PARKED,
+    request_blocks: super::REQUEST_BLOCKS,
+    response_blocks: super::RESPONSE_BLOCKS,
+    response_carried: Some(crate::codec::drops::Carried {
+        map: super::map::RESPONSE_PATHS,
+        code: super::RESPONSE_CODE,
+        drops: super::RESPONSE_DROPS,
+        defaults: &[],
+    }),
+    stream_carried: Some(crate::codec::drops::Carried {
+        map: super::map::RESPONSE_PATHS,
+        code: super::RESPONSE_CODE,
+        drops: super::RESPONSE_DROPS,
+        defaults: &[],
+    }),
+    stream_keyed_by_event: false,
+    block_kinds: super::IR_BLOCK_KINDS,
+    request_code_names: super::REQUEST_CODE_NAMES,
+};
+
 impl ProtocolReader for GeminiReader {
     /// A candidate's own `finishReason` member (`{"candidates":[{…,"finishReason":…}]}`, depth 3):
     /// the first is the first candidate's, the one `read_response` reads its stop reason from.
@@ -291,12 +314,7 @@ impl ProtocolReader for GeminiReader {
             if let Some(parts_arr) = sys_instr.get(FIELD_PARTS).and_then(|p| p.as_array()) {
                 for part in parts_arr {
                     if let Some(text_val) = part.get(keys::TEXT).and_then(|t| t.as_str()) {
-                        system_blocks.push(crate::codec::ir::IrBlock::Text {
-                            text: text_val.to_string(),
-                            cache_control: None,
-                            citations: Vec::new(),
-                            refusal: false,
-                        });
+                        system_blocks.push(crate::codec::ir::IrBlock::text(text_val.to_string()));
                     }
                 }
             }
@@ -379,12 +397,7 @@ impl ProtocolReader for GeminiReader {
                         // Text part
                         else if let Some(text_val) = part.get(keys::TEXT).and_then(|t| t.as_str())
                         {
-                            msg_content.push(crate::codec::ir::IrBlock::Text {
-                                text: text_val.to_string(),
-                                cache_control: None,
-                                citations: Vec::new(),
-                                refusal: false,
-                            });
+                            msg_content.push(crate::codec::ir::IrBlock::text(text_val.to_string()));
                         }
                         // FunctionCall (ToolUse)
                         else if let Some(func_call) = part.get(FIELD_FUNCTION_CALL) {
@@ -456,12 +469,7 @@ impl ProtocolReader for GeminiReader {
                                 o.get(keys::ERROR_WORD).is_some_and(|e| !e.is_null())
                                     && !o.contains_key(keys::OUTPUT)
                             });
-                            let mut content = vec![crate::codec::ir::IrBlock::Text {
-                                text: response_text,
-                                cache_control: None,
-                                citations: Vec::new(),
-                                refusal: false,
-                            }];
+                            let mut content = vec![crate::codec::ir::IrBlock::text(response_text)];
                             // A multimodal result's attachments ride in `functionResponse.parts`
                             // (GEM-07) — carried into the result's content beside the JSON.
                             if let Some(parts) =
@@ -1448,12 +1456,7 @@ impl ProtocolReader for GeminiReader {
                 // Text part → IrBlock::Text
                 else if let Some(text) = part.get(keys::TEXT).and_then(|t| t.as_str()) {
                     if !text.is_empty() {
-                        content.push(crate::codec::ir::IrBlock::Text {
-                            text: text.to_string(),
-                            cache_control: None,
-                            citations: Vec::new(),
-                            refusal: false,
-                        });
+                        content.push(crate::codec::ir::IrBlock::text(text.to_string()));
                     }
                 }
 
@@ -1615,50 +1618,8 @@ impl ProtocolReader for GeminiReader {
         Box::new(self.clone())
     }
 
-    fn request_map(&self) -> crate::codec::carry::Table {
-        super::map::REQUEST
-    }
-
-    fn parked(&self) -> &'static [crate::codec::drops::Parked] {
-        super::PARKED
-    }
-
-    fn request_blocks(&self) -> &'static [crate::codec::drops::Blocks] {
-        super::REQUEST_BLOCKS
-    }
-
-    fn response_blocks(&self) -> &'static [crate::codec::drops::Blocks] {
-        super::RESPONSE_BLOCKS
-    }
-
-    fn response_carried(&self) -> Option<crate::codec::drops::Carried> {
-        Some(crate::codec::drops::Carried {
-            map: super::map::RESPONSE_PATHS,
-            code: super::RESPONSE_CODE,
-            drops: super::RESPONSE_DROPS,
-            defaults: &[],
-        })
-    }
-
-    fn stream_carried(&self) -> Option<crate::codec::drops::Carried> {
-        Some(crate::codec::drops::Carried {
-            map: super::map::RESPONSE_PATHS,
-            code: super::RESPONSE_CODE,
-            drops: super::RESPONSE_DROPS,
-            defaults: &[],
-        })
-    }
-
-    fn block_kinds(&self) -> &'static [(&'static str, &'static str)] {
-        super::IR_BLOCK_KINDS
-    }
-
-    fn request_code_names(&self) -> &'static [(&'static str, &'static str)] {
-        super::REQUEST_CODE_NAMES
-    }
-
-    fn unread(&self) -> &'static [&'static str] {
-        super::UNREAD
+    fn grammar(&self) -> &'static crate::codec::drops::Grammar {
+        &GRAMMAR
     }
 }
 

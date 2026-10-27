@@ -232,7 +232,6 @@ pub const RESPONSE_FORMAT: Member = member(name::RESPONSE_FORMAT);
 pub const METADATA: Member = member(name::METADATA);
 pub const OUTPUT_MODALITIES: Member = member(name::OUTPUT_MODALITIES);
 pub const TOP_LOGPROBS: Member = member(name::TOP_LOGPROBS);
-pub const TOP_K: Member = member(name::TOP_K);
 pub const SERVICE_TIER: Member = member(name::SERVICE_TIER);
 pub const LOGPROBS: Member = member(name::LOGPROBS);
 pub const STRICT: Member = member(name::STRICT);
@@ -278,8 +277,9 @@ pub fn resolve(dialect: &str, name: &str, rows: &[&str]) -> Option<String> {
     let rows = if rows.is_empty() { &[name][..] } else { rows };
     crate::codec::proto_codec::with_reader(dialect, |r| {
         rows.iter().find_map(|n| {
-            crate::codec::carry::wire_path(r.request_map(), n).or_else(|| {
-                r.request_code_names()
+            crate::codec::carry::wire_path(r.grammar().request_map, n).or_else(|| {
+                r.grammar()
+                    .request_code_names
                     .iter()
                     .find(|(ir, _)| ir == n)
                     .map(|(_, path)| path.to_string())
@@ -299,12 +299,13 @@ pub fn block_path(
 ) -> (Option<String>, Option<&'static str>) {
     crate::codec::proto_codec::with_reader(dialect, |r| {
         let grammar = match direction {
-            Direction::Request => r.request_blocks(),
-            Direction::Response => r.response_blocks(),
+            Direction::Request => r.grammar().request_blocks,
+            Direction::Response => r.grammar().response_blocks,
         };
         let at = grammar.first().map(|g| g.at.join("."));
         let spelled = r
-            .block_kinds()
+            .grammar()
+            .block_kinds
             .iter()
             .find(|(ir, _)| *ir == kind)
             .map(|(_, wire)| *wire);
@@ -683,6 +684,41 @@ pub struct Carried {
     pub defaults: &'static [(&'static str, &'static str)],
 }
 
+/// What a TRANSLATE attempt walks for one dialect, declared as data: its request field table (its
+/// map file), the members its reader parks in `extra`, its request and answer content-block
+/// grammars, what its buffered answers and stream frames carry (`None` walks nothing), whether its
+/// stream frames are keyed by their event name (the event is the root of their wire paths:
+/// Bedrock's `contentBlockDelta.delta...`), how it spells each IR content-block kind for a
+/// dropped block's warn, and the request members its reader carries by code from a wire path no
+/// map row names (`("response_format", "output_config.format")`).
+#[derive(Clone, Copy)]
+pub struct Grammar {
+    pub request_map: crate::codec::carry::Table,
+    pub parked: &'static [Parked],
+    pub request_blocks: &'static [Blocks],
+    pub response_blocks: &'static [Blocks],
+    pub response_carried: Option<Carried>,
+    pub stream_carried: Option<Carried>,
+    pub stream_keyed_by_event: bool,
+    pub block_kinds: &'static [(&'static str, &'static str)],
+    pub request_code_names: &'static [(&'static str, &'static str)],
+}
+
+impl Grammar {
+    /// A dialect that declares nothing: every walk is empty.
+    pub const NONE: Self = Self {
+        request_map: &[],
+        parked: &[],
+        request_blocks: &[],
+        response_blocks: &[],
+        response_carried: None,
+        stream_carried: None,
+        stream_keyed_by_event: false,
+        block_kinds: &[],
+        request_code_names: &[],
+    };
+}
+
 /// Where a wire path stands against what a dialect carries.
 enum Cover {
     /// It, or a path above it, is carried: its whole subtree crosses.
@@ -884,8 +920,8 @@ pub fn read_stream_frame(
     let mut seen = std::mem::take(&mut state.dropped);
     let events = scope_more(seam, &mut seen, || {
         let events = reader.read_response_events(host, event_type, data, state);
-        if let Some(carried) = reader.stream_carried() {
-            let root = if reader.stream_keyed_by_event() {
+        if let Some(carried) = reader.grammar().stream_carried {
+            let root = if reader.grammar().stream_keyed_by_event {
                 event_type
             } else {
                 ""

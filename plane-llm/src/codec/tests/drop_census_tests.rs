@@ -40,6 +40,37 @@ const DIALECTS: &[(&str, &str)] = &[
     ("responses", "responses"),
 ];
 
+/// The IR request members each dialect's reader never sets: the dialect has no wire form for them
+/// (or keeps its own spelling of the concept for a same-dialect hop only), so a caller of that
+/// dialect never has one dropped and no drop is ever named for it.
+fn unread(dialect: &str) -> &'static [&'static str] {
+    use crate::codec::drops::name::*;
+    match dialect {
+        "anthropic" => &[N, METADATA, TOP_LOGPROBS, OUTPUT_MODALITIES, LOGPROBS],
+        "bedrock" => &[
+            N,
+            CACHE_CONTROL,
+            PARALLEL_TOOL_CALLS,
+            TOP_LOGPROBS,
+            OUTPUT_MODALITIES,
+            LOGPROBS,
+        ],
+        "cohere" => &[
+            N,
+            CACHE_CONTROL,
+            PARALLEL_TOOL_CALLS,
+            METADATA,
+            TOP_LOGPROBS,
+            OUTPUT_MODALITIES,
+            SERVICE_TIER,
+        ],
+        "gemini" => &[CACHE_CONTROL, PARALLEL_TOOL_CALLS],
+        "openai" => &[CACHE_CONTROL, TOP_K],
+        "responses" => &[N, CACHE_CONTROL, STOP, TOP_K, OUTPUT_MODALITIES],
+        _ => &[],
+    }
+}
+
 /// Every (dialect, IR name) pair a drop could be named for is named by the caller's wire path: a
 /// map-file row, or the path the dialect's reader carries the member from by code. A member the
 /// dialect's reader never sets (`unread`) is never dropped from that dialect's caller. Measured 41
@@ -48,7 +79,7 @@ const DIALECTS: &[(&str, &str)] = &[
 fn every_drop_is_named_by_the_callers_wire_path() {
     let mut unresolved = Vec::new();
     for (dialect, _) in DIALECTS {
-        let unread = crate::codec::proto_codec::with_reader(dialect, |r| r.unread()).unwrap_or(&[]);
+        let unread = unread(dialect);
         for (name, rows) in NAMED {
             if crate::codec::drops::resolve(dialect, name, rows).is_none() && !unread.contains(name)
             {
@@ -67,7 +98,7 @@ fn every_drop_is_named_by_the_callers_wire_path() {
 #[test]
 fn an_unread_member_has_no_wire_path() {
     for (dialect, _) in DIALECTS {
-        let unread = crate::codec::proto_codec::with_reader(dialect, |r| r.unread()).unwrap_or(&[]);
+        let unread = unread(dialect);
         for name in unread {
             assert_eq!(
                 crate::codec::drops::resolve(dialect, name, &[]),
@@ -101,8 +132,9 @@ fn every_request_code_name_is_in_the_wire_lock() {
                     .join(".")
             })
             .collect();
-        let names = crate::codec::proto_codec::with_reader(dialect, |r| r.request_code_names())
-            .unwrap_or(&[]);
+        let names =
+            crate::codec::proto_codec::with_reader(dialect, |r| r.grammar().request_code_names)
+                .unwrap_or(&[]);
         for (name, path) in names {
             let steps: Vec<&str> = path.split('.').collect();
             let opaque = |p: &str| {

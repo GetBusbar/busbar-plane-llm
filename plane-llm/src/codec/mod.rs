@@ -196,41 +196,6 @@ pub mod proto_stream;
 /// suites that pin them are codec suites.
 pub mod wire_shim;
 
-/// A dialect's own error envelope, with the entropy for any minted identifier supplied.
-///
-/// A dialect whose native envelope carries a freshly minted identifier (anthropic's top-level
-/// `request_id`: an envelope without one is a tell) builds it from these bytes rather than from a
-/// random source, so a caller that may not read one can still write the native envelope, and the
-/// same bytes produce the same envelope. Dialects that mint nothing ignore the argument. Each
-/// dialect states this itself ([`proto_codec::ProtocolWriter::write_error_from_entropy`]).
-///
-/// Returns `None` for a protocol name the registry does not know.
-#[must_use]
-pub fn write_error_envelope(
-    host: &dyn busbar_contract::codec::CodecHost,
-    ingress_protocol: &str,
-    status: u16,
-    kind: &str,
-    message: &str,
-    entropy: &[u8],
-) -> Option<serde_json::Value> {
-    let protocol = proto_codec::protocol_for(ingress_protocol)?;
-    Some(
-        protocol
-            .writer()
-            .write_error_from_entropy(host, status, kind, message, entropy),
-    )
-}
-
-/// THE REGISTRY KEY THE LLM PLANE IS KNOWN BY — the string the composition root files the plane
-/// under and the same string the LLM native plane reports as its capability key.
-///
-/// Named ONCE, here, on the pure side of the split, because the plane's `capability_key` and the
-/// composition-root FLIP must reference the SAME literal or a swap could drift onto two. It agrees
-/// with `busbar-llm`'s `PLANE_DECL.key` (`"llm"`, the fallback plane's identity). `busbar-llm`
-/// re-exports it as `busbar_llm::PLANE_KEY`, the one stable path the `busbar` binary names.
-pub const PLANE_KEY: &str = "llm";
-
 /// THIS PLANE'S OWN DECLARATION OF `name`, read off [`DECLS`]. Every fact the codecs look up about a
 /// dialect by name — the path-model shape, the array-stream shim key, the native tool-id prefix, the
 /// provider-metadata reporter — is a fact about one of THESE six dialects, so the lookup reads this

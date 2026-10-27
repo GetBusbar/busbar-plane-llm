@@ -102,23 +102,9 @@ pub trait ProtocolReader: Send + Sync {
         None
     }
 
-    /// The stop reason of a non-stream response read from its RAW BYTES, without parsing the
-    /// document: locate this dialect's stop-reason field and map its token exactly as
-    /// [`Self::read_response`] maps it. For the same-protocol relay, which passes the body through
-    /// verbatim and holds only its bytes, to tell a failed generation (owner ruling Q31) from a
-    /// completed one at the cost of finding one field. `None` when the field is absent or not a
-    /// plain token. Defaulted to `None`: only a dialect whose stop vocabulary can say
-    /// [`crate::codec::ir::IrStopReason::Error`] needs to answer.
-    fn raw_stop_reason(&self, body: &[u8]) -> Option<crate::codec::ir::IrStopReason> {
-        let mut scan = crate::codec::usage_tail::StopKeyScanner::new(self.stop_reason_key()?)?;
-        scan.feed(body);
-        scan.token()
-            .and_then(|token| self.stop_reason_of_token(token))
-    }
-
     /// This dialect's non-stream stop-reason FIELD, located structurally (a member name, quotes
     /// included, at a container depth — see [`crate::codec::usage_tail::StopKey`]): the field
-    /// [`Self::raw_stop_reason`] and the relay's incremental
+    /// the relay's incremental
     /// [`crate::codec::usage_tail::StopKeyScanner`] read. The FIRST such member in the body is the
     /// one read, so it must be the one [`Self::read_response`] reads. `None` (the default): this
     /// dialect is not scanned.
@@ -191,65 +177,9 @@ pub trait ProtocolReader: Send + Sync {
     /// Clone this reader as a trait object.
     fn clone_box(&self) -> Box<dyn ProtocolReader>;
 
-    // ── what a translate attempt cannot carry (`codec::drops`), declared per dialect as data ──
-
-    /// The dialect's request field table (its map file), which the drop walker reads to tell a
-    /// mapped nested member from an unmapped one.
-    fn request_map(&self) -> crate::codec::carry::Table {
-        &[]
-    }
-
-    /// The members this reader parks in `extra` beside the ones its map file does not model, and
-    /// what each holds of the caller's request.
-    fn parked(&self) -> &'static [crate::codec::drops::Parked] {
-        &[]
-    }
-
-    /// The content-block grammar of the dialect's requests.
-    fn request_blocks(&self) -> &'static [crate::codec::drops::Blocks] {
-        &[]
-    }
-
-    /// The content-block grammar of the dialect's answers.
-    fn response_blocks(&self) -> &'static [crate::codec::drops::Blocks] {
-        &[]
-    }
-
-    /// What the dialect's buffered answers carry, for the drop walk (design F3 "Drops"). `None`
-    /// walks nothing.
-    fn response_carried(&self) -> Option<crate::codec::drops::Carried> {
-        None
-    }
-
-    /// What the dialect's stream frames carry, for the drop walk. `None` walks nothing.
-    fn stream_carried(&self) -> Option<crate::codec::drops::Carried> {
-        None
-    }
-
-    /// The dialect's stream frames are keyed by their event name (the event is the root member of
-    /// its wire paths: Bedrock's `contentBlockDelta.delta...`).
-    fn stream_keyed_by_event(&self) -> bool {
-        false
-    }
-
-    /// How the dialect spells each IR content-block kind (`("image", "type=image_url")`), for a
-    /// dropped block's warn.
-    fn block_kinds(&self) -> &'static [(&'static str, &'static str)] {
-        &[]
-    }
-
-    /// The IR request members this reader carries by its own code from a wire path no map-file row
-    /// names (`("response_format", "output_config.format")`): how a drop of one is named by the
-    /// caller's wire path ([`crate::codec::drops::resolve`]).
-    fn request_code_names(&self) -> &'static [(&'static str, &'static str)] {
-        &[]
-    }
-
-    /// The IR request members this reader never sets: the dialect has no wire form for them (or
-    /// keeps its own spelling of the concept for a same-dialect hop only), so a caller of this
-    /// dialect never has one dropped and no drop is ever named for it.
-    fn unread(&self) -> &'static [&'static str] {
-        &[]
+    /// What a translate attempt cannot carry (`codec::drops`), declared per dialect as data.
+    fn grammar(&self) -> &'static crate::codec::drops::Grammar {
+        &crate::codec::drops::Grammar::NONE
     }
 }
 
@@ -638,11 +568,12 @@ pub trait ProtocolWriter: Send + Sync {
         None
     }
 
-    /// Serialize the one-token "ping" probe request through THIS dialect's own `write_request`, as a
-    /// wire `Value`. The concrete ping IR is built by the owning plugin (busbar-llm's `ir_encode`),
-    /// so core's `probe_body` orchestration below names no concrete IR. The model is stamped
+    /// The one-token "ping" probe request (`ir_encode::ping_request`) through THIS dialect's own
+    /// `write_request`, so the probe body matches a real request on this wire. The model is stamped
     /// afterward by [`Self::rewrite_model_if_needed`], so the ping itself carries none.
-    fn probe_request(&self, host: &dyn busbar_contract::codec::CodecHost) -> serde_json::Value;
+    fn probe_request(&self, host: &dyn busbar_contract::codec::CodecHost) -> serde_json::Value {
+        self.write_request(host, &crate::codec::ir_encode::ping_request())
+    }
 
     /// Build a minimal, protocol-correct request body for an active health probe of `model`.
     /// Serializes a one-token "ping" through this protocol's own [`Self::probe_request`], so every

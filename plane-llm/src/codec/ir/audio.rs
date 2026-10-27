@@ -15,18 +15,6 @@ use busbar_contract::billing::Billing;
 use busbar_contract::ir::SourceScopedExtra;
 use busbar_contract::media::MediaBlob;
 
-/// Timestamp detail requested on a transcription (whisper-1 only; requires verbose_json).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TimestampGranularity {
-    /// whisper-1's `timestamp_granularities` are modelled by the superset IR; no 1.5.0
-    /// transcription reader parses the parameter, so nothing constructs this variant yet.
-    #[allow(dead_code)]
-    Word,
-    /// See `Word` above.
-    #[allow(dead_code)]
-    Segment,
-}
-
 /// A word with start/end offsets (seconds).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Word {
@@ -86,16 +74,7 @@ impl busbar_contract::ir::facts::IrFacts for TranscriptionReq {
     }
 
     fn shape(&self) -> busbar_contract::ir::facts::Shape {
-        let items = busbar_contract::ir::facts::IrFacts::content(self);
-        let (text_chars, system_chars) = busbar_contract::ir::facts::Shape::counts_over(&items);
-        busbar_contract::ir::facts::Shape {
-            turn_count: 1,
-            has_tools: false,
-            tool_count: 0,
-            text_chars,
-            system_chars,
-            max_tokens: None,
-        }
+        super::one_turn_shape(self)
     }
 
     fn content(&self) -> Vec<busbar_contract::ir::facts::ContentItem<'_>> {
@@ -197,16 +176,7 @@ impl busbar_contract::ir::facts::IrFacts for SpeechReq {
     }
 
     fn shape(&self) -> busbar_contract::ir::facts::Shape {
-        let items = busbar_contract::ir::facts::IrFacts::content(self);
-        let (text_chars, system_chars) = busbar_contract::ir::facts::Shape::counts_over(&items);
-        busbar_contract::ir::facts::Shape {
-            turn_count: 1,
-            has_tools: false,
-            tool_count: 0,
-            text_chars,
-            system_chars,
-            max_tokens: None,
-        }
+        super::one_turn_shape(self)
     }
 
     fn content(&self) -> Vec<busbar_contract::ir::facts::ContentItem<'_>> {

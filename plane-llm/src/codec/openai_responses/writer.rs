@@ -10,12 +10,6 @@ fn event(name: &'static str, mut data: serde_json::Value) -> (String, serde_json
 }
 
 impl ProtocolWriter for ResponsesWriter {
-    fn probe_request(&self, host: &dyn busbar_contract::codec::CodecHost) -> serde_json::Value {
-        // The ping IR is built by the plugin (ir_encode::ping_request); this dialect serializes it
-        // through its own write_request, so the probe body matches a real request on this wire.
-        self.write_request(host, &super::super::ir_encode::ping_request())
-    }
-
     fn upstream_path(&self) -> &str {
         "/v1/responses"
     }

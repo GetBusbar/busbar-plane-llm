@@ -93,12 +93,6 @@ pub fn relay_far_head(
     }
 }
 
-/// Whether every answer to a caller of `ingress` carries the far end's `x-amzn-*` head fields.
-#[must_use]
-pub fn ingress_relays_amzn_headers(ingress: &str) -> bool {
-    decl(ingress).is_some_and(|d| d.ingress_relays_amzn_headers)
-}
-
 /// The far-end head field names a caller of `ingress` has relayed verbatim on a same-dialect
 /// answer; the first is the primary request id.
 #[must_use]

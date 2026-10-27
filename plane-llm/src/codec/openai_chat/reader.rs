@@ -1,5 +1,29 @@
 use super::*;
 use crate::codec::dialect::ir_parse_error;
+use crate::codec::ir_encode::{synth_response_tool_call_id, tool_input_from_arguments};
+
+/// What a translate attempt cannot carry from this dialect (`codec::drops`).
+static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
+    request_map: super::map::REQUEST,
+    parked: super::PARKED,
+    request_blocks: super::REQUEST_BLOCKS,
+    response_blocks: super::RESPONSE_BLOCKS,
+    response_carried: Some(crate::codec::drops::Carried {
+        map: super::map::RESPONSE_PATHS,
+        code: super::RESPONSE_CODE,
+        drops: super::RESPONSE_DROPS,
+        defaults: &[],
+    }),
+    stream_carried: Some(crate::codec::drops::Carried {
+        map: super::map::STREAM_PATHS,
+        code: super::STREAM_CODE,
+        drops: super::STREAM_DROPS,
+        defaults: &[],
+    }),
+    stream_keyed_by_event: false,
+    block_kinds: super::IR_BLOCK_KINDS,
+    request_code_names: super::REQUEST_CODE_NAMES,
+};
 
 impl ProtocolReader for OpenAiReader {
     fn recover_truncated_usage(&self, tail: &[u8]) -> Option<busbar_contract::billing::TokenUsage> {
@@ -204,12 +228,7 @@ impl ProtocolReader for OpenAiReader {
                     let blocks_before = system_blocks.len();
                     if let Some(content) = content_val {
                         if let Some(text) = content.as_str() {
-                            system_blocks.push(crate::codec::ir::IrBlock::Text {
-                                text: text.to_string(),
-                                cache_control: None,
-                                citations: Vec::new(),
-                                refusal: false,
-                            });
+                            system_blocks.push(crate::codec::ir::IrBlock::text(text.to_string()));
                         } else if let Some(arr) = content.as_array() {
                             for block_val in arr {
                                 system_blocks.extend(read_openai_part(block_val)?);
@@ -227,12 +246,7 @@ impl ProtocolReader for OpenAiReader {
                         .and_then(|c| c.as_array())
                         .is_some_and(|a| !a.is_empty());
                     if system_blocks.len() == blocks_before && !had_parts {
-                        system_blocks.push(crate::codec::ir::IrBlock::Text {
-                            text: String::new(),
-                            cache_control: None,
-                            citations: Vec::new(),
-                            refusal: false,
-                        });
+                        system_blocks.push(crate::codec::ir::IrBlock::text(String::new()));
                     }
                     crate::codec::ir::IrSystemFold::record(
                         &mut system_folds,
@@ -258,12 +272,7 @@ impl ProtocolReader for OpenAiReader {
                     if role != crate::codec::ir::IrRole::Tool {
                         if let Some(cv) = content_val {
                             if let Some(text) = cv.as_str() {
-                                msg_content.push(crate::codec::ir::IrBlock::Text {
-                                    text: text.to_string(),
-                                    cache_control: None,
-                                    citations: Vec::new(),
-                                    refusal: false,
-                                });
+                                msg_content.push(crate::codec::ir::IrBlock::text(text.to_string()));
                             } else if let Some(arr) = cv.as_array() {
                                 for block_val in arr {
                                     msg_content.extend(read_openai_part(block_val)?);
@@ -412,12 +421,7 @@ impl ProtocolReader for OpenAiReader {
 
                         msg_content.push(crate::codec::ir::IrBlock::ToolResult {
                             tool_use_id: tool_call_id,
-                            content: vec![crate::codec::ir::IrBlock::Text {
-                                text: content_text,
-                                cache_control: None,
-                                citations: Vec::new(),
-                                refusal: false,
-                            }],
+                            content: vec![crate::codec::ir::IrBlock::text(content_text)],
                             is_error: false,
                             cache_control: None,
                         });
@@ -1223,50 +1227,8 @@ impl ProtocolReader for OpenAiReader {
         Box::new(self.clone())
     }
 
-    fn request_map(&self) -> crate::codec::carry::Table {
-        super::map::REQUEST
-    }
-
-    fn parked(&self) -> &'static [crate::codec::drops::Parked] {
-        super::PARKED
-    }
-
-    fn request_blocks(&self) -> &'static [crate::codec::drops::Blocks] {
-        super::REQUEST_BLOCKS
-    }
-
-    fn response_blocks(&self) -> &'static [crate::codec::drops::Blocks] {
-        super::RESPONSE_BLOCKS
-    }
-
-    fn response_carried(&self) -> Option<crate::codec::drops::Carried> {
-        Some(crate::codec::drops::Carried {
-            map: super::map::RESPONSE_PATHS,
-            code: super::RESPONSE_CODE,
-            drops: super::RESPONSE_DROPS,
-            defaults: &[],
-        })
-    }
-
-    fn stream_carried(&self) -> Option<crate::codec::drops::Carried> {
-        Some(crate::codec::drops::Carried {
-            map: super::map::STREAM_PATHS,
-            code: super::STREAM_CODE,
-            drops: super::STREAM_DROPS,
-            defaults: &[],
-        })
-    }
-
-    fn block_kinds(&self) -> &'static [(&'static str, &'static str)] {
-        super::IR_BLOCK_KINDS
-    }
-
-    fn request_code_names(&self) -> &'static [(&'static str, &'static str)] {
-        super::REQUEST_CODE_NAMES
-    }
-
-    fn unread(&self) -> &'static [&'static str] {
-        super::UNREAD
+    fn grammar(&self) -> &'static crate::codec::drops::Grammar {
+        &GRAMMAR
     }
 
     fn read_response(
@@ -1584,36 +1546,6 @@ fn close_text_block(state: &mut crate::codec::ir::StreamDecodeState, out: &mut V
         if let Some(ti) = state.text_index {
             out.push(IrStreamEvent::BlockStop { index: ti });
         }
-    }
-}
-
-/// Synthesize a deterministic, non-empty `call_…` tool-call id for a RESPONSE tool call whose
-/// upstream body carried a blank/absent `id`. A blank id becomes an empty `tool_use.id`/`tool_call_id`
-/// that the cross-protocol target reader (Anthropic) rejects and that breaks `tool`/`tool_result`
-/// correlation. Derived from `(ordinal, name)` via the stdlib fixed-seed `DefaultHasher` (SipHash-1-3,
-/// no new dependency, stable within a run) so repeated function names in one response stay distinct;
-/// the `call_` prefix matches OpenAI's native tool-id shape and keeps it visibly synthetic. Mirrors
-/// the gemini reader's `synth_tool_call_id` discipline for the same never-blank-correlation-key reason.
-fn synth_response_tool_call_id(ordinal: usize, name: &str) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    ordinal.hash(&mut hasher);
-    name.hash(&mut hasher);
-    format!("call_{:016x}", hasher.finish())
-}
-
-/// Decode a tool-call `arguments` field into the IR tool-input `Value`. OpenAI's native shape is a
-/// JSON STRING (parsed to a value; a malformed string is preserved verbatim as a `String` rather than
-/// dropped, so no arguments are lost). But some OpenAI-compatible backends emit `arguments` as an
-/// already-parsed JSON OBJECT (or other non-string value); the prior `as_str().unwrap_or("{}")`
-/// COLLAPSED that to an empty object, silently discarding the caller's tool arguments. Use a non-string
-/// value directly instead. Absent `arguments` yields `{}` (a no-arg call).
-fn tool_input_from_arguments(v: Option<&serde_json::Value>) -> serde_json::Value {
-    match v {
-        Some(serde_json::Value::String(s)) => crate::codec::json::parse_str(s)
-            .unwrap_or_else(|_| serde_json::Value::String(s.clone())),
-        Some(other) => other.clone(),
-        None => serde_json::json!({}),
     }
 }
 

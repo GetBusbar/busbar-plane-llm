@@ -81,3 +81,15 @@ pub fn screened(items: &[busbar_contract::ir::facts::ContentItem<'_>]) -> Vec<St
         .map(|i| i.screenable_text().into_owned())
         .collect()
 }
+
+/// The stop reason of a non-stream response read from its RAW BYTES the way the same-protocol
+/// relay reads it: the dialect's stop-reason field, scanned, its token mapped.
+pub(crate) fn raw_stop_reason(
+    reader: &dyn crate::codec::proto_codec::ProtocolReader,
+    body: &[u8],
+) -> Option<crate::codec::ir::IrStopReason> {
+    let mut scan = crate::codec::usage_tail::StopKeyScanner::new(reader.stop_reason_key()?)?;
+    scan.feed(body);
+    scan.token()
+        .and_then(|token| reader.stop_reason_of_token(token))
+}

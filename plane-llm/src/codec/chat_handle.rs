@@ -325,8 +325,8 @@ pub fn drop_request_extra(ir: &mut IrRequest, ingress_protocol: &str) {
     // hint or a member its own code carries names nothing). Only paths are logged, never values
     // (they carry caller payload).
     let paths = super::proto_codec::with_reader(ingress_protocol, |r| {
-        drops::extra_paths(&ir.extra, r.parked(), |path| {
-            crate::codec::carry::crosses(r.request_map(), path)
+        drops::extra_paths(&ir.extra, r.grammar().parked, |path| {
+            crate::codec::carry::crosses(r.grammar().request_map, path)
         })
     })
     .unwrap_or_else(|| drops::extra_paths(&ir.extra, &[], |_| false));
@@ -343,17 +343,6 @@ pub fn drop_request_extra(ir: &mut IrRequest, ingress_protocol: &str) {
     ir.extra.clear();
 }
 
-/// What a TRANSLATE attempt's REQUEST drops before the far end's writer runs, for a host that does
-/// not run [`chat_prepare_for_egress`] (the plane's own crossing, design F7): the caller's content
-/// blocks the reader does not model are named (the reader put nothing in their place), and every
-/// `extra` member is dropped. Call inside a [`drops::scope`].
-pub fn drop_untranslatable_request(ir: &mut IrRequest, ingress_protocol: &str, body: &Value) {
-    super::proto_codec::with_reader(ingress_protocol, |r| {
-        drops::note_unmodelled_blocks(r.request_blocks(), body, drops::UNMODELLED_REQUEST_BLOCK);
-    });
-    drop_request_extra(ir, ingress_protocol);
-}
-
 /// What a TRANSLATE attempt's ANSWER drops: the far end's vendor-scoped response metadata, its
 /// content blocks the far end's reader does not model, and every other member the far end's dialect
 /// does not carry (the answer walk), each named by its wire path. Both hosts
@@ -361,10 +350,14 @@ pub fn drop_untranslatable_request(ir: &mut IrRequest, ingress_protocol: &str, b
 pub fn drop_untranslatable_response(egress_protocol: &str, body: &Value) {
     crate::codec::dialect::drop_untranslatable_response_metadata(egress_protocol, body);
     super::proto_codec::with_reader(egress_protocol, |r| {
-        drops::note_unmodelled_blocks(r.response_blocks(), body, drops::UNMODELLED_ANSWER_BLOCK);
+        drops::note_unmodelled_blocks(
+            r.grammar().response_blocks,
+            body,
+            drops::UNMODELLED_ANSWER_BLOCK,
+        );
         // Every other member of the answer the caller's dialect does not get (DF-MAP-IR-GAPS
         // section E: no extra bucket), walked against what the far end's dialect carries.
-        if let Some(carried) = r.response_carried() {
+        if let Some(carried) = r.grammar().response_carried {
             drops::note_unmapped(&carried, "", body);
         }
     });

@@ -7,6 +7,8 @@
 //! RED: before the envelope, `models.<m>.protocol: bedrock-invoke` was refused as an unknown
 //! protocol, so none of these builds or holds.
 
+mod common;
+
 use busbar_contract::operation::OpVerb;
 use busbar_plane_llm::codec::eventstream::{encode_exception_frame, encode_frame};
 use busbar_plane_llm::exchange::arrive::{arrive, Arrived};
@@ -15,25 +17,8 @@ use busbar_plane_llm::exchange::handler_of;
 use busbar_plane_llm::exchange::invoke::{self, Transcoder};
 use busbar_plane_llm::exchange::reply::{At, Reply, ReplyCtx, Verdict};
 use busbar_plane_llm::exchange::shaping::Shaping;
+use common::TestHost;
 use serde_json::{json, Value};
-
-/// The codec host these tests hand the plane: the OS CSPRNG and the system clock in whole seconds,
-/// read the way the kernel's host reads them.
-struct TestHost;
-
-impl busbar_contract::codec::CodecHost for TestHost {
-    fn fill_entropy(&self, out: &mut [u8]) -> bool {
-        getrandom::fill(out).is_ok()
-    }
-
-    fn wall_clock_now(&self) -> Option<u64> {
-        Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs()),
-        )
-    }
-}
 
 /// The handle every codec call here is handed.
 const HOST: &dyn busbar_contract::codec::CodecHost = &TestHost;

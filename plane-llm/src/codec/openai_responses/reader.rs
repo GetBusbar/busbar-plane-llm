@@ -1,5 +1,29 @@
 use super::*;
 use crate::codec::dialect::ir_parse_error;
+use crate::codec::ir_encode::{synth_response_tool_call_id, tool_input_from_arguments};
+
+/// What a translate attempt cannot carry from this dialect (`codec::drops`).
+static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
+    request_map: super::map::REQUEST,
+    parked: super::PARKED,
+    request_blocks: super::REQUEST_BLOCKS,
+    response_blocks: super::RESPONSE_BLOCKS,
+    response_carried: Some(crate::codec::drops::Carried {
+        map: super::map::RESPONSE_PATHS,
+        code: super::RESPONSE_CODE,
+        drops: super::RESPONSE_DROPS,
+        defaults: super::ANSWER_DEFAULTS,
+    }),
+    stream_carried: Some(crate::codec::drops::Carried {
+        map: super::map::STREAM_PATHS,
+        code: super::STREAM_CODE,
+        drops: super::STREAM_DROPS,
+        defaults: super::ANSWER_DEFAULTS,
+    }),
+    stream_keyed_by_event: false,
+    block_kinds: super::IR_BLOCK_KINDS,
+    request_code_names: super::REQUEST_CODE_NAMES,
+};
 
 impl ProtocolReader for ResponsesReader {
     fn recover_truncated_usage(&self, tail: &[u8]) -> Option<busbar_contract::billing::TokenUsage> {
@@ -133,12 +157,7 @@ impl ProtocolReader for ResponsesReader {
         if let Some(instructions) = obj.get(keys::INSTRUCTIONS).and_then(|v| v.as_str()) {
             if !instructions.is_empty() {
                 saw_instructions = true;
-                system_blocks.push(crate::codec::ir::IrBlock::Text {
-                    text: instructions.to_string(),
-                    cache_control: None,
-                    citations: Vec::new(),
-                    refusal: false,
-                });
+                system_blocks.push(crate::codec::ir::IrBlock::text(instructions.to_string()));
             }
         }
 
@@ -264,12 +283,7 @@ impl ProtocolReader for ResponsesReader {
                             let output_val = item.get(keys::OUTPUT);
                             let content_blocks: Vec<crate::codec::ir::IrBlock> = match output_val {
                                 Some(serde_json::Value::String(out_str)) => {
-                                    vec![crate::codec::ir::IrBlock::Text {
-                                        text: out_str.clone(),
-                                        cache_control: None,
-                                        citations: Vec::new(),
-                                        refusal: false,
-                                    }]
+                                    vec![crate::codec::ir::IrBlock::text(out_str.clone())]
                                 }
                                 _ => output_val
                                     .and_then(|o| o.as_array())
@@ -1410,13 +1424,7 @@ impl ProtocolReader for ResponsesReader {
                     // handled by the branch above; this else covers `completed`/`incomplete`.)
                     let stop_reason = (event_type == EVT_RESPONSE_COMPLETED)
                         .then_some(crate::codec::ir::IrStopReason::EndTurn);
-                    let usage = crate::codec::ir::IrUsage {
-                        input_tokens: 0,
-                        output_tokens: 0,
-                        cache_creation_input_tokens: None,
-                        cache_read_input_tokens: None,
-                        detail: crate::codec::ir::IrUsageDetail::default(),
-                    };
+                    let usage = crate::codec::ir::IrUsage::default();
                     close_open_blocks(&mut out, state);
                     out.push(IrStreamEvent::MessageDelta {
                         stop_reason,
@@ -1819,78 +1827,8 @@ impl ProtocolReader for ResponsesReader {
         Box::new(self.clone())
     }
 
-    fn request_map(&self) -> crate::codec::carry::Table {
-        super::map::REQUEST
-    }
-
-    fn parked(&self) -> &'static [crate::codec::drops::Parked] {
-        super::PARKED
-    }
-
-    fn request_blocks(&self) -> &'static [crate::codec::drops::Blocks] {
-        super::REQUEST_BLOCKS
-    }
-
-    fn response_blocks(&self) -> &'static [crate::codec::drops::Blocks] {
-        super::RESPONSE_BLOCKS
-    }
-
-    fn response_carried(&self) -> Option<crate::codec::drops::Carried> {
-        Some(crate::codec::drops::Carried {
-            map: super::map::RESPONSE_PATHS,
-            code: super::RESPONSE_CODE,
-            drops: super::RESPONSE_DROPS,
-            defaults: super::ANSWER_DEFAULTS,
-        })
-    }
-
-    fn stream_carried(&self) -> Option<crate::codec::drops::Carried> {
-        Some(crate::codec::drops::Carried {
-            map: super::map::STREAM_PATHS,
-            code: super::STREAM_CODE,
-            drops: super::STREAM_DROPS,
-            defaults: super::ANSWER_DEFAULTS,
-        })
-    }
-
-    fn block_kinds(&self) -> &'static [(&'static str, &'static str)] {
-        super::IR_BLOCK_KINDS
-    }
-
-    fn request_code_names(&self) -> &'static [(&'static str, &'static str)] {
-        super::REQUEST_CODE_NAMES
-    }
-
-    fn unread(&self) -> &'static [&'static str] {
-        super::UNREAD
-    }
-}
-
-/// Synthesize a deterministic, non-empty `call_…` tool-call id for a RESPONSE function-call whose
-/// upstream body carried a blank/absent `call_id`. A blank id becomes an empty `tool_use.id`/
-/// `tool_call_id` the cross-protocol target reader (Anthropic) rejects and that breaks
-/// `function_call_output` correlation. Derived from `(ordinal, name)` via the stdlib fixed-seed
-/// `DefaultHasher` (SipHash-1-3, no new dependency, stable within a run) so repeated function names in
-/// one response stay distinct; the `call_` prefix matches the native tool-id shape and keeps it
-/// visibly synthetic. Mirrors the openai_chat + gemini readers' never-blank-correlation-key discipline.
-fn synth_response_tool_call_id(ordinal: usize, name: &str) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    ordinal.hash(&mut hasher);
-    name.hash(&mut hasher);
-    format!("call_{:016x}", hasher.finish())
-}
-
-/// Decode a Responses function-call `arguments` field into the IR tool-input `Value`. Native shape is
-/// a JSON STRING (parsed; a malformed string preserved verbatim rather than dropped). A non-string
-/// (already-parsed object) is used directly instead of being collapsed to an empty object, so a
-/// backend that emits object-form arguments does not silently lose them. Absent yields `{}`.
-fn tool_input_from_arguments(v: Option<&serde_json::Value>) -> serde_json::Value {
-    match v {
-        Some(serde_json::Value::String(s)) => crate::codec::json::parse_str(s)
-            .unwrap_or_else(|_| serde_json::Value::String(s.clone())),
-        Some(other) => other.clone(),
-        None => serde_json::json!({}),
+    fn grammar(&self) -> &'static crate::codec::drops::Grammar {
+        &GRAMMAR
     }
 }
 
