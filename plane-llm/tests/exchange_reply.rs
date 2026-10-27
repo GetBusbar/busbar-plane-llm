@@ -2126,7 +2126,7 @@ mod rehomed_answers {
         assert!(!names.is_empty());
         let raw = String::from_utf8_lossy(body);
         assert!(raw.contains(":exception-type"), "{body:?}");
-        assert!(raw.contains("InternalServerException"), "{body:?}");
+        assert!(raw.contains("internalServerException"), "{body:?}");
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_same_protocol_stream_mid_stream_transport_error_appends_binary_exception`
@@ -2605,7 +2605,7 @@ mod rehomed_answers {
             ":message-type",
             "exception",
             ":exception-type",
-            "InternalServerException",
+            "internalServerException",
         ] {
             assert!(headers.contains(needle), "{needle}: {headers}");
         }
@@ -3086,15 +3086,15 @@ const CUT_FIRST: &[u8] = b"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.comple
 /// own and are compared with both removed.
 const CUT_1_5_5: &[(&str, bool, &[u8])] = &[
     ("openai", false, b"data: {\"error\":{\"code\":null,\"message\":\"The response stream was interrupted.\",\"param\":null,\"type\":\"server_error\"}}\n\n"),
-    ("anthropic", false, b"event: error\ndata: {\"error\":{\"message\":\"The response stream was interrupted.\",\"type\":\"The response stream was interrupted.\"},\"type\":\"error\"}\n\n"),
+    ("anthropic", false, b"event: error\ndata: {\"error\":{\"message\":\"The response stream was interrupted.\",\"type\":\"api_error\"},\"type\":\"error\"}\n\n"),
     ("gemini", false, b"data: {\"error\":{\"code\":500,\"message\":\"The response stream was interrupted.\",\"status\":\"INTERNAL\"}}\n\n"),
     ("gemini", true, b",{\"error\":{\"code\":500,\"message\":\"The response stream was interrupted.\",\"status\":\"INTERNAL\"}}]"),
     ("cohere", false, b"data: {\"delta\":{\"finish_reason\":\"ERROR\",\"usage\":{\"tokens\":{\"input_tokens\":0,\"output_tokens\":0}}},\"type\":\"message-end\"}\n\n"),
     ("responses", false, b"event: response.failed\ndata: {\"response\":{\"created_at\":1791927860,\"error\":{\"code\":\"server_error\",\"message\":\"The response stream was interrupted.\"},\"id\":\"resp_zjjqukHWABl78LV1C9NNR22oHbFmGEmq0TypczYXR4ZIVu2O\",\"model\":\"gpt-4o\",\"object\":\"response\",\"output\":[],\"status\":\"failed\"},\"sequence_number\":0,\"type\":\"response.failed\"}\n\n"),
 ];
 
-/// 1.5.5's Bedrock caller: one `InternalServerException` exception frame (binary eventstream).
-const CUT_1_5_5_BEDROCK: &str = "000000a7000000659afd09380f3a657863657074696f6e2d74797065070017496e7465726e616c536572766572457863657074696f6e0d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d74797065070009657863657074696f6e7b226d657373616765223a2254686520726573706f6e73652073747265616d2077617320696e7465727275707465642e227d4b3fd5c9";
+/// The Bedrock caller (1.5.5 sent `InternalServerException`; the union member is `internalServerException`): one exception frame (binary eventstream).
+const CUT_1_5_5_BEDROCK: &str = "000000a7000000659afd09380f3a657863657074696f6e2d74797065070017696e7465726e616c536572766572457863657074696f6e0d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d74797065070009657863657074696f6e7b226d657373616765223a2254686520726573706f6e73652073747265616d2077617320696e7465727275707465642e227de769a380";
 
 /// The members of a Response object signed register entry S-6 adds to 1.5.5's (the spec's required
 /// members, emitted with their defaults or carried values).
@@ -4236,7 +4236,7 @@ mod rehomed_metering {
                         )
                         .0;
                         assert_eq!((frames.len(), buf.len()), (1, 0), "{what}");
-                        assert!(text.contains("InternalServerException"), "{what}");
+                        assert!(text.contains("internalServerException"), "{what}");
                     }
                     "anthropic" => {
                         assert!(text.starts_with("event: error\n"), "{what}: {text}");

@@ -2907,9 +2907,9 @@ fn test_translate_error_to_bedrock_ingress_is_exception_frame() {
         headers.contains(":exception-type"),
         "frame carries an :exception-type header; headers: {headers}"
     );
-    // The exception-type is a real Converse exception name (Overloaded → ServiceUnavailableException).
+    // The exception-type is a real Converse exception name (Overloaded → serviceUnavailableException).
     assert!(
-        headers.contains("ServiceUnavailableException"),
+        headers.contains("serviceUnavailableException"),
         ":exception-type names the transient overload Converse exception; headers: {headers}"
     );
     // The whole frame must decode without trailing bytes (valid CRC + lengths).
