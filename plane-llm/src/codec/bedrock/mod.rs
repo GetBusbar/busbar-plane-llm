@@ -1480,12 +1480,7 @@ fn guard_content_block(guard: &serde_json::Value) -> Option<crate::codec::ir::Ir
         .and_then(|t| t.get(keys::TEXT))
         .and_then(|t| t.as_str())
     {
-        return Some(crate::codec::ir::IrBlock::Text {
-            text: t.to_string(),
-            cache_control: None,
-            citations: Vec::new(),
-            refusal: false,
-        });
+        return Some(crate::codec::ir::IrBlock::text(t.to_string()));
     }
     guard.get(keys::IMAGE).and_then(read_bedrock_image_block)
 }

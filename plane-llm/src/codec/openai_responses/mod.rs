@@ -570,13 +570,7 @@ fn build_responses_usage(usage: &crate::codec::ir::IrUsage) -> serde_json::Value
 /// `response.created` skeleton). The spec types `Response.usage` as a non-nullable `ResponseUsage`,
 /// so when the key is present it must be an object with every required member: all zeros here.
 fn zero_responses_usage() -> serde_json::Value {
-    build_responses_usage(&crate::codec::ir::IrUsage {
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_creation_input_tokens: None,
-        cache_read_input_tokens: None,
-        detail: crate::codec::ir::IrUsageDetail::default(),
-    })
+    build_responses_usage(&crate::codec::ir::IrUsage::default())
 }
 
 /// Fill in the members the pinned spec marks REQUIRED on every `Response` object that the writer
@@ -734,12 +728,7 @@ fn push_system_content(
 ) {
     let mut push_text = |text: &str| {
         if !text.is_empty() {
-            system_blocks.push(crate::codec::ir::IrBlock::Text {
-                text: text.to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            });
+            system_blocks.push(crate::codec::ir::IrBlock::text(text.to_string()));
         }
     };
     match content {
@@ -767,12 +756,9 @@ fn message_content_blocks(
     content: Option<&serde_json::Value>,
 ) -> Option<Vec<crate::codec::ir::IrBlock>> {
     match content {
-        Some(serde_json::Value::String(s)) => Some(vec![crate::codec::ir::IrBlock::Text {
-            text: s.clone(),
-            cache_control: None,
-            citations: Vec::new(),
-            refusal: false,
-        }]),
+        Some(serde_json::Value::String(s)) => {
+            Some(vec![crate::codec::ir::IrBlock::text(s.clone())])
+        }
         Some(serde_json::Value::Array(arr)) => {
             Some(arr.iter().filter_map(|b| responses_block(b).ok()).collect())
         }
