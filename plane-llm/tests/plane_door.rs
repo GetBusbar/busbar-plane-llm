@@ -324,13 +324,19 @@ fn an_open_count_is_reported_in_its_declared_class_and_never_dropped() {
 }
 
 /// RED for the keep mode: every need relays the far end's whole head but the governed fields, and
-/// the deny list is exactly every dialect's governed response fields, each once.
+/// the deny list is exactly every dialect's governed response fields and the operator's connection
+/// cookies, each once.
 #[test]
 fn every_need_keeps_all_but_every_dialects_governed_response_fields() {
     use busbar_contract::abi::host::conn::connector::KEEP_ALL_EXCEPT_DENIED;
     let mut governed: Vec<&str> = DIALECTS
         .iter()
         .flat_map(|d| d.governed_response_headers.iter().copied())
+        .chain(
+            busbar_plane_llm::dialect::ACCOUNT_RESPONSE_HEADERS
+                .iter()
+                .copied(),
+        )
         .collect();
     governed.sort_unstable();
     governed.dedup();
@@ -373,15 +379,18 @@ fn red_no_dialects_governed_response_field_leaks_through_a_need() {
                 );
             }
         }
-        for relayed in [
-            "request-id",
-            "x-amzn-requestid",
-            "x-ratelimit-remaining-requests",
-            "set-cookie",
-        ] {
+        for relayed in ["request-id", "x-amzn-requestid"] {
             assert!(
                 keeps_response_field(n.keep_mode, &[], &denied, relayed, none),
                 "`{relayed}` is the upstream's and crosses (F2)"
+            );
+        }
+        // the cookies a far end sets for busbar's own connection never reach the plane, so no
+        // tenant receives them
+        for cookie in ["set-cookie", "set-cookie2"] {
+            assert!(
+                !keeps_response_field(n.keep_mode, &[], &denied, cookie, none),
+                "`{cookie}` is the operator's connection state and is stripped"
             );
         }
     }
