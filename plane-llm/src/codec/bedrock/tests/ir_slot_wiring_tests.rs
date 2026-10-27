@@ -35,7 +35,12 @@ fn xreq_lane(ingress: &'static str, body: &Value, model: &str, caps: LaneCaps) -
 fn user_turn(text: &str) -> crate::codec::ir::IrMessage {
     crate::codec::ir::IrMessage {
         role: crate::codec::ir::IrRole::User,
-        content: vec![crate::codec::ir::IrBlock::text(text.to_string())],
+        content: vec![crate::codec::ir::IrBlock::Text {
+            text: text.into(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
     }
 }
 
@@ -101,7 +106,12 @@ fn bed10_context_window_detail_rides_the_message_stop_frame() {
     assert_eq!(payload["stopReason"], "model_context_window_exceeded");
 
     let ir = crate::codec::ir::IrResponse {
-        content: vec![crate::codec::ir::IrBlock::text("partial")],
+        content: vec![crate::codec::ir::IrBlock::Text {
+            text: "partial".into(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
         stop_reason: Some(crate::codec::ir::IrStopReason::MaxTokens),
         stop_detail: Some(crate::codec::ir::IrStopDetail::ContextWindowExceeded),
         ..Default::default()

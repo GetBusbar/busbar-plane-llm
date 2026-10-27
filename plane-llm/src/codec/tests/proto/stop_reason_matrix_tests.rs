@@ -9,7 +9,12 @@ fn resp(reason: IrStopReason) -> IrResponse {
     IrResponse {
         logprobs: Vec::new(),
         role: IrRole::Assistant,
-        content: vec![IrBlock::text("x".to_string())],
+        content: vec![IrBlock::Text {
+            text: "x".to_string(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
         stop_reason: Some(reason),
         usage: IrUsage {
             input_tokens: 1,

@@ -131,7 +131,13 @@ pub(super) fn write_server_tool_use(usage: &crate::codec::ir::IrUsage) -> serde_
 /// unchanged. `None` (a cross-protocol stream whose first frame carried no usage) yields the
 /// zero-valued skeleton.
 pub(super) fn write_usage_object(usage: Option<&crate::codec::ir::IrUsage>) -> serde_json::Value {
-    let zero = crate::codec::ir::IrUsage::default();
+    let zero = crate::codec::ir::IrUsage {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: None,
+        cache_read_input_tokens: None,
+        detail: crate::codec::ir::IrUsageDetail::default(),
+    };
     let usage = usage.unwrap_or(&zero);
     let mut usage_map = serde_json::Map::new();
     usage_map.insert(

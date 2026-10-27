@@ -15,7 +15,12 @@ fn anthropic_to_cohere_document_media_warns_not_silent() {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![
-                crate::codec::ir::IrBlock::text("summarize this".to_string()),
+                crate::codec::ir::IrBlock::Text {
+                    text: "summarize this".to_string(),
+                    cache_control: None,
+                    citations: Vec::new(),
+                    refusal: false,
+                },
                 crate::codec::ir::IrBlock::Media {
                     kind: crate::codec::ir::IrMediaKind::Document,
                     source: crate::codec::ir::IrImageSource::Base64 {

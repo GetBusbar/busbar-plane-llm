@@ -660,9 +660,13 @@ impl StreamTranslate {
     /// far end reports: the stream-start counts (Anthropic `message_start`) as well as the terminal
     /// delta, so a stream that ends before its terminal frame bills what was reported so far (#62).
     fn fold_reported_usage(&mut self, reported: &crate::codec::ir::IrUsage) {
-        let acc = self
-            .last_usage
-            .get_or_insert(crate::codec::ir::IrUsage::default());
+        let acc = self.last_usage.get_or_insert(crate::codec::ir::IrUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+            detail: crate::codec::ir::IrUsageDetail::default(),
+        });
         merge_trailing_usage(acc, reported);
     }
 

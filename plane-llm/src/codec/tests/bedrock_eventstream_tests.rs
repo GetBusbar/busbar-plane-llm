@@ -10,7 +10,12 @@ fn buffered_response_wraps_into_converse_stream_frames() {
     let ir = IrResponse {
         logprobs: Vec::new(),
         role: IrRole::Assistant,
-        content: vec![IrBlock::text("hello world".to_string())],
+        content: vec![IrBlock::Text {
+            text: "hello world".to_string(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: IrUsage {
             input_tokens: 11,
@@ -150,7 +155,12 @@ fn buffered_multi_block_assigns_distinct_monotonic_content_block_indices() {
         logprobs: Vec::new(),
         role: IrRole::Assistant,
         content: vec![
-            IrBlock::text("Let me check the weather.".to_string()),
+            IrBlock::Text {
+                text: "Let me check the weather.".to_string(),
+                cache_control: None,
+                citations: Vec::new(),
+                refusal: false,
+            },
             IrBlock::ToolUse {
                 thought_signature: None,
                 id: "toolu_abc123".to_string(),
@@ -158,7 +168,12 @@ fn buffered_multi_block_assigns_distinct_monotonic_content_block_indices() {
                 input: serde_json::json!({"city": "Paris"}),
                 cache_control: None,
             },
-            IrBlock::text("One moment.".to_string()),
+            IrBlock::Text {
+                text: "One moment.".to_string(),
+                cache_control: None,
+                citations: Vec::new(),
+                refusal: false,
+            },
         ],
         stop_reason: Some(crate::codec::ir::IrStopReason::ToolUse),
         usage: IrUsage {
@@ -309,7 +324,12 @@ fn buffered_text_only_with_absent_stop_reason_defaults_to_end_turn() {
     let ir = IrResponse {
         logprobs: Vec::new(),
         role: IrRole::Assistant,
-        content: vec![IrBlock::text("All done.".to_string())],
+        content: vec![IrBlock::Text {
+            text: "All done.".to_string(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
         stop_reason: None,
         usage: IrUsage {
             input_tokens: 3,

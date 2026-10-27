@@ -18,7 +18,12 @@ fn resp(
 ) -> IrResponse {
     IrResponse {
         logprobs,
-        content: vec![IrBlock::text(text.to_string())],
+        content: vec![IrBlock::Text {
+            text: text.to_string(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }],
         stop_reason,
         usage: IrUsage {
             input_tokens: 1,

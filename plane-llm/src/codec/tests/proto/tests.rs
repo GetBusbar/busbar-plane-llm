@@ -2484,7 +2484,13 @@ mod ir_property_tests {
         let ev1 = crate::codec::ir::IrStreamEvent::MessageDelta {
             stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
             stop_sequence: None,
-            usage: crate::codec::ir::IrUsage::default(),
+            usage: crate::codec::ir::IrUsage {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+                detail: crate::codec::ir::IrUsageDetail::default(),
+            },
             stop_detail: None,
         };
         let result1 = writer.write_response_event(crate::codec::test_host::HOST, &ev1);
@@ -2500,7 +2506,13 @@ mod ir_property_tests {
         let ev2 = crate::codec::ir::IrStreamEvent::MessageDelta {
             stop_reason: Some(crate::codec::ir::IrStopReason::MaxTokens),
             stop_sequence: None,
-            usage: crate::codec::ir::IrUsage::default(),
+            usage: crate::codec::ir::IrUsage {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+                detail: crate::codec::ir::IrUsageDetail::default(),
+            },
             stop_detail: None,
         };
         let result2 = writer.write_response_event(crate::codec::test_host::HOST, &ev2);
@@ -2516,7 +2528,13 @@ mod ir_property_tests {
         let ev3 = crate::codec::ir::IrStreamEvent::MessageDelta {
             stop_reason: Some(crate::codec::ir::IrStopReason::ToolUse),
             stop_sequence: None,
-            usage: crate::codec::ir::IrUsage::default(),
+            usage: crate::codec::ir::IrUsage {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+                detail: crate::codec::ir::IrUsageDetail::default(),
+            },
             stop_detail: None,
         };
         let result3 = writer.write_response_event(crate::codec::test_host::HOST, &ev3);

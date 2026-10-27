@@ -139,7 +139,12 @@ fn anthropic_clamps_and_drops_by_max_tokens() {
     let budget_ir = |max_tokens: u32| crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
-            content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
+            content: vec![crate::codec::ir::IrBlock::Text {
+                text: "hi".to_string(),
+                cache_control: None,
+                citations: Vec::new(),
+                refusal: false,
+            }],
         }],
         max_tokens: Some(max_tokens),
         reasoning: Some(IrReasoningAsk::Budget(16384)),

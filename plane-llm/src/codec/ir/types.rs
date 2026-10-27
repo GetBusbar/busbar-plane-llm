@@ -823,15 +823,6 @@ impl IrBlock {
     /// citation's `raw` holds the block's `citations` switch verbatim (`{"enabled": bool}`, spelled
     /// identically by both wires). A dialect that has the block re-emits it from
     /// [`IrBlock::as_search_result`]; any other dialect sends the text.
-    /// A plain text block: no cache marker, no citations, not a refusal.
-    pub fn text(text: impl Into<String>) -> IrBlock {
-        IrBlock::Text {
-            text: text.into(),
-            cache_control: None,
-            citations: Vec::new(),
-            refusal: false,
-        }
-    }
     pub fn search_result(
         source: &str,
         title: &str,

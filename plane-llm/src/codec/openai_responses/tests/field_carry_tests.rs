@@ -98,7 +98,12 @@ fn write_response(resp: &crate::codec::ir::IrResponse) -> serde_json::Value {
 }
 
 fn text_block(text: &str) -> crate::codec::ir::IrBlock {
-    crate::codec::ir::IrBlock::text(text.to_string())
+    crate::codec::ir::IrBlock::Text {
+        text: text.to_string(),
+        cache_control: None,
+        citations: Vec::new(),
+        refusal: false,
+    }
 }
 
 /// Run `f` with a warn-capturing subscriber and return whatever it produced plus the capture.
