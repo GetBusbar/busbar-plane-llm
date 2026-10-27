@@ -568,11 +568,12 @@ pub trait ProtocolWriter: Send + Sync {
         None
     }
 
-    /// Serialize the one-token "ping" probe request through THIS dialect's own `write_request`, as a
-    /// wire `Value`. The concrete ping IR is built by the owning plugin (busbar-llm's `ir_encode`),
-    /// so core's `probe_body` orchestration below names no concrete IR. The model is stamped
+    /// The one-token "ping" probe request (`ir_encode::ping_request`) through THIS dialect's own
+    /// `write_request`, so the probe body matches a real request on this wire. The model is stamped
     /// afterward by [`Self::rewrite_model_if_needed`], so the ping itself carries none.
-    fn probe_request(&self, host: &dyn busbar_contract::codec::CodecHost) -> serde_json::Value;
+    fn probe_request(&self, host: &dyn busbar_contract::codec::CodecHost) -> serde_json::Value {
+        self.write_request(host, &crate::codec::ir_encode::ping_request())
+    }
 
     /// Build a minimal, protocol-correct request body for an active health probe of `model`.
     /// Serializes a one-token "ping" through this protocol's own [`Self::probe_request`], so every

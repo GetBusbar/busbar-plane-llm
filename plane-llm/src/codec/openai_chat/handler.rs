@@ -447,21 +447,6 @@ pub fn write_transcription_response(r: &TranscriptionResp) -> WireBody {
     ))
 }
 
-/// One billed usage count that is present and unreadable, REFUSED ON ITS OWN (the per-field rule `usage_count::read_usage` holds for the chat tables): said loudly,
-/// it bills nothing, nothing stands in for it, and the answer it rode on is served. v1.5.5 read
-/// these counts as `.and_then(Value::as_u64)` and served every such answer (v1.5.5
-/// `crates/busbar/src/handlers/openai.rs:369-372`, `:586`); refusing the whole answer over one count
-/// was a 500 with no usage where 1.5.5 delivered and billed the readable counts.
-fn refused_count(unreadable: &crate::codec::usage_count::UnreadableCount) {
-    tracing::warn!(
-        protocol = super::VENDOR_NAME,
-        field = unreadable.field,
-        spelling = %unreadable.spelling,
-        "usage count is present but unreadable: REFUSED, it bills nothing and is never read as \
-         zero (#42, #81); the answer is served and the readable counts bill as stated"
-    );
-}
-
 /// OpenAI transcription `usage` → `Billing`: `{type:"duration",seconds}` (whisper) or a token shape.
 ///
 /// The token counts are judged one by one ([`refused_count`]). The presence of a READABLE
@@ -495,7 +480,7 @@ fn parse_transcription_usage(wire: &[u8], u: &Value) -> Result<Option<Billing>, 
             // Absent, or spelled `null`: this response is not token-metered. Unchanged.
             Ok(None) => Ok(None),
             Err(unreadable) => {
-                refused_count(&unreadable);
+                crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
                 Ok(None)
             }
             Ok(Some(input)) => Ok(Some(Billing::Tokens(
@@ -503,7 +488,10 @@ fn parse_transcription_usage(wire: &[u8], u: &Value) -> Result<Option<Billing>, 
                     input,
                     output: crate::codec::usage_count::billed_count(u, keys::OUTPUT_TOKENS)
                         .unwrap_or_else(|unreadable| {
-                            refused_count(&unreadable);
+                            crate::codec::usage_count::refused_count(
+                                super::VENDOR_NAME,
+                                &unreadable,
+                            );
                             0
                         }),
                     ..Default::default()
@@ -1236,7 +1224,7 @@ pub fn read_embeddings_response(
             .map(|u| busbar_contract::billing::TokenUsage {
                 input: crate::codec::usage_count::billed_count(u, super::PROMPT_TOKENS)
                     .unwrap_or_else(|unreadable| {
-                        refused_count(&unreadable);
+                        crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
                         0
                     }),
                 ..Default::default()
