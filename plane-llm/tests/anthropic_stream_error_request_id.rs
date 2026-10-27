@@ -8,23 +8,12 @@
 //! (`crates/busbar/src/proto/anthropic/writer.rs:626-666` at the v1.5.5 tag), so the llm
 //! spec-conformance rig would fail every such row on `required`: named conformance gaps are zero.
 
+mod common;
+
 use busbar_contract::upstream::{CanonicalSignal, StatusClass};
 use busbar_plane_llm::codec::anthropic;
 use busbar_plane_llm::codec::ir::IrStreamEvent;
-
-/// The host the writer is handed: a fixed entropy fill to mint the request id from, and no clock.
-struct SevensHost;
-
-impl busbar_contract::codec::CodecHost for SevensHost {
-    fn fill_entropy(&self, out: &mut [u8]) -> bool {
-        out.fill(7);
-        true
-    }
-
-    fn wall_clock_now(&self) -> Option<u64> {
-        None
-    }
-}
+use common::SevensHost;
 
 #[test]
 fn an_anthropic_in_stream_error_event_carries_every_member_error_response_requires() {

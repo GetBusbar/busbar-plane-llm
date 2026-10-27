@@ -6,25 +6,11 @@
 //! "this request's tokens are undercounted"). The relay billed a FLOOR estimate over the bytes it
 //! kept instead. The cap is the relay's own `translate_cap`, set here at 64 bytes.
 
+mod common;
+
 use busbar_contract::operation::OpVerb;
 use busbar_plane_llm::exchange::reply::relay::{Relay, RelayCtx};
-
-/// The codec host these relays are handed: the OS CSPRNG and the system clock in whole seconds.
-struct TestHost;
-
-impl busbar_contract::codec::CodecHost for TestHost {
-    fn fill_entropy(&self, out: &mut [u8]) -> bool {
-        getrandom::fill(out).is_ok()
-    }
-
-    fn wall_clock_now(&self) -> Option<u64> {
-        Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs()),
-        )
-    }
-}
+use common::TestHost;
 
 /// The handle every codec call here is handed.
 const HOST: &dyn busbar_contract::codec::CodecHost = &TestHost;
