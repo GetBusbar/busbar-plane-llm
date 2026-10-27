@@ -196,15 +196,6 @@ pub mod proto_stream;
 /// suites that pin them are codec suites.
 pub mod wire_shim;
 
-/// THE REGISTRY KEY THE LLM PLANE IS KNOWN BY — the string the composition root files the plane
-/// under and the same string the LLM native plane reports as its capability key.
-///
-/// Named ONCE, here, on the pure side of the split, because the plane's `capability_key` and the
-/// composition-root FLIP must reference the SAME literal or a swap could drift onto two. It agrees
-/// with `busbar-llm`'s `PLANE_DECL.key` (`"llm"`, the fallback plane's identity). `busbar-llm`
-/// re-exports it as `busbar_llm::PLANE_KEY`, the one stable path the `busbar` binary names.
-pub const PLANE_KEY: &str = "llm";
-
 /// THIS PLANE'S OWN DECLARATION OF `name`, read off [`DECLS`]. Every fact the codecs look up about a
 /// dialect by name — the path-model shape, the array-stream shim key, the native tool-id prefix, the
 /// provider-metadata reporter — is a fact about one of THESE six dialects, so the lookup reads this

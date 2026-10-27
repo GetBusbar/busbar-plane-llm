@@ -5665,7 +5665,7 @@ fn bedrock_input_tier_excludes_cache_at_billing_boundary() {
     // Project through the SAME seam the non-stream billing arm uses: IrUsage → neutral TokenUsage →
     // the four pricing tiers.
     let tu = resp.usage.to_token_usage();
-    let tier = crate::codec::wire_shim::tier_usage(&tu);
+    let tier = crate::codec::usage_census::tier_usage(&tu);
     let u = |k: &str| tier.usage_units.get(k).copied().unwrap_or(0);
     assert_eq!(
         u(busbar_contract::records::UNIT_INPUT),

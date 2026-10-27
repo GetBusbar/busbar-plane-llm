@@ -19,7 +19,7 @@
 //! reader this crate owns — that an unreadable cache count REFUSES through item 133's path rather
 //! than ever reaching `tier_usage()` as a bare, indistinguishable `None`.
 
-use super::tier_usage;
+use crate::codec::usage_census::tier_usage;
 use busbar_contract::billing::TokenUsage;
 
 fn unit(usage: &busbar_contract::billing::Usage, k: &str) -> Option<u64> {

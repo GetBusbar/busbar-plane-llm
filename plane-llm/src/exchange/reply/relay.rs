@@ -260,19 +260,6 @@ impl Relay {
         }
     }
 
-    /// The caller's dialect, as the relay frames its errors (the residual dialect for one the
-    /// plane does not hold).
-    #[must_use]
-    pub fn ingress(&self) -> &'static str {
-        self.ingress
-    }
-
-    /// The far end answered a stream.
-    #[must_use]
-    pub fn far_is_stream(&self) -> bool {
-        self.far_is_stream
-    }
-
     /// A far-end byte has arrived.
     #[must_use]
     pub fn had_first(&self) -> bool {

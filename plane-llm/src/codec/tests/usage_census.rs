@@ -86,7 +86,7 @@ pub(crate) fn lock_counts(dialect: &str, section: &str, prefix: &str) -> Vec<Str
 /// neither may hold a class the plane does not declare.
 pub(crate) fn ledgered(u: &TokenUsage) -> Ledgered {
     let n = |x: u64| i64::try_from(x).expect("small fixture");
-    let map = crate::codec::wire_shim::tier_usage(u).usage_units;
+    let map = tier_usage(u).usage_units;
     let units = crate::exchange::reply::Units::of(Some(u), Default::default());
     let mut tiers = NONE;
     let mut plane = NONE;
@@ -149,4 +149,36 @@ pub(crate) fn class_of<B: Copy>(table: &[(&str, B)], field: &str, census: &str) 
 /// The move from `before` to `after`.
 pub(crate) fn moved(after: Ledgered, before: Ledgered) -> Ledgered {
     std::array::from_fn(|i| after[i] - before[i])
+}
+
+/// Project the IR's normalized usage into the neutral name-keyed [`busbar_contract::billing::Usage`]
+/// carrier: the four reserved units (`input`/`output`/`cache_read`/`cache_write`) as canonical map
+/// keys, and every open class the reader counted beside them (`TokenUsage::open_units`, a turn's
+/// billed searches) under its declared class. Readers normalize `input_tokens` to UNCACHED and keep
+/// the cache fields ADDITIVE, so the mapping is direct: cache-creation is the `cache_write` unit.
+/// Zero counts are omitted so the map stays sparse (no-zero-entry).
+pub(crate) fn tier_usage(
+    u: &busbar_contract::billing::TokenUsage,
+) -> busbar_contract::billing::Usage {
+    let mut usage_units: std::collections::BTreeMap<String, u64> = (u.open_units.iter())
+        .filter(|(_, n)| **n != 0)
+        .map(|(class, n)| (class.clone(), *n))
+        .collect();
+    for (k, v) in [
+        (busbar_contract::records::UNIT_INPUT, u.input),
+        (busbar_contract::records::UNIT_OUTPUT, u.output),
+        (
+            busbar_contract::records::UNIT_CACHE_READ,
+            u.cache_read.unwrap_or(0),
+        ),
+        (
+            busbar_contract::records::UNIT_CACHE_WRITE,
+            u.cache_creation.unwrap_or(0),
+        ),
+    ] {
+        if v != 0 {
+            usage_units.insert(k.to_string(), v);
+        }
+    }
+    busbar_contract::billing::Usage { usage_units }
 }

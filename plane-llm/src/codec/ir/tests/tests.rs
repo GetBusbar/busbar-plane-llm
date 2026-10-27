@@ -283,7 +283,7 @@ fn cohere_bills_its_raw_tokens_whatever_billed_units_says() {
         "billed_units present → the ledger still bills the RAW tokens bucket, as 1.5.5 did"
     );
     // The reserved-tier projection the ledger actually accrues follows the raw counts.
-    let tier = crate::codec::wire_shim::tier_usage(&tu);
+    let tier = crate::codec::usage_census::tier_usage(&tu);
     let u = |k: &str| tier.usage_units.get(k).copied().unwrap_or(0);
     assert_eq!(
         (
