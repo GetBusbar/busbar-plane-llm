@@ -13,6 +13,9 @@ description = "The LLM plane for busbar: the plugin contract's plane kind over i
 # `DEP_BUSBAR_DOOR_CELLS_<CRATE>_CELLS` / `_DRIVER`. Links no native library.
 links = "busbar-door-cells-busbar-plane-llm"
 
+[lints]
+workspace = true
+
 [lib]
 name = "busbar_plane_llm"
 path = "src/lib.rs"
