@@ -1124,18 +1124,18 @@ impl ProtocolWriter for AnthropicWriter {
 
 /// The nine `error.type` tokens of Anthropic's published ErrorResponse.
 fn is_error_type_token(s: &str) -> bool {
-    matches!(
-        s,
-        "api_error"
-            | "authentication_error"
-            | "billing_error"
-            | "invalid_request_error"
-            | "not_found_error"
-            | "overloaded_error"
-            | "permission_error"
-            | "rate_limit_error"
-            | "timeout_error"
-    )
+    [
+        ERR_TYPE_API_ERROR,
+        ERR_TYPE_AUTHENTICATION,
+        ERR_TYPE_BILLING,
+        ERR_TYPE_INVALID_REQUEST,
+        ERR_TYPE_NOT_FOUND,
+        ERR_TYPE_OVERLOADED,
+        ERR_TYPE_PERMISSION,
+        ERR_TYPE_RATE_LIMIT,
+        ERR_TYPE_TIMEOUT,
+    ]
+    .contains(&s)
 }
 
 /// The Anthropic `error.type` for an error class, when the provider named no type of its own.
