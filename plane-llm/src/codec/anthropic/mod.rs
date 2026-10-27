@@ -1844,3 +1844,7 @@ mod ir_round3_tests;
 #[cfg(test)]
 #[path = "tests/hosted_record_tests.rs"]
 mod hosted_record_tests;
+
+#[cfg(test)]
+#[path = "tests/stream_error_member_tests.rs"]
+mod stream_error_member_tests;

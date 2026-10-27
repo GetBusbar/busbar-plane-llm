@@ -926,38 +926,29 @@ impl ProtocolWriter for AnthropicWriter {
             )),
             IrStreamEvent::Error(err) => {
                 // Native Anthropic in-stream error event:
-                // `{"type":"error","error":{"type":<type>,"message":<msg>}}`. The SDK's streaming
-                // decoder reads BOTH `error.type` (→ typed exception) AND `error.message` (the
-                // human-readable description, a required field in the documented shape). Omitting
-                // `message` leaves the SDK's `APIError` with an undefined description and is a
-                // distinguishability tell vs a native event.
-                let mut error_obj = serde_json::Map::new();
-                // `error.type` is v1.5.5's text, byte for byte (v1.5.5
-                // `crates/busbar/src/proto/anthropic/writer.rs:626-666`): the provider signal
-                // VERBATIM when present (even free text), JSON `null` when absent. A class-derived
-                // spec token here was a difference no signed register entry covers; ARCHITECT
-                // ruling: "`error.type` keeps v1.5.5's text. R-22 signs only the request_id."
-                error_obj.insert(
-                    keys::TYPE.to_string(),
-                    match err.provider_signal.as_deref() {
-                        Some(ps) => serde_json::json!(ps),
-                        None => serde_json::Value::Null,
-                    },
-                );
-                // The IR carries no separate message string (IrError == CanonicalSignal, which has
-                // no `message` field), so derive a human-readable one from the signal: prefer the
-                // provider type when present, otherwise a generic fallback. Always non-empty so the
-                // SDK's `error.message` is never undefined/null.
+                // `{"type":"error","error":{"type":<type>,"message":<msg>},"request_id":..}`. The SDK's
+                // streaming decoder reads BOTH `error.type` (→ typed exception) AND `error.message` (the
+                // human-readable description, required in the documented shape).
                 //
-                // The message text MUST stay native-plausible: a real Anthropic streaming `error`
-                // event never carries reverse-proxy vocabulary ("upstream", "gateway", "backend",
-                // …). The provider type token (`provider_signal`, e.g. `overloaded_error`) is the
-                // provider's OWN type string, so emit it VERBATIM — never prefixed with router/proxy
-                // words. When no signal is present, fall back to the generic native phrasing.
-                let message = match err.provider_signal.as_deref() {
-                    Some(ps) if !ps.is_empty() => ps.to_string(),
-                    Some(_) | None => "an error occurred while streaming the response".to_string(),
+                // `error.type` is a member of the published ErrorResponse discriminator (nine tokens).
+                // v1.5.5 put the provider signal there VERBATIM, so free text ("The response stream was
+                // interrupted.") landed in `type` and no SDK could map it (owner-approved fidelity fix,
+                // 2026-10-26). Now: a signal that IS one of the nine tokens stays the type; any other
+                // signal is the MESSAGE, and the type is the token for the error's class.
+                let signal = err.provider_signal.as_deref().filter(|s| !s.is_empty());
+                let (err_type, message) = match signal {
+                    Some(ps) if is_error_type_token(ps) => (ps, ps.to_string()),
+                    Some(ps) => (class_error_type(err.class), ps.to_string()),
+                    None => (
+                        class_error_type(err.class),
+                        "an error occurred while streaming the response".to_string(),
+                    ),
                 };
+                // The message text MUST stay native-plausible: never reverse-proxy vocabulary
+                // ("upstream", "gateway", "backend"), which is why the provider's own text is emitted
+                // verbatim and the fallback is generic.
+                let mut error_obj = serde_json::Map::new();
+                error_obj.insert(keys::TYPE.to_string(), serde_json::json!(err_type));
                 error_obj.insert(keys::MESSAGE.to_string(), serde_json::json!(message));
                 let mut data_obj = serde_json::Map::new();
                 // Native Anthropic in-stream error data body carries the top-level `type:"error"`
@@ -1128,5 +1119,35 @@ impl ProtocolWriter for AnthropicWriter {
         );
 
         serde_json::Value::Object(obj)
+    }
+}
+
+/// The nine `error.type` tokens of Anthropic's published ErrorResponse.
+fn is_error_type_token(s: &str) -> bool {
+    matches!(
+        s,
+        "api_error"
+            | "authentication_error"
+            | "billing_error"
+            | "invalid_request_error"
+            | "not_found_error"
+            | "overloaded_error"
+            | "permission_error"
+            | "rate_limit_error"
+            | "timeout_error"
+    )
+}
+
+/// The Anthropic `error.type` for an error class, when the provider named no type of its own.
+fn class_error_type(class: busbar_contract::upstream::StatusClass) -> &'static str {
+    use busbar_contract::upstream::StatusClass as C;
+    match class {
+        C::RateLimit => ERR_TYPE_RATE_LIMIT,
+        C::Overloaded => ERR_TYPE_OVERLOADED,
+        C::Timeout => ERR_TYPE_TIMEOUT,
+        C::Auth => ERR_TYPE_AUTHENTICATION,
+        C::Billing => ERR_TYPE_BILLING,
+        C::ClientError | C::ContextLength => ERR_TYPE_INVALID_REQUEST,
+        C::ServerError | C::Network => ERR_TYPE_API_ERROR,
     }
 }

@@ -400,7 +400,7 @@ fn test_encode_exception_frame_is_valid() {
     assert!(headers.contains(":message-type")); // golden wire-contract literal (kept bare on purpose)
     assert!(headers.contains("exception")); // golden wire-contract literal (kept bare on purpose)
     assert!(headers.contains(":exception-type")); // golden wire-contract literal (kept bare on purpose)
-    assert!(headers.contains("InternalServerException")); // golden wire-contract literal (kept bare on purpose)
+    assert!(headers.contains("internalServerException")); // the union MEMBER name (botocore), not the shape
                                                           // Payload is the JSON body the SDK surfaces.
     let payload = &frame[PRELUDE_LEN + headers_len..len - CRC_BYTES];
     let v: serde_json::Value = serde_json::from_slice(payload).unwrap();
