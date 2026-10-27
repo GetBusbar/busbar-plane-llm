@@ -74,7 +74,7 @@ use busbar_contract::abi::plane::{
 };
 use busbar_contract::abi::plane::{CatalogIn, CatalogOut, CLAIM_CATALOG, DIALECT_PROVIDER};
 use busbar_contract::abi::plane::{PlaneCancelIn, PlaneCancelOut};
-use busbar_contract::abi::plane::{RecordWrite, AUDIT_DEGRADED, RECORD_AUDIT};
+use busbar_contract::abi::plane::{RecordWrite, AUDIT_APPLIED, AUDIT_DEGRADED, RECORD_AUDIT};
 use busbar_contract::abi::plane::{CLAIM_RAW_AFFIX, CLAIM_SIGNED_INGRESS};
 use busbar_contract::abi::sdk::door::{abi_str, statement};
 use busbar_contract::abi::sdk::life::Refusal;
@@ -411,13 +411,19 @@ struct Answer {
     tap_fault: u8,
     /// The caller's reply is complete.
     done: bool,
-    /// The unit's audit rows, `(action, resource)`, each written as a degraded `RECORD_AUDIT`:
-    /// what a TRANSLATE attempt could not carry (1.5.5's `egress.control_unrepresentable` rows).
-    audits: Vec<(Vec<u8>, Vec<u8>)>,
+    /// The unit's audit rows, `(outcome, action, resource)`, each written as a `RECORD_AUDIT`: what a
+    /// TRANSLATE attempt could not carry (1.5.5's degraded `egress.control_unrepresentable` rows),
+    /// and a stream synthesised from a whole answer ([`STREAM_SYNTHESIZED`]).
+    audits: Vec<(u32, Vec<u8>, Vec<u8>)>,
 }
 
 /// The action of a dropped control's audit row (1.5.5's).
 const DROPPED_CONTROL: &[u8] = b"egress.control_unrepresentable";
+
+/// The action of the audit row a stream synthesised from a whole answer writes (OWNER 2026-10-27:
+/// busbar answers in the caller's dialect AND mode, and marks the conversion): its outcome is
+/// `applied`, its resource names the far end's dialect.
+pub const STREAM_SYNTHESIZED: &[u8] = b"egress.stream_synthesized";
 
 impl Answer {
     /// The walk ends here: nothing for the far end, nothing more for the caller.
@@ -1126,6 +1132,7 @@ fn attempt(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
                     .iter()
                     .map(|c| {
                         (
+                            AUDIT_DEGRADED,
                             DROPPED_CONTROL.to_vec(),
                             format!("{c} on {egress}").into_bytes(),
                         )
@@ -1217,16 +1224,31 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
     // An answer member the caller's dialect has no form for, one degraded row each (`<path> from
     // <dialect>`, the row 1.5.5 wrote as it delivered the translated answer).
     let dropped = std::mem::take(&mut fed.dropped);
+    let synthesized = fed.synthesized;
     let mut answer = far_answer(fed, unit.far_status);
     answer.audits = dropped
         .iter()
         .map(|p| {
             (
+                AUDIT_DEGRADED,
                 DROPPED_CONTROL.to_vec(),
                 format!("{p} from {}", lane.dialect).into_bytes(),
             )
         })
         .collect();
+    // A stream the caller reads that the far end answered as one whole body: marked, so the
+    // conversion is never silent.
+    if synthesized {
+        answer.audits.push((
+            AUDIT_APPLIED,
+            STREAM_SYNTHESIZED.to_vec(),
+            format!(
+                "stream synthesised from a non-stream upstream ({} answered whole)",
+                lane.dialect
+            )
+            .into_bytes(),
+        ));
+    }
     answer
 }
 
@@ -1325,9 +1347,9 @@ fn deliver(
         // The reason the answer's fault reading states, on the window that carries the reading.
         let reason = (p.answer.fault != FAULT_NONE && !p.answer.fault_reason.is_empty())
             .then(|| arena.span(&p.answer.fault_reason));
-        for (action, resource) in &p.answer.audits {
+        for (outcome, action, resource) in &p.answer.audits {
             records.push(RecordWrite {
-                kind: AUDIT_DEGRADED,
+                kind: *outcome,
                 op: RECORD_AUDIT,
                 key: arena.span(action),
                 value: arena.span(resource),

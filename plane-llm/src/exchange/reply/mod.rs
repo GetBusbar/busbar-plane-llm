@@ -165,6 +165,10 @@ pub struct Piece<'a> {
     /// audit row per path (`<path> from <dialect>`), 1.5.5's row. Empty on a relay of the caller's
     /// own dialect and on every end that delivers nothing.
     pub dropped: Vec<String>,
+    /// The caller asked for a stream and the far end answered whole: the stream the caller reads
+    /// was synthesised from that one body (OWNER 2026-10-27: busbar answers in the caller's dialect
+    /// AND mode). The door audits it; the units are the far end's real body's.
+    pub synthesized: bool,
     /// Why the usage tap could not read a same-dialect whole body, on the end that read it: the
     /// door carries it out beside its units, and the kernel counts it (row 155).
     pub tap_fault: Option<UsageTapFault>,
@@ -250,6 +254,7 @@ fn answered<'a>(r: Rendered, units: Units, verdict: Verdict, fault: Option<Fault
         fault,
         done: true,
         dropped: Vec::new(),
+        synthesized: false,
         tap_fault: None,
     }
 }
@@ -387,6 +392,7 @@ impl Reply {
             fault: p.fault,
             done: p.done,
             dropped: p.dropped,
+            synthesized: p.synthesized,
             tap_fault: p.tap_fault,
         }
     }
@@ -468,6 +474,7 @@ impl Reply {
                         fault: None,
                         done: false,
                         dropped: Vec::new(),
+                        synthesized: false,
                         tap_fault: None,
                     };
                 }
@@ -524,6 +531,7 @@ impl Reply {
                     fault,
                     done: true,
                     dropped: end.dropped,
+                    synthesized: false,
                     tap_fault: end.tap_fault,
                 }
             }
@@ -585,6 +593,7 @@ impl Reply {
                     fault: Some(Fault::Transient(cut.reason)),
                     done: true,
                     dropped: Vec::new(),
+                    synthesized: false,
                     tap_fault: None,
                 }
             }
@@ -693,8 +702,10 @@ fn whole_piece<'a>(
         whole::WholeEnd::Cut => (Verdict::Hard, Some(Fault::Transient("transport"))),
         whole::WholeEnd::IngressUnsupported | whole::WholeEnd::OverCap => (Verdict::Hard, None),
     };
+    let synthesized = w.end == whole::WholeEnd::Delivered && w.synthesized;
     Piece {
         dropped,
+        synthesized,
         ..answered(w.answer, units, verdict, fault)
     }
 }
