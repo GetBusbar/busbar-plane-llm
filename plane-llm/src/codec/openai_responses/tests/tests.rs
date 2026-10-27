@@ -456,37 +456,6 @@ fn test_auth_headers() {
     );
 }
 
-/// Warn+OMIT policy (`proto::bearer_auth_headers`): a key with bytes invalid for an HTTP header
-/// value (embedded newline) must OMIT the header entirely (empty Vec), never emit an empty
-/// `authorization` value (a syntactically invalid header AND a fingerprinting tell). No panic.
-#[test]
-fn auth_headers_invalid_key_omits_header_no_panic() {
-    // #83a S2-a: the dialect DECLARES its credential scheme and the host presents it — a plain
-    // `authorization: Bearer <key>` for every credential and mode. The bytes the host writes for a
-    // valid key, and the omission of a key whose bytes no header value may carry, are pinned in the
-    // host's suite over the shared fixture `testing/plane-copies/declared-credentials.json`.
-    let Some(busbar_contract::protocol::EgressScheme::Static {
-        families,
-        own,
-        passthrough,
-    }) = crate::codec::openai_responses::DECL.egress_scheme
-    else {
-        panic!("responses declares a static credential scheme");
-    };
-    assert!(families.is_empty());
-    assert_eq!(own, busbar_contract::protocol::CredentialHeader::Bearer);
-    assert_eq!(
-        passthrough,
-        busbar_contract::protocol::CredentialHeader::Bearer
-    );
-    assert!(
-        crate::codec::openai_responses::DECL
-            .egress_auth_headers
-            .is_none(),
-        "no credential passes through the plane"
-    );
-}
-
 #[test]
 fn test_read_response_decode() {
     let json = serde_json::json!({

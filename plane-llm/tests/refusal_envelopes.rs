@@ -5,6 +5,10 @@
 //! builds it, and this file asserts that the writer is the one that built it and that the status
 //! and kind the plane chose are the ones the existing forward path chooses for the same reason.
 
+mod common;
+
+use common::SevensHost;
+
 /// The six dialects, and the request target that names each.
 const DIALECTS: &[&str] = &[
     "anthropic",
@@ -41,21 +45,6 @@ fn dialect_codec(name: &str) -> &'static dyn busbar_contract::protocol::DialectC
         .find(|d| d.name == name)
         .and_then(|d| d.dialect())
         .unwrap_or_else(|| panic!("{name} declares a dialect codec"))
-}
-
-/// The host's entropy, so a dialect that mints a request id mints one (constant bytes, so a test
-/// that renders a refusal twice reads the same document twice), and no clock.
-struct SevensHost;
-
-impl busbar_contract::codec::CodecHost for SevensHost {
-    fn fill_entropy(&self, out: &mut [u8]) -> bool {
-        out.fill(7);
-        true
-    }
-
-    fn wall_clock_now(&self) -> Option<u64> {
-        None
-    }
 }
 
 /// The constant-entropy handle the rendered-refusal tests hand the exchange and the codecs.

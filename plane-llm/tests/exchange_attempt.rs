@@ -3,6 +3,9 @@
 
 //! One attempt's far-end request.
 
+mod common;
+
+use common::TestHost;
 use serde_json::json;
 
 use busbar_plane_llm::exchange::arrive::arrive;
@@ -10,24 +13,6 @@ use busbar_plane_llm::exchange::arrive::Arrived;
 use busbar_plane_llm::exchange::attempt::*;
 use busbar_plane_llm::exchange::shaping::Shaping;
 use serde_json::Value;
-
-/// The codec host these tests hand the plane: the OS CSPRNG and the system clock in whole seconds,
-/// read the way the kernel's host reads them.
-struct TestHost;
-
-impl busbar_contract::codec::CodecHost for TestHost {
-    fn fill_entropy(&self, out: &mut [u8]) -> bool {
-        getrandom::fill(out).is_ok()
-    }
-
-    fn wall_clock_now(&self) -> Option<u64> {
-        Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs()),
-        )
-    }
-}
 
 /// The handle every codec call here is handed.
 const HOST: &dyn busbar_contract::codec::CodecHost = &TestHost;
