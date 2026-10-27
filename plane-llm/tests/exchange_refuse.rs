@@ -32,12 +32,6 @@ fn recorded(cell: &str) -> Value {
 /// The handle every codec call here is handed.
 const HOST: &dyn busbar_contract::codec::CodecHost = &SevensHost;
 
-/// The bedrock spend-cap cell 1.6.0 answers differently from 1.5.5: accepted difference
-/// "C-22 bedrock budget refusal is a declared Converse error" moves its status 400 -> 429 and its
-/// `__type` / `x-amzn-errortype` `ServiceQuotaExceededException` -> `ThrottlingException`.
-const C22_CELL: &str = "llm__bedrock__bedrock__request__over_budget_total";
-const C22_ID: &str = "C-22 bedrock budget refusal is a declared Converse error";
-
 /// The answer 1.6.0 owes for `cell`: the recording, with the owner-accepted differences applied.
 fn owed(cell: &str) -> Value {
     let mut want = recorded(cell);
@@ -45,30 +39,6 @@ fn owed(cell: &str) -> Value {
     // Anthropic's own `billing_error`, where 1.5.5 named OpenAI's `insufficient_quota`.
     if cell == "llm__anthropic__anthropic__request__over_budget_total" {
         want["body"]["json"]["error"]["type"] = Value::String("billing_error".into());
-    }
-    if cell == C22_CELL {
-        // The register entry is present and names this cell, so this can forgive nothing the
-        // register does not.
-        let path = std::path::PathBuf::from(std::env::var_os("BUSBAR_CHECKOUT").expect(
-            "BUSBAR_CHECKOUT is unset: busbar's tree at .busbar-ref (plugin CI exports it)",
-        ))
-        .join("testing/shadow-oracle/accepted-differences.json");
-        let text = std::fs::read_to_string(&path).expect("the register is readable");
-        let register: Value = serde_json::from_str(&text).expect("the register is JSON");
-        let entry = register["accepted"]
-            .as_array()
-            .expect("the register holds `accepted`")
-            .iter()
-            .find(|e| e["id"].as_str() == Some(C22_ID))
-            .unwrap_or_else(|| panic!("accepted difference {C22_ID:?} is in the register"));
-        assert!(
-            entry["cells"]
-                .as_str()
-                .is_some_and(|c| c.contains(&cell.replace("__", "\\|"))),
-            "accepted difference {C22_ID:?} names {cell}"
-        );
-        want["status"] = Value::from(429);
-        want["body"]["json"]["__type"] = Value::String("ThrottlingException".into());
     }
     want
 }
@@ -509,9 +479,8 @@ fn a_bedrock_not_found_carries_a_uuid_request_id_and_its_exception() {
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_errortype_header_matches_body_and_others_omit`.
 /// 1.5.5 behaviour pinned: for every refusal kind a bedrock caller can read, `x-amzn-errortype`
 /// equals the body's `__type`: invalid request ValidationException, rate limit
-/// ThrottlingException, permission AccessDeniedException, quota (1.5.5: 400
-/// ServiceQuotaExceededException; 1.6.0 by PR #958, accepted difference C-22: 429
-/// ThrottlingException, an error Converse declares);
+/// ThrottlingException, permission AccessDeniedException, quota 400
+/// ServiceQuotaExceededException (1.5.5's, non-retryable; OWNER 2026-10-27);
 /// the same holds on the kernel's refusals of those classes; an openai 404 carries neither amzn
 /// field. RED if a value differs from its body or the table, or openai carries one.
 #[test]
@@ -537,9 +506,9 @@ fn a_bedrock_refusals_errortype_is_its_body_type_for_every_kind() {
         ),
         (
             "insufficient_quota",
-            429,
+            400,
             RefusalCode::OverBudget.code(),
-            "ThrottlingException",
+            "ServiceQuotaExceededException",
         ),
     ] {
         for r in [
