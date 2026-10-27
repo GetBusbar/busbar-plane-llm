@@ -32,6 +32,22 @@ pub use facts_impl::project;
 mod types;
 pub use types::*;
 
+/// The shape of a one-turn leaf request: one turn, no tools, no ceiling, and the text it carries.
+fn one_turn_shape(
+    ir: &dyn busbar_contract::ir::facts::IrFacts,
+) -> busbar_contract::ir::facts::Shape {
+    let items = ir.content();
+    let (text_chars, system_chars) = busbar_contract::ir::facts::Shape::counts_over(&items);
+    busbar_contract::ir::facts::Shape {
+        turn_count: 1,
+        has_tools: false,
+        tool_count: 0,
+        text_chars,
+        system_chars,
+        max_tokens: None,
+    }
+}
+
 #[cfg(test)]
 #[path = "tests/tests.rs"]
 mod tests;

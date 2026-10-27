@@ -142,7 +142,7 @@ pub trait TranslateCodec: OperationHandler {
                     // The content blocks the caller's dialect has and its reader does not model.
                     crate::codec::proto_codec::with_reader(prep.ingress_protocol, |r| {
                         crate::codec::drops::note_unmodelled_blocks(
-                            r.request_blocks(),
+                            r.grammar().request_blocks,
                             v,
                             crate::codec::drops::UNMODELLED_REQUEST_BLOCK,
                         )

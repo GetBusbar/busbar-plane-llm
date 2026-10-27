@@ -1112,16 +1112,6 @@ const REQUEST_CODE_NAMES: &[(&str, &str)] = &[
     (crate::codec::drops::name::TOP_LOGPROBS, keys::TOP_LOGPROBS),
 ];
 
-/// The IR request members the reader never sets.
-// No candidate count, cache marks, stop sequences, `top_k` or output modalities.
-const UNREAD: &[&str] = &[
-    crate::codec::drops::name::N,
-    crate::codec::drops::name::CACHE_CONTROL,
-    crate::codec::drops::name::STOP,
-    crate::codec::drops::name::TOP_K,
-    crate::codec::drops::name::OUTPUT_MODALITIES,
-];
-
 const RESPONSE_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::Blocks {
     at: &["output[]", "content[]"],
     tag: Some(keys::TYPE),

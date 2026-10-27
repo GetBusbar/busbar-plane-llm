@@ -74,16 +74,7 @@ impl busbar_contract::ir::facts::IrFacts for TranscriptionReq {
     }
 
     fn shape(&self) -> busbar_contract::ir::facts::Shape {
-        let items = busbar_contract::ir::facts::IrFacts::content(self);
-        let (text_chars, system_chars) = busbar_contract::ir::facts::Shape::counts_over(&items);
-        busbar_contract::ir::facts::Shape {
-            turn_count: 1,
-            has_tools: false,
-            tool_count: 0,
-            text_chars,
-            system_chars,
-            max_tokens: None,
-        }
+        super::one_turn_shape(self)
     }
 
     fn content(&self) -> Vec<busbar_contract::ir::facts::ContentItem<'_>> {
@@ -185,16 +176,7 @@ impl busbar_contract::ir::facts::IrFacts for SpeechReq {
     }
 
     fn shape(&self) -> busbar_contract::ir::facts::Shape {
-        let items = busbar_contract::ir::facts::IrFacts::content(self);
-        let (text_chars, system_chars) = busbar_contract::ir::facts::Shape::counts_over(&items);
-        busbar_contract::ir::facts::Shape {
-            turn_count: 1,
-            has_tools: false,
-            tool_count: 0,
-            text_chars,
-            system_chars,
-            max_tokens: None,
-        }
+        super::one_turn_shape(self)
     }
 
     fn content(&self) -> Vec<busbar_contract::ir::facts::ContentItem<'_>> {

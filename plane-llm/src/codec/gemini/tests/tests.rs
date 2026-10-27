@@ -4553,7 +4553,7 @@ fn raw_stop_reason_agrees_with_read_response() {
             .read_response(crate::codec::test_host::HOST, &body)
             .expect("read_response");
         assert_eq!(
-            GeminiReader.raw_stop_reason(body.to_string().as_bytes()),
+            crate::codec::test_host::raw_stop_reason(&GeminiReader, body.to_string().as_bytes()),
             parsed.stop_reason,
             "{token}"
         );
@@ -4563,8 +4563,14 @@ fn raw_stop_reason_agrees_with_read_response() {
         "{{\"candidates\":[{{\"finishReason\":\"{}\"}}]}}",
         "A".repeat(4096)
     );
-    assert_eq!(GeminiReader.raw_stop_reason(long.as_bytes()), None);
-    assert_eq!(GeminiReader.raw_stop_reason(b"{}"), None);
+    assert_eq!(
+        crate::codec::test_host::raw_stop_reason(&GeminiReader, long.as_bytes()),
+        None
+    );
+    assert_eq!(
+        crate::codec::test_host::raw_stop_reason(&GeminiReader, b"{}"),
+        None
+    );
 }
 
 /// The relay's INCREMENTAL scan answers the same wherever the body is split — the key, the colon,
@@ -4642,7 +4648,7 @@ fn a_finish_reason_inside_tool_args_is_not_the_stop_reason() {
     // to a failed generation. `read_response` then promotes a tool-call `STOP` to `ToolUse` from
     // the content, which a token-only scan cannot see and the fault check does not need.
     assert_eq!(
-        GeminiReader.raw_stop_reason(body.to_string().as_bytes()),
+        crate::codec::test_host::raw_stop_reason(&GeminiReader, body.to_string().as_bytes()),
         Some(crate::codec::ir::IrStopReason::EndTurn)
     );
     let parsed = GeminiReader
