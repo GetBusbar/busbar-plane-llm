@@ -1,5 +1,6 @@
 use super::*;
 use crate::codec::dialect::ir_parse_error;
+use crate::codec::ir_encode::{synth_response_tool_call_id, tool_input_from_arguments};
 
 /// What a translate attempt cannot carry from this dialect (`codec::drops`).
 static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
@@ -1565,36 +1566,6 @@ fn close_text_block(state: &mut crate::codec::ir::StreamDecodeState, out: &mut V
         if let Some(ti) = state.text_index {
             out.push(IrStreamEvent::BlockStop { index: ti });
         }
-    }
-}
-
-/// Synthesize a deterministic, non-empty `call_…` tool-call id for a RESPONSE tool call whose
-/// upstream body carried a blank/absent `id`. A blank id becomes an empty `tool_use.id`/`tool_call_id`
-/// that the cross-protocol target reader (Anthropic) rejects and that breaks `tool`/`tool_result`
-/// correlation. Derived from `(ordinal, name)` via the stdlib fixed-seed `DefaultHasher` (SipHash-1-3,
-/// no new dependency, stable within a run) so repeated function names in one response stay distinct;
-/// the `call_` prefix matches OpenAI's native tool-id shape and keeps it visibly synthetic. Mirrors
-/// the gemini reader's `synth_tool_call_id` discipline for the same never-blank-correlation-key reason.
-fn synth_response_tool_call_id(ordinal: usize, name: &str) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    ordinal.hash(&mut hasher);
-    name.hash(&mut hasher);
-    format!("call_{:016x}", hasher.finish())
-}
-
-/// Decode a tool-call `arguments` field into the IR tool-input `Value`. OpenAI's native shape is a
-/// JSON STRING (parsed to a value; a malformed string is preserved verbatim as a `String` rather than
-/// dropped, so no arguments are lost). But some OpenAI-compatible backends emit `arguments` as an
-/// already-parsed JSON OBJECT (or other non-string value); the prior `as_str().unwrap_or("{}")`
-/// COLLAPSED that to an empty object, silently discarding the caller's tool arguments. Use a non-string
-/// value directly instead. Absent `arguments` yields `{}` (a no-arg call).
-fn tool_input_from_arguments(v: Option<&serde_json::Value>) -> serde_json::Value {
-    match v {
-        Some(serde_json::Value::String(s)) => crate::codec::json::parse_str(s)
-            .unwrap_or_else(|_| serde_json::Value::String(s.clone())),
-        Some(other) => other.clone(),
-        None => serde_json::json!({}),
     }
 }
 

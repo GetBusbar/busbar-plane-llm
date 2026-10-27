@@ -423,20 +423,6 @@ pub fn read_embeddings_request(
     })
 }
 
-/// One billed usage count that is present and unreadable, REFUSED ON ITS OWN (the per-field rule `usage_count::read_usage` holds for the Converse table): said
-/// loudly, it bills nothing, nothing stands in for it, and the answer it rode on is served. v1.5.5
-/// read the Titan count as `.and_then(Value::as_u64)` and served every such answer; refusing the
-/// whole answer over one count was a 500 with no usage where 1.5.5 delivered it.
-fn refused_count(unreadable: &crate::codec::usage_count::UnreadableCount) {
-    tracing::warn!(
-        protocol = super::VENDOR_NAME,
-        field = unreadable.field,
-        spelling = %unreadable.spelling,
-        "usage count is present but unreadable: REFUSED, it bills nothing and is never read as \
-         zero (#42, #81); the answer is served and the readable counts bill as stated"
-    );
-}
-
 /// Wire -> concrete `EmbeddingsResp` parse, extracted from the `OperationHandler::read_response`
 /// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
 pub fn read_embeddings_response(
@@ -462,7 +448,7 @@ pub fn read_embeddings_response(
     let usage =
         crate::codec::usage_count::billed_count_opt(Some(&v), super::INPUT_TEXT_TOKEN_COUNT)
             .unwrap_or_else(|unreadable| {
-                refused_count(&unreadable);
+                crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
                 None
             })
             .map(|n| busbar_contract::billing::TokenUsage {
@@ -531,7 +517,7 @@ pub fn read_rerank_response(
             "search_units",
         )
         .unwrap_or_else(|unreadable| {
-            refused_count(&unreadable);
+            crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
             None
         }),
         ..Default::default()

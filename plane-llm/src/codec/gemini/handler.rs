@@ -573,21 +573,6 @@ pub fn read_transcription_request(
     })
 }
 
-/// One billed usage count that is present and unreadable, REFUSED ON ITS OWN (the per-field rule `usage_count::read_usage` holds for the chat table): said loudly,
-/// it bills nothing, nothing stands in for it, and the answer it rode on is served. v1.5.5 read
-/// these counts as `.and_then(Value::as_u64)` and served every such answer (v1.5.5
-/// `crates/busbar/src/handlers/gemini.rs:229-241`, `:605-612`); refusing the whole answer over one
-/// count was a 500 with no usage where 1.5.5 delivered and billed the readable counts.
-fn refused_count(unreadable: &crate::codec::usage_count::UnreadableCount) {
-    tracing::warn!(
-        protocol = COUNT_LABEL,
-        field = unreadable.field,
-        spelling = %unreadable.spelling,
-        "usage count is present but unreadable: REFUSED, it bills nothing and is never read as \
-         zero (#42, #81); the answer is served and the readable counts bill as stated"
-    );
-}
-
 /// The `usageMetadata` counts a transcription answer reports beside the two it bills. The chat table
 /// (`gemini::usage::USAGE`) itemizes them into meter classes, but a transcription bills only the
 /// prompt and candidates counts, as v1.5.5 did, so these are RECORDED as residual units, keyed by
@@ -633,7 +618,7 @@ pub fn read_transcription_response(
         // served and billed, v1.5.5's `.and_then(Value::as_u64).unwrap_or(0)` figure.
         let billed = |field: &'static str| {
             crate::codec::usage_count::billed_count(u, field).unwrap_or_else(|unreadable| {
-                refused_count(&unreadable);
+                crate::codec::usage_count::refused_count(COUNT_LABEL, &unreadable);
                 0
             })
         };
@@ -948,7 +933,7 @@ pub fn read_embeddings_response(
         FIELD_PROMPT_TOKEN_COUNT,
     )
     .unwrap_or_else(|unreadable| {
-        refused_count(&unreadable);
+        crate::codec::usage_count::refused_count(COUNT_LABEL, &unreadable);
         None
     })
     .map(|n| busbar_contract::billing::TokenUsage {

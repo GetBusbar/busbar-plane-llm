@@ -1,5 +1,6 @@
 use super::*;
 use crate::codec::dialect::ir_parse_error;
+use crate::codec::ir_encode::{synth_response_tool_call_id, tool_input_from_arguments};
 
 /// What a translate attempt cannot carry from this dialect (`codec::drops`).
 static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
@@ -1844,34 +1845,6 @@ impl ProtocolReader for ResponsesReader {
 
     fn grammar(&self) -> &'static crate::codec::drops::Grammar {
         &GRAMMAR
-    }
-}
-
-/// Synthesize a deterministic, non-empty `call_…` tool-call id for a RESPONSE function-call whose
-/// upstream body carried a blank/absent `call_id`. A blank id becomes an empty `tool_use.id`/
-/// `tool_call_id` the cross-protocol target reader (Anthropic) rejects and that breaks
-/// `function_call_output` correlation. Derived from `(ordinal, name)` via the stdlib fixed-seed
-/// `DefaultHasher` (SipHash-1-3, no new dependency, stable within a run) so repeated function names in
-/// one response stay distinct; the `call_` prefix matches the native tool-id shape and keeps it
-/// visibly synthetic. Mirrors the openai_chat + gemini readers' never-blank-correlation-key discipline.
-fn synth_response_tool_call_id(ordinal: usize, name: &str) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    ordinal.hash(&mut hasher);
-    name.hash(&mut hasher);
-    format!("call_{:016x}", hasher.finish())
-}
-
-/// Decode a Responses function-call `arguments` field into the IR tool-input `Value`. Native shape is
-/// a JSON STRING (parsed; a malformed string preserved verbatim rather than dropped). A non-string
-/// (already-parsed object) is used directly instead of being collapsed to an empty object, so a
-/// backend that emits object-form arguments does not silently lose them. Absent yields `{}`.
-fn tool_input_from_arguments(v: Option<&serde_json::Value>) -> serde_json::Value {
-    match v {
-        Some(serde_json::Value::String(s)) => crate::codec::json::parse_str(s)
-            .unwrap_or_else(|_| serde_json::Value::String(s.clone())),
-        Some(other) => other.clone(),
-        None => serde_json::json!({}),
     }
 }
 
