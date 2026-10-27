@@ -13,12 +13,7 @@ use crate::codec::ir::{CacheControl, CacheKind, IrImageSource, IrMessage};
 use serde_json::json;
 
 fn text(t: &str) -> IrBlock {
-    IrBlock::Text {
-        text: t.to_string(),
-        cache_control: None,
-        citations: Vec::new(),
-        refusal: false,
-    }
+    IrBlock::text(t.to_string())
 }
 
 fn turn(role: IrRole, content: Vec<IrBlock>) -> IrMessage {

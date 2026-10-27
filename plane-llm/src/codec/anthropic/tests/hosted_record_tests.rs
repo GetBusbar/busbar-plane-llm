@@ -82,15 +82,7 @@ fn a_web_search_error_reads_as_a_record_with_its_status() {
 #[test]
 fn a_foreign_hosted_record_is_dropped_on_anthropic_egress() {
     let resp = crate::codec::ir::IrResponse {
-        content: vec![
-            expected(),
-            IrBlock::Text {
-                text: "hi".to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            },
-        ],
+        content: vec![expected(), IrBlock::text("hi".to_string())],
         ..Default::default()
     };
     let out = protocol_for("anthropic")

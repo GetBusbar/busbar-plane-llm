@@ -45,12 +45,7 @@ fn a_foreign_reasoning_ask_is_dropped_on_bedrock_egress() {
     let ir = crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
-            content: vec![crate::codec::ir::IrBlock::Text {
-                text: "hi".into(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            }],
+            content: vec![crate::codec::ir::IrBlock::text("hi")],
         }],
         max_tokens: Some(8192),
         temperature: Some(0.5),

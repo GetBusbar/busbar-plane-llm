@@ -314,12 +314,7 @@ impl ProtocolReader for GeminiReader {
             if let Some(parts_arr) = sys_instr.get(FIELD_PARTS).and_then(|p| p.as_array()) {
                 for part in parts_arr {
                     if let Some(text_val) = part.get(keys::TEXT).and_then(|t| t.as_str()) {
-                        system_blocks.push(crate::codec::ir::IrBlock::Text {
-                            text: text_val.to_string(),
-                            cache_control: None,
-                            citations: Vec::new(),
-                            refusal: false,
-                        });
+                        system_blocks.push(crate::codec::ir::IrBlock::text(text_val.to_string()));
                     }
                 }
             }
@@ -402,12 +397,7 @@ impl ProtocolReader for GeminiReader {
                         // Text part
                         else if let Some(text_val) = part.get(keys::TEXT).and_then(|t| t.as_str())
                         {
-                            msg_content.push(crate::codec::ir::IrBlock::Text {
-                                text: text_val.to_string(),
-                                cache_control: None,
-                                citations: Vec::new(),
-                                refusal: false,
-                            });
+                            msg_content.push(crate::codec::ir::IrBlock::text(text_val.to_string()));
                         }
                         // FunctionCall (ToolUse)
                         else if let Some(func_call) = part.get(FIELD_FUNCTION_CALL) {
@@ -479,12 +469,7 @@ impl ProtocolReader for GeminiReader {
                                 o.get(keys::ERROR_WORD).is_some_and(|e| !e.is_null())
                                     && !o.contains_key(keys::OUTPUT)
                             });
-                            let mut content = vec![crate::codec::ir::IrBlock::Text {
-                                text: response_text,
-                                cache_control: None,
-                                citations: Vec::new(),
-                                refusal: false,
-                            }];
+                            let mut content = vec![crate::codec::ir::IrBlock::text(response_text)];
                             // A multimodal result's attachments ride in `functionResponse.parts`
                             // (GEM-07) — carried into the result's content beside the JSON.
                             if let Some(parts) =
@@ -1471,12 +1456,7 @@ impl ProtocolReader for GeminiReader {
                 // Text part → IrBlock::Text
                 else if let Some(text) = part.get(keys::TEXT).and_then(|t| t.as_str()) {
                     if !text.is_empty() {
-                        content.push(crate::codec::ir::IrBlock::Text {
-                            text: text.to_string(),
-                            cache_control: None,
-                            citations: Vec::new(),
-                            refusal: false,
-                        });
+                        content.push(crate::codec::ir::IrBlock::text(text.to_string()));
                     }
                 }
 

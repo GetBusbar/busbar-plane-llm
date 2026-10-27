@@ -9,12 +9,7 @@ fn req_with_format(rf: IrResponseFormat) -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
         messages: vec![IrMessage {
             role: IrRole::User,
-            content: vec![IrBlock::Text {
-                text: "hi".to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            }],
+            content: vec![IrBlock::text("hi".to_string())],
         }],
         response_format: Some(rf),
         ..Default::default()
@@ -149,12 +144,7 @@ fn req_with_tool_choice_no_tools() -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
-            content: vec![crate::codec::ir::IrBlock::Text {
-                text: "hi".to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            }],
+            content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
         }],
         tools: vec![],
         tool_choice: Some(crate::codec::ir::IrToolChoice::Required),
@@ -245,12 +235,7 @@ fn req_with_stop(stop: Vec<String>) -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
-            content: vec![crate::codec::ir::IrBlock::Text {
-                text: "hi".to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            }],
+            content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
         }],
         stop,
         ..Default::default()
@@ -336,12 +321,7 @@ fn parallel_tool_calls_discarded_on_gemini_cohere_bedrock_warns() {
     let req = |parallel: Option<bool>| crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
-            content: vec![crate::codec::ir::IrBlock::Text {
-                text: "hi".to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            }],
+            content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
         }],
         parallel_tool_calls: parallel,
         ..Default::default()
