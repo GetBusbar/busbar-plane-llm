@@ -275,12 +275,7 @@ impl ProtocolReader for BedrockReader {
         if let Some(system_arr) = obj.get(keys::SYSTEM).and_then(|s| s.as_array()) {
             for (idx, sys_val) in system_arr.iter().enumerate() {
                 if let Some(text_val) = sys_val.get(keys::TEXT).and_then(|t| t.as_str()) {
-                    system_blocks.push(crate::codec::ir::IrBlock::Text {
-                        text: text_val.to_string(),
-                        cache_control: None,
-                        citations: Vec::new(),
-                        refusal: false,
-                    });
+                    system_blocks.push(crate::codec::ir::IrBlock::text(text_val.to_string()));
                 } else if let Some(cache_point) = sys_val.get(super::CACHE_POINT) {
                     // No IR counterpart for a prompt-cache marker; stash it with its original index
                     // so the writer re-emits it verbatim at the same position (a same-protocol
@@ -348,12 +343,7 @@ impl ProtocolReader for BedrockReader {
                     for (block_idx, content_val) in content_arr.iter().enumerate() {
                         if let Some(text_val) = content_val.get(keys::TEXT).and_then(|t| t.as_str())
                         {
-                            msg_content.push(crate::codec::ir::IrBlock::Text {
-                                text: text_val.to_string(),
-                                cache_control: None,
-                                citations: Vec::new(),
-                                refusal: false,
-                            });
+                            msg_content.push(crate::codec::ir::IrBlock::text(text_val.to_string()));
                         } else if let Some(tool_use) = content_val.get(super::TOOL_USE_CAMEL) {
                             // A present `toolUse` block MUST carry a non-empty string `toolUseId`: it
                             // is the correlation key a later `toolResult` (and any egress dialect)
@@ -398,12 +388,9 @@ impl ProtocolReader for BedrockReader {
                                     if let Some(text_val) =
                                         inner_val.get(keys::TEXT).and_then(|t| t.as_str())
                                     {
-                                        inner_content.push(crate::codec::ir::IrBlock::Text {
-                                            text: text_val.to_string(),
-                                            cache_control: None,
-                                            citations: Vec::new(),
-                                            refusal: false,
-                                        });
+                                        inner_content.push(crate::codec::ir::IrBlock::text(
+                                            text_val.to_string(),
+                                        ));
                                     } else if let Some(json_val) = inner_val.get(keys::JSON) {
                                         // A native Converse `{"json": <value>}` tool-result block is
                                         // structured data with no text/image analog — carry it as the
@@ -1369,12 +1356,7 @@ impl ProtocolReader for BedrockReader {
         if let Some(content_arr) = message_val.get(keys::CONTENT).and_then(|c| c.as_array()) {
             for block_val in content_arr {
                 if let Some(text_val) = block_val.get(keys::TEXT).and_then(|t| t.as_str()) {
-                    content.push(crate::codec::ir::IrBlock::Text {
-                        text: text_val.to_string(),
-                        cache_control: None,
-                        citations: Vec::new(),
-                        refusal: false,
-                    });
+                    content.push(crate::codec::ir::IrBlock::text(text_val.to_string()));
                 } else if let Some(tool_use) = block_val
                     .get(super::TOOL_USE_CAMEL)
                     .and_then(|t| t.as_object())
