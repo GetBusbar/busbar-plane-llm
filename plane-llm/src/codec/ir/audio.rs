@@ -15,18 +15,6 @@ use busbar_contract::billing::Billing;
 use busbar_contract::ir::SourceScopedExtra;
 use busbar_contract::media::MediaBlob;
 
-/// Timestamp detail requested on a transcription (whisper-1 only; requires verbose_json).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TimestampGranularity {
-    /// whisper-1's `timestamp_granularities` are modelled by the superset IR; no 1.5.0
-    /// transcription reader parses the parameter, so nothing constructs this variant yet.
-    #[allow(dead_code)]
-    Word,
-    /// See `Word` above.
-    #[allow(dead_code)]
-    Segment,
-}
-
 /// A word with start/end offsets (seconds).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Word {

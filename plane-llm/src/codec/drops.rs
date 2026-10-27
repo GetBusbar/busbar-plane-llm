@@ -232,7 +232,6 @@ pub const RESPONSE_FORMAT: Member = member(name::RESPONSE_FORMAT);
 pub const METADATA: Member = member(name::METADATA);
 pub const OUTPUT_MODALITIES: Member = member(name::OUTPUT_MODALITIES);
 pub const TOP_LOGPROBS: Member = member(name::TOP_LOGPROBS);
-pub const TOP_K: Member = member(name::TOP_K);
 pub const SERVICE_TIER: Member = member(name::SERVICE_TIER);
 pub const LOGPROBS: Member = member(name::LOGPROBS);
 pub const STRICT: Member = member(name::STRICT);

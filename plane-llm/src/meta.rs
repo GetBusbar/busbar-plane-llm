@@ -7,7 +7,7 @@
 use busbar_contract::ids::{
     AdminVerbId, ClassDirection, MeterClassDecl, MeterClassId, OpClassId, RecordSchemaId,
 };
-use busbar_contract::plane::{PlaneMeta, ServedOpClass, TOKEN_FAMILY};
+use busbar_contract::plane::{PlaneMeta, TOKEN_FAMILY};
 
 use crate::claims;
 use crate::plane_door::TOKEN_CLASSES;
@@ -233,11 +233,6 @@ macro_rules! help_endpoints {
 /// newline, the root splices them between two lines it owns.
 pub const HELP_ENDPOINTS: &str = help_endpoints!();
 
-/// This plane's rows of `busbar --help`, as the composition root's CLI-help axis reads them:
-/// `("tagline", …)` the one-line description the help opens with, `("endpoint", …)` its rows of the
-/// `ENDPOINTS` block.
-pub const CLI_HELP: &[(&str, &str)] = &[("tagline", HELP_TAGLINE), ("endpoint", HELP_ENDPOINTS)];
-
 /// THE SAME ROWS AS THE DOOR'S TAIL STATES THEM (`PlaneTail::cli_help`), in the contract's grammar
 /// (`busbar_contract::abi::plane::cli_help`): the tagline row, then the `ENDPOINTS` row. The host
 /// reads them off the door, so a dropped-in build of this plane prints the same help as a linked one.
@@ -247,14 +242,6 @@ pub const CLI_HELP_TEXT: &str = concat!(
     "\u{1e}endpoint\u{1f}",
     help_endpoints!()
 );
-
-/// The operation class this plane serves ONE LEVEL DOWN, to another plane's unit that names only the
-/// class it needs, and the display name a refusal naming this plane reads — byte for byte the word
-/// the binary has always printed where it names this plane (#47/#49: this plane owns it).
-pub const SERVED_OP_CLASSES: &[ServedOpClass] = &[ServedOpClass {
-    op: OpClassId::new("chat"),
-    name: "LLM",
-}];
 
 /// THE PROVIDER KEYS THIS PLANE OWNS, per form of a `providers:` entry (row 155 B1c, ARCHITECT
 /// ruling "Option A"): the descriptor this plane states in its Statement's extensions under

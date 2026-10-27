@@ -33,7 +33,6 @@ fn the_tail_states_the_planes_help_rows() {
     let help = unsafe { std::slice::from_raw_parts(TAIL.cli_help.ptr(), TAIL.cli_help.len()) };
     let help = std::str::from_utf8(help).expect("the help is text");
     let rows: Vec<(&str, &str)> = busbar_contract::abi::plane::cli_help::rows(help).collect();
-    assert_eq!(rows, busbar_plane_llm::meta::CLI_HELP);
     assert_eq!(
         rows,
         [
