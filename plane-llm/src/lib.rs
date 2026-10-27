@@ -5,7 +5,6 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-pub mod claims;
 // `#![deny(missing_docs)]` above is a rule this crate holds itself to; the `codec` module was not
 // written under it and is exempt, scoped to exactly this module.
 #[allow(missing_docs)]
@@ -22,8 +21,3 @@ pub mod refusal;
 /// ([`codec::diagnostics::DIAGNOSTICS`]; a test holds the two equal), so the host's catalogue learns
 /// this plane's codes from its door's declaration whichever way the plane came in.
 pub const DECLARES: &str = include_str!("../declares.json");
-
-/// The LLM plane: the carrier of its [`busbar_contract::plane::PlaneMeta`] declarations, which
-/// the door ([`plane_door::door`]) states.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct LlmPlane;
