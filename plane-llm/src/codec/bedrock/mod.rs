@@ -229,10 +229,9 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     frame_after_message_start: None,
     reshapes_body_at_path_base: false,
     max_cache_control_breakpoints: None,
-    // 429 with `ThrottlingException`, a Converse-declared error, like the other five dialects' 429.
-    // 1.5.5 answered 400 `ServiceQuotaExceededException`, which Converse does not declare (OWNER
-    // rule 22, 2026-10-14; accepted difference "C-22 bedrock budget refusal is a declared Converse error").
-    quota_exceeded_status: busbar_contract::http::StatusCode::TOO_MANY_REQUESTS.as_u16(),
+    // 400 with `ServiceQuotaExceededException`, as 1.5.5 answered (OWNER 2026-10-27): a spent budget
+    // is not transient, and AWS SDKs retry a 429 `ThrottlingException` with backoff before failing.
+    quota_exceeded_status: busbar_contract::http::StatusCode::BAD_REQUEST.as_u16(),
     ingress_is_eventstream: true,
     emits_sse_done_terminator: false,
     max_citations_per_delta: Some(1),
@@ -316,9 +315,9 @@ const ERR_TYPE_OVERLOADED: &str = busbar_contract::protocol::ERR_TYPE_OVERLOADED
 /// `ModelNotReadyException`, `ModelTimeoutException`, `ResourceNotFoundException`,
 /// `ServiceUnavailableException`, `ThrottlingException`, `ValidationException`: the `errors` of
 /// Converse and ConverseStream in botocore's bedrock-runtime model); a native SDK matches on
-/// exactly these. `ServiceQuotaExceededException` is NOT one of them (only InvokeModel declares
-/// it), so an exhausted quota or budget answers `ThrottlingException`, whose AWS description is
-/// "Your request was denied due to exceeding the account quotas for Amazon Bedrock".
+/// exactly these, plus `ServiceQuotaExceededException` (InvokeModel's), which an exhausted quota or
+/// budget answers, as 1.5.5 did (OWNER 2026-10-27): it is not retryable, where every AWS SDK retries
+/// `ThrottlingException` with backoff, and a spent budget does not come back by retrying.
 /// Any kind without a Bedrock-native counterpart falls back to `ValidationException` (the generic
 /// client-error shape) — chosen deliberately over a catch-all so the wire `__type` is always a real
 /// AWS exception name. This is the inverse of the `__type` token `extract_error` reads back, so a
@@ -340,7 +339,9 @@ pub fn error_kind_to_bedrock_type(kind: &str) -> &'static str {
         | ERR_TYPE_OVERLOADED
         | "service_unavailable"
         | "unavailable" => EXC_SERVICE_UNAVAILABLE,
-        "quota_exceeded" | "service_quota_exceeded" | ERR_TYPE_INSUFFICIENT_QUOTA => EXC_THROTTLING,
+        "quota_exceeded" | "service_quota_exceeded" | ERR_TYPE_INSUFFICIENT_QUOTA => {
+            "ServiceQuotaExceededException"
+        }
         busbar_contract::protocol::KIND_API_ERROR
         | "internal_error"
         | busbar_contract::protocol::KIND_SERVER_ERROR => EXC_INTERNAL_SERVER,
