@@ -139,6 +139,19 @@ const SECTIONS: &[Section] = &[
 
 const OPS: &[OpClassId] = crate::meta::OP_CLASSES;
 
+/// A tail table of `$n` rows, row `i` built by the const fn `$row(i)`.
+macro_rules! rows {
+    ($ty:ty; $n:expr, $row:ident) => {{
+        let mut out = [<$ty>::ZERO; $n];
+        let mut i = 0;
+        while i < $n {
+            out[i] = $row(i);
+            i += 1;
+        }
+        out
+    }};
+}
+
 const fn dialect(i: usize) -> AbiStr {
     abi_str(DIALECTS[i].name)
 }
@@ -168,15 +181,8 @@ const fn billable(i: usize) -> BillableClass {
     }
 }
 
-const DIALECT_NAMES: &[AbiStr] = &[
-    dialect(0),
-    dialect(1),
-    dialect(2),
-    dialect(3),
-    dialect(4),
-    dialect(5),
-];
-const OP_CLASSES: &[OpClass] = &[op(0), op(1), op(2), op(3), op(4), op(5), op(6)];
+const DIALECT_NAMES: &[AbiStr] = &rows!(AbiStr; DIALECTS.len(), dialect);
+const OP_CLASSES: &[OpClass] = &rows!(OpClass; OPS.len(), op);
 /// THE OPEN CLASSES a far end counts beside its tokens, each `(class, family)`: every name the
 /// reply can report in its open counts, enumerated from the codec (`codec/ir/open_class.rs`, each
 /// priced under `rate_card.<model>.units`), so no reported count is dropped (owner LEDGER-100).
@@ -198,39 +204,24 @@ pub const FEE_CLASS: &str = busbar_contract::plane::PER_REQUEST;
 /// [`FEE_CLASS`]'s index in the tail's billable classes.
 pub const FEE_CLASS_INDEX: u32 = (TOKEN_CLASSES.len() + OPEN_CLASSES.len()) as u32;
 
-const BILLABLE_CLASSES: &[BillableClass] = &[
-    billable(0),
-    billable(1),
-    billable(2),
-    billable(3),
-    open_class(0),
-    open_class(1),
-    open_class(2),
-    open_class(3),
-    open_class(4),
-    open_class(5),
-    open_class(6),
-    open_class(7),
-    open_class(8),
-    open_class(9),
-    open_class(10),
-    open_class(11),
-    open_class(12),
-    open_class(13),
-    open_class(14),
-    BillableClass {
-        class: abi_str(FEE_CLASS),
-        family: abi_str("request"),
-    },
-];
+/// Billable class `i` of the tail: the token classes, the open classes, then the fee unit.
+const fn billable_class(i: usize) -> BillableClass {
+    if i < TOKEN_CLASSES.len() {
+        billable(i)
+    } else if i < FEE_CLASS_INDEX as usize {
+        open_class(i - TOKEN_CLASSES.len())
+    } else {
+        BillableClass {
+            class: abi_str(FEE_CLASS),
+            family: abi_str("request"),
+        }
+    }
+}
+
+const BILLABLE_CLASSES: &[BillableClass] =
+    &rows!(BillableClass; FEE_CLASS_INDEX as usize + 1, billable_class);
 /// The tail's fee units: [`FEE_CLASS`].
 const FEE_UNITS: &[AbiStr] = &[abi_str(FEE_CLASS)];
-const _: () = assert!(
-    DIALECTS.len() == DIALECT_NAMES.len()
-        && OPS.len() == OP_CLASSES.len()
-        && TOKEN_CLASSES.len() + OPEN_CLASSES.len() + 1 == BILLABLE_CLASSES.len(),
-    "the tail states every dialect, op class and token class the plane declares"
-);
 
 /// THE OUTBOUND AUTH STYLES THE PLANE'S MEMBERS ARE BOUND UNDER (the design's auth points): each
 /// dialect's default ([`DIALECTS`]' `egress_style`), then the provider `auth:` overrides the
@@ -274,16 +265,9 @@ const fn dialect_auth(i: usize) -> DialectAuth {
 }
 
 /// THE TAIL'S `dialect_auth`: each dialect's default outbound style (ARCHITECT Q-L1-AUTH (A)).
-const DIALECT_AUTH: &[DialectAuth] = &[
-    dialect_auth(0),
-    dialect_auth(1),
-    dialect_auth(2),
-    dialect_auth(3),
-    dialect_auth(4),
-    dialect_auth(5),
-];
+const DIALECT_AUTH: &[DialectAuth] = &rows!(DialectAuth; DIALECTS.len(), dialect_auth);
 
-const fn const_eq(a: &str, b: &str) -> bool {
+pub(crate) const fn const_eq(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
     if a.len() != b.len() {
         return false;
