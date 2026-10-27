@@ -54,26 +54,12 @@ use crate::dialect::DIALECTS;
 const fn dialect_index(name: &str) -> u32 {
     let mut i = 0;
     while i < DIALECTS.len() {
-        if same(DIALECTS[i].name.as_bytes(), name.as_bytes()) {
+        if crate::plane_door::const_eq(DIALECTS[i].name, name) {
             return i as u32;
         }
         i += 1;
     }
     panic!("a refusal status names a dialect the plane does not state");
-}
-
-const fn same(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i < a.len() {
-        if a[i] != b[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
 }
 
 /// The reason codes this plane states a status for: each a reason's place in the plane ABI's

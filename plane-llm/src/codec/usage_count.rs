@@ -301,6 +301,19 @@ fn opt(
     billed_count_opt(up, field)
 }
 
+/// One billed leaf-operation usage count that is present and unreadable, REFUSED ON ITS OWN:
+/// said loudly, it bills nothing, nothing stands in for it, and the answer it rode on is served.
+/// v1.5.5 read these counts as `.and_then(Value::as_u64)` and served every such answer.
+pub fn refused_count(protocol: &'static str, unreadable: &UnreadableCount) {
+    tracing::warn!(
+        protocol,
+        field = unreadable.field,
+        spelling = %unreadable.spelling,
+        "usage count is present but unreadable: REFUSED, it bills nothing and is never read as \
+         zero (#42, #81); the answer is served and the readable counts bill as stated"
+    );
+}
+
 /// THE ONE USAGE READER. Walks a dialect's usage table over one wire usage object (`None` when the
 /// response carried none) and builds the IR usage it states. Each row is read under
 /// [`billed_count`]'s contract: absent is zero (or `None`), a readable count is the count, and a

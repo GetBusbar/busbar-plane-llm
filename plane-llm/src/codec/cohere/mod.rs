@@ -331,19 +331,6 @@ const REQUEST_CODE_NAMES: &[(&str, &str)] = &[
     ),
 ];
 
-/// The IR request members the reader never sets.
-// No candidate count, cache marks, parallel-call switch, metadata, top-logprob count, output
-// modalities or service tier.
-const UNREAD: &[&str] = &[
-    crate::codec::drops::name::N,
-    crate::codec::drops::name::CACHE_CONTROL,
-    crate::codec::drops::name::PARALLEL_TOOL_CALLS,
-    crate::codec::drops::name::METADATA,
-    crate::codec::drops::name::TOP_LOGPROBS,
-    crate::codec::drops::name::OUTPUT_MODALITIES,
-    crate::codec::drops::name::SERVICE_TIER,
-];
-
 const RESPONSE_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::Blocks {
     at: &["message", "content[]"],
     tag: Some(keys::TYPE),
@@ -692,12 +679,7 @@ fn read_cohere_image_detail(
 /// with no foreign analog. A document with no `data` keeps the opaque cohere `Vendor` escape.
 fn read_cohere_tool_result_document(doc: &serde_json::Value) -> crate::codec::ir::IrBlock {
     match doc.get(keys::DATA) {
-        Some(serde_json::Value::String(text)) => crate::codec::ir::IrBlock::Text {
-            text: text.clone(),
-            cache_control: None,
-            citations: Vec::new(),
-            refusal: false,
-        },
+        Some(serde_json::Value::String(text)) => crate::codec::ir::IrBlock::text(text.clone()),
         Some(data) if !data.is_null() => crate::codec::ir::IrBlock::Json(data.clone()),
         _ => crate::codec::ir::IrBlock::Media {
             kind: crate::codec::ir::IrMediaKind::Document,

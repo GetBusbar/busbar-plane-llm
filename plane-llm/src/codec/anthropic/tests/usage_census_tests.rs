@@ -179,7 +179,7 @@ fn web_searches_ledger_as_search_units_and_none_is_no_row() {
         .usage
         .to_token_usage();
     assert!(
-        !crate::codec::wire_shim::tier_usage(&u)
+        !crate::codec::usage_census::tier_usage(&u)
             .usage_units
             .contains_key(crate::codec::ir::rerank::SEARCH_UNITS_CLASS),
         "a zero search count is no search_units row"

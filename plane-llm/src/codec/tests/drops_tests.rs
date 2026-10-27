@@ -735,9 +735,10 @@ fn the_answer_walk_names_the_shallowest_uncarried_member() {
 /// directed choice, parallel calls off) is still named, so its drop is still audited.
 #[test]
 fn an_echoed_request_default_names_no_drop_and_a_caller_set_value_still_does() {
-    let carried = crate::codec::proto_codec::with_reader("responses", |r| r.response_carried())
-        .flatten()
-        .expect("the Responses answer is walked");
+    let carried =
+        crate::codec::proto_codec::with_reader("responses", |r| r.grammar().response_carried)
+            .flatten()
+            .expect("the Responses answer is walked");
     let echoed = json!({"id": "resp_1", "object": "response", "status": "completed",
         "output": [], "tools": [], "tool_choice": "auto", "parallel_tool_calls": true});
     assert!(
@@ -771,8 +772,8 @@ fn every_section_e_path_is_named_by_the_drop_walk() {
         let (dialect, direction, path) =
             (it.next().unwrap(), it.next().unwrap(), it.next().unwrap());
         let carried = crate::codec::proto_codec::with_reader(dialect, |r| match direction {
-            "response" => r.response_carried(),
-            _ => r.stream_carried(),
+            "response" => r.grammar().response_carried,
+            _ => r.grammar().stream_carried,
         })
         .flatten()
         .unwrap_or_else(|| panic!("{dialect} {direction}: no answer map"));
@@ -819,7 +820,7 @@ fn the_answer_walk_names_only_true_drops_over_the_golden_corpus() {
         else {
             continue;
         };
-        let carried = crate::codec::proto_codec::with_reader(far, |r| r.response_carried())
+        let carried = crate::codec::proto_codec::with_reader(far, |r| r.grammar().response_carried)
             .flatten()
             .expect("an answer map");
         let mut named = carried.unmapped("", &body);
@@ -874,8 +875,8 @@ fn no_dialect_drops_a_path_it_carries() {
     ] {
         crate::codec::proto_codec::with_reader(dialect, |r| {
             for (direction, carried) in [
-                ("answer", r.response_carried()),
-                ("stream", r.stream_carried()),
+                ("answer", r.grammar().response_carried),
+                ("stream", r.grammar().stream_carried),
             ] {
                 let Some(c) = carried else { continue };
                 for d in c.drops {
@@ -904,8 +905,8 @@ fn every_drop_list_is_sorted_for_the_walks_search() {
     ] {
         crate::codec::proto_codec::with_reader(dialect, |r| {
             for (direction, carried) in [
-                ("answer", r.response_carried()),
-                ("stream", r.stream_carried()),
+                ("answer", r.grammar().response_carried),
+                ("stream", r.grammar().stream_carried),
             ] {
                 let Some(c) = carried else { continue };
                 for pair in c.drops.windows(2) {

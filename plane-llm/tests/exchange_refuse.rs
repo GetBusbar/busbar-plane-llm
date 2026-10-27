@@ -4,6 +4,9 @@
 //! Refusals, rendered, against the previous release's recorded answers (the shadow oracle's golden
 //! cells, read here and never written): the status, the JSON body and the head field names.
 
+mod common;
+
+use common::SevensHost;
 use std::path::PathBuf;
 
 use busbar_plane_llm::exchange::arrive::envelope_for;
@@ -24,20 +27,6 @@ fn recorded(cell: &str) -> Value {
     let path = golden().join(format!("{cell}.json"));
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     serde_json::from_str(&text).expect("a recording is JSON")
-}
-
-/// The host's entropy, so a dialect that mints a request id mints one: a fixed fill, and no clock.
-struct SevensHost;
-
-impl busbar_contract::codec::CodecHost for SevensHost {
-    fn fill_entropy(&self, out: &mut [u8]) -> bool {
-        out.fill(7);
-        true
-    }
-
-    fn wall_clock_now(&self) -> Option<u64> {
-        None
-    }
 }
 
 /// The handle every codec call here is handed.

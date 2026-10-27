@@ -576,12 +576,7 @@ fn ant15_response_image_and_json_blocks_are_not_invalid_blocks() {
         logprobs: Vec::new(),
         role: crate::codec::ir::IrRole::Assistant,
         content: vec![
-            crate::codec::ir::IrBlock::Text {
-                text: "here".to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            },
+            crate::codec::ir::IrBlock::text("here".to_string()),
             crate::codec::ir::IrBlock::Image {
                 source: crate::codec::ir::IrImageSource::Base64 {
                     media_type: "image/png".to_string(),
@@ -649,12 +644,7 @@ fn ant17_tool_result_content_is_filtered_like_message_content() {
             content: vec![crate::codec::ir::IrBlock::ToolResult {
                 tool_use_id: "t1".to_string(),
                 content: vec![
-                    crate::codec::ir::IrBlock::Text {
-                        text: "ok".to_string(),
-                        cache_control: None,
-                        citations: Vec::new(),
-                        refusal: false,
-                    },
+                    crate::codec::ir::IrBlock::text("ok".to_string()),
                     crate::codec::ir::IrBlock::Media {
                         kind: crate::codec::ir::IrMediaKind::Audio,
                         source: crate::codec::ir::IrImageSource::Base64 {
@@ -674,12 +664,7 @@ fn ant17_tool_result_content_is_filtered_like_message_content() {
                         cache_control: None,
                         detail: None,
                     },
-                    crate::codec::ir::IrBlock::Text {
-                        text: String::new(),
-                        cache_control: None,
-                        citations: Vec::new(),
-                        refusal: false,
-                    },
+                    crate::codec::ir::IrBlock::text(String::new()),
                 ],
                 is_error: false,
                 cache_control: None,

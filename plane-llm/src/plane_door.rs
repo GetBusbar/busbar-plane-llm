@@ -84,8 +84,7 @@ use busbar_contract::abi::sdk::{
     StaticServices,
 };
 use busbar_contract::abi::transport::{FAULT_CALLER, FAULT_HARD, FAULT_NONE, FAULT_TRANSIENT};
-use busbar_contract::ids::{MeterClassDecl, OpClassId};
-use busbar_contract::plane::PlaneMeta;
+use busbar_contract::ids::OpClassId;
 use busbar_contract::provider_keys::EXT_PROVIDER_KEYS;
 use busbar_contract::upstream::{Disposition, StatusClass};
 use serde_json::Value;
@@ -98,13 +97,6 @@ use crate::exchange::shaping::{sections, Shaping};
 use crate::exchange::webhook::{self, Webhooks};
 use crate::exchange::{handler_of, probe, project, refuse};
 use crate::meta::PROVIDER_KEYS;
-use crate::LlmPlane;
-
-/// THE PROTOCOL AXIS of the door's linked row: the plane's own six dialect declarations, in the
-/// order an operator sees, as contract data (`busbar_contract::protocol::ProtocolDecl`). A
-/// composition root that links this door seeds the kernel's protocol registry from them, so the
-/// kernel names no dialect (ARCHITECT 2026-10-16 ruling 3).
-pub use crate::codec::DECLS as PROTOCOLS;
 
 // ── the Statement ────────────────────────────────────────────────────────────────────────────────
 
@@ -145,8 +137,20 @@ const SECTIONS: &[Section] = &[
     section(webhook::SECTION, 0),
 ];
 
-const OPS: &[OpClassId] = <LlmPlane as PlaneMeta>::OP_CLASSES;
-const METER: &[MeterClassDecl] = <LlmPlane as PlaneMeta>::METER_CLASSES;
+const OPS: &[OpClassId] = crate::meta::OP_CLASSES;
+
+/// A tail table of `$n` rows, row `i` built by the const fn `$row(i)`.
+macro_rules! rows {
+    ($ty:ty; $n:expr, $row:ident) => {{
+        let mut out = [<$ty>::ZERO; $n];
+        let mut i = 0;
+        while i < $n {
+            out[i] = $row(i);
+            i += 1;
+        }
+        out
+    }};
+}
 
 const fn dialect(i: usize) -> AbiStr {
     abi_str(DIALECTS[i].name)
@@ -159,8 +163,7 @@ const fn op(i: usize) -> OpClass {
 
 /// THE TOKEN CLASSES, THE ONE SOURCE of this plane's token class names (ARCHITECT, `$` meter
 /// classes: "The door's billable classes, which are what the dispatcher checks, are the source"):
-/// the first four of the tail's billable classes, and every key of the plane's `MeterClassDecl` list
-/// ([`crate::meta`]'s `CLASS_*`, read from here, never spelled there). They are 1.5.5's own names,
+/// the first four of the tail's billable classes. They are 1.5.5's own names,
 /// byte for byte: the tiers its `rate_card:` prices (`input_utok`, `output_utok`, `cache_read_utok`,
 /// `cache_write_utok`), its ledger's `TierTokens` fields and its spend metrics' `tier` label, so a
 /// door-served count is priced by the card as written and ledgered under the tier 1.5.5 wrote.
@@ -178,37 +181,8 @@ const fn billable(i: usize) -> BillableClass {
     }
 }
 
-/// The plane's `MeterClassDecl` list is DERIVED from the token classes above: the same keys, in the
-/// same order, in the token family. A second spelling of a class is refused at compile time.
-const fn meter_derives_from_the_tail() -> bool {
-    if METER.len() != TOKEN_CLASSES.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i < METER.len() {
-        if !const_eq(METER[i].key.as_str(), TOKEN_CLASSES[i])
-            || !const_eq(METER[i].family, busbar_contract::plane::TOKEN_FAMILY)
-        {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
-const _: () = assert!(
-    meter_derives_from_the_tail(),
-    "the plane's meter classes are the door's token classes, one source"
-);
-
-const DIALECT_NAMES: &[AbiStr] = &[
-    dialect(0),
-    dialect(1),
-    dialect(2),
-    dialect(3),
-    dialect(4),
-    dialect(5),
-];
-const OP_CLASSES: &[OpClass] = &[op(0), op(1), op(2), op(3), op(4), op(5), op(6)];
+const DIALECT_NAMES: &[AbiStr] = &rows!(AbiStr; DIALECTS.len(), dialect);
+const OP_CLASSES: &[OpClass] = &rows!(OpClass; OPS.len(), op);
 /// THE OPEN CLASSES a far end counts beside its tokens, each `(class, family)`: every name the
 /// reply can report in its open counts, enumerated from the codec (`codec/ir/open_class.rs`, each
 /// priced under `rate_card.<model>.units`), so no reported count is dropped (owner LEDGER-100).
@@ -230,39 +204,24 @@ pub const FEE_CLASS: &str = busbar_contract::plane::PER_REQUEST;
 /// [`FEE_CLASS`]'s index in the tail's billable classes.
 pub const FEE_CLASS_INDEX: u32 = (TOKEN_CLASSES.len() + OPEN_CLASSES.len()) as u32;
 
-const BILLABLE_CLASSES: &[BillableClass] = &[
-    billable(0),
-    billable(1),
-    billable(2),
-    billable(3),
-    open_class(0),
-    open_class(1),
-    open_class(2),
-    open_class(3),
-    open_class(4),
-    open_class(5),
-    open_class(6),
-    open_class(7),
-    open_class(8),
-    open_class(9),
-    open_class(10),
-    open_class(11),
-    open_class(12),
-    open_class(13),
-    open_class(14),
-    BillableClass {
-        class: abi_str(FEE_CLASS),
-        family: abi_str("request"),
-    },
-];
+/// Billable class `i` of the tail: the token classes, the open classes, then the fee unit.
+const fn billable_class(i: usize) -> BillableClass {
+    if i < TOKEN_CLASSES.len() {
+        billable(i)
+    } else if i < FEE_CLASS_INDEX as usize {
+        open_class(i - TOKEN_CLASSES.len())
+    } else {
+        BillableClass {
+            class: abi_str(FEE_CLASS),
+            family: abi_str("request"),
+        }
+    }
+}
+
+const BILLABLE_CLASSES: &[BillableClass] =
+    &rows!(BillableClass; FEE_CLASS_INDEX as usize + 1, billable_class);
 /// The tail's fee units: [`FEE_CLASS`].
 const FEE_UNITS: &[AbiStr] = &[abi_str(FEE_CLASS)];
-const _: () = assert!(
-    DIALECTS.len() == DIALECT_NAMES.len()
-        && OPS.len() == OP_CLASSES.len()
-        && TOKEN_CLASSES.len() + OPEN_CLASSES.len() + 1 == BILLABLE_CLASSES.len(),
-    "the tail states every dialect, op class and token class the plane declares"
-);
 
 /// THE OUTBOUND AUTH STYLES THE PLANE'S MEMBERS ARE BOUND UNDER (the design's auth points): each
 /// dialect's default ([`DIALECTS`]' `egress_style`), then the provider `auth:` overrides the
@@ -306,16 +265,9 @@ const fn dialect_auth(i: usize) -> DialectAuth {
 }
 
 /// THE TAIL'S `dialect_auth`: each dialect's default outbound style (ARCHITECT Q-L1-AUTH (A)).
-const DIALECT_AUTH: &[DialectAuth] = &[
-    dialect_auth(0),
-    dialect_auth(1),
-    dialect_auth(2),
-    dialect_auth(3),
-    dialect_auth(4),
-    dialect_auth(5),
-];
+const DIALECT_AUTH: &[DialectAuth] = &rows!(DialectAuth; DIALECTS.len(), dialect_auth);
 
-const fn const_eq(a: &str, b: &str) -> bool {
+pub(crate) const fn const_eq(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
     if a.len() != b.len() {
         return false;
@@ -406,7 +358,7 @@ const EXTENSIONS: &[u8] = &extensions::entry::<
 
 /// THE STATEMENT: the plane's key and version, its sections, its needs, its tail and its extensions.
 pub const STATEMENT: Statement = {
-    let mut s = statement(<LlmPlane as PlaneMeta>::KEY, VERSION, MAX_INFLIGHT)
+    let mut s = statement(crate::meta::KEY, VERSION, MAX_INFLIGHT)
         .with_kind_tail(TAIL)
         .with_sections(SECTIONS)
         .with_needs(NEEDS);

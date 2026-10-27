@@ -608,18 +608,6 @@ const REQUEST_CODE_NAMES: &[(&str, &str)] = &[
     ),
 ];
 
-/// The IR request members the reader never sets.
-// A `cachePoint` is its own block, kept raw for a same-dialect hop (never a block's cache mark);
-// no candidate count, parallel-call switch, logprobs or output modalities.
-const UNREAD: &[&str] = &[
-    crate::codec::drops::name::N,
-    crate::codec::drops::name::CACHE_CONTROL,
-    crate::codec::drops::name::PARALLEL_TOOL_CALLS,
-    crate::codec::drops::name::TOP_LOGPROBS,
-    crate::codec::drops::name::OUTPUT_MODALITIES,
-    crate::codec::drops::name::LOGPROBS,
-];
-
 const RESPONSE_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::Blocks {
     at: &["output", "message", "content[]"],
     tag: None,
@@ -1492,12 +1480,7 @@ fn guard_content_block(guard: &serde_json::Value) -> Option<crate::codec::ir::Ir
         .and_then(|t| t.get(keys::TEXT))
         .and_then(|t| t.as_str())
     {
-        return Some(crate::codec::ir::IrBlock::Text {
-            text: t.to_string(),
-            cache_control: None,
-            citations: Vec::new(),
-            refusal: false,
-        });
+        return Some(crate::codec::ir::IrBlock::text(t.to_string()));
     }
     guard.get(keys::IMAGE).and_then(read_bedrock_image_block)
 }

@@ -27,21 +27,13 @@ fn cohere_stop_reason_codec_round_trips_and_never_leaks() {
 #[test]
 fn test_write_request() {
     let ir = crate::codec::ir::IrRequest {
-        system: vec![crate::codec::ir::IrBlock::Text {
-            text: "You are helpful.".to_string(),
-            cache_control: None,
-            citations: Vec::new(),
-            refusal: false,
-        }],
+        system: vec![crate::codec::ir::IrBlock::text(
+            "You are helpful.".to_string(),
+        )],
         messages: vec![
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::User,
-                content: vec![crate::codec::ir::IrBlock::Text {
-                    text: "hi".to_string(),
-                    cache_control: None,
-                    citations: Vec::new(),
-                    refusal: false,
-                }],
+                content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
             },
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::Assistant,
@@ -57,12 +49,7 @@ fn test_write_request() {
                 role: crate::codec::ir::IrRole::Tool,
                 content: vec![crate::codec::ir::IrBlock::ToolResult {
                     tool_use_id: "t1".to_string(),
-                    content: vec![crate::codec::ir::IrBlock::Text {
-                        text: "result text".to_string(),
-                        cache_control: None,
-                        citations: Vec::new(),
-                        refusal: false,
-                    }],
+                    content: vec![crate::codec::ir::IrBlock::text("result text".to_string())],
                     is_error: false,
                     cache_control: None,
                 }],
@@ -123,21 +110,11 @@ fn test_read_request_roundtrip() {
         messages: vec![
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::User,
-                content: vec![crate::codec::ir::IrBlock::Text {
-                    text: "user msg".to_string(),
-                    cache_control: None,
-                    citations: Vec::new(),
-                    refusal: false,
-                }],
+                content: vec![crate::codec::ir::IrBlock::text("user msg".to_string())],
             },
             crate::codec::ir::IrMessage {
                 role: crate::codec::ir::IrRole::Assistant,
-                content: vec![crate::codec::ir::IrBlock::Text {
-                    text: "assistant msg".to_string(),
-                    cache_control: None,
-                    citations: Vec::new(),
-                    refusal: false,
-                }],
+                content: vec![crate::codec::ir::IrBlock::text("assistant msg".to_string())],
             },
         ],
         max_tokens: Some(512),
@@ -449,12 +426,7 @@ fn test_write_request_text_block_shapes() {
     let single = crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
-            content: vec![crate::codec::ir::IrBlock::Text {
-                text: "hi".to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            }],
+            content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
         }],
         ..Default::default()
     };
@@ -471,18 +443,8 @@ fn test_write_request_text_block_shapes() {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
             content: vec![
-                crate::codec::ir::IrBlock::Text {
-                    text: "a".to_string(),
-                    cache_control: None,
-                    citations: Vec::new(),
-                    refusal: false,
-                },
-                crate::codec::ir::IrBlock::Text {
-                    text: "b".to_string(),
-                    cache_control: None,
-                    citations: Vec::new(),
-                    refusal: false,
-                },
+                crate::codec::ir::IrBlock::text("a".to_string()),
+                crate::codec::ir::IrBlock::text("b".to_string()),
             ],
         }],
         ..single
@@ -817,12 +779,7 @@ fn test_same_protocol_stream_roundtrip_preserves_id() {
 #[test]
 fn test_cross_protocol_write_synthesizes_valid_id() {
     let resp = crate::codec::ir::IrResponse {
-        content: vec![crate::codec::ir::IrBlock::Text {
-            text: "hello".to_string(),
-            cache_control: None,
-            citations: Vec::new(),
-            refusal: false,
-        }],
+        content: vec![crate::codec::ir::IrBlock::text("hello".to_string())],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
@@ -997,12 +954,7 @@ fn test_auth_headers_valid_key_emits_bearer() {
 #[test]
 fn test_safety_finish_reason_writes_complete_non_stream() {
     let resp = crate::codec::ir::IrResponse {
-        content: vec![crate::codec::ir::IrBlock::Text {
-            text: "moderated".to_string(),
-            cache_control: None,
-            citations: Vec::new(),
-            refusal: false,
-        }],
+        content: vec![crate::codec::ir::IrBlock::text("moderated".to_string())],
         stop_reason: Some(crate::codec::ir::IrStopReason::Safety),
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
@@ -1037,13 +989,7 @@ fn test_safety_finish_reason_writes_complete_stream() {
     let ev = IrStreamEvent::MessageDelta {
         stop_reason: Some(crate::codec::ir::IrStopReason::Safety),
         stop_sequence: None,
-        usage: crate::codec::ir::IrUsage {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
-        },
+        usage: crate::codec::ir::IrUsage::default(),
         stop_detail: None,
     };
     let writer = CohereWriter;
@@ -1524,12 +1470,7 @@ fn test_recover_truncated_usage_float_token_counts_survive_as_integers() {
 fn test_write_response_tool_calls_nested_and_roundtrip() {
     let resp = crate::codec::ir::IrResponse {
         content: vec![
-            crate::codec::ir::IrBlock::Text {
-                text: "calling tools".to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            },
+            crate::codec::ir::IrBlock::text("calling tools".to_string()),
             crate::codec::ir::IrBlock::ToolUse {
                 thought_signature: None,
                 id: "t1".to_string(),
@@ -2441,12 +2382,7 @@ fn test_write_request_stream_field_conditional() {
     let base = crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
-            content: vec![crate::codec::ir::IrBlock::Text {
-                text: "hi".to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            }],
+            content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
         }],
         ..Default::default()
     };
@@ -2540,13 +2476,7 @@ fn test_write_response_event_message_end_zero_usage_present() {
     let ev = IrStreamEvent::MessageDelta {
         stop_reason: None,
         stop_sequence: None,
-        usage: crate::codec::ir::IrUsage {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            detail: crate::codec::ir::IrUsageDetail::default(),
-        },
+        usage: crate::codec::ir::IrUsage::default(),
         stop_detail: None,
     };
     let writer = CohereWriter;
@@ -2614,20 +2544,10 @@ fn test_tool_role_text_alongside_result_not_dropped() {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Tool,
             content: vec![
-                crate::codec::ir::IrBlock::Text {
-                    text: "note".to_string(),
-                    cache_control: None,
-                    citations: Vec::new(),
-                    refusal: false,
-                },
+                crate::codec::ir::IrBlock::text("note".to_string()),
                 crate::codec::ir::IrBlock::ToolResult {
                     tool_use_id: "t1".to_string(),
-                    content: vec![crate::codec::ir::IrBlock::Text {
-                        text: "result".to_string(),
-                        cache_control: None,
-                        citations: Vec::new(),
-                        refusal: false,
-                    }],
+                    content: vec![crate::codec::ir::IrBlock::text("result".to_string())],
                     is_error: false,
                     cache_control: None,
                 },
@@ -2662,18 +2582,8 @@ fn test_tool_result_multi_block_content_joins_without_space() {
             content: vec![crate::codec::ir::IrBlock::ToolResult {
                 tool_use_id: "t1".to_string(),
                 content: vec![
-                    crate::codec::ir::IrBlock::Text {
-                        text: "foo".to_string(),
-                        cache_control: None,
-                        citations: Vec::new(),
-                        refusal: false,
-                    },
-                    crate::codec::ir::IrBlock::Text {
-                        text: "bar".to_string(),
-                        cache_control: None,
-                        citations: Vec::new(),
-                        refusal: false,
-                    },
+                    crate::codec::ir::IrBlock::text("foo".to_string()),
+                    crate::codec::ir::IrBlock::text("bar".to_string()),
                 ],
                 is_error: false,
                 cache_control: None,
@@ -2699,12 +2609,9 @@ fn test_tool_role_text_without_result_not_dropped() {
     let ir = crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Tool,
-            content: vec![crate::codec::ir::IrBlock::Text {
-                text: "orphan tool text".to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            }],
+            content: vec![crate::codec::ir::IrBlock::text(
+                "orphan tool text".to_string(),
+            )],
         }],
         ..Default::default()
     };
@@ -2733,18 +2640,8 @@ fn test_tool_role_multi_text_without_result_is_string() {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Tool,
             content: vec![
-                crate::codec::ir::IrBlock::Text {
-                    text: "a".to_string(),
-                    cache_control: None,
-                    citations: Vec::new(),
-                    refusal: false,
-                },
-                crate::codec::ir::IrBlock::Text {
-                    text: "b".to_string(),
-                    cache_control: None,
-                    citations: Vec::new(),
-                    refusal: false,
-                },
+                crate::codec::ir::IrBlock::text("a".to_string()),
+                crate::codec::ir::IrBlock::text("b".to_string()),
             ],
         }],
         ..Default::default()
@@ -4052,12 +3949,7 @@ fn test_block_stop_tool_index_consumed_on_close() {
 #[test]
 fn test_write_response_stop_sequence_maps_to_stop_sequence() {
     let resp = crate::codec::ir::IrResponse {
-        content: vec![crate::codec::ir::IrBlock::Text {
-            text: "hi".to_string(),
-            cache_control: None,
-            citations: Vec::new(),
-            refusal: false,
-        }],
+        content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
         stop_reason: Some(crate::codec::ir::IrStopReason::StopSequence),
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
@@ -4081,12 +3973,7 @@ fn test_write_response_stop_sequence_maps_to_stop_sequence() {
 #[test]
 fn test_write_response_end_turn_maps_to_complete() {
     let resp = crate::codec::ir::IrResponse {
-        content: vec![crate::codec::ir::IrBlock::Text {
-            text: "hi".to_string(),
-            cache_control: None,
-            citations: Vec::new(),
-            refusal: false,
-        }],
+        content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         usage: crate::codec::ir::IrUsage {
             input_tokens: 1,
@@ -4502,12 +4389,7 @@ fn ir_with_tool_choice(tc: Option<crate::codec::ir::IrToolChoice>) -> crate::cod
     crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
-            content: vec![crate::codec::ir::IrBlock::Text {
-                text: "hi".to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            }],
+            content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
         }],
         tools: vec![crate::codec::ir::IrTool {
             name: "get_weather".to_string(),
@@ -4883,12 +4765,7 @@ fn n_candidate_count_never_emitted_on_cohere() {
         system_folds: Vec::new(),
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
-            content: vec![crate::codec::ir::IrBlock::Text {
-                text: "hi".to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            }],
+            content: vec![crate::codec::ir::IrBlock::text("hi".to_string())],
         }],
         ..Default::default()
     };
@@ -5018,12 +4895,7 @@ fn test_write_response_reemits_folded_tool_plan_as_content_not_tool_plan() {
     let writer = CohereWriter;
     let resp = crate::codec::ir::IrResponse {
         content: vec![
-            crate::codec::ir::IrBlock::Text {
-                text: "First I will check the weather.".to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            },
+            crate::codec::ir::IrBlock::text("First I will check the weather.".to_string()),
             crate::codec::ir::IrBlock::ToolUse {
                 thought_signature: None,
                 id: "t1".to_string(),
@@ -5456,24 +5328,30 @@ fn raw_stop_reason_agrees_with_read_response() {
             .read_response(crate::codec::test_host::HOST, &body)
             .expect("read_response");
         assert_eq!(
-            CohereReader.raw_stop_reason(body.to_string().as_bytes()),
+            crate::codec::test_host::raw_stop_reason(&CohereReader, body.to_string().as_bytes()),
             parsed.stop_reason,
             "{token}"
         );
     }
     // Pretty-printed spacing around the colon still reads.
     assert_eq!(
-        CohereReader.raw_stop_reason(b"{\"finish_reason\" :  \"ERROR\"}"),
+        crate::codec::test_host::raw_stop_reason(
+            &CohereReader,
+            b"{\"finish_reason\" :  \"ERROR\"}"
+        ),
         Some(crate::codec::ir::IrStopReason::Error)
     );
     // No field, an empty token, a non-string value: no reason.
-    assert_eq!(CohereReader.raw_stop_reason(b"{\"id\":\"c\"}"), None);
     assert_eq!(
-        CohereReader.raw_stop_reason(b"{\"finish_reason\":\"\"}"),
+        crate::codec::test_host::raw_stop_reason(&CohereReader, b"{\"id\":\"c\"}"),
         None
     );
     assert_eq!(
-        CohereReader.raw_stop_reason(b"{\"finish_reason\":null}"),
+        crate::codec::test_host::raw_stop_reason(&CohereReader, b"{\"finish_reason\":\"\"}"),
+        None
+    );
+    assert_eq!(
+        crate::codec::test_host::raw_stop_reason(&CohereReader, b"{\"finish_reason\":null}"),
         None
     );
 }
@@ -5490,7 +5368,7 @@ fn raw_stop_reason_ignores_the_key_inside_delivered_text() {
         "usage": {"tokens": {"input_tokens": 10, "output_tokens": 5}}
     });
     assert_eq!(
-        CohereReader.raw_stop_reason(body.to_string().as_bytes()),
+        crate::codec::test_host::raw_stop_reason(&CohereReader, body.to_string().as_bytes()),
         Some(crate::codec::ir::IrStopReason::EndTurn)
     );
 }

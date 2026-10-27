@@ -234,21 +234,12 @@ fn method_not_allowed(path: &str) -> Declined {
     )
 }
 
-/// A field value as its header's text: visible ASCII (and tabs) only, else nothing.
-fn field_text(value: &[u8]) -> Option<&str> {
-    value
-        .iter()
-        .all(|b| *b == b'\t' || (0x20..0x7f).contains(b))
-        .then(|| std::str::from_utf8(value).ok())
-        .flatten()
-}
-
 /// The first `content-type` field's text, or empty.
 fn content_type(fields: HeadFields<'_>) -> String {
     fields
         .iter()
         .find(|(n, _)| n.eq_ignore_ascii_case(b"content-type"))
-        .and_then(|(_, v)| field_text(v))
+        .and_then(|(_, v)| super::reply::wire::head_text(v))
         .unwrap_or("")
         .to_string()
 }
