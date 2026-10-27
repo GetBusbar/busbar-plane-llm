@@ -252,6 +252,55 @@ fn coh10_anthropic_cache_tiers_sum_into_the_cohere_prompt() {
     assert!(out["usage"].get("cached_tokens").is_none(), "{out}");
 }
 
+/// A backend that reports a cache read of ZERO (the Responses API always sends
+/// `input_tokens_details.cached_tokens`) had no cache hit: the Cohere client sees no `cached_tokens`,
+/// as 1.5.5's Cohere door wrote none. RED on `usage.cached_tokens: 0` (busbar oracle cell
+/// `llm|cohere|responses|request|ok`), buffered and streamed.
+#[test]
+fn a_zero_cache_read_writes_no_cohere_cached_tokens() {
+    let body = json!({
+        "id": "resp_1", "object": "response", "created_at": 1, "status": "completed",
+        "model": "m",
+        "output": [{"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
+                    "content": [{"type": "output_text", "text": "hello", "annotations": []}]}],
+        "usage": {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18,
+                  "input_tokens_details": {"cached_tokens": 0},
+                  "output_tokens_details": {"reasoning_tokens": 0}}
+    });
+    let out = translate_response("responses", "cohere", &body);
+    assert_eq!(out["usage"]["tokens"]["input_tokens"], json!(11), "{out}");
+    assert!(out["usage"].get("cached_tokens").is_none(), "{out}");
+
+    let raw = concat!(
+        "event: message_start\n",
+        "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":1,\"cache_read_input_tokens\":0}}}\n\n",
+        "event: content_block_start\n",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+        "event: content_block_delta\n",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n",
+        "event: content_block_stop\n",
+        "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+        "event: message_delta\n",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":5}}\n\n",
+        "event: message_stop\n",
+        "data: {\"type\":\"message_stop\"}\n\n",
+    );
+    let out = translate_stream("anthropic", "cohere", raw);
+    let end = sse_data(&out)
+        .into_iter()
+        .find(|v| v["type"] == "message-end")
+        .unwrap_or_else(|| panic!("no message-end: {out}"));
+    assert_eq!(
+        end["delta"]["usage"]["tokens"]["input_tokens"],
+        json!(10),
+        "{out}"
+    );
+    assert!(
+        end["delta"]["usage"].get("cached_tokens").is_none(),
+        "{out}"
+    );
+}
+
 /// COH-10 round trip: what the Cohere writer emits (the whole 10-token prompt, 4 of it cached), the
 /// Cohere reader bills as 1.5.5 did: the whole prompt at the input tier, no cache-read split (v1.5.5
 /// `crates/busbar/src/proto/cohere/reader.rs:964-979`).
