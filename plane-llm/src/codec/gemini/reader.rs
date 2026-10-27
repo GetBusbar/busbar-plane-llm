@@ -2,6 +2,29 @@ use super::*;
 use crate::codec::dialect::ir_parse_error;
 use crate::codec::keys;
 
+/// What a translate attempt cannot carry from this dialect (`codec::drops`).
+static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
+    request_map: super::map::REQUEST,
+    parked: super::PARKED,
+    request_blocks: super::REQUEST_BLOCKS,
+    response_blocks: super::RESPONSE_BLOCKS,
+    response_carried: Some(crate::codec::drops::Carried {
+        map: super::map::RESPONSE_PATHS,
+        code: super::RESPONSE_CODE,
+        drops: super::RESPONSE_DROPS,
+        defaults: &[],
+    }),
+    stream_carried: Some(crate::codec::drops::Carried {
+        map: super::map::RESPONSE_PATHS,
+        code: super::RESPONSE_CODE,
+        drops: super::RESPONSE_DROPS,
+        defaults: &[],
+    }),
+    stream_keyed_by_event: false,
+    block_kinds: super::IR_BLOCK_KINDS,
+    request_code_names: super::REQUEST_CODE_NAMES,
+};
+
 impl ProtocolReader for GeminiReader {
     /// A candidate's own `finishReason` member (`{"candidates":[{…,"finishReason":…}]}`, depth 3):
     /// the first is the first candidate's, the one `read_response` reads its stop reason from.
@@ -1615,50 +1638,8 @@ impl ProtocolReader for GeminiReader {
         Box::new(self.clone())
     }
 
-    fn request_map(&self) -> crate::codec::carry::Table {
-        super::map::REQUEST
-    }
-
-    fn parked(&self) -> &'static [crate::codec::drops::Parked] {
-        super::PARKED
-    }
-
-    fn request_blocks(&self) -> &'static [crate::codec::drops::Blocks] {
-        super::REQUEST_BLOCKS
-    }
-
-    fn response_blocks(&self) -> &'static [crate::codec::drops::Blocks] {
-        super::RESPONSE_BLOCKS
-    }
-
-    fn response_carried(&self) -> Option<crate::codec::drops::Carried> {
-        Some(crate::codec::drops::Carried {
-            map: super::map::RESPONSE_PATHS,
-            code: super::RESPONSE_CODE,
-            drops: super::RESPONSE_DROPS,
-            defaults: &[],
-        })
-    }
-
-    fn stream_carried(&self) -> Option<crate::codec::drops::Carried> {
-        Some(crate::codec::drops::Carried {
-            map: super::map::RESPONSE_PATHS,
-            code: super::RESPONSE_CODE,
-            drops: super::RESPONSE_DROPS,
-            defaults: &[],
-        })
-    }
-
-    fn block_kinds(&self) -> &'static [(&'static str, &'static str)] {
-        super::IR_BLOCK_KINDS
-    }
-
-    fn request_code_names(&self) -> &'static [(&'static str, &'static str)] {
-        super::REQUEST_CODE_NAMES
-    }
-
-    fn unread(&self) -> &'static [&'static str] {
-        super::UNREAD
+    fn grammar(&self) -> &'static crate::codec::drops::Grammar {
+        &GRAMMAR
     }
 }
 

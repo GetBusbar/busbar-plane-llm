@@ -5456,24 +5456,30 @@ fn raw_stop_reason_agrees_with_read_response() {
             .read_response(crate::codec::test_host::HOST, &body)
             .expect("read_response");
         assert_eq!(
-            CohereReader.raw_stop_reason(body.to_string().as_bytes()),
+            crate::codec::test_host::raw_stop_reason(&CohereReader, body.to_string().as_bytes()),
             parsed.stop_reason,
             "{token}"
         );
     }
     // Pretty-printed spacing around the colon still reads.
     assert_eq!(
-        CohereReader.raw_stop_reason(b"{\"finish_reason\" :  \"ERROR\"}"),
+        crate::codec::test_host::raw_stop_reason(
+            &CohereReader,
+            b"{\"finish_reason\" :  \"ERROR\"}"
+        ),
         Some(crate::codec::ir::IrStopReason::Error)
     );
     // No field, an empty token, a non-string value: no reason.
-    assert_eq!(CohereReader.raw_stop_reason(b"{\"id\":\"c\"}"), None);
     assert_eq!(
-        CohereReader.raw_stop_reason(b"{\"finish_reason\":\"\"}"),
+        crate::codec::test_host::raw_stop_reason(&CohereReader, b"{\"id\":\"c\"}"),
         None
     );
     assert_eq!(
-        CohereReader.raw_stop_reason(b"{\"finish_reason\":null}"),
+        crate::codec::test_host::raw_stop_reason(&CohereReader, b"{\"finish_reason\":\"\"}"),
+        None
+    );
+    assert_eq!(
+        crate::codec::test_host::raw_stop_reason(&CohereReader, b"{\"finish_reason\":null}"),
         None
     );
 }
@@ -5490,7 +5496,7 @@ fn raw_stop_reason_ignores_the_key_inside_delivered_text() {
         "usage": {"tokens": {"input_tokens": 10, "output_tokens": 5}}
     });
     assert_eq!(
-        CohereReader.raw_stop_reason(body.to_string().as_bytes()),
+        crate::codec::test_host::raw_stop_reason(&CohereReader, body.to_string().as_bytes()),
         Some(crate::codec::ir::IrStopReason::EndTurn)
     );
 }

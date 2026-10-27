@@ -308,13 +308,6 @@ const REQUEST_CODE_NAMES: &[(&str, &str)] = &[
     ),
 ];
 
-/// The IR request members the reader never sets.
-// `cachedContent` names a stored cache, not a block's cache mark; no parallel-call switch.
-const UNREAD: &[&str] = &[
-    crate::codec::drops::name::CACHE_CONTROL,
-    crate::codec::drops::name::PARALLEL_TOOL_CALLS,
-];
-
 const RESPONSE_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::Blocks {
     at: &["candidates[]", "content", "parts[]"],
     tag: None,

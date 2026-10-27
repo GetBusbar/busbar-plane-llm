@@ -387,17 +387,6 @@ const REQUEST_CODE_NAMES: &[(&str, &str)] = &[
     ),
 ];
 
-/// The IR request members the reader never sets.
-// No candidate count, logprobs or output modalities; `metadata` holds only `user_id`, which is the
-// IR's `user`.
-const UNREAD: &[&str] = &[
-    crate::codec::drops::name::N,
-    crate::codec::drops::name::METADATA,
-    crate::codec::drops::name::TOP_LOGPROBS,
-    crate::codec::drops::name::OUTPUT_MODALITIES,
-    crate::codec::drops::name::LOGPROBS,
-];
-
 const RESPONSE_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::Blocks {
     at: &["content[]"],
     tag: Some(keys::TYPE),

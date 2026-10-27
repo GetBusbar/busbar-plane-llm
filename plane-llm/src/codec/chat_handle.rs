@@ -325,8 +325,8 @@ pub fn drop_request_extra(ir: &mut IrRequest, ingress_protocol: &str) {
     // hint or a member its own code carries names nothing). Only paths are logged, never values
     // (they carry caller payload).
     let paths = super::proto_codec::with_reader(ingress_protocol, |r| {
-        drops::extra_paths(&ir.extra, r.parked(), |path| {
-            crate::codec::carry::crosses(r.request_map(), path)
+        drops::extra_paths(&ir.extra, r.grammar().parked, |path| {
+            crate::codec::carry::crosses(r.grammar().request_map, path)
         })
     })
     .unwrap_or_else(|| drops::extra_paths(&ir.extra, &[], |_| false));
@@ -350,10 +350,14 @@ pub fn drop_request_extra(ir: &mut IrRequest, ingress_protocol: &str) {
 pub fn drop_untranslatable_response(egress_protocol: &str, body: &Value) {
     crate::codec::dialect::drop_untranslatable_response_metadata(egress_protocol, body);
     super::proto_codec::with_reader(egress_protocol, |r| {
-        drops::note_unmodelled_blocks(r.response_blocks(), body, drops::UNMODELLED_ANSWER_BLOCK);
+        drops::note_unmodelled_blocks(
+            r.grammar().response_blocks,
+            body,
+            drops::UNMODELLED_ANSWER_BLOCK,
+        );
         // Every other member of the answer the caller's dialect does not get (DF-MAP-IR-GAPS
         // section E: no extra bucket), walked against what the far end's dialect carries.
-        if let Some(carried) = r.response_carried() {
+        if let Some(carried) = r.grammar().response_carried {
             drops::note_unmapped(&carried, "", body);
         }
     });
