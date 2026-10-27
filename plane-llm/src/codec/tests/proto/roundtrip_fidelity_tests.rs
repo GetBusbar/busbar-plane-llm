@@ -1559,12 +1559,7 @@ fn bedrock_uncited_text_keeps_the_plain_shape() {
         crate::codec::test_host::HOST,
         &crate::codec::ir::IrResponse {
             role: crate::codec::ir::IrRole::Assistant,
-            content: vec![crate::codec::ir::IrBlock::Text {
-                text: "plain".to_string(),
-                cache_control: None,
-                citations: Vec::new(),
-                refusal: false,
-            }],
+            content: vec![crate::codec::ir::IrBlock::text("plain".to_string())],
             stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
             usage: crate::codec::ir::IrUsage {
                 input_tokens: 1,

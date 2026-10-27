@@ -815,6 +815,16 @@ impl IrBlock {
         }
     }
 
+    /// A plain text block: no cache marker, no citations, not a refusal.
+    pub fn text(text: impl Into<String>) -> IrBlock {
+        IrBlock::Text {
+            text: text.into(),
+            cache_control: None,
+            citations: Vec::new(),
+            refusal: false,
+        }
+    }
+
     /// THE SEARCH-RESULT SLOT (ARCHITECT 2026-10-02, DF-MAP-2): one caller-supplied RAG passage —
     /// Anthropic `search_result`, Converse `searchResult` — modelled as a `Text` block a model of
     /// any dialect can read (a `title — source` header line, then the passage), carrying ONE

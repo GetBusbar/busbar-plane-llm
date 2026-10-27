@@ -51,13 +51,7 @@ fn test_billable_tokens_sum_and_saturation() {
     assert_eq!(u.billable_tokens(), 20);
 
     // All-zero / None → 0 (the common no-cache OpenAI-family case is input+output only).
-    let z = IrUsage {
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_creation_input_tokens: None,
-        cache_read_input_tokens: None,
-        detail: crate::codec::ir::IrUsageDetail::default(),
-    };
+    let z = IrUsage::default();
     assert_eq!(z.billable_tokens(), 0);
 
     // Overflow across the cache addends must SATURATE at u64::MAX, never panic/wrap.
@@ -201,12 +195,7 @@ fn all_three_opaque_reasoning_shapes_read_as_opaque_from_the_ir() {
 #[test]
 fn readable_blocks_are_not_opaque() {
     let cases = [
-        IrBlock::Text {
-            text: "hello".into(),
-            cache_control: None,
-            citations: Vec::new(),
-            refusal: false,
-        },
+        IrBlock::text("hello"),
         IrBlock::Thinking {
             text: "step one".into(),
             signature: None,
