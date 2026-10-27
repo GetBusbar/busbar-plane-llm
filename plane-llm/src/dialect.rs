@@ -32,6 +32,29 @@ pub struct Dialect {
     pub governed_response_headers: &'static [&'static str],
 }
 
+/// The upstream answer head fields that describe the OPERATOR's own upstream account or connection,
+/// in every dialect: the cookies a far end (or its CDN) sets for busbar's connection. A tenant never
+/// receives them; the previous release relayed only the request id. Exact names, so the host strips
+/// them before the plane reads the head ([`crate::plane_door::DENY_RESPONSE_HEADERS`]).
+pub const ACCOUNT_RESPONSE_HEADERS: &[&str] = &["set-cookie", "set-cookie2"];
+
+/// The upstream answer head field families that report the operator's account-wide rate-limit state
+/// (`x-ratelimit-remaining-tokens`, `anthropic-ratelimit-requests-limit`, ...), in every dialect:
+/// one tenant must not read the operator's (or another tenant's) quota. Prefixes, lower-case.
+pub const ACCOUNT_RESPONSE_PREFIXES: &[&str] = &["x-ratelimit-", "anthropic-ratelimit-"];
+
+/// Whether the answer head field `name` (compared without case) is the operator's account state
+/// ([`ACCOUNT_RESPONSE_HEADERS`], [`ACCOUNT_RESPONSE_PREFIXES`]), never relayed to a caller.
+#[must_use]
+pub fn account_scoped_response(name: &str) -> bool {
+    ACCOUNT_RESPONSE_HEADERS
+        .iter()
+        .any(|h| name.eq_ignore_ascii_case(h))
+        || ACCOUNT_RESPONSE_PREFIXES.iter().any(|p| {
+            name.len() >= p.len() && name.as_bytes()[..p.len()].eq_ignore_ascii_case(p.as_bytes())
+        })
+}
+
 /// What the two dialects of one vendor govern: its credential headers (a bearer, and the key header
 /// a re-hosted deployment of it reads) and its two tenant selectors.
 /// The tenant selectors of the two dialects of one vendor, by provider config key.
