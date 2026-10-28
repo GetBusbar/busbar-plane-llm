@@ -134,42 +134,6 @@ impl<'a> GeminiCharIndex<'a> {
     }
 }
 
-/// Convert a Gemini `startIndex`/`endIndex` BYTE offset (Google's `CitationSource` is documented
-/// measured in bytes) into a CHARACTER offset — the IR's `IrCitation::start_index`/`end_index`
-/// contract (`ir/mod.rs`). `byte_idx` is clamped to `text.len()` so an
-/// out-of-range upstream value degrades to "end of text" rather than panicking on a non-boundary
-/// slice.
-///
-/// The straightforward per-offset conversion, kept as the REFERENCE the [`GeminiCharIndex`]
-/// equivalence test measures against. Production reads go through the index, which answers the same
-/// question for a whole candidate in one pass over the text.
-#[cfg(test)]
-pub(super) fn gemini_byte_offset_to_char(text: &str, byte_idx: i64) -> i64 {
-    let clamped = byte_idx.max(0) as usize;
-    let boundary = clamped.min(text.len());
-    // A byte index that lands mid-codepoint (a malformed/adversarial upstream value) has no valid
-    // char count at that exact point; fall back to the nearest earlier boundary rather than panic.
-    let safe_boundary = (0..=boundary)
-        .rev()
-        .find(|&b| text.is_char_boundary(b))
-        .unwrap_or(0);
-    text[..safe_boundary].chars().count() as i64
-}
-
-/// The inverse of [`gemini_byte_offset_to_char`]: a CHARACTER offset (the IR contract) back to the
-/// BYTE offset Gemini's wire format expects. `char_idx` is clamped to the text's char count.
-///
-/// Kept as the REFERENCE [`GeminiCharIndex::byte_offset`] is measured against; production writes go
-/// through the index, so a text with many citations is not walked once per offset.
-#[cfg(test)]
-pub(super) fn gemini_char_offset_to_byte(text: &str, char_idx: i64) -> i64 {
-    let clamped = char_idx.max(0) as usize;
-    match text.char_indices().nth(clamped) {
-        Some((byte_idx, _)) => byte_idx as i64,
-        None => text.len() as i64,
-    }
-}
-
 /// Map a Gemini candidate's `citationMetadata.citationSources[]` → neutral
 /// [`crate::codec::ir::IrCitation`]s. A Gemini citation source is a grounding/web-search reference carrying
 /// `startIndex`/`endIndex` — measured in BYTES per Google's `CitationSource` reference, converted to
@@ -531,7 +495,7 @@ fn grounding_citations_at(
 /// [`crate::codec::ir::IrCitation`] (see its doc comment: "char index (`char_location`)" is scoped to
 /// whichever content block the citation is attached to, not the whole message). A citation whose
 /// start lands past every block's end (an out-of-range upstream value) falls back to the LAST text
-/// block, mirroring [`gemini_byte_offset_to_char`]'s own clamp-to-end fallback.
+/// block, mirroring `GeminiCharIndex::char_offset`'s own clamp-to-end fallback.
 pub(super) fn attach_gemini_citations_to_text_blocks(
     candidate: &serde_json::Value,
     content: &mut [crate::codec::ir::IrBlock],

@@ -109,63 +109,7 @@ impl ProtocolReader for CohereReader {
 
     #[cfg(test)]
     fn classify(&self, status: StatusCode, body: &[u8]) -> CanonicalSignal {
-        let text = String::from_utf8_lossy(body);
-        let lower = text.to_lowercase();
-
-        // Mirror the production `extract_error` gate: rate-limit / auth / server statuses are
-        // classified by status FIRST, so a free-text body that mentions token counts on a 429/401/403
-        // can never be reclassified as the no-penalty ContextLength class. The context-length phrasing
-        // is honored ONLY on a request-size status (400 / 413).
-        if status == StatusCode::TOO_MANY_REQUESTS {
-            return CanonicalSignal {
-                class: StatusClass::RateLimit,
-                provider_signal: Some("429".to_string()),
-                retry_after: None,
-            };
-        }
-
-        if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-            return CanonicalSignal {
-                class: StatusClass::Auth,
-                provider_signal: Some("auth".to_string()),
-                retry_after: None,
-            };
-        }
-
-        if status.is_server_error() {
-            return CanonicalSignal {
-                class: StatusClass::ServerError,
-                provider_signal: Some("5xx".to_string()),
-                retry_after: None,
-            };
-        }
-
-        if (status == StatusCode::BAD_REQUEST || status == StatusCode::PAYLOAD_TOO_LARGE)
-            && (lower.contains("too many tokens")
-                || (lower.contains(keys::MAXIMUM) && lower.contains(keys::TOKENS)))
-        {
-            return CanonicalSignal {
-                class: StatusClass::ContextLength,
-                provider_signal: Some(
-                    busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH.to_string(),
-                ),
-                retry_after: None,
-            };
-        }
-
-        if status.is_client_error() {
-            return CanonicalSignal {
-                class: StatusClass::ClientError,
-                provider_signal: Some(format!("{}", status.as_u16())),
-                retry_after: None,
-            };
-        }
-
-        CanonicalSignal {
-            class: StatusClass::ClientError,
-            provider_signal: None,
-            retry_after: None,
-        }
+        crate::codec::dialect_classify::cohere(status, body)
     }
 
     fn read_request(
