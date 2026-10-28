@@ -2324,6 +2324,25 @@ pub struct ResponsesWriter {
     /// open-text set out from under an item that is still open. Latching here makes the reset
     /// idempotent per stream. `AtomicBool` (not `Cell`) for the same `Sync` reason as `sequence`.
     started: AtomicBool,
+    /// Whether this stream has already written its `response.failed` terminal event. A Responses
+    /// stream ends at `response.failed`, so a `MessageDelta` arriving after it (a Cohere/Gemini
+    /// reader emits `Error` and THEN its `MessageDelta{Error}`) must write nothing rather than a
+    /// second, contradictory terminal (RSP-11). `AtomicBool` for the same `Sync` reason as `started`.
+    failed: AtomicBool,
+    /// THIS STREAM'S TRANSLATION CAP: the byte ceiling any one per-item accumulator may reach
+    /// ([`Self::accum_byte_cap`]). The plane hands it from its own settings when it opens the
+    /// stream ([`crate::codec::proto_codec::ProtocolWriter::set_translate_cap`]); until then,
+    /// [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`].
+    translate_cap: AtomicUsize,
+    /// The stream's state behind ONE lock: every per-stream cell (`ResponsesStream`).
+    stream: StreamCell<ResponsesStream>,
+}
+
+/// A Responses stream's per-stream INSTANCE state (see the [`ResponsesWriter`] type doc), held
+/// behind the writer's one lock. A mid-stream `Protocol::clone` is still the SAME stream, so the
+/// clone carries all of it.
+#[derive(Clone)]
+struct ResponsesStream {
     /// Per-stream `response.id`. Captured on the opening `MessageStart` (the synthesized-or-
     /// forwarded id written into `response.created`) and replayed verbatim onto EVERY subsequent
     /// lifecycle event (`response.completed`/`response.incomplete`/`response.failed`). A native
@@ -2334,7 +2353,7 @@ pub struct ResponsesWriter {
     /// `response.created` — an SDK-breaking correctness failure and a hard distinguishability tell.
     /// Per-stream INSTANCE state for the same reason as `sequence` (see the type doc); a poisoned
     /// lock degrades to the synthesize-fresh fallback rather than panicking on the request path.
-    response_id: std::sync::Mutex<Option<String>>,
+    response_id: Option<String>,
     /// Per-stream `response.created_at` (unix seconds). Captured on the opening `MessageStart`
     /// (`response.created`) and replayed verbatim onto EVERY subsequent lifecycle event
     /// (`response.completed`/`response.incomplete`/`response.failed`). A native OpenAI Responses
@@ -2346,7 +2365,7 @@ pub struct ResponsesWriter {
     /// comparing timestamps across events. Per-stream INSTANCE state for the same reason as
     /// `response_id`; a poisoned lock degrades to the synthesize-fresh (`now_unix_secs`) fallback
     /// rather than panicking on the request path.
-    created_at: std::sync::Mutex<Option<u64>>,
+    created_at: Option<u64>,
     /// Per-stream `response.model`. Captured on the opening `MessageStart` (the model written into
     /// `response.created`, after the DEFAULT_MODEL fallback) and replayed verbatim onto EVERY
     /// subsequent lifecycle event (`response.completed`/`response.incomplete`/`response.failed`). A
@@ -2357,7 +2376,7 @@ pub struct ResponsesWriter {
     /// arms replay this captured value (falling back to DEFAULT_MODEL only if the cell was never
     /// populated). Per-stream INSTANCE state for the same reason as `response_id`/`created_at`; a
     /// poisoned lock degrades to the DEFAULT_MODEL fallback rather than panicking on the request path.
-    model: std::sync::Mutex<Option<String>>,
+    model: Option<String>,
     /// Output indices for which this writer emitted a function-call `output_item.added`. The IR
     /// `BlockStop` carries only the integer index (no block kind), but a native Responses stream
     /// emits `output_item.done` ONLY for items it previously `added` — and the Text `BlockStart`
@@ -2368,7 +2387,7 @@ pub struct ResponsesWriter {
     /// unmatched lifecycle event and a hard distinguishability tell. Per-stream INSTANCE state for
     /// the same reason as `sequence` (see the type doc); `Relaxed`-equivalent `Mutex` access is
     /// fine since a stream is single-threaded at any instant and the writer must stay `Sync`.
-    open_tool_indices: std::sync::Mutex<std::collections::BTreeSet<usize>>,
+    open_tool_indices: std::collections::BTreeSet<usize>,
     /// Output indices for which this writer opened a TEXT message item (emitted
     /// `output_item.added` type "message" + `content_part.added`). A native /v1/responses stream
     /// ALWAYS brackets a text part with the full lifecycle
@@ -2379,10 +2398,10 @@ pub struct ResponsesWriter {
     /// open text indices here (the same way `open_tool_indices` tracks tool items) so the matching
     /// BlockStop emits the text terminal frames for THIS index only. Per-stream INSTANCE state for
     /// the same reason as the other fields; a poisoned lock degrades safely.
-    open_text_indices: std::sync::Mutex<std::collections::BTreeSet<usize>>,
+    open_text_indices: std::collections::BTreeSet<usize>,
     /// IR-02: the open text indices whose BlockStart said `refusal` — their part is a `refusal`
     /// part, not an `output_text` part, from `content_part.added` to `output_item.done`.
-    refusal_indices: std::sync::Mutex<std::collections::BTreeSet<usize>>,
+    refusal_indices: std::collections::BTreeSet<usize>,
     /// Per-stream cache of synthesized opaque `item_id`s, keyed by `(kind-prefix, output_index)`.
     /// A native /v1/responses stream carries a CONSTANT `item_id` across the
     /// `output_item.added → delta* → output_item.done` lifecycle of one output item; the official
@@ -2394,7 +2413,7 @@ pub struct ResponsesWriter {
     /// reference within the stream returns the same one. Per-stream INSTANCE state for the same
     /// reason as the other fields; a poisoned lock degrades to a freshly-minted id (still opaque,
     /// still valid) rather than panicking on the request path.
-    item_ids: std::sync::Mutex<std::collections::BTreeMap<(&'static str, usize), String>>,
+    item_ids: std::collections::BTreeMap<(&'static str, usize), String>,
     /// Per-stream accumulator of function-call item fields, keyed by `output_index`. A native
     /// /v1/responses stream's `response.output_item.done` for a function-call item carries the FULLY
     /// finalized item — `call_id`, `name`, AND the complete accumulated `arguments` string — and the
@@ -2408,7 +2427,7 @@ pub struct ResponsesWriter {
     /// distinguishability tell. Per-stream INSTANCE state for the same reason as the other fields; a
     /// poisoned lock degrades to omitting the accumulated fields (still emits the `done`) rather than
     /// panicking on the request path.
-    tool_calls: std::sync::Mutex<std::collections::BTreeMap<usize, ToolCallAccum>>,
+    tool_calls: std::collections::BTreeMap<usize, ToolCallAccum>,
     /// Per-stream accumulator of streamed assistant TEXT, keyed by `output_index`. A native
     /// /v1/responses terminal `response.completed`/`response.incomplete` event carries the FULLY
     /// assembled `output[]` array, and a message item in it carries its `output_text` parts with the
@@ -2417,20 +2436,19 @@ pub struct ResponsesWriter {
     /// joined text into the terminal `output` message item at BlockStop. Per-stream INSTANCE state
     /// for the same reason as the other fields; a poisoned lock degrades to omitting the accumulated
     /// text (the item then carries empty text) rather than panicking on the request path.
-    text_accum: std::sync::Mutex<std::collections::BTreeMap<usize, String>>,
+    text_accum: std::collections::BTreeMap<usize, String>,
     /// Per-stream buffer of the citations delivered for the message item at each `output_index`.
     /// Responses carries citations as `annotations` on the assembled `output_text` part, not as a
     /// standalone delta frame, so a streamed `CitationsDelta` has nowhere to go at arrival time and
     /// is accumulated here until `BlockStop` builds that part. Dropping it, as the writer used to,
     /// lost every grounding source on any cross-protocol stream into Responses.
-    citation_accum: std::sync::Mutex<std::collections::BTreeMap<usize, CitationAccum>>,
+    citation_accum: std::collections::BTreeMap<usize, CitationAccum>,
     /// Per-stream buffer of the token logprobs delivered for the message item at each
     /// `output_index`. The IR streams them as a standalone `LogprobsDelta` (separate from the text
     /// fragment they score), while a native Responses stream carries them on the `output_text.done`
     /// event and on the finalized `output_text` part, so they are buffered here until `BlockStop`
     /// builds those frames. A poisoned lock degrades to an empty list rather than panicking.
-    logprob_accum:
-        std::sync::Mutex<std::collections::BTreeMap<usize, Vec<crate::codec::ir::IrTokenLogprob>>>,
+    logprob_accum: std::collections::BTreeMap<usize, Vec<crate::codec::ir::IrTokenLogprob>>,
     /// Per-stream buffer of FINALIZED `output[]` items, keyed by `output_index` so the terminal
     /// event emits them in stable index order. A native /v1/responses `response.completed`/
     /// `response.incomplete` event's inner `response.output` is the fully assembled array (each
@@ -2443,33 +2461,28 @@ pub struct ResponsesWriter {
     /// is a shape real OpenAI never emits and breaks SDK consumers that read the assembled output off
     /// the completed event. Per-stream INSTANCE state for the same reason as the other fields; a
     /// poisoned lock degrades to an empty array (the prior behavior) rather than panicking.
-    output_items: std::sync::Mutex<std::collections::BTreeMap<usize, serde_json::Value>>,
+    output_items: std::collections::BTreeMap<usize, serde_json::Value>,
     /// Output indices for which this writer opened a REASONING item — emitted the
     /// `output_item.added` typed "reasoning". Tracked separately from text/tool opens so the matching
     /// `BlockStop` (which carries only the index) emits the `output_item.done` typed "reasoning" for
     /// THIS index, and so a reasoning BlockStop is never mistaken for a text/tool close. Per-stream
     /// INSTANCE state for the same reason as the other open-index sets; a poisoned lock degrades safely.
-    open_reasoning_indices: std::sync::Mutex<std::collections::BTreeSet<usize>>,
+    open_reasoning_indices: std::collections::BTreeSet<usize>,
     /// IR-17: the open reasoning items whose Thinking block is a SUMMARY. Their
     /// text streams as `reasoning_summary_text` and lands in the item's `summary[]` (the buffered
     /// `insert_reasoning_text` shape); every other reasoning item keeps `content[]`.
-    summary_reasoning_indices: std::sync::Mutex<std::collections::BTreeSet<usize>>,
+    summary_reasoning_indices: std::collections::BTreeSet<usize>,
     /// Per-stream accumulator of streamed reasoning TEXT, keyed by `output_index`. The terminal
     /// `response.output[]` reasoning item carries the COMPLETE reasoning text the stream delivered via
     /// `reasoning_text.delta`; the IR streams it as `ThinkingDelta` fragments, so the writer
     /// concatenates them here and drains the joined text into the finalized reasoning item at
     /// BlockStop. A poisoned lock degrades to empty text rather than panicking.
-    reasoning_accum: std::sync::Mutex<std::collections::BTreeMap<usize, String>>,
+    reasoning_accum: std::collections::BTreeMap<usize, String>,
     /// Per-stream buffer of the thinking SIGNATURE streamed for the reasoning item at each
     /// `output_index` (`IrDelta::SignatureDelta`). Responses has no signature delta frame: the blob is
     /// the finalized reasoning item's `encrypted_content`, so it is buffered here until the matching
     /// `BlockStop` builds that item (RSP-01). Bounded exactly as `reasoning_accum` is.
-    reasoning_sig_accum: std::sync::Mutex<std::collections::BTreeMap<usize, String>>,
-    /// Whether this stream has already written its `response.failed` terminal event. A Responses
-    /// stream ends at `response.failed`, so a `MessageDelta` arriving after it (a Cohere/Gemini
-    /// reader emits `Error` and THEN its `MessageDelta{Error}`) must write nothing rather than a
-    /// second, contradictory terminal (RSP-11). `AtomicBool` for the same `Sync` reason as `started`.
-    failed: AtomicBool,
+    reasoning_sig_accum: std::collections::BTreeMap<usize, String>,
     /// Per-stream request-echo context: the ORIGINAL ingress request body, captured via
     /// [`ProtocolWriter::set_request_echo`] before the first event is written. The pinned spec
     /// requires every `Response` object to MIRROR certain request members verbatim (`temperature`,
@@ -2479,12 +2492,7 @@ pub struct ResponsesWriter {
     /// response). `None` when never set (same-protocol streams, which never reach this writer at
     /// all, and any cross-protocol stream whose caller has no parsed ingress body). A poisoned lock
     /// degrades to `None` (the spec DEFAULTS below), never to a panic on the request path.
-    request_echo: std::sync::Mutex<Option<serde_json::Value>>,
-    /// THIS STREAM'S TRANSLATION CAP: the byte ceiling any one per-item accumulator may reach
-    /// ([`Self::accum_byte_cap`]). The plane hands it from its own settings when it opens the
-    /// stream ([`crate::codec::proto_codec::ProtocolWriter::set_translate_cap`]); until then,
-    /// [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`].
-    translate_cap: AtomicUsize,
+    request_echo: Option<serde_json::Value>,
 }
 
 /// Accumulated function-call item fields for one open `output_index`, finalized into the
@@ -2515,172 +2523,63 @@ struct ToolCallAccum {
 pub const ResponsesWriter: ResponsesWriter = ResponsesWriter {
     sequence: AtomicU64::new(0),
     started: AtomicBool::new(false),
-    response_id: std::sync::Mutex::new(None),
-    created_at: std::sync::Mutex::new(None),
-    model: std::sync::Mutex::new(None),
-    open_tool_indices: std::sync::Mutex::new(std::collections::BTreeSet::new()),
-    open_text_indices: std::sync::Mutex::new(std::collections::BTreeSet::new()),
-    refusal_indices: std::sync::Mutex::new(std::collections::BTreeSet::new()),
-    item_ids: std::sync::Mutex::new(std::collections::BTreeMap::new()),
-    tool_calls: std::sync::Mutex::new(std::collections::BTreeMap::new()),
-    text_accum: std::sync::Mutex::new(std::collections::BTreeMap::new()),
-    citation_accum: std::sync::Mutex::new(std::collections::BTreeMap::new()),
-    logprob_accum: std::sync::Mutex::new(std::collections::BTreeMap::new()),
-    output_items: std::sync::Mutex::new(std::collections::BTreeMap::new()),
-    open_reasoning_indices: std::sync::Mutex::new(std::collections::BTreeSet::new()),
-    summary_reasoning_indices: std::sync::Mutex::new(std::collections::BTreeSet::new()),
-    reasoning_accum: std::sync::Mutex::new(std::collections::BTreeMap::new()),
-    reasoning_sig_accum: std::sync::Mutex::new(std::collections::BTreeMap::new()),
     failed: AtomicBool::new(false),
-    request_echo: std::sync::Mutex::new(None),
     translate_cap: AtomicUsize::new(busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT),
+    stream: StreamCell::new(ResponsesStream::NEW),
 };
 
+impl ResponsesStream {
+    /// A fresh stream: nothing captured, nothing open, nothing accumulated.
+    const NEW: ResponsesStream = ResponsesStream {
+        response_id: None,
+        created_at: None,
+        model: None,
+        open_tool_indices: std::collections::BTreeSet::new(),
+        open_text_indices: std::collections::BTreeSet::new(),
+        refusal_indices: std::collections::BTreeSet::new(),
+        item_ids: std::collections::BTreeMap::new(),
+        tool_calls: std::collections::BTreeMap::new(),
+        text_accum: std::collections::BTreeMap::new(),
+        citation_accum: std::collections::BTreeMap::new(),
+        logprob_accum: std::collections::BTreeMap::new(),
+        output_items: std::collections::BTreeMap::new(),
+        open_reasoning_indices: std::collections::BTreeSet::new(),
+        summary_reasoning_indices: std::collections::BTreeSet::new(),
+        reasoning_accum: std::collections::BTreeMap::new(),
+        reasoning_sig_accum: std::collections::BTreeMap::new(),
+        request_echo: None,
+    };
+}
+
 impl Clone for ResponsesWriter {
+    /// A mid-stream `Protocol::clone` is still the SAME stream: the counter, the latches, the cap
+    /// and every per-stream cell carry across, so the clone keeps the same `sequence_number`
+    /// position, ids, open items and accumulators.
     fn clone(&self) -> Self {
-        // Preserve the current counter value on clone so a `Protocol::clone` mid-stream keeps the
-        // same `sequence_number` position rather than resetting to 0. The open-tool-index set is
-        // likewise carried across the clone so a mid-stream `Protocol::clone` keeps the in-flight
-        // function-call lifecycle correlation; a poisoned lock degrades to an empty set rather than
-        // panicking on the request path.
         ResponsesWriter {
             sequence: AtomicU64::new(self.sequence.load(Ordering::Relaxed)),
-            // Carry the started latch too: a mid-stream `Protocol::clone` is still the SAME stream,
-            // so a duplicate `MessageStart` arriving after the clone must not reset it either.
             started: AtomicBool::new(self.started.load(Ordering::Relaxed)),
-            response_id: std::sync::Mutex::new(
-                self.response_id.lock().map(|id| id.clone()).unwrap_or(None),
-            ),
-            // Carry the captured `created_at` across a mid-stream `Protocol::clone` so the cloned
-            // writer's terminal events replay the SAME timestamp; a poisoned lock degrades to None
-            // (terminal arm then falls back to `now_unix_secs`).
-            created_at: std::sync::Mutex::new(self.created_at.lock().map(|c| *c).unwrap_or(None)),
-            // Carry the captured `model` across a mid-stream `Protocol::clone` so the cloned
-            // writer's terminal events replay the SAME model; a poisoned lock degrades to None
-            // (terminal arm then falls back to DEFAULT_MODEL).
-            model: std::sync::Mutex::new(self.model.lock().map(|m| m.clone()).unwrap_or(None)),
-            open_tool_indices: std::sync::Mutex::new(
-                self.open_tool_indices
-                    .lock()
-                    .map(|set| set.clone())
-                    .unwrap_or_default(),
-            ),
-            open_text_indices: std::sync::Mutex::new(
-                self.open_text_indices
-                    .lock()
-                    .map(|set| set.clone())
-                    .unwrap_or_default(),
-            ),
-            refusal_indices: std::sync::Mutex::new(
-                self.refusal_indices
-                    .lock()
-                    .map(|set| set.clone())
-                    .unwrap_or_default(),
-            ),
-            // Carry the minted `item_id` cache across a mid-stream `Protocol::clone` so the cloned
-            // writer keeps emitting the SAME opaque id for an already-opened item's remaining
-            // lifecycle frames; a poisoned lock degrades to an empty cache (later refs re-mint).
-            item_ids: std::sync::Mutex::new(
-                self.item_ids.lock().map(|m| m.clone()).unwrap_or_default(),
-            ),
-            // Carry the in-flight function-call field accumulator across a mid-stream
-            // `Protocol::clone` so the cloned writer's `output_item.done` still emits the complete
-            // finalized item (call_id/name/accumulated arguments); a poisoned lock degrades to an
-            // empty map (the done then omits the accumulated fields).
-            tool_calls: std::sync::Mutex::new(
-                self.tool_calls
-                    .lock()
-                    .map(|m| m.clone())
-                    .unwrap_or_default(),
-            ),
-            // Carry the in-flight text accumulator across a mid-stream `Protocol::clone` so the
-            // cloned writer's terminal `output` still assembles the full streamed text; a poisoned
-            // lock degrades to an empty map.
-            text_accum: std::sync::Mutex::new(
-                self.text_accum
-                    .lock()
-                    .map(|m| m.clone())
-                    .unwrap_or_default(),
-            ),
-            // Carry the citation accumulator across the same clone, for the same reason.
-            citation_accum: std::sync::Mutex::new(
-                self.citation_accum
-                    .lock()
-                    .map(|m| m.clone())
-                    .unwrap_or_default(),
-            ),
-            // Carry the logprob accumulator across the same clone, for the same reason.
-            logprob_accum: std::sync::Mutex::new(
-                self.logprob_accum
-                    .lock()
-                    .map(|m| m.clone())
-                    .unwrap_or_default(),
-            ),
-            // Carry the finalized-output buffer across a mid-stream `Protocol::clone` so the cloned
-            // writer's terminal event still emits the assembled `output[]`; a poisoned lock degrades
-            // to an empty map (terminal `output` then falls back to `[]`).
-            output_items: std::sync::Mutex::new(
-                self.output_items
-                    .lock()
-                    .map(|m| m.clone())
-                    .unwrap_or_default(),
-            ),
-            // Carry the in-flight reasoning open-set and text accumulator across a mid-stream
-            // `Protocol::clone` so the cloned writer's reasoning `output_item.done` still emits the
-            // assembled reasoning item; poisoned locks degrade to empty.
-            open_reasoning_indices: std::sync::Mutex::new(
-                self.open_reasoning_indices
-                    .lock()
-                    .map(|set| set.clone())
-                    .unwrap_or_default(),
-            ),
-            summary_reasoning_indices: std::sync::Mutex::new(
-                self.summary_reasoning_indices
-                    .lock()
-                    .map(|set| set.clone())
-                    .unwrap_or_default(),
-            ),
-            reasoning_accum: std::sync::Mutex::new(
-                self.reasoning_accum
-                    .lock()
-                    .map(|m| m.clone())
-                    .unwrap_or_default(),
-            ),
-            // Carry the signature buffer and the failed latch across the same clone, for the same
-            // reason: a mid-stream clone is still the SAME stream.
-            reasoning_sig_accum: std::sync::Mutex::new(
-                self.reasoning_sig_accum
-                    .lock()
-                    .map(|m| m.clone())
-                    .unwrap_or_default(),
-            ),
             failed: AtomicBool::new(self.failed.load(Ordering::Relaxed)),
-            // Carry the captured request-echo context across a mid-stream `Protocol::clone` so the
-            // cloned writer's remaining terminal events still answer with the client's actual
-            // request values; a poisoned lock degrades to `None` (the spec defaults then apply).
-            request_echo: std::sync::Mutex::new(
-                self.request_echo.lock().map(|e| e.clone()).unwrap_or(None),
-            ),
             translate_cap: AtomicUsize::new(self.translate_cap.load(Ordering::Relaxed)),
+            stream: self.stream.clone(),
         }
     }
 }
 
-/// Insert `index` into a per-stream open-item set, capped at `MAX_OPEN_TOOLS`. True only when it
-/// was newly inserted; false when already open, at the cap, or the lock is poisoned.
-fn open_bounded(set: &std::sync::Mutex<std::collections::BTreeSet<usize>>, index: usize) -> bool {
-    set.lock()
-        .map(|mut set| {
-            if set.contains(&index) || set.len() >= MAX_OPEN_TOOLS {
-                return false;
-            }
-            set.insert(index);
-            true
-        })
-        .unwrap_or(false)
+/// Open `index` in `set` unless it is open already or the set holds `MAX_OPEN_TOOLS`.
+fn open_bounded(set: &mut std::collections::BTreeSet<usize>, index: usize) -> bool {
+    if set.contains(&index) || set.len() >= MAX_OPEN_TOOLS {
+        return false;
+    }
+    set.insert(index)
 }
 
 impl ResponsesWriter {
+    /// The stream's state, locked.
+    fn stream(&self) -> std::sync::MutexGuard<'_, ResponsesStream> {
+        self.stream.lock()
+    }
+
     /// The BYTE ceiling any ONE of the writer's per-item accumulators may reach over the life of a
     /// stream. `MAX_OPEN_TOOLS` bounds how MANY items accumulate; this bounds how large one of them
     /// grows, which is the other half of the same memory-amplification exposure — a backend
@@ -2709,101 +2608,38 @@ impl ResponsesWriter {
     /// function-call index into a fresh stream.
     fn reset_sequence_number(&self) {
         self.sequence.store(0, Ordering::Relaxed);
-        if let Ok(mut set) = self.open_tool_indices.lock() {
-            set.clear();
-        }
-        if let Ok(mut set) = self.open_text_indices.lock() {
-            set.clear();
-        }
-        if let Ok(mut set) = self.refusal_indices.lock() {
-            set.clear();
-        }
-        // Clear the per-stream `item_id` cache so a reused/cloned writer mints fresh opaque ids for
-        // the new stream rather than replaying a previous stream's item ids.
-        if let Ok(mut map) = self.item_ids.lock() {
-            map.clear();
-        }
-        // Clear the per-stream function-call field accumulator so a reused/cloned writer does not
-        // carry a previous stream's call_id/name/arguments into a new stream's `output_item.done`.
-        if let Ok(mut map) = self.tool_calls.lock() {
-            map.clear();
-        }
-        // Clear the per-stream text accumulator and the finalized-output buffer so a reused/cloned
-        // writer does not leak a previous stream's text/items into a new stream's terminal `output`.
-        if let Ok(mut map) = self.text_accum.lock() {
-            map.clear();
-        }
-        if let Ok(mut map) = self.output_items.lock() {
-            map.clear();
-        }
-        // Clear the per-stream citation and logprob buffers for the same reason: an entry left under
-        // an index the new stream reuses would attach a previous stream's sources and token
-        // logprobs to this stream's text part.
-        if let Ok(mut map) = self.citation_accum.lock() {
-            map.clear();
-        }
-        if let Ok(mut map) = self.logprob_accum.lock() {
-            map.clear();
-        }
-        // Clear the per-stream reasoning open-set and text accumulator so a reused/cloned writer does
-        // not leak a previous stream's reasoning into a new stream's output.
-        if let Ok(mut set) = self.open_reasoning_indices.lock() {
-            set.clear();
-        }
-        if let Ok(mut set) = self.summary_reasoning_indices.lock() {
-            set.clear();
-        }
-        if let Ok(mut map) = self.reasoning_accum.lock() {
-            map.clear();
-        }
-        if let Ok(mut map) = self.reasoning_sig_accum.lock() {
-            map.clear();
-        }
         // A new stream has not failed.
         self.failed.store(false, Ordering::Relaxed);
-        // Clear the carried `response.id` alongside the sequence counter: a reused/cloned writer
-        // must not leak a previous stream's id onto a new stream's terminal events. The new id is
-        // stored when this stream's `MessageStart` is written.
-        if let Ok(mut id) = self.response_id.lock() {
-            *id = None;
-        }
-        // Clear the carried `created_at` alongside the id: a reused/cloned writer must not leak a
-        // previous stream's creation timestamp onto a new stream's terminal events. The new value
-        // is stored when this stream's `MessageStart` is written.
-        if let Ok(mut created) = self.created_at.lock() {
-            *created = None;
-        }
-        // Clear the carried `model` alongside the id/created_at: a reused/cloned writer must not
-        // leak a previous stream's model onto a new stream's terminal events. The new value is
-        // stored when this stream's `MessageStart` is written.
-        if let Ok(mut model) = self.model.lock() {
-            *model = None;
-        }
+        // Every per-stream cell starts over (open items, minted ids, accumulators, the carried
+        // id/created_at/model), so a reused/cloned writer leaks nothing of a previous stream into
+        // this one; only the request echo, stored before the first event, stays.
+        let mut stream = self.stream();
+        let request_echo = stream.request_echo.take();
+        *stream = ResponsesStream {
+            request_echo,
+            ..ResponsesStream::NEW
+        };
     }
 
     /// Store the per-stream `response.id` captured on `MessageStart` so terminal events replay it
     /// verbatim. Lock poisoning degrades to a no-op (the terminal arm then synthesizes a fresh id)
     /// rather than panicking on the request path.
     fn set_response_id(&self, id: &str) {
-        if let Ok(mut slot) = self.response_id.lock() {
-            *slot = Some(id.to_string());
-        }
+        self.stream().response_id = Some(id.to_string());
     }
 
     /// Return the per-stream `response.id` captured on `MessageStart`, or `None` if it was never
     /// set (a malformed stream whose terminal event preceded `MessageStart`, or a poisoned lock).
     /// The caller falls back to synthesizing a fresh id in that case.
     fn carried_response_id(&self) -> Option<String> {
-        self.response_id.lock().ok().and_then(|id| id.clone())
+        self.stream().response_id.clone()
     }
 
     /// Store the per-stream `created_at` captured on `MessageStart` so terminal events replay it
     /// verbatim. Lock poisoning degrades to a no-op (the terminal arm then falls back to
     /// `now_unix_secs`) rather than panicking on the request path.
     fn set_created_at(&self, created_at: u64) {
-        if let Ok(mut slot) = self.created_at.lock() {
-            *slot = Some(created_at);
-        }
+        self.stream().created_at = Some(created_at);
     }
 
     /// Return the per-stream `created_at` captured on `MessageStart`, falling back to the current
@@ -2811,11 +2647,8 @@ impl ResponsesWriter {
     /// `MessageStart`, or a poisoned lock). Replaying the captured value keeps every event's
     /// `created_at` identical, matching a native Responses stream.
     pub fn carried_created_at(&self, host: &dyn busbar_contract::codec::CodecHost) -> u64 {
-        self.created_at
-            .lock()
-            .ok()
-            .and_then(|c| *c)
-            .unwrap_or_else(|| self.default_created_at(host))
+        let carried = self.stream().created_at;
+        carried.unwrap_or_else(|| self.default_created_at(host))
     }
 
     /// The `created_at` for an answer that carries none: the wall clock of the HOST the caller
@@ -2831,9 +2664,7 @@ impl ResponsesWriter {
     /// verbatim. Lock poisoning degrades to a no-op (the terminal arm then falls back to
     /// `DEFAULT_MODEL`) rather than panicking on the request path.
     fn set_model(&self, model: &str) {
-        if let Ok(mut slot) = self.model.lock() {
-            *slot = Some(model.to_string());
-        }
+        self.stream().model = Some(model.to_string());
     }
 
     /// Return the per-stream `model` captured on `MessageStart`, falling back to `DEFAULT_MODEL` if
@@ -2841,10 +2672,9 @@ impl ResponsesWriter {
     /// poisoned lock). Replaying the captured value keeps every event's `model` identical and
     /// non-null, matching a native Responses stream and the SDK's required-field contract.
     fn carried_model(&self) -> String {
-        self.model
-            .lock()
-            .ok()
-            .and_then(|m| m.clone())
+        self.stream()
+            .model
+            .clone()
             .unwrap_or_else(|| DEFAULT_MODEL.to_string())
     }
 
@@ -2852,9 +2682,7 @@ impl ResponsesWriter {
     /// Lock poisoning degrades to a no-op (the request-echo members then fall back to the spec's
     /// bare defaults) rather than panicking on the request path.
     fn store_request_echo(&self, body: &serde_json::Value) {
-        if let Ok(mut slot) = self.request_echo.lock() {
-            *slot = Some(body.clone());
-        }
+        self.stream().request_echo = Some(body.clone());
     }
 
     /// Return the request-echo context captured for this stream, or `None` if never set (a
@@ -2862,7 +2690,7 @@ impl ResponsesWriter {
     /// poisoned lock). `fill_required_response_members` treats `None` exactly like an empty object —
     /// every echo member falls back to the spec's default.
     fn carried_request_echo(&self) -> Option<serde_json::Value> {
-        self.request_echo.lock().ok().and_then(|e| e.clone())
+        self.stream().request_echo.clone()
     }
 
     /// Return the next `sequence_number` for this stream and advance the counter. The first call
@@ -2888,7 +2716,7 @@ impl ResponsesWriter {
     /// `output_item.added` frame either, or the wire carries a lifecycle open for an item that
     /// never existed and is never closed.
     fn mark_tool_open(&self, index: usize) -> bool {
-        open_bounded(&self.open_tool_indices, index)
+        open_bounded(&mut self.stream().open_tool_indices, index)
     }
 
     /// Return true and forget `index` if it was a previously-opened function-call item; false if no
@@ -2896,10 +2724,7 @@ impl ResponsesWriter {
     /// `output_item.done`). Lock poisoning degrades to `false` (suppress the `done`) rather than
     /// panicking on the request path.
     fn take_tool_open(&self, index: usize) -> bool {
-        self.open_tool_indices
-            .lock()
-            .map(|mut set| set.remove(&index))
-            .unwrap_or(false)
+        self.stream().open_tool_indices.remove(&index)
     }
 
     /// Record the `call_id`/`name` for a function-call item opened at `index`, captured from the
@@ -2907,11 +2732,10 @@ impl ResponsesWriter {
     /// finalized item. Lock poisoning degrades to a no-op (the `done` then omits these fields)
     /// rather than panicking on the request path.
     fn record_tool_meta(&self, index: usize, call_id: &str, name: &str) {
-        if let Ok(mut map) = self.tool_calls.lock() {
-            let entry = map.entry(index).or_default();
-            entry.call_id = call_id.to_string();
-            entry.name = name.to_string();
-        }
+        let mut stream = self.stream();
+        let entry = stream.tool_calls.entry(index).or_default();
+        entry.call_id = call_id.to_string();
+        entry.name = name.to_string();
     }
 
     /// Append a streamed `arguments` fragment for the function-call item at `index`. Native
@@ -2925,20 +2749,19 @@ impl ResponsesWriter {
     /// degrades an unparseable accumulation to the empty-arguments fallback, so the call's identity
     /// (`call_id`/`name`) always survives and no new failure mode is introduced.
     fn append_tool_arguments(&self, index: usize, fragment: &str) {
-        if let Ok(mut map) = self.tool_calls.lock() {
-            match map.get_mut(&index) {
-                Some(entry) => {
-                    if entry.arguments.len().saturating_add(fragment.len()) <= self.accum_byte_cap()
-                    {
-                        entry.arguments.push_str(fragment);
-                    }
+        let cap = self.accum_byte_cap();
+        let map = &mut self.stream().tool_calls;
+        match map.get_mut(&index) {
+            Some(entry) => {
+                if entry.arguments.len().saturating_add(fragment.len()) <= cap {
+                    entry.arguments.push_str(fragment);
                 }
-                None => {
-                    if map.len() >= MAX_OPEN_TOOLS || fragment.len() > self.accum_byte_cap() {
-                        return;
-                    }
-                    map.entry(index).or_default().arguments.push_str(fragment);
+            }
+            None => {
+                if map.len() >= MAX_OPEN_TOOLS || fragment.len() > cap {
+                    return;
                 }
+                map.entry(index).or_default().arguments.push_str(fragment);
             }
         }
     }
@@ -2948,10 +2771,7 @@ impl ResponsesWriter {
     /// `None` if nothing was accumulated (e.g. a poisoned lock); the caller then emits the `done`
     /// without the accumulated fields rather than panicking on the request path.
     fn take_tool_accum(&self, index: usize) -> Option<ToolCallAccum> {
-        self.tool_calls
-            .lock()
-            .ok()
-            .and_then(|mut map| map.remove(&index))
+        self.stream().tool_calls.remove(&index)
     }
 
     /// Append a streamed text fragment for the message item at `index`. The native terminal
@@ -2963,9 +2783,8 @@ impl ResponsesWriter {
     /// text item is what the client already gets from any capped stream; an unbounded one is a
     /// per-connection memory-amplification DoS.
     fn append_text(&self, index: usize, fragment: &str) {
-        if let Ok(mut map) = self.text_accum.lock() {
-            append_capped(&mut map, index, fragment, self.accum_byte_cap());
-        }
+        let cap = self.accum_byte_cap();
+        append_capped(&mut self.stream().text_accum, index, fragment, cap);
     }
 
     /// Buffer streamed citations for the message item at `index` until `BlockStop` assembles the
@@ -2982,37 +2801,36 @@ impl ResponsesWriter {
             .iter()
             .map(citation_bytes)
             .fold(0usize, usize::saturating_add);
-        if let Ok(mut map) = self.citation_accum.lock() {
-            match map.get_mut(&index) {
-                Some(entry) => {
-                    let held = entry.bytes.saturating_add(added);
-                    if held <= self.accum_byte_cap() {
-                        entry.items.extend_from_slice(cits);
-                        entry.bytes = held;
-                    }
+        let cap = self.accum_byte_cap();
+        let map = &mut self.stream().citation_accum;
+        match map.get_mut(&index) {
+            Some(entry) => {
+                let held = entry.bytes.saturating_add(added);
+                if held <= cap {
+                    entry.items.extend_from_slice(cits);
+                    entry.bytes = held;
                 }
-                None => {
-                    if map.len() >= MAX_OPEN_TOOLS || added > self.accum_byte_cap() {
-                        return;
-                    }
-                    map.insert(
-                        index,
-                        CitationAccum {
-                            items: cits.to_vec(),
-                            bytes: added,
-                        },
-                    );
+            }
+            None => {
+                if map.len() >= MAX_OPEN_TOOLS || added > cap {
+                    return;
                 }
+                map.insert(
+                    index,
+                    CitationAccum {
+                        items: cits.to_vec(),
+                        bytes: added,
+                    },
+                );
             }
         }
     }
 
     /// Remove and return the accumulated citations for the message item at `index`.
     fn take_citation_accum(&self, index: usize) -> Vec<crate::codec::ir::IrCitation> {
-        self.citation_accum
-            .lock()
-            .ok()
-            .and_then(|mut map| map.remove(&index))
+        self.stream()
+            .citation_accum
+            .remove(&index)
             .map(|accum| accum.items)
             .unwrap_or_default()
     }
@@ -3029,41 +2847,36 @@ impl ResponsesWriter {
             return;
         }
         let added: usize = lps.iter().map(logprob_bytes).sum();
-        if let Ok(mut map) = self.logprob_accum.lock() {
-            match map.get_mut(&index) {
-                Some(entry) => {
-                    let held: usize = entry.iter().map(logprob_bytes).sum();
-                    if held.saturating_add(added) <= self.accum_byte_cap() {
-                        entry.extend_from_slice(lps);
-                    }
+        let cap = self.accum_byte_cap();
+        let map = &mut self.stream().logprob_accum;
+        match map.get_mut(&index) {
+            Some(entry) => {
+                let held: usize = entry.iter().map(logprob_bytes).sum();
+                if held.saturating_add(added) <= cap {
+                    entry.extend_from_slice(lps);
                 }
-                None => {
-                    if map.len() >= MAX_OPEN_TOOLS || added > self.accum_byte_cap() {
-                        return;
-                    }
-                    map.entry(index).or_default().extend_from_slice(lps);
+            }
+            None => {
+                if map.len() >= MAX_OPEN_TOOLS || added > cap {
+                    return;
                 }
+                map.entry(index).or_default().extend_from_slice(lps);
             }
         }
     }
 
     /// Remove and return the accumulated token logprobs for the message item at `index`.
     fn take_logprob_accum(&self, index: usize) -> Vec<crate::codec::ir::IrTokenLogprob> {
-        self.logprob_accum
-            .lock()
-            .ok()
-            .and_then(|mut map| map.remove(&index))
+        self.stream()
+            .logprob_accum
+            .remove(&index)
             .unwrap_or_default()
     }
 
     /// Remove and return the accumulated text for the message item at `index`. Returns an empty
     /// string if nothing was accumulated (a text block with no deltas, or a poisoned lock).
     fn take_text_accum(&self, index: usize) -> String {
-        self.text_accum
-            .lock()
-            .ok()
-            .and_then(|mut map| map.remove(&index))
-            .unwrap_or_default()
+        self.stream().text_accum.remove(&index).unwrap_or_default()
     }
 
     /// Record a FINALIZED `output[]` item at `index`, captured as the matching `BlockStop`
@@ -3071,9 +2884,7 @@ impl ResponsesWriter {
     /// fully assembled `output` array (keyed by index for stable order). Lock poisoning degrades to
     /// a no-op (that item is omitted from the terminal `output`) rather than panicking.
     fn record_output_item(&self, index: usize, item: serde_json::Value) {
-        if let Ok(mut map) = self.output_items.lock() {
-            map.insert(index, item);
-        }
+        self.stream().output_items.insert(index, item);
     }
 
     /// Drain the finalized `output[]` items into an index-ordered array for the terminal event.
@@ -3081,10 +2892,9 @@ impl ResponsesWriter {
     /// the order a native /v1/responses stream assembled them. A poisoned lock degrades to an empty
     /// array (the prior `[]` behavior) rather than panicking on the request path.
     fn drain_output_items(&self) -> Vec<serde_json::Value> {
-        self.output_items
-            .lock()
-            .map(|mut map| std::mem::take(&mut *map).into_values().collect())
-            .unwrap_or_default()
+        std::mem::take(&mut self.stream().output_items)
+            .into_values()
+            .collect()
     }
 
     /// Mark a TEXT message item open at `index` IF it is not already open and there is room under
@@ -3094,97 +2904,73 @@ impl ResponsesWriter {
     /// (skip the frames; bounds per-stream memory against a pathological backend). Lock poisoning
     /// degrades to false. Mirrors the cardinality discipline of the reader's `open_tools` cap.
     fn open_text_item(&self, index: usize) -> bool {
-        open_bounded(&self.open_text_indices, index)
+        open_bounded(&mut self.stream().open_text_indices, index)
     }
 
     /// IR-02: record that the text item at `index` is a refusal (its BlockStart said so).
     fn mark_refusal(&self, index: usize) {
-        if let Ok(mut set) = self.refusal_indices.lock() {
-            set.insert(index);
-        }
+        self.stream().refusal_indices.insert(index);
     }
 
     /// IR-02: whether the open text item at `index` is a refusal.
     fn is_refusal(&self, index: usize) -> bool {
-        self.refusal_indices
-            .lock()
-            .map(|set| set.contains(&index))
-            .unwrap_or(false)
+        self.stream().refusal_indices.contains(&index)
     }
 
     /// IR-02: forget and return whether the text item at `index` was a refusal (at its BlockStop).
     fn take_refusal(&self, index: usize) -> bool {
-        self.refusal_indices
-            .lock()
-            .map(|mut set| set.remove(&index))
-            .unwrap_or(false)
+        self.stream().refusal_indices.remove(&index)
     }
 
     /// Return true and forget `index` if a TEXT message item was open at it (so the matching
     /// `BlockStop` emits the text terminal frames for THIS index only). Returns false for a
     /// non-text index. Lock poisoning degrades to false.
     fn take_text_open(&self, index: usize) -> bool {
-        self.open_text_indices
-            .lock()
-            .map(|mut set| set.remove(&index))
-            .unwrap_or(false)
+        self.stream().open_text_indices.remove(&index)
     }
 
     /// Mark a REASONING item open at `index` IF not already open and under the cardinality cap,
     /// returning true when this call performed the open (so the caller emits the `output_item.added`
     /// typed "reasoning" exactly once). Mirrors `open_text_item`'s discipline. Lock poisoning → false.
     fn open_reasoning_item(&self, index: usize) -> bool {
-        open_bounded(&self.open_reasoning_indices, index)
+        open_bounded(&mut self.stream().open_reasoning_indices, index)
     }
 
     /// IR-17: remember that the reasoning item at `index` is a summary (`mark`), or ask whether it
     /// is. Lock poisoning degrades to "not a summary" (the pre-slot `content[]` shape).
     fn mark_summary_reasoning(&self, index: usize) {
-        if let Ok(mut set) = self.summary_reasoning_indices.lock() {
-            set.insert(index);
-        }
+        self.stream().summary_reasoning_indices.insert(index);
     }
 
     fn is_summary_reasoning(&self, index: usize) -> bool {
-        self.summary_reasoning_indices
-            .lock()
-            .map(|set| set.contains(&index))
-            .unwrap_or(false)
+        self.stream().summary_reasoning_indices.contains(&index)
     }
 
     fn take_summary_reasoning(&self, index: usize) -> bool {
-        self.summary_reasoning_indices
-            .lock()
-            .map(|mut set| set.remove(&index))
-            .unwrap_or(false)
+        self.stream().summary_reasoning_indices.remove(&index)
     }
 
     /// Return true and forget `index` if a REASONING item was open at it (so the matching `BlockStop`
     /// emits the reasoning terminal frame for THIS index only). False for a non-reasoning index. Lock
     /// poisoning degrades to false.
     fn take_reasoning_open(&self, index: usize) -> bool {
-        self.open_reasoning_indices
-            .lock()
-            .map(|mut set| set.remove(&index))
-            .unwrap_or(false)
+        self.stream().open_reasoning_indices.remove(&index)
     }
 
     /// Append a streamed reasoning-text fragment for the reasoning item at `index`. Lock
     /// poisoning degrades to a no-op (the terminal item then carries empty reasoning text).
     /// Bounded on both axes, as `append_text` is.
     fn append_reasoning(&self, index: usize, fragment: &str) {
-        if let Ok(mut map) = self.reasoning_accum.lock() {
-            append_capped(&mut map, index, fragment, self.accum_byte_cap());
-        }
+        let cap = self.accum_byte_cap();
+        append_capped(&mut self.stream().reasoning_accum, index, fragment, cap);
     }
 
     /// Remove and return the accumulated reasoning text for the item at `index`, or an empty string
     /// if none was accumulated (a poisoned lock or a signature-only Thinking block).
     fn take_reasoning_accum(&self, index: usize) -> String {
-        self.reasoning_accum
-            .lock()
-            .ok()
-            .and_then(|mut map| map.remove(&index))
+        self.stream()
+            .reasoning_accum
+            .remove(&index)
             .unwrap_or_default()
     }
 
@@ -3195,19 +2981,17 @@ impl ResponsesWriter {
         if fragment.is_empty() {
             return;
         }
-        if let Ok(mut map) = self.reasoning_sig_accum.lock() {
-            append_capped(&mut map, index, fragment, self.accum_byte_cap());
-        }
+        let cap = self.accum_byte_cap();
+        append_capped(&mut self.stream().reasoning_sig_accum, index, fragment, cap);
     }
 
     /// Remove and return the buffered signature for the reasoning item at `index`; `None` when the
     /// stream carried none (the item then has no `encrypted_content`, as a signature-less buffered
     /// Thinking block has none).
     fn take_reasoning_signature(&self, index: usize) -> Option<String> {
-        self.reasoning_sig_accum
-            .lock()
-            .ok()
-            .and_then(|mut map| map.remove(&index))
+        self.stream()
+            .reasoning_sig_accum
+            .remove(&index)
             .filter(|s| !s.is_empty())
     }
 
@@ -3224,13 +3008,11 @@ impl ResponsesWriter {
         prefix: &'static str,
         index: usize,
     ) -> String {
-        match self.item_ids.lock() {
-            Ok(mut map) => map
-                .entry((prefix, index))
-                .or_insert_with(|| synthesize_item_id(host, prefix))
-                .clone(),
-            Err(_) => synthesize_item_id(host, prefix),
-        }
+        self.stream()
+            .item_ids
+            .entry((prefix, index))
+            .or_insert_with(|| synthesize_item_id(host, prefix))
+            .clone()
     }
 }
 

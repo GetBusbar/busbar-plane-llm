@@ -91,7 +91,7 @@ use serde_json::Value;
 
 use crate::dialect::DIALECTS;
 use crate::exchange::arrive::{self, envelope_for, Arrived, Declined};
-use crate::exchange::attempt::{self, stream_intent, FarRequest};
+use crate::exchange::attempt::{self, stream_intent, FarRequest, StreamIntent};
 use crate::exchange::reply::{At, Fault, Piece, Reply, ReplyCtx, Units, Verdict};
 use crate::exchange::shaping::{sections, Shaping};
 use crate::exchange::webhook::{self, Webhooks};
@@ -475,6 +475,8 @@ struct UnitState {
     member: String,
     /// The request the current attempt wrote.
     request: Option<FarRequest>,
+    /// The caller's stream intent, read once per attempt off the request it was written from.
+    intent: StreamIntent,
     /// The current attempt's answer.
     reply: Option<Reply>,
     /// The clock at the attempt's start (monotonic nanoseconds).
@@ -506,6 +508,7 @@ impl UnitState {
             probe: false,
             member: String::new(),
             request: None,
+            intent: StreamIntent::default(),
             reply: None,
             started: None,
             far_status: 0,
@@ -1123,6 +1126,9 @@ fn attempt(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
             .and_then(|lane| probe::request(host, lane))
             .ok_or(None)
     } else if let Some(arrived) = &unit.arrived {
+        unit.intent = handler_of(arrived)
+            .map(|h| stream_intent(h, arrived.parsed.as_ref()))
+            .unwrap_or_default();
         let pool = String::from_utf8_lossy(piece.pool);
         let caller = unit.caller_fields();
         attempt::build(host, arrived, &caller, &unit.shaping, &pool, &unit.member).map_err(Some)
@@ -1186,9 +1192,7 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
     let ctx = ReplyCtx {
         arrived,
         lane,
-        intent: handler_of(arrived)
-            .map(|h| stream_intent(h, arrived.parsed.as_ref()))
-            .unwrap_or_default(),
+        intent: unit.intent,
         passthrough: piece.passthrough,
         translate_cap: unit.shaping.translate_cap(),
     };
@@ -1668,11 +1672,19 @@ slot!(
         if check_piece_in(input.from(), input.flags()).is_err() {
             return Outcome::Fault;
         }
-        // The unit leaves the map for the call, so its answer is computed with no lock held.
-        let Some(mut unit) = guard(&door.units).take(key) else {
+        // The unit leaves the map for the call (bound to the ticket its piece came on, under the
+        // same lock), so its answer is computed with no lock held.
+        let taken = {
+            let mut book = guard(&door.units);
+            let unit = book.take(key);
+            if unit.is_some() {
+                book.bind(input.head().ticket(), key);
+            }
+            unit
+        };
+        let Some(mut unit) = taken else {
             return Outcome::Fault;
         };
-        guard(&door.units).bind(input.head().ticket(), key);
         if unit.pending.is_none() {
             if input.from() == FROM_FAR_END && input.flags() & PIECE_FINAL != 0 {
                 unit.final_answer = true;

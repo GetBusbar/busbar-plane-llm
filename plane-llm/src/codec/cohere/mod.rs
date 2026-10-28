@@ -1077,7 +1077,14 @@ impl CohereReader {
     }
 }
 
+#[derive(Clone)]
 pub struct CohereWriter {
+    stream: StreamCell<CohereStream>,
+}
+
+/// A Cohere stream's per-stream state (see [`CohereWriter`]).
+#[derive(Clone)]
+struct CohereStream {
     /// IR block indices for which this writer emitted a `tool-call-start` frame. The IR
     /// `BlockStop` carries only the integer index (no block kind), but a native Cohere v2 stream
     /// closes a tool-call block with `tool-call-end` and a text-content block with `content-end`.
@@ -1086,28 +1093,23 @@ pub struct CohereWriter {
     /// content events from tool-call events by type mis-decoded the stream. Track
     /// the tool-call opens here so `BlockStop` emits `tool-call-end` for a tool index and
     /// `content-end` for a text (or any non-tool) index. Per-stream INSTANCE state, mirroring the
-    /// Responses writer's `open_tool_indices`: a `Mutex` keeps the writer `Sync` as the
-    /// `ProtocolWriter` trait requires, and a stream is single-threaded at any instant so
-    /// `Relaxed`-equivalent access is fine. Lock poisoning degrades to a no-op / `false` rather than
-    /// panicking on the request path.
-    open_tool_indices: std::sync::Mutex<std::collections::BTreeSet<usize>>,
+    /// Responses writer's `open_tool_indices`.
+    open_tool_indices: std::collections::BTreeSet<usize>,
     /// Per-stream set of text-block indices that emitted a `content-start` frame, so the matching
     /// `BlockStop` emits `content-end` ONLY for a block that actually opened. Cross-protocol blocks
     /// that carry no opening frame (redacted thinking / Image — see the `BlockStart` arm, which maps them to
     /// `None`) are never recorded here, so their `BlockStop` emits NOTHING rather than an orphan
     /// `content-end` with no matching `content-start`. Mirrors the Gemini writer's
-    /// no-frame-for-untracked-index behavior. Same `Mutex` / poison-degrades-to-no-op discipline as
-    /// `open_tool_indices`.
-    open_text_indices: std::sync::Mutex<std::collections::BTreeSet<usize>>,
+    /// no-frame-for-untracked-index behavior.
+    open_text_indices: std::collections::BTreeSet<usize>,
     /// THIS STREAM'S `id`, minted ONCE and replayed on every later `message-start`.
     ///
     /// A stream is not guaranteed to carry exactly one `MessageStart`: the Anthropic reader emits
     /// it 1:1 with the upstream frame rather than gating it, so a cohere-egress stream fed from an
     /// Anthropic ingress can see two. Without this cell the second synthesized a FRESH id, so one
     /// message announced itself twice under two different identities. A native Cohere stream's id
-    /// is fixed for the message, so the first one wins. Same `Mutex` / poison-degrades discipline
-    /// as the sets above.
-    stream_id: std::sync::Mutex<Option<String>>,
+    /// is fixed for the message, so the first one wins.
+    stream_id: Option<String>,
 }
 
 /// Value-namespace constructor for [`CohereWriter`]. A `const` and a struct may share a name (they
@@ -1125,36 +1127,12 @@ pub struct CohereWriter {
 #[allow(non_upper_case_globals)]
 #[allow(clippy::declare_interior_mutable_const)]
 pub const CohereWriter: CohereWriter = CohereWriter {
-    open_tool_indices: std::sync::Mutex::new(std::collections::BTreeSet::new()),
-    open_text_indices: std::sync::Mutex::new(std::collections::BTreeSet::new()),
-    stream_id: std::sync::Mutex::new(None),
+    stream: StreamCell::new(CohereStream {
+        open_tool_indices: std::collections::BTreeSet::new(),
+        open_text_indices: std::collections::BTreeSet::new(),
+        stream_id: None,
+    }),
 };
-
-impl Clone for CohereWriter {
-    fn clone(&self) -> Self {
-        // Carry the open-tool-index set across a clone so a mid-stream `Protocol::clone` keeps the
-        // in-flight tool-call open/close correlation; a poisoned lock degrades to an empty set
-        // rather than panicking on the request path.
-        CohereWriter {
-            open_tool_indices: std::sync::Mutex::new(
-                self.open_tool_indices
-                    .lock()
-                    .map(|set| set.clone())
-                    .unwrap_or_default(),
-            ),
-            open_text_indices: std::sync::Mutex::new(
-                self.open_text_indices
-                    .lock()
-                    .map(|set| set.clone())
-                    .unwrap_or_default(),
-            ),
-            // A mid-stream clone is still the SAME message, so it keeps the id already announced.
-            stream_id: std::sync::Mutex::new(
-                self.stream_id.lock().map(|id| id.clone()).unwrap_or(None),
-            ),
-        }
-    }
-}
 
 impl CohereWriter {
     /// THE STREAM'S `id`: the first one wins. Returns the id already captured for this stream if
@@ -1162,19 +1140,18 @@ impl CohereWriter {
     /// re-states the identity the client already has. Lock poisoning degrades to the freshly minted
     /// id rather than panicking on the request path.
     fn carried_stream_id(&self, mint: impl FnOnce() -> String) -> String {
-        match self.stream_id.lock() {
-            Ok(mut slot) => slot.get_or_insert_with(mint).clone(),
-            Err(_) => mint(),
-        }
+        self.stream
+            .lock()
+            .stream_id
+            .get_or_insert_with(mint)
+            .clone()
     }
 
     /// Record that a `tool-call-start` frame was emitted at IR block `index`, so the matching
     /// `BlockStop` closes it with `tool-call-end` rather than `content-end`. Lock poisoning degrades
     /// to a no-op rather than panicking on the request path.
     fn mark_tool_open(&self, index: usize) {
-        if let Ok(mut set) = self.open_tool_indices.lock() {
-            set.insert(index);
-        }
+        self.stream.lock().open_tool_indices.insert(index);
     }
 
     /// Return true and forget `index` if it was a previously-opened tool-call block; false if no
@@ -1182,10 +1159,7 @@ impl CohereWriter {
     /// `content-end`). Lock poisoning degrades to `false` (treat as a text close) rather than
     /// panicking on the request path.
     fn take_tool_open(&self, index: usize) -> bool {
-        self.open_tool_indices
-            .lock()
-            .map(|mut set| set.remove(&index))
-            .unwrap_or(false)
+        self.stream.lock().open_tool_indices.remove(&index)
     }
 
     /// Record that a `content-start` frame was emitted for text block `index`, so the matching
@@ -1193,9 +1167,7 @@ impl CohereWriter {
     /// (redacted thinking / Image) are never recorded, so their `BlockStop` stays silent. Lock poisoning
     /// degrades to a no-op rather than panicking on the request path.
     fn mark_text_open(&self, index: usize) {
-        if let Ok(mut set) = self.open_text_indices.lock() {
-            set.insert(index);
-        }
+        self.stream.lock().open_text_indices.insert(index);
     }
 
     /// Return true and forget `index` if a `content-start` was emitted for that text block; false if
@@ -1203,10 +1175,7 @@ impl CohereWriter {
     /// `BlockStop` must emit nothing). Lock poisoning degrades to `false` (emit nothing) rather than
     /// panicking on the request path.
     fn take_text_open(&self, index: usize) -> bool {
-        self.open_text_indices
-            .lock()
-            .map(|mut set| set.remove(&index))
-            .unwrap_or(false)
+        self.stream.lock().open_text_indices.remove(&index)
     }
 }
 
