@@ -16,14 +16,11 @@ use busbar_contract::protocol::{
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
 use busbar_contract::upstream::StatusClass;
-// G6 A4b: the wire-codec surface (ProtocolReader/Writer/Protocol/StreamFraming/ToolIdRemap/
-// protocol_for) relocated to this plugin's `proto_codec`; reach it RELATIVELY so it resolves both
-// standalone (crate::codec::proto_codec) and netted into core (core::proto::proto_codec).
+// Reached relatively so it resolves both standalone and netted into core; redundant with the
+// `busbar_contract::protocol::*` glob when netted.
 #[allow(unused_imports)]
-// used standalone; redundant with the `busbar_contract::protocol::*` glob when netted into core
 use super::proto_codec::*;
-// See the anthropic dialect for the rationale: an explicit import of the codec surface so it binds to
-// THIS crate's own `proto_codec` rather than the `busbar_contract::protocol::*` glob.
+// Named explicitly so it binds to this crate's `proto_codec` rather than the glob.
 #[allow(unused_imports)]
 use super::proto_codec::{Protocol, ProtocolReader, ProtocolWriter, StreamFraming};
 
@@ -45,19 +42,17 @@ use schema::*;
 use slots::*;
 use usage::*;
 
-/// The query pair a Gemini request carries to ask for its answer as event-framed chunks: the
-/// dialect's own wire parameter, written on the far-end stream path and read at arrival.
+/// The query pair a request carries to ask for event-framed chunks, written on the far-end stream
+/// path and read at arrival.
 pub const STREAM_QUERY: (&str, &str) = ("alt", "sse");
 
-/// Build this dialect's wire codec — the [`ProtocolDecl::codec`] constructor. A fresh instance per
-/// resolution, exactly as the registry's field doc requires.
+/// Build this dialect's wire codec (a fresh instance per resolution).
 pub fn protocol() -> Protocol {
     Protocol::new(COUNT_LABEL, GeminiReader, GeminiWriter)
 }
 
-/// The [`ProtocolDecl::models_list_envelope`] builder: Gemini's `GET /v1(beta)/models` shape. Each
-/// name becomes a Gemini `Model` resource (`models/{id}` resource name, and the two generation
-/// methods busbar serves for it), wrapped in the `{ "models": [...] }` envelope their SDK expects.
+/// Gemini's `GET /v1(beta)/models` envelope: `Model` resources (`models/{id}` and the two
+/// generation methods busbar serves) in `{ "models": [...] }`.
 fn models_list_envelope(names: &[&str]) -> serde_json::Value {
     let models: Vec<serde_json::Value> = names
         .iter()
@@ -72,11 +67,9 @@ fn models_list_envelope(names: &[&str]) -> serde_json::Value {
     serde_json::json!({ "models": models })
 }
 
-/// GEMINI'S ROUTER DETECTION — its rungs of the old `busbar-core` `protocol_id` ladder, stated here
-/// so core folds them without naming Gemini: the mandatory-unique `x-goog-api-key` header (rung 3,
-/// tighter than the shared path suffixes), then the `:{action}` path verbs (rung 5), then the
-/// `/v1{,beta}/models/` wildcard surface (rung 6). Strength values are the ladder POSITION (lower
-/// binds tighter); they are the single ladder shared with the sibling dialects' predicates.
+/// Router detection: the unique `x-goog-api-key` header (3, tighter than the shared path
+/// suffixes), then the `:{action}` path verbs (5), then the `/v1{,beta}/models/` wildcard
+/// surface (6). Lower strength binds tighter, on the ladder shared with the sibling dialects.
 fn claims(
     h: busbar_contract::protocol::HeadFields<'_>,
     path: &str,
@@ -99,10 +92,9 @@ fn claims(
     None
 }
 
-/// The Gemini ACTION suffixes the RESIDUAL classifier recognises on the shared `/v1/models/{id}`
-/// surface — DISTINCT from the router's `:{verb}` set above (this is the drop-through error-envelope
-/// question, not the routing one): a `/v1/models/{id}` whose last segment ends in one of these is
-/// Gemini; any other colon-bearing id (an OpenAI fine-tune) is not, and falls to the OpenAI residual.
+/// The action suffixes the residual classifier recognises on the shared `/v1/models/{id}` surface,
+/// distinct from the router's `:{verb}` set: a last segment ending in one is Gemini; any other
+/// colon-bearing id (an OpenAI fine-tune) falls to the OpenAI residual.
 const GEMINI_RESIDUAL_ACTIONS: [&str; 7] = [
     ":generateContent",
     ":streamGenerateContent",
@@ -113,10 +105,8 @@ const GEMINI_RESIDUAL_ACTIONS: [&str; 7] = [
     ":batchEmbedContents",
 ];
 
-/// GEMINI'S RESIDUAL DETECTION — its arm of the headerless `residual_dialect_for_path` ladder: the
-/// whole `/v1beta/models…` surface is Gemini-only (rung 10), and a `/v1/models/{id}` whose last
-/// segment carries a genuine Gemini action suffix is Gemini (rung 20, tighter than the OpenAI
-/// `/v1/models/` catch at rung 25).
+/// Headerless detection: the whole `/v1beta/models…` surface is Gemini-only (10), and a
+/// `/v1/models/{id}` with a genuine action suffix is Gemini (20, tighter than OpenAI's catch at 25).
 fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrength> {
     use busbar_contract::protocol::ClaimStrength;
     if path.starts_with("/v1beta/models") {
@@ -134,9 +124,8 @@ fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrengt
     None
 }
 
-/// GEMINI'S DECLARATION. The only protocol declaring an array-stream shim key, and the reason that
-/// key is a DECLARATION rather than a literal in the agnostic strip: `proxy` removes every declared
-/// shim key without naming one.
+/// Gemini's protocol declaration: the only one declaring an array-stream shim key, which `proxy`
+/// removes by declaration without naming one.
 pub const DECL: ProtocolDecl = ProtocolDecl {
     name: COUNT_LABEL,
     codec: dialect_codec!(COUNT_LABEL),
@@ -151,24 +140,17 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     head_keys: super::proto_codec::LLM_CHAT_HEAD_KEYS,
     streaming_content_type: Some(busbar_contract::protocol::TEXT_EVENT_STREAM),
     array_stream_shim_key: Some(GEMINI_JSON_ARRAY_SHIM_KEY),
-    // Gemini carries NO tool id on the wire (it correlates `functionCall`s by name), so there is
-    // nothing to reshape and no risk of a foreign id leaking to a Gemini client.
+    // No tool id on the wire (`functionCall`s correlate by name): nothing to reshape.
     native_tool_id_prefix: None,
     ingress_auth: IngressAuth::Bearer,
-    // Gemini's native credential is the raw key in a custom `x-goog-api-key` header (no Bearer) —
-    // Declared here as data: the kernel's egress-auth unit presents the lane
-    // credential under it (lane-constant, so the boot path prebuilds it), and the key never passes
-    // through this plane.
+    // The credential is the raw key in a custom `x-goog-api-key` header (no Bearer), lane-constant.
     egress_auth_headers: None,
     egress_auth_lane_constant: false,
     egress_scheme: Some(EgressScheme::header(FIELD_X_GOOG_API_KEY)),
-    // THE MODEL IS IN THE URL (`/v1beta/models/{model}:generateContent`): this dialect registers its
-    // arrival (`busbar_kernel::ingress::gemini_arrival`) through `busbar_llm::PATH_INGRESS`, which the
-    // composition root hands to the core side-table. `has_model_in_url: true` below is what the boot
-    // parity assert pairs with that registration; the arrival is no longer a field on this decl (it
-    // named the core-only `Arrival`, which `ProtocolDecl`'s substrate home cannot).
+    // The model is in the URL (`/v1beta/models/{model}:generateContent`); the dialect registers its
+    // arrival through `PATH_INGRESS`, and `has_model_in_url: true` below is what the boot parity
+    // assert pairs with that registration.
     stream_usage_requires_opt_in: false,
-    // ── Promoted writer facts (G6 step A1): the same constants the `GeminiWriter` methods returned.
     requires_max_tokens: false,
     stop_sequence_cap: Some((5, "Gemini")),
     cache_markers_model_gated: false,
@@ -180,11 +162,9 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     ingress_is_eventstream: false,
     emits_sse_done_terminator: false,
     max_citations_per_delta: None,
-    // Google GenAI SDK UA. RELEASE OBLIGATION: re-verify/bump per release;
-    // `test_egress_ua_versions_are_pinned_and_present` guards drift.
-    // The plane writes this on a translated route into this dialect, on a
-    // same-dialect route whose caller sent no user-agent, and on the
-    // kernel-originated health probe; a same-dialect caller's own user-agent replaces it.
+    // Google GenAI SDK UA. Re-verify per release (`test_egress_ua_versions_are_pinned_and_present`
+    // guards drift). Written on a translated route, on a same-dialect route whose caller sent no
+    // user-agent, and on the health probe; a same-dialect caller's own user-agent replaces it.
     egress_user_agent: "google-genai-sdk/0.8.0 gl-python/3.11",
     has_model_in_url: true,
     auth_failure_status_and_kind: (
@@ -202,13 +182,13 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     residual_claims: Some(residual_claims),
     residual_default: false,
     vendor_response_metadata: Some(vendor_response_metadata),
-    // The Gemini SDK sends `x-goog-api-key`; its presence disambiguates the shared list-models
-    // surface as Gemini (the `/v1beta` path is handled by the detection fold, not this header set).
+    // The SDK's `x-goog-api-key` disambiguates the shared list-models surface (`/v1beta` is
+    // handled by the detection fold).
     list_models_fingerprint_headers: &[FIELD_X_GOOG_API_KEY],
     static_headers: &[],
 };
 
-/// This dialect's registration (its one line is in `crate::codec::DIALECTS`).
+/// This dialect's registration (listed in `crate::codec::DIALECTS`).
 pub(crate) const ENTRY: super::proto_codec::DialectEntry = super::proto_codec::DialectEntry {
     decl: &DECL,
     protocol,
@@ -220,10 +200,9 @@ pub(crate) const ENTRY: super::proto_codec::DialectEntry = super::proto_codec::D
     leaf: &handler::LEAF,
 };
 
-/// GEMINI'S RESPONSE-side untranslatable metadata: `safetyRatings` (Google's own harm-category
-/// vocabulary) live under `candidates[].safetyRatings`, present only when the request asked for them.
-/// Reported so the cross-protocol seam can LOG that they were dropped — no other protocol can carry
-/// them. The nested `candidates[]` lookup is Gemini's own shape and stays here, off core.
+/// Response-side untranslatable metadata: `safetyRatings` (Google's harm-category vocabulary) under
+/// `candidates[].safetyRatings`, present only when asked for. Reported so the cross-protocol seam
+/// logs the drop; no other protocol can carry them.
 fn vendor_response_metadata(body: &serde_json::Value) -> Vec<&'static str> {
     // Named by wire path, as the drop path reports it.
     [(FIELD_SAFETY_RATINGS, "candidates[].safetyRatings")]
@@ -237,7 +216,6 @@ fn vendor_response_metadata(body: &serde_json::Value) -> Vec<&'static str> {
         .collect()
 }
 
-/// The wire word `responseJsonSchema`.
 const FIELD_RESPONSE_JSON_SCHEMA: &str = "responseJsonSchema";
 
 /// The part kinds the request reader models; a `thought` part is a text part.
@@ -252,9 +230,9 @@ const REQUEST_PART_KINDS: &[&str] = &[
 /// The members a part carries beside its kind.
 const PART_COMPANIONS: &[&str] = &[FIELD_THOUGHT, FIELD_THOUGHT_SIGNATURE];
 
-/// The Gemini request content grammar (`codec::drops`): a union keyed by its kind member. A part of
-/// any other kind (the code-interpreter's `executableCode` / `codeExecutionResult`) does not cross
-/// a translate attempt, which names it.
+/// The request content grammar (`codec::drops`): a union keyed by its kind member. A part of any
+/// other kind (the code-interpreter's `executableCode` / `codeExecutionResult`) does not cross a
+/// translate attempt.
 const REQUEST_BLOCKS: &[crate::codec::drops::Blocks] = &[
     crate::codec::drops::Blocks {
         at: &["contents[]", "parts[]"],
@@ -270,7 +248,6 @@ const REQUEST_BLOCKS: &[crate::codec::drops::Blocks] = &[
     },
 ];
 
-/// The Gemini answer content grammar.
 /// How this dialect spells each IR content-block kind (a dropped block's warn names it so).
 const IR_BLOCK_KINDS: &[(&str, &str)] = &[
     (crate::codec::drops::kind::TEXT, keys::TEXT),
@@ -308,6 +285,7 @@ const REQUEST_CODE_NAMES: &[(&str, &str)] = &[
     ),
 ];
 
+/// The answer content grammar.
 const RESPONSE_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::Blocks {
     at: &["candidates[]", "content", "parts[]"],
     tag: None,
@@ -357,12 +335,12 @@ const PARKED: &[crate::codec::drops::Parked] = &[
     },
 ];
 
-/// What this dialect's answers carry beyond its map file's rows (the drop walk, design F3 "Drops").
-// The per-modality output split is read into the usage detail. A stream frame is an answer.
+/// What this dialect's answers carry beyond its map file's rows. The per-modality output split is
+/// read into the usage detail. A stream frame is an answer.
 const RESPONSE_CODE: &[&str] = &["usageMetadata.candidatesTokensDetails"];
 
-/// The answer paths INSIDE a subtree this dialect carries that its code does not carry, named by the
-/// drop walk (the paths that a coarse map row covers).
+/// Answer paths inside a subtree this dialect carries that its code does not, named by the drop
+/// walk (paths a coarse map row covers).
 const RESPONSE_DROPS: &[&str] = &[
     "candidates[].citationMetadata.citationSources[].license",
     "candidates[].content.parts[].audioTranscription",
@@ -397,86 +375,65 @@ const RESPONSE_DROPS: &[&str] = &[
     "candidates[].logprobsResult.topCandidates[].candidates[].tokenId",
 ];
 
-/// Router-internal shim key the gemini ingress route injects into the request body when the client
-/// sent a streaming `:streamGenerateContent` request WITHOUT `?alt=sse` (so the response must be the
-/// JSON-array streaming format, not SSE). It rides alongside the `model`/`stream` shims. Single
-/// source of truth shared by the route injection (`ingress`), the forward-layer strip
-/// (`proxy::strip_router_shim_keys`), and the Gemini reader's `modeled_keys` exclusion so it never
-/// reaches a backend on any path. A leading `__busbar` makes a collision with a real provider field
-/// impossible. Defined here and referenced at this owning path, so the route/forward sites reach it
-/// via `super::gemini::GEMINI_JSON_ARRAY_SHIM_KEY`.
+/// Router-internal shim key the Gemini ingress route injects when the client sent a streaming
+/// `:streamGenerateContent` request without `?alt=sse` (the response must be the JSON-array
+/// streaming format, not SSE). One source shared by the route injection, the forward-layer strip
+/// (`proxy::strip_router_shim_keys`) and the reader's `modeled_keys` exclusion, so it never reaches
+/// a backend. The `__busbar` prefix cannot collide with a real provider field.
 pub const GEMINI_JSON_ARRAY_SHIM_KEY: &str = "__busbar_gemini_json_array";
 
-/// The canonical Gemini bad-API-key message text (`google.rpc.Status.message` a real Generative
-/// Language API 400/INVALID_ARGUMENT carries on an invalid key). Single-sourced here: the auth-failure
-/// path returns it via `GeminiWriter::auth_failure_message`, and `write_error` matches on it to gate
-/// the `details[].reason == "API_KEY_INVALID"` ErrorInfo array onto exactly that bad-key 400.
+/// The canonical bad-API-key message (`google.rpc.Status.message` on a 400/INVALID_ARGUMENT). The
+/// auth-failure path returns it via `GeminiWriter::auth_failure_message`, and `write_error` matches
+/// on it to gate the `details[].reason == "API_KEY_INVALID"` ErrorInfo onto exactly that 400.
 pub const GEMINI_BAD_KEY_MESSAGE: &str = "API key not valid. Please pass a valid API key.";
 
-/// Hard cap on the number of distinct tool-call block indices recorded in `state.open_tools` for a
-/// single Gemini SSE stream. The set is drained on either of the stream's TWO terminal paths — a
-/// `finishReason` chunk (the normal candidate-terminated close) or a mid-stream prompt-block envelope
-/// (`candidates_absent` + `promptFeedback.blockReason`, which also closes every open block before its
-/// terminal `MessageDelta`/`MessageStop`) — so a hostile or buggy upstream that streams an unbounded
-/// run of `functionCall` parts WITHOUT ever reaching either terminal path would grow it without
-/// bound — one inserted index per part — until the process is OOM-killed. No legitimate Gemini
-/// response approaches this many parallel tool calls in a single turn; past the cap we stop both
-/// recording new tool frames and emitting their BlockStart/BlockDelta events, so per-request heap
-/// stays bounded. The cap leaves every realistic stream untouched. Mirrors the Cohere reader's
-/// `MAX_TRACKED_TOOL_FRAMES`.
+/// Cap on distinct tool-call block indices recorded in `state.open_tools` for one SSE stream. The
+/// set drains on either terminal path (a `finishReason` chunk, or a mid-stream prompt-block
+/// envelope), so an upstream streaming an unbounded run of `functionCall` parts without reaching
+/// one would grow it until OOM. Past the cap, new tool frames stop being recorded and their
+/// BlockStart/BlockDelta events are not emitted. No legitimate turn approaches it. Mirrors the
+/// Cohere reader's `MAX_TRACKED_TOOL_FRAMES`.
 const MAX_GEMINI_TOOL_FRAMES: usize = 4096;
 
-// ── finishReason value tokens ─────────────────────────────────────────────────
-/// Gemini `FinishReason.STOP` — normal/tool-call end.
+// finishReason value tokens.
 const GEMINI_FINISH_STOP: &str = "STOP";
-/// Gemini `FinishReason.MAX_TOKENS` — output truncated by token cap.
 const GEMINI_FINISH_MAX_TOKENS: &str = "MAX_TOKENS";
-/// Gemini `FinishReason.SAFETY` — content-safety stop.
 const GEMINI_FINISH_SAFETY: &str = "SAFETY";
-/// Gemini `FinishReason.OTHER` — unenumerated stop reason.
 const GEMINI_FINISH_OTHER: &str = "OTHER";
-/// Gemini `FinishReason.MALFORMED_FUNCTION_CALL` — model produced an unparseable tool call.
+/// The model produced an unparseable tool call.
 const GEMINI_FINISH_MALFORMED_FUNCTION_CALL: &str = "MALFORMED_FUNCTION_CALL";
-/// Gemini `FinishReason.RECITATION` — verbatim recitation stop (maps to `safety` in the IR).
+/// Verbatim recitation stop (maps to `safety` in the IR).
 const GEMINI_FINISH_RECITATION: &str = "RECITATION";
-/// Gemini `FinishReason.PROHIBITED_CONTENT` — content-policy block (maps to `safety`).
+/// Content-policy block (maps to `safety`).
 const GEMINI_FINISH_PROHIBITED_CONTENT: &str = "PROHIBITED_CONTENT";
 
-/// Upstream URL path prefix shared by all Gemini Generative Language API endpoints. The
-/// per-request path appends `/{model}:{method}` (and optionally `?alt=sse`) via
-/// `upstream_path_for` / `upstream_path_for_stream`. Single source of truth for the four
-/// sites that previously hard-coded the string literal.
+/// Upstream URL path prefix shared by all Generative Language API endpoints; the per-request path
+/// appends `/{model}:{method}` (and optionally `?alt=sse`) via `upstream_path_for` /
+/// `upstream_path_for_stream`.
 const GEMINI_PATH_BASE: &str = "/v1beta/models";
 
-// ── usageMetadata field names ─────────────────────────────────────────────────
-/// JSON key for Gemini's top-level usage wrapper (`usageMetadata`).
+// usageMetadata field names.
 const FIELD_USAGE_METADATA: &str = "usageMetadata";
-/// JSON key for the prompt (input) token count inside `usageMetadata`.
 const FIELD_PROMPT_TOKEN_COUNT: &str = "promptTokenCount";
-/// JSON key for the candidates (output) token count inside `usageMetadata`.
 const FIELD_CANDIDATES_TOKEN_COUNT: &str = "candidatesTokenCount";
-/// JSON key for the total token count inside `usageMetadata`.
 const FIELD_TOTAL_TOKEN_COUNT: &str = "totalTokenCount";
-/// JSON key for the THINKING (reasoning) token count inside `usageMetadata`. Reported by the
-/// 2.5-series models and, unlike OpenAI's `reasoning_tokens`, it is NOT a subset of the visible
-/// output count — Google reports it as a separate ADDITIVE term. See
-/// [`GEMINI_USAGE_ADDITIVE_TERMS`] for the full identity, which was MEASURED rather than read.
+/// Thinking (reasoning) token count, reported by the 2.5-series models. Unlike OpenAI's
+/// `reasoning_tokens` it is not a subset of the visible output count but a separate additive term
+/// (see [`GEMINI_USAGE_ADDITIVE_TERMS`]).
 const FIELD_THOUGHTS_TOKEN_COUNT: &str = "thoughtsTokenCount";
-/// JSON key for the context-cache token count inside `usageMetadata`.
 const FIELD_CACHED_CONTENT_TOKEN_COUNT: &str = "cachedContentTokenCount";
-/// JSON key for the server-side tool-use prompt tokens inside `usageMetadata`. Despite the name,
-/// this is NOT a slice of `promptTokenCount` but a FOURTH ADDITIVE TERM beside it, charged at the
-/// input rate and billed as such since 1.6.0 — see [`GEMINI_USAGE_ADDITIVE_TERMS`].
+/// Server-side tool-use prompt tokens. Despite the name this is not a slice of `promptTokenCount`
+/// but a fourth additive term beside it, billed at the input rate (see
+/// [`GEMINI_USAGE_ADDITIVE_TERMS`]).
 const FIELD_TOOL_USE_PROMPT_TOKEN_COUNT: &str = "toolUsePromptTokenCount";
-/// JSON key for the billing-lane marker inside `usageMetadata` (`ON_DEMAND` / `PROVISIONED`).
-/// INFORMATIONAL, not billed — see [`crate::codec::ir::types::IrUsageDetail::traffic_type`]. Undeclared by
-/// the pinned generativelanguage discovery document (it describes the Gemini API surface; this is
-/// the Vertex one) — carried in the IR
-/// rather than left as a silent drop.
+/// Billing-lane marker (`ON_DEMAND` / `PROVISIONED`): informational, not billed (see
+/// [`crate::codec::ir::types::IrUsageDetail::traffic_type`]). The pinned generativelanguage
+/// discovery document does not declare it (it is the Vertex surface); it is carried in the IR
+/// rather than silently dropped.
 const FIELD_TRAFFIC_TYPE: &str = "trafficType";
 
-/// THE MEASURED GEMINI USAGE IDENTITY — the four counters inside `usageMetadata` that are ADDITIVE
-/// terms of `totalTokenCount`:
+/// The measured Gemini usage identity: the four `usageMetadata` counters that are additive terms
+/// of `totalTokenCount`:
 ///
 /// ```text
 /// totalTokenCount == promptTokenCount
@@ -486,29 +443,24 @@ const FIELD_TRAFFIC_TYPE: &str = "trafficType";
 /// ```
 ///
 /// This table is data, derived from seven real Vertex AI `gemini-2.5-flash` turns committed under
-/// `src/tests/proto/golden/vendor/` (see that directory's README for the per-recording numbers).
-/// `gemini_usage_identity_tests.rs` replays every one of them through the real decoder, so changing
-/// this list without a recording that supports the change turns the corpus red.
+/// `src/tests/proto/golden/vendor/` (see its README). `gemini_usage_identity_tests.rs` replays each
+/// through the real decoder, so changing this list without a supporting recording turns the corpus
+/// red.
 ///
-/// It had to be measured. Two of the four terms were ambiguous from the published spec, and the
-/// sum identity differs depending on the answer:
+/// Two terms were ambiguous in the published spec:
 ///
-/// * `thoughtsTokenCount` — additive. Not a slice of `candidatesTokenCount`.
-/// * `toolUsePromptTokenCount` — additive. The grounding recording settles it with no
-///   interpretation required: `toolUsePromptTokenCount` is **32** while the whole
-///   `promptTokenCount` is **18**. A sub-bucket cannot exceed its bucket.
+/// * `thoughtsTokenCount` is additive, not a slice of `candidatesTokenCount`.
+/// * `toolUsePromptTokenCount` is additive: the grounding recording has it at **32** while the
+///   whole `promptTokenCount` is **18**, and a sub-bucket cannot exceed its bucket.
 ///
-/// All four terms are billed: `gemini_usage` adds the tool-use term to `input_tokens` (Google
-/// charges it at the input rate) and `GeminiReader::recover_truncated_usage` does the same for a
-/// response too large to reassemble; otherwise a Gemini turn that used a server-side tool would be
-/// under-counted by exactly `toolUsePromptTokenCount` (32 of 222 tokens on the recording above).
+/// All four are billed: `gemini_usage` adds the tool-use term to `input_tokens` (Google charges it
+/// at the input rate), as does `GeminiReader::recover_truncated_usage` for a response too large to
+/// reassemble; otherwise a server-side-tool turn is under-counted by exactly that term.
 ///
-/// This table is also the guard. [`gemini_usage_identity_note`] is a discrepancy metric over
-/// `totalTokenCount`: it fires when Google's stated total cannot be reached from this table, i.e.
-/// when Google is reporting a counter this dialect does not model yet. The gap is ledgered by the
-/// plane as the open class `unitemized_tokens` (money = the plane's ledger lines x the rate card)
-/// and the WARN names it; no itemized class absorbs it, and a recurring gap is fixed by a new itemized term
-/// backed by the wire lock.
+/// This table is also the guard. [`gemini_usage_identity_note`] fires when Google's stated total
+/// cannot be reached from it, i.e. Google reports a counter this dialect does not yet model. The
+/// gap is ledgered as the open class `unitemized_tokens` and the WARN names it; a recurring gap is
+/// fixed by a new itemized term backed by the wire lock.
 const GEMINI_USAGE_ADDITIVE_TERMS: &[&str] = &[
     FIELD_PROMPT_TOKEN_COUNT,
     FIELD_CANDIDATES_TOKEN_COUNT,
@@ -516,8 +468,8 @@ const GEMINI_USAGE_ADDITIVE_TERMS: &[&str] = &[
     FIELD_TOOL_USE_PROMPT_TOKEN_COUNT,
 ];
 
-/// Stable identifier for the identity [`gemini_usage_identity_note`] checks, carried on
-/// [`crate::codec::ir::UsageIdentityNote::identity`] so callers branch on a constant, not on prose.
+/// Stable identifier of the identity [`gemini_usage_identity_note`] checks, carried on
+/// [`crate::codec::ir::UsageIdentityNote::identity`].
 const GEMINI_USAGE_IDENTITY: &str = "gemini.usageMetadata";
 
 /// The sum of [`GEMINI_USAGE_ADDITIVE_TERMS`] on one `usageMetadata` object (absent terms are zero).
@@ -531,51 +483,45 @@ fn additive_sum(u: &serde_json::Value) -> Option<u64> {
         .ok()
 }
 
-/// Cross-check what busbar will BILL for this turn against the total Google itself stated, and
-/// report a disagreement instead of hiding one.
+/// Cross-check what busbar bills for this turn against the total Google stated, reporting a
+/// disagreement instead of hiding one.
 ///
-/// `summed_total` is the sum of every term in [`GEMINI_USAGE_ADDITIVE_TERMS`] — what the usage table
-/// folds into the turn's totals since 1.6.0 — so that figure IS the sum of the modelled terms and this
-/// check is a DATA-DRIVEN DISCREPANCY METRIC over `totalTokenCount`: it can only fire when Google's
-/// stated total cannot be reached from the table — a counter this dialect does not model at all, or
-/// a term whose meaning has changed. Either way the answer is a new recording and a table entry, not
-/// an adjustment here. `wire_sum`/`unmodelled_term` on the log line say which of the two it is: the
-/// table failing to close against the total is the "new counter on the wire" signal, while a gap
-/// that appears only against `billed` means the normalization (cache subtraction) moved the money.
+/// `summed_total` is the sum of every term in [`GEMINI_USAGE_ADDITIVE_TERMS`], which the usage table
+/// folds into the turn's totals, so this is a discrepancy metric over `totalTokenCount`: it fires
+/// only when Google's total cannot be reached from the table (a counter this dialect does not model,
+/// or a term whose meaning changed). The answer is then a new recording and table entry, not an
+/// adjustment here. `wire_sum`/`unmodelled_term` on the log line say which: a table that fails to
+/// close is the "new counter on the wire" signal, while a gap only against `billed` means the
+/// normalization (cache subtraction) moved the money.
 ///
-/// Returns `None` in the ordinary case — no `totalTokenCount` on the block (Gemini omits the
-/// counters entirely on the early SSE frames, which carry a `usageMetadata` object with nothing in
-/// it), or the billed figure already matches Google's total.
+/// `None` in the ordinary case: no `totalTokenCount` on the block (early SSE frames carry an empty
+/// `usageMetadata`), or the figures already match.
 ///
-/// Nothing is zeroed, clamped or back-filled. The buckets stay exactly as Google itemized them; a
-/// total above their sum is the open class `unitemized_tokens` (`IrUsage::to_token_usage`: a
-/// reported unit is a ledger line, priced by the ratecard), and this note plus its
-/// WARN say where the remainder came from.
+/// Nothing is zeroed, clamped or back-filled. The buckets stay as Google itemized them; a total
+/// above their sum is the open class `unitemized_tokens` (`IrUsage::to_token_usage`), and this note
+/// plus its WARN say where the remainder came from.
 fn gemini_usage_identity_note(
     u: Option<&serde_json::Value>,
 ) -> Option<crate::codec::ir::UsageIdentityNote> {
     let u = u?;
-    // ABSENT is not ZERO. A `usageMetadata` that states no total states nothing to check against;
-    // treating a missing total as 0 would report every ordinary streaming frame as a discrepancy.
+    // Absent is not zero: no stated total means nothing to check, and 0 would flag every ordinary
+    // streaming frame.
     let reported_total = u.get(FIELD_TOTAL_TOKEN_COUNT).and_then(read_count_u64)?;
-    // What busbar counts for this turn: every additive term of the table below, which is exactly
-    // what the usage table folds into `input_tokens + cache_read_input_tokens + output_tokens`.
+    // What busbar counts: every additive term, exactly what the usage table folds into
+    // `input_tokens + cache_read_input_tokens + output_tokens`.
     let summed_total = additive_sum(u)?;
     if summed_total == reported_total {
         return None;
     }
     let unaccounted = i64::try_from(reported_total).unwrap_or(i64::MAX)
         - i64::try_from(summed_total).unwrap_or(i64::MAX);
-    // WHICH KIND OF SHORTFALL IS THIS? Sum the terms busbar KNOWS are additive, straight from the
-    // const table. If that sum does NOT close against Google's total, Google is reporting a counter
-    // this dialect does not model at all and the table needs a new entry backed by a new recording —
-    // that is the case this metric exists for. If it DOES close while `billed` still disagrees, the
-    // gap is in the normalization rather than on the wire (e.g. an upstream that reports more cached
-    // tokens than prompt tokens). The two demand completely different responses, so an operator
-    // reading this line should not have to guess which one they are looking at.
+    // Which kind of shortfall is this? If the const table's sum does not close against Google's
+    // total, Google reports a counter this dialect does not model and the table needs a new entry
+    // backed by a recording. If it does close while `billed` disagrees, the gap is in normalization
+    // (e.g. more cached tokens than prompt tokens). The responses differ, so the log line says which.
     //
-    // Read through `billed_count`, the same seam the billed terms were read through: the caller has
-    // already refused an unreadable term, so every term here is a count or absent (zero).
+    // Read through `billed_count`, as the billed terms were: the caller already refused an
+    // unreadable term, so each is a count or absent (zero).
     let wire_sum = summed_total;
     let unmodelled_term = wire_sum != reported_total;
     tracing::warn!(
@@ -600,173 +546,97 @@ fn gemini_usage_identity_note(
     })
 }
 
-// ── response identity field names ─────────────────────────────────────────────
-/// JSON key for the opaque response identifier emitted at the top level.
+// Response identity field names: the opaque `responseId` and the serving `modelVersion`.
 const FIELD_RESPONSE_ID: &str = "responseId";
-/// JSON key for the serving model name emitted at the top level.
 const FIELD_MODEL_VERSION: &str = "modelVersion";
-/// JSON key for the RFC3339 response-creation timestamp Vertex stamps at the top level of every
-/// `GenerateContentResponse`. Undeclared by the pinned generativelanguage discovery document for
-/// the same reason [`FIELD_TRAFFIC_TYPE`] is (Vertex-only surface) — carried in the IR.
-/// See [`crate::codec::ir::types::IrResponse::create_time`].
+/// The RFC3339 creation timestamp Vertex stamps on every `GenerateContentResponse`; undeclared by
+/// the pinned discovery document for the same reason as [`FIELD_TRAFFIC_TYPE`], and carried in the
+/// IR (see [`crate::codec::ir::types::IrResponse::create_time`]).
 const FIELD_CREATE_TIME: &str = "createTime";
 
-/// Read Gemini/Vertex's top-level `createTime` off a response body, verbatim (no reformatting — a
-/// foreign timestamp parser could reject a Vertex-specific precision/zone quirk this codec has no
-/// need to understand). `None` when the body carries no such field (every non-Vertex Gemini
-/// response, and every non-Gemini protocol).
+/// Read the top-level `createTime` verbatim: a foreign timestamp parser could reject a Vertex
+/// precision or zone quirk. `None` when absent (every non-Vertex response).
 fn read_gemini_create_time(body: &serde_json::Value) -> Option<String> {
     body.get(FIELD_CREATE_TIME)
         .and_then(|v| v.as_str())
         .map(str::to_string)
 }
 
-// ── gRPC / google.rpc.Code status name tokens ────────────────────────────────
-/// google.rpc.Code name for a malformed/bad-argument request.
+// google.rpc.Code status name tokens.
 const GRPC_INVALID_ARGUMENT: &str = "INVALID_ARGUMENT";
-/// google.rpc.Code name for a quota/rate-limit failure.
 const GRPC_RESOURCE_EXHAUSTED: &str = "RESOURCE_EXHAUSTED";
-/// google.rpc.Code name for a service-overload / temporarily unavailable failure.
 const GRPC_UNAVAILABLE: &str = "UNAVAILABLE";
-/// google.rpc.Code name for a missing or invalid credential.
 const GRPC_UNAUTHENTICATED: &str = "UNAUTHENTICATED";
-/// google.rpc.Code name for a permission / billing failure.
 const GRPC_PERMISSION_DENIED: &str = "PERMISSION_DENIED";
 
-// ── WIRE WORDS this dialect speaks more than once: one spelling each ──
-/// The wire word `allowedFunctionNames`.
+// Wire words this dialect speaks more than once: one spelling each.
 const FIELD_ALLOWED_FUNCTION_NAMES: &str = "allowedFunctionNames";
-/// The wire word `args`.
 const FIELD_ARGS: &str = "args";
-/// The wire word `aspectRatio`.
 const FIELD_ASPECT_RATIO: &str = "aspectRatio";
-/// The wire word `bytesBase64Encoded`.
 const FIELD_BYTES_BASE64_ENCODED: &str = "bytesBase64Encoded";
-/// The wire word `candidates`.
 const FIELD_CANDIDATES: &str = "candidates";
-/// The wire word `chosenCandidates`.
 const FIELD_CHOSEN_CANDIDATES: &str = "chosenCandidates";
-/// The wire word `citationMetadata`.
 const FIELD_CITATION_METADATA: &str = "citationMetadata";
-/// The wire word `citationSources`.
 const FIELD_CITATION_SOURCES: &str = "citationSources";
-/// The wire word `contents`.
 const FIELD_CONTENTS: &str = "contents";
-/// The wire word `details`.
 const FIELD_DETAILS: &str = "details";
-/// The wire word `endIndex`.
 const FIELD_END_INDEX: &str = "endIndex";
-/// The wire word `fileData`.
 const FIELD_FILE_DATA: &str = "fileData";
-/// The wire word `fileUri`.
 const FIELD_FILE_URI: &str = "fileUri";
-/// The wire word `functionCallingConfig`.
 const FIELD_FUNCTION_CALLING_CONFIG: &str = "functionCallingConfig";
-/// The wire word `functionDeclarations`.
 const FIELD_FUNCTION_DECLARATIONS: &str = "functionDeclarations";
-/// The wire word `functionResponse`.
 const FIELD_FUNCTION_RESPONSE: &str = "functionResponse";
-/// The wire word `generateContent`.
 const FIELD_GENERATE_CONTENT: &str = "generateContent";
-/// The wire word `generationConfig`.
 const FIELD_GENERATION_CONFIG: &str = "generationConfig";
-/// The wire word `guidanceScale`.
 const FIELD_GUIDANCE_SCALE: &str = "guidanceScale";
-/// The wire word `inline_data`.
 const FIELD_INLINE_DATA_SNAKE: &str = "inline_data";
-/// The wire word `inlineData`.
 const FIELD_INLINE_DATA: &str = "inlineData";
-/// The wire word `labels`.
 const FIELD_LABELS: &str = "labels";
-/// The wire word `logprobsResult`.
 const FIELD_LOGPROBS_RESULT: &str = "logprobsResult";
-/// The wire word `logProbability`.
 const FIELD_LOG_PROBABILITY: &str = "logProbability";
-/// The wire word `maxOutputTokens`.
 const FIELD_MAX_OUTPUT_TOKENS: &str = "maxOutputTokens";
-/// The wire word `mime_type`.
 const FIELD_MIME_TYPE_SNAKE: &str = "mime_type";
-/// The wire word `mimeType`.
 const FIELD_MIME_TYPE: &str = "mimeType";
-/// The wire word `modality`.
 const FIELD_MODALITY: &str = "modality";
-/// The wire word `negativePrompt`.
 const FIELD_NEGATIVE_PROMPT: &str = "negativePrompt";
-/// The wire word `null`.
 const FIELD_NULL: &str = "null";
-/// The wire word `nullable`.
 const FIELD_NULLABLE: &str = "nullable";
-/// The wire word `outputDimensionality`.
 const FIELD_OUTPUT_DIMENSIONALITY: &str = "outputDimensionality";
-/// The wire word `parts`.
 const FIELD_PARTS: &str = "parts";
-/// The wire word `personGeneration`.
 const FIELD_PERSON_GENERATION: &str = "personGeneration";
-/// The wire word `predictions`.
 const FIELD_PREDICTIONS: &str = "predictions";
-/// The wire word `responseLogprobs`.
 const FIELD_RESPONSE_LOGPROBS: &str = "responseLogprobs";
-/// The wire word `responseModalities`.
 const FIELD_RESPONSE_MODALITIES: &str = "responseModalities";
-/// The wire word `responseSchema`.
 const FIELD_RESPONSE_SCHEMA: &str = "responseSchema";
-/// The wire word `retrievedContext`.
 const FIELD_RETRIEVED_CONTEXT: &str = "retrievedContext";
-/// The wire word `sampleCount`.
 const FIELD_SAMPLE_COUNT: &str = "sampleCount";
-/// The wire word `sampleImageSize`.
 const FIELD_SAMPLE_IMAGE_SIZE: &str = "sampleImageSize";
-/// The wire word `startIndex`.
 const FIELD_START_INDEX: &str = "startIndex";
-/// The wire word `streamGenerateContent`.
 const FIELD_STREAM_GENERATE_CONTENT: &str = "streamGenerateContent";
-/// The wire word `systemInstruction`.
 const FIELD_SYSTEM_INSTRUCTION: &str = "systemInstruction";
-/// The wire word `thinkingBudget`.
 const FIELD_THINKING_BUDGET: &str = "thinkingBudget";
-/// The wire word `thinkingConfig`.
 const FIELD_THINKING_CONFIG: &str = "thinkingConfig";
-/// The wire word `thought`.
 const FIELD_THOUGHT: &str = "thought";
-/// The wire word `thoughtSignature`.
 const FIELD_THOUGHT_SIGNATURE: &str = "thoughtSignature";
-/// The wire word `tokenCount`.
 const FIELD_TOKEN_COUNT: &str = "tokenCount";
-/// The wire word `topCandidates`.
 const FIELD_TOP_CANDIDATES: &str = "topCandidates";
-/// The wire word `uri`.
 const FIELD_URI: &str = "uri";
-/// The wire word `values`.
 const FIELD_VALUES: &str = "values";
-/// The wire word `x-goog-api-key`.
 const FIELD_X_GOOG_API_KEY: &str = "x-goog-api-key";
-/// The wire word `ABORTED`.
 const GEMINI_ABORTED: &str = "ABORTED";
-/// The wire word `ANY`.
 const GEMINI_ANY: &str = "ANY";
-/// The wire word `AUDIO`.
 const GEMINI_AUDIO: &str = "AUDIO";
-/// The wire word `AUTO`.
 const GEMINI_AUTO: &str = "AUTO";
-/// The wire word `BLOCKLIST`.
 const GEMINI_BLOCKLIST: &str = "BLOCKLIST";
-/// The wire word `CANCELLED`.
 const GEMINI_CANCELLED: &str = "CANCELLED";
-/// The wire word `IMAGE_SAFETY`.
 const GEMINI_IMAGE_SAFETY: &str = "IMAGE_SAFETY";
-/// The wire word `UNKNOWN`.
 const GEMINI_UNKNOWN: &str = "UNKNOWN";
-/// google.rpc.Code name for an internal server error.
 const GRPC_INTERNAL: &str = "INTERNAL";
-/// google.rpc.Code name for a deadline / timeout failure.
 const GRPC_DEADLINE_EXCEEDED: &str = "DEADLINE_EXCEEDED";
-/// google.rpc.Code name for a resource not found.
 const GRPC_NOT_FOUND: &str = "NOT_FOUND";
-/// google.rpc.Code name for an unimplemented / not-supported operation.
 const GRPC_UNIMPLEMENTED: &str = "UNIMPLEMENTED";
-/// The google.rpc.Code names and the HTTP status each pairs with on the Generative Language API, one
-/// row per pair: the error writer maps a status to its name and a name back to its status from
-/// this one table.
+/// The google.rpc.Code names and the HTTP status each pairs with on the Generative Language API:
+/// the error writer maps a status to its name and a name back to its status from this one table.
 const STATUS_HTTP: &[(&str, u16)] = &[
     (GRPC_INVALID_ARGUMENT, 400),
     (GRPC_UNAUTHENTICATED, 401),
@@ -779,78 +649,55 @@ const STATUS_HTTP: &[(&str, u16)] = &[
     (GRPC_DEADLINE_EXCEEDED, 504),
 ];
 
-// ── ErrorInfo tokens ──────────────────────────────────────────────────────────
-/// The machine-readable `reason` value carried in `google.rpc.ErrorInfo` for an invalid API key.
+// ErrorInfo tokens: the `reason` for an invalid API key and the `google.rpc.ErrorInfo` type URL
+// (`details[].@type`).
 const GEMINI_ERROR_REASON_API_KEY_INVALID: &str = "API_KEY_INVALID";
-/// The protobuf type URL for `google.rpc.ErrorInfo` (carried in `details[].@type`).
 const GEMINI_ERROR_INFO_TYPE_URL: &str = "type.googleapis.com/google.rpc.ErrorInfo";
 
-// ── structured-output + generation field keys ─────────────────────────────────
-/// JSON key for the MIME type of the response format inside `generationConfig`.
+// Structured-output and generation field keys.
 const FIELD_RESPONSE_MIME_TYPE: &str = "responseMimeType";
-/// MIME type value for JSON structured output.
 const MIME_APPLICATION_JSON: &str = "application/json";
-/// JSON key for a `functionCall` content part.
 const FIELD_FUNCTION_CALL: &str = "functionCall";
-/// JSON key for the finish reason on a candidate.
 const FIELD_FINISH_REASON: &str = "finishReason";
 
 #[derive(Clone)]
 pub struct GeminiReader;
 
-/// Lowercase+uppercase+digit base62 alphabet — the mixed-case alphanumeric character class a native
-/// Gemini `responseId` draws from (e.g. `PXmFaPzVMI…`). Carries no `-`/`_`, so no separator or
-/// hyphen leaks the synthetic boundary the old `{:x}-{:x}` form exposed.
-/// Base62 alphabet for the synthesized `responseId` — the shared single-source-of-truth atom (see
-/// `crate::codec::dialect::BASE62_ALPHABET`), aliased locally so the generator below reads naturally.
+/// The shared base62 alphabet (`crate::codec::dialect::BASE62_ALPHABET`) for the synthesized
+/// `responseId`; a native one is mixed-case alphanumeric (e.g. `PXmFaPzVMI…`) with no `-`/`_`.
 const RESPONSE_ID_ALPHABET: &[u8; 62] = crate::codec::dialect::BASE62_ALPHABET;
 
-/// Width of a synthesized Gemini `responseId`. Native Gemini bodies/streams carry a short opaque
-/// base64url-style token (~11–16 chars) with NO positional structure; 16 base62 chars stays in that
-/// length/entropy profile so a client that length-checks or regex-validates `responseId` cannot
-/// fingerprint it as non-native.
+/// Width of a synthesized `responseId`. Native ids are short opaque base64url-style tokens
+/// (~11-16 chars) with no structure; 16 base62 chars matches that profile so a length or regex
+/// check cannot fingerprint it.
 const RESPONSE_ID_TOKEN_LEN: usize = 16;
 
-/// Rejection-sampling threshold for the base62 reduction in `synth_response_id`: the largest multiple
-/// of 62 that fits in a `u8` is `4 * 62 = 248`. Any random byte `>= 248` is in the partial final
-/// block (`248..=255` → residues `0..=7`) that would otherwise be over-represented by a bare
-/// `byte % 62`, so we reject and resample those to keep the symbol distribution uniform.
+/// Rejection-sampling threshold for the base62 reduction: the largest multiple of 62 in a `u8`
+/// (`4 * 62 = 248`). A bare `byte % 62` over-represents residues `0..=7`, so bytes `>= 248` are
+/// rejected and resampled.
 const RESPONSE_ID_REJECT_THRESHOLD: u8 = crate::codec::dialect::BASE62_REJECT_THRESHOLD;
 
 /// Mint a Gemini-shaped `responseId` for the cross-protocol path where the backend supplied none.
 ///
-/// A native Gemini `responseId` is an opaque, mixed-case alphanumeric base64url-style token with NO
-/// embedded structure (no hyphen, no lowercase-hex-only restriction, no embedded timestamp). The
-/// previous `format!("{:x}-{:x}", unix_now_secs(), seq)` form was structurally distinguishable on two
-/// counts: (a) the `-` separator plus `[0-9a-f]`-only character class is a shape no native id has,
-/// and (b) the leading hex segment leaked the proxy host's wall-clock second to anyone holding a
-/// response id. This mints an opaque CSPRNG-backed base62 token of native length instead: the WHOLE
-/// token is filled from the host entropy source with NO counter overlay. A counter overlaid into any fixed
-/// region of the token leaves those characters predictable/low-entropy (the counter stays small, so
-/// its high base62 digits are constant '0') — a structural tell at whatever position it occupies. A
-/// 16-char base62 token is ~95 bits of entropy, collision-free in practice for a per-process id
-/// stream, so no counter backstop is needed and every position stays fully random like a native id.
-/// No embedded clock, no separator, no new dependency. Never panics on the request path: on entropy
-/// failure the buffer stays the base62 zero char.
+/// A native id is an opaque mixed-case alphanumeric token with no embedded structure. A
+/// `{:x}-{:x}` clock-plus-counter form is distinguishable (the `-` and hex-only class are
+/// non-native) and leaks the host's wall-clock second. This fills the whole token from the host
+/// entropy source with no counter overlay (a counter leaves predictable characters, a structural
+/// tell). 16 base62 chars is ~95 bits, collision-free in practice. Never panics on the request
+/// path: on entropy failure the buffer stays the base62 zero char.
 ///
-/// The byte→base62 reduction uses REJECTION SAMPLING, not a bare `byte % 62`. `256 % 62 != 0`, so a
-/// plain modulo over a uniform `u8` is biased: residues `0..=7` (reachable by the 8 extra byte values
-/// `248..=255`) occur slightly more often than `8..=61`. We instead reject any byte `>=
-/// RESPONSE_ID_REJECT_THRESHOLD` (the largest multiple of 62 that fits in a `u8`, i.e. `4*62 = 248`)
-/// and resample, so every surviving byte maps uniformly across the 62 symbols. Rejected bytes are
-/// simply skipped and more random bytes are drawn as needed.
+/// Bytes reduce to base62 by rejection sampling, not `byte % 62` (`256 % 62 != 0`); rejected
+/// bytes are skipped and more are drawn.
 fn synth_response_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
     let mut token = [b'0'; RESPONSE_ID_TOKEN_LEN];
     let mut filled = 0usize;
-    // Bound the number of refill rounds so a stuck/zero entropy source can never spin forever on the
-    // request path; ~4/256 of bytes are rejected, so a handful of rounds covers the token with margin
-    // and the `'0'`-prefilled buffer is the panic-free fallback if entropy never arrives.
+    // Bounded refill rounds so a stuck entropy source cannot spin the request path; the
+    // `'0'`-prefilled buffer is the panic-free fallback.
     let mut rounds = 0u32;
     const MAX_ROUNDS: u32 = 8;
     while filled < RESPONSE_ID_TOKEN_LEN && rounds < MAX_ROUNDS {
         rounds += 1;
-        // Draw a generous batch so a single entropy draw typically fills the whole token even after
-        // rejections (RESPONSE_ID_TOKEN_LEN*2 bytes leave ample headroom for the ~1.6% reject rate).
+        // A generous batch so one draw typically fills the token even after rejections.
         let mut batch = [0u8; RESPONSE_ID_TOKEN_LEN * 2];
         if !host.fill_entropy(&mut batch) {
             break;
@@ -860,7 +707,7 @@ fn synth_response_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
                 break;
             }
             if byte >= RESPONSE_ID_REJECT_THRESHOLD {
-                // Biased residue region — reject and resample rather than fold it in.
+                // Biased residue region: reject and resample.
                 continue;
             }
             token[filled] = RESPONSE_ID_ALPHABET[(byte % 62) as usize];
@@ -868,8 +715,7 @@ fn synth_response_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
         }
     }
 
-    // `token` is ASCII base62 by construction, hence always valid UTF-8; the fallback only guards an
-    // impossible non-ASCII byte and keeps the path panic-free (no unwrap/expect on the request path).
+    // `token` is ASCII base62, always valid UTF-8; the fallback keeps the path panic-free.
     String::from_utf8(token.to_vec()).unwrap_or_else(|_| "0".repeat(RESPONSE_ID_TOKEN_LEN))
 }
 
