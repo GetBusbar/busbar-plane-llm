@@ -15,14 +15,9 @@ pub mod shaping;
 pub mod webhook;
 
 use busbar_contract::codec::OperationHandler;
-use busbar_contract::protocol::ProtocolDecl;
 
-use crate::codec::DECLS;
-
-/// The declaration of the dialect named `name`.
-pub(crate) fn decl(name: &str) -> Option<&'static ProtocolDecl> {
-    DECLS.iter().copied().find(|d| d.name == name)
-}
+/// The declaration of the dialect named `name`: the plane's one lookup ([`crate::codec::decl_of`]).
+pub(crate) use crate::codec::decl_of as decl;
 
 /// The operation handler that serves `arrived`: its dialect's handler for its operation.
 #[must_use]
