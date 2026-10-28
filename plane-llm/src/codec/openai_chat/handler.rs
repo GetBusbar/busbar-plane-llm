@@ -248,12 +248,10 @@ leaf_op! {
     OpenAiTranscription: super::VENDOR_NAME,
     TranscriptionReqHandle = read_transcription_request,
     TranscriptionRespHandle = read_transcription_response;
-    // METERED IN ITS OWN DIALECT AS ACROSS ONE (owner rule 21: money = ledger quantity x rate
-    // card; LEDGER-100). A same-dialect transcription's body is buffered so the relay reads the
+    // Metered in its own dialect as across one (money = ledger quantity x rate
+    // card). A same-dialect transcription's body is buffered so the relay reads the
     // usage the answer reports: whisper's duration as `audio_ms`, a token-metered model's tokens
-    // under the token classes, exactly what the translated path already ledgers. 1.5.5 never tapped
-    // a transcription (v1.5.5 crates/busbar/src/handlers/mod.rs:140 answers `false`; only embeddings
-    // override it, handlers/openai.rs:464), so its same-dialect transcription billed nothing.
+    // under the token classes, exactly what the translated path already ledgers.
     fn taps_usage(&self) -> bool {
         true
     }
@@ -263,11 +261,9 @@ leaf_op! {
     }
 }
 
-/// The multipart boundary the transcription egress form is framed with: 1.5.5's literal (v1.5.5
-/// `crates/busbar/src/handlers/openai.rs:238`, `:281`), a constant, so the plugin keeps no
-/// process-global state for it (BUSBAR-1.6.0.md THE DESIGN §2: "A plugin holds no process-global
-/// state"; the per-process `OnceLock` draw it replaces was such state) and the upstream receives the
-/// bytes 1.5.5 sent.
+/// The multipart boundary the transcription egress form is framed with: a constant, so the
+/// plugin keeps no process-global state for it (a plugin holds no process-global state) and the
+/// upstream receives the same bytes each time.
 ///
 /// A client that knows the delimiter cannot use it: the audio part carries raw client-controlled
 /// bytes, so a payload embedding `\r\n--<boundary>` could close the file part early and append a
@@ -450,12 +446,11 @@ pub fn write_transcription_response(r: &TranscriptionResp) -> WireBody {
 /// OpenAI transcription `usage` → `Billing`: `{type:"duration",seconds}` (whisper) or a token shape.
 ///
 /// The token counts are judged one by one ([`refused_count`]). The presence of a READABLE
-/// `input_tokens` is what says this response is token-metered, as in v1.5.5: an absent, `null` or
-/// unreadable `input_tokens` is no token billing at all (v1.5.5 `.and_then(Value::as_u64).map(..)`),
-/// and an unreadable `output_tokens` beside a readable input bills no output.
+/// `input_tokens` is what says this response is token-metered: an absent, `null` or
+/// unreadable `input_tokens` is no token billing at all, and an unreadable `output_tokens` beside a readable input bills no output.
 ///
 /// # Errors
-/// The duration's `seconds` does not fit the exact decimal scale (#81, parked for the owner; see
+/// The duration's `seconds` does not fit the exact decimal scale (see
 /// `a_duration_finer_than_the_scale_refuses_rather_than_being_rounded`).
 fn parse_transcription_usage(wire: &[u8], u: &Value) -> Result<Option<Billing>, CodecError> {
     match u.get(keys::TYPE).and_then(Value::as_str) {
@@ -643,7 +638,7 @@ leaf_op! {
     ImageReqHandle = read_image_request,
     ImageRespHandle = read_image_response;
     // Buffer the same-protocol non-stream 2xx body so the default `extract_usage` runs this op's
-    // reader: a gpt-image-1 answer's reported tokens are RECORDED (never billed, as in 1.5.5; see
+    // reader: a gpt-image-1 answer's reported tokens are recorded (never billed; see
     // `ImageResp::billing`), and a per-image answer with no `usage` bills its `images` count.
     fn taps_usage(&self) -> bool {
         true
@@ -936,7 +931,7 @@ pub fn read_transcription_response(
 ) -> Result<crate::codec::ir::audio::TranscriptionResp, CodecError> {
     // OpenAI transcription is `{"text": "..."}` (json) or bare text (response_format=text). The
     // real API also carries `usage` — whisper-1 DURATION (`{type:"duration",seconds}`), the
-    // gpt-4o-transcribe models TOKENS — captured from the live API (2026-07-10). Both → Billing.
+    // gpt-4o-transcribe models TOKENS — captured from the live API. Both → Billing.
     // A `verbose_json` body additionally carries language/duration/segments/words — all modelled by
     // the IR. Parse them so timestamps/diarization survive the hop instead of being flattened to text.
     let v = match serde_json::from_slice::<Value>(wire) {
@@ -1217,8 +1212,7 @@ pub fn read_embeddings_response(
         })
         .unwrap_or_default();
     // BILLED COUNT: absent is zero; an UNREADABLE one is refused on its own ([`refused_count`]): it
-    // bills nothing and the vectors are served, v1.5.5's `.and_then(Value::as_u64).unwrap_or(0)`
-    // figure (v1.5.5 `crates/busbar/src/handlers/openai.rs:586`).
+    // bills nothing and the vectors are served.
     let usage =
         v.get(keys::USAGE)
             .map(|u| busbar_contract::billing::TokenUsage {
@@ -1354,12 +1348,11 @@ pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::Image
         .unwrap_or_default();
     // gpt-image-1 returns a token `usage` object (`{total_tokens,input_tokens,output_tokens}`);
     // per-image models (dall-e, etc.) return no usage body at all. The tokens are RECORDED, never
-    // billed (`ImageResp::billing`, 1.5.5 parity: v1.5.5
-    // `crates/busbar/src/handlers/openai.rs:731-758` billed none).
+    // billed (`ImageResp::billing`).
     // A recorded count is still a ledger row, so it is read through the one count seam
     // (`usage_count::recorded_count`): absent is zero; a present count this build cannot read is
     // UNKNOWN, left out of the record and named on `warnings` and in the log. It is never a 0
-    // and never a refusal: 1.5.5 served the answer whatever its usage said.
+    // and never a refusal: the answer is served whatever its usage said.
     let mut warnings = Vec::new();
     let usage = v
         .get(keys::USAGE)

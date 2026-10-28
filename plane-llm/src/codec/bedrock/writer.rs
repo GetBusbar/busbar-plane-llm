@@ -120,7 +120,7 @@ impl ProtocolWriter for BedrockWriter {
 
     /// The production write: the lane's declared [`LaneCaps`] choose the structured-output form
     /// (see `write_request_with`). A cross-protocol reasoning ask is dropped for every model family
-    /// there, as 1.5.5 dropped it.
+    /// there.
     fn write_request_for_lane(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -1183,13 +1183,10 @@ impl BedrockWriter {
             );
         }
 
-        // A cross-protocol reasoning ask is DROPPED, with a warn, for every model family, exactly
-        // as 1.5.5 dropped it (v1.5.5 `crates/busbar/src/proto/bedrock/writer.rs:139-146`: "no
-        // Bedrock Converse mapping in this release"). Writing it as Claude's
-        // `additionalModelRequestFields.thinking` switched on billed thinking tokens (and changed
-        // the sampling controls and a forced tool choice) on requests 1.5.5 billed without them,
-        // and no owner ruling signs that (BUSBAR-1.6.0.md THE LLM DIALECT FIDELITY RULE: "Billing
-        // never moves"). A raw native ask already in `extra` (a same-protocol body) is re-emitted
+        // A cross-protocol reasoning ask is dropped, with a warn, for every model family (there
+        // is no Bedrock Converse mapping). Writing it as Claude's
+        // `additionalModelRequestFields.thinking` would switch on billed thinking tokens (and
+        // change the sampling controls and a forced tool choice). A raw native ask already in `extra` (a same-protocol body) is re-emitted
         // verbatim below, untouched.
         if req.reasoning.is_some() {
             crate::codec::drops::writer_drop!(
@@ -1267,8 +1264,7 @@ impl BedrockWriter {
         // (`LaneCaps::native_structured_output`, declared per provider / model in the catalog):
         // Converse accepts `outputConfig.textFormat` only on the models AWS lists for structured
         // outputs and rejects it on the rest (a 400 for a request that worked). A lane that does not
-        // declare it keeps the pre-structured-output form — the directive is dropped, observably,
-        // exactly as 1.5.5 did.
+        // declare it keeps the pre-structured-output form — the directive is dropped, observably.
         if let Some(rf) = &req.response_format {
             match super::write_bedrock_text_format(rf) {
                 // A same-protocol body's own raw `textFormat` (what the typed field was read
@@ -1427,7 +1423,7 @@ impl BedrockWriter {
             );
         }
         // Egress: Bedrock Converse models no parallelism control. `is_some()` gates this
-        // to requests that actually carried the flag (owner decision 4: no per-request noise).
+        // to requests that actually carried the flag (no per-request noise).
         if req.parallel_tool_calls.is_some() {
             crate::codec::drops::writer_drop!(
                 crate::codec::drops::PARALLEL_TOOL_CALLS,
@@ -1483,7 +1479,7 @@ impl BedrockWriter {
                 out.insert(super::FIELD_REQUEST_METADATA.to_string(), m);
             }
         }
-        // The Q57 request slots with no Converse form — the same set `dropped_egress_controls`
+        // The typed request slots with no Converse form — the same set `dropped_egress_controls`
         // reports for the seam's audit.
         crate::codec::carry::warn_drops(
             super::map::REQUEST,

@@ -2,18 +2,13 @@
 //!
 //! # Why this module exists
 //!
-//! [`serde_json::Value::as_u64`] returns `None` for ANY float-backed `Number` — including `27.0`,
-//! which is exactly representable as an integer. The house idiom across this crate's dialects was
-//! `.as_u64().unwrap_or(0)`, so a provider that spells a count as a float turned a genuine count of
-//! 27 into a recorded count of **zero**. Cohere's published spec types every usage count as a JSON
-//! `number`, which PERMITS a float spelling — so a reader that cannot read one is a reader that can
-//! bill zero for real work. (This module used to assert that Cohere's *real wire responses* do
-//! spell them as floats. Measured 2026-09-22, nothing in this tree supports that: the only
-//! float-spelled counts under `crates/busbar-llm-codec/` are this crate's own hand-written test
-//! fixtures. The spec claim is weaker, checkable, and already sufficient; the wire claim was not
-//! ours to make.)
+//! [`serde_json::Value::as_u64`] returns `None` for any float-backed `Number` — including `27.0`,
+//! which is exactly representable as an integer. Reading with `.as_u64().unwrap_or(0)` would turn
+//! a provider's genuine count of 27 into a recorded count of **zero**. Cohere's published spec
+//! types every usage count as a JSON `number`, which permits a float spelling — so a reader that
+//! cannot read one is a reader that can bill zero for real work.
 //!
-//! Under the locked money model this is not a money bug — it is a **ledger** bug, which is worse.
+//! This is not a money bug — it is a **ledger** bug, which is worse.
 //! Money is a view over `ledger x ratecard` and cannot be wrong on its own; if the ledger says the
 //! provider returned nothing, then every view derived from it faithfully reports nothing, and the
 //! error is invisible at every downstream layer. The only place it can be caught is here, at the
@@ -94,7 +89,7 @@ const SPELLING_BUDGET: usize = 64;
 ///
 /// That idiom collapses two different facts into one number. A usage field the provider did not
 /// send is genuinely zero of that unit — an embeddings response reports no output tokens because
-/// there are none, and billing zero for it is correct and is what v1.5.5 did. But a field that IS
+/// there are none, and billing zero for it is correct. But a field that IS
 /// there and cannot be read is the provider telling us something this build does not understand,
 /// and writing zero for it is the worst available answer: the ledger records that no work happened,
 /// every money view over that row is faithfully derived and faithfully wrong, and nothing anywhere
@@ -303,7 +298,7 @@ fn opt(
 
 /// One billed leaf-operation usage count that is present and unreadable, REFUSED ON ITS OWN:
 /// said loudly, it bills nothing, nothing stands in for it, and the answer it rode on is served.
-/// v1.5.5 read these counts as `.and_then(Value::as_u64)` and served every such answer.
+/// Every such answer is served.
 pub fn refused_count(protocol: &'static str, unreadable: &UnreadableCount) {
     tracing::warn!(
         protocol,
@@ -322,10 +317,9 @@ pub fn refused_count(protocol: &'static str, unreadable: &UnreadableCount) {
 /// THE REFUSAL IS PER FIELD: each usage field is judged
 /// on its own. A readable field bills as stated; an unreadable one (a stringified `"1500"`) is
 /// refused, so IT bills nothing, and the refusal is loud (the warn line below, naming the protocol,
-/// the field and its spelling; #42/#81 "refuse loudly"). Nothing is substituted for it: it is never
-/// read as a zero count and no floor stands in for it (#77(2)). The answer and its readable counts
-/// are not refused with it: `{"prompt_tokens":"1500","completion_tokens":9}` bills (0, 9), v1.5.5's
-/// figure for that body (v1.5.5 `proto/openai_chat/reader.rs:678`), reached without reading the
+/// the field and its spelling). Nothing is substituted for it: it is never
+/// read as a zero count and no floor stands in for it. The answer and its readable counts
+/// are not refused with it: `{"prompt_tokens":"1500","completion_tokens":9}` bills (0, 9), reached without reading the
 /// unreadable count as anything. A dialect supplies only the table and its `protocol` label; it
 /// never reads a count itself.
 ///
@@ -467,7 +461,7 @@ pub fn refused_any(usage: Option<&serde_json::Value>, table: &[UsageCount]) -> b
 /// input, cache read, cache write, output). A provider's total is its own sum of the counts it
 /// itemizes, never a unit: nothing is zeroed, clamped or back-filled to make the two agree, and
 /// the itemized counts stay exactly as reported. A total ABOVE them is the open class
-/// `unitemized_tokens` (`IrUsage::to_token_usage`, owner LEDGER-100).
+/// `unitemized_tokens` (`IrUsage::to_token_usage`).
 ///
 /// `None` in the ordinary case — no total on the usage object (absent, `null`, or not a count: a
 /// total is checked, never billed, so an unreadable one is not a refusal), or a total equal to the

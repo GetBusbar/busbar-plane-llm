@@ -400,10 +400,8 @@ pub fn read_embeddings_response(
             item
         })
         .collect();
-    // BILLED COUNT: absent or `null` is no usage (unchanged); an UNREADABLE one is refused on its
-    // own (`refused_count`): it bills nothing and the vectors are served. That is v1.5.5's figure
-    // for the body: `.and_then(Value::as_u64).map(..)` read no usage (v1.5.5
-    // `crates/busbar/src/handlers/cohere.rs:267-275`).
+    // Billed count: absent or `null` is no usage; an unreadable one is refused on its own
+    // (`refused_count`): it bills nothing and the vectors are served.
     let usage = crate::codec::usage_count::billed_count_opt(
         v.get(keys::META).and_then(|m| m.get(keys::BILLED_UNITS)),
         keys::INPUT_TOKENS,
@@ -474,10 +472,9 @@ pub fn read_rerank_response(
     Ok(crate::codec::ir::rerank::RerankResp {
         id: v.get(keys::ID).and_then(Value::as_str).map(str::to_string),
         results: crate::codec::rerank_wire::read_results(v.get(keys::RESULTS)),
-        // The PRICED quantity (item 134, `RerankResp::billing`). Absent or `null` stays `None` (the
-        // flat marker); an UNREADABLE count is refused on its own (`refused_count`): the ranking is
-        // served on the flat marker, v1.5.5's `.and_then(Value::as_u64)` figure for the body
-        // (v1.5.5 `crates/busbar/src/handlers/cohere.rs:409-413`).
+        // The priced quantity (`RerankResp::billing`). Absent or `null` stays `None` (the flat
+        // marker); an unreadable count is refused on its own (`refused_count`): the ranking is
+        // served on the flat marker.
         search_units: crate::codec::usage_count::billed_count_opt(
             v.get(keys::META).and_then(|m| m.get(keys::BILLED_UNITS)),
             keys::SEARCH_UNITS,

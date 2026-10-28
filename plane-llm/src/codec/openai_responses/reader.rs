@@ -29,7 +29,7 @@ impl ProtocolReader for ResponsesReader {
     fn recover_truncated_usage(&self, tail: &[u8]) -> Option<busbar_contract::billing::TokenUsage> {
         let v = super::super::usage_tail::isolate_tail_usage_object(tail, b"\"usage\"")?;
         // Every count is read through the dialect's usage table (`USAGE`): an unreadable one is
-        // refused on its own and bills nothing (#42; ARCHITECT ruling 2026-10-15), the readable
+        // refused on its own and bills nothing, the readable
         // ones recover. A truncated body reads the same cache tiers an
         // untruncated one does.
         Some(read_responses_usage(Some(&v), None).ok()?.to_token_usage())
@@ -145,8 +145,7 @@ impl ProtocolReader for ResponsesReader {
         let mut system_blocks: Vec<crate::codec::ir::IrBlock> = Vec::new();
         // Count of `system`/`developer`-role ITEMS folded out of the `input` array below (the
         // top-level `instructions` string is a separate wire field and is NOT counted here) —
-        // restores the 1.5.5 `message_count` semantics (the raw `input` array length) onto
-        // `IrFacts::shape()`.
+        // keeps `message_count` the raw `input` array length on `IrFacts::shape()`.
         let mut system_turns_folded: usize = 0;
         // Where each folded entry stood, for the hook view (`IrRequest::system_folds`).
         let mut system_folds: Vec<crate::codec::ir::IrSystemFold> = Vec::new();
@@ -1210,9 +1209,9 @@ impl ProtocolReader for ResponsesReader {
                         let class = class_for_response_failed(
                             provider_signal.as_deref().unwrap_or(SIGNAL_RESPONSE_FAILED),
                         );
-                        // BILLED COUNTS: a failed response that still REPORTS its usage (the
-                        // tokens the far end generated before it failed) bills them (#62: a cut is
-                        // not a refund). A present-but-UNREADABLE count refuses (#42) in place of
+                        // Billed counts: a failed response that still reports its usage (the
+                        // tokens the far end generated before it failed) bills them (a cut is
+                        // not a refund). A present-but-unreadable count refuses in place of
                         // the failure, exactly as the completed arm below does.
                         // A native failed response usually says `"usage": null`: nothing reported,
                         // nothing to carry.
@@ -1353,7 +1352,7 @@ impl ProtocolReader for ResponsesReader {
                         stop_reason
                     };
 
-                    // BILLED COUNTS: absent is zero, a present-but-UNREADABLE count REFUSES (#42)
+                    // Billed counts: absent is zero, a present-but-unreadable count refuses
                     // — the stream ends in an error instead of ledgering zero tokens.
                     let usage = response_obj
                         .get(keys::USAGE)
@@ -1437,8 +1436,7 @@ impl ProtocolReader for ResponsesReader {
             }
 
             // The TOP-LEVEL `error` stream event (`{"type":"error","code","message","param"}`) has no
-            // arm, as in 1.5.5 (v1.5.5 proto/openai_responses/reader.rs:542-1103): it ends nothing and
-            // fails nothing, so the stream bills and closes as 1.5.5's did (row 155, codec L3#10).
+            // arm: it ends nothing and fails nothing, so the stream bills and closes normally.
             _ => {}
         }
 
@@ -1651,7 +1649,7 @@ impl ProtocolReader for ResponsesReader {
                         }
                     }
 
-                    // A provider-run WEB SEARCH (DF-MAP item 2): the IR's hosted web-search record,
+                    // A provider-run web search: the IR's hosted web-search record,
                     // its sources as results.
                     super::ITEM_TYPE_WEB_SEARCH_CALL => {
                         content.push(super::read_web_search_call(item));
@@ -1715,8 +1713,8 @@ impl ProtocolReader for ResponsesReader {
         // proxy engine discard a valid body and emit a spurious 500.
         let usage_val = obj.get(keys::USAGE);
 
-        // Absent is zero, a present-but-UNREADABLE count REFUSES (#42). See `USAGE` for the cache
-        // normalization; RSP-17's serving tier is the top-level `service_tier`.
+        // Absent is zero, a present-but-unreadable count refuses. See `USAGE` for the cache
+        // normalization; the serving tier is the top-level `service_tier`.
         let usage = read_responses_usage(usage_val, Some(body))?;
 
         let model = obj

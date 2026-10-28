@@ -151,7 +151,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     // `toolu_…` is Anthropic's documented native tool-call id shape.
     native_tool_id_prefix: Some("toolu_"),
     ingress_auth: IngressAuth::Bearer,
-    // Anthropic's credential scheme is DECLARED here as data (#83a S2-a, #40(b)) — a credential-family
+    // Anthropic's credential scheme is declared here as data — a credential-family
     // table: an API key (`sk-ant-api…`) is presented as `x-api-key` with its leading whitespace
     // trimmed, an OAuth access token (`sk-ant-oat…`) as `authorization: Bearer`, and a credential of
     // neither family by the lane's mode (a configured key as `x-api-key`, a forwarded caller token as
@@ -198,7 +198,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     // OBLIGATION: re-verify each version against the latest published SDK before a release and bump
     // (the `test_egress_ua_versions_are_pinned_and_present` guard forces the change to be conscious).
     // The plane writes this on a translated route into this dialect, on a
-    // same-dialect route whose caller sent no user-agent (1.5.5's bytes), and on the
+    // same-dialect route whose caller sent no user-agent, and on the
     // kernel-originated health probe; a same-dialect caller's own user-agent replaces it.
     egress_user_agent: "Anthropic/Python 0.39.0",
     has_model_in_url: false,
@@ -829,7 +829,7 @@ fn stream_error_class(error_type: Option<&str>) -> StatusClass {
 ///
 /// A value the source reported is left untouched.
 /// A provider-run tool's record from ANOTHER dialect has no Anthropic form: a `web_search_tool_result`
-/// must carry each result's `encrypted_content`, which only Anthropic mints (DF-MAP item 2). The
+/// must carry each result's `encrypted_content`, which only Anthropic mints. The
 /// record is dropped, observably; its citations still ride the text blocks.
 fn warn_hosted_record_dropped() {
     crate::codec::drops::writer_drop!(

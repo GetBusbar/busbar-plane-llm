@@ -10,7 +10,7 @@
 //! (b64 AND url may coexist). Common cross-provider fields are typed; provider-unique knobs (Titan
 //! `controlMode`, SDXL `sampler`/`clip_guidance_preset`, per-prompt weights…) ride source-scoped
 //! `extra`. Billing: the token counts a gpt-image-1 or Gemini answer reports are RECORDED, never
-//! billed (1.5.5 billed no image tokens; see [`ImageResp::billing`]); else `Billing::Images`
+//! billed (see [`ImageResp::billing`]); else `Billing::Images`
 //! (per-image, no usage body).
 
 use busbar_contract::billing::{Billing, TokenUsage};
@@ -179,7 +179,7 @@ pub struct ImageResp {
 /// The token counts an image answer reported (gpt-image-1 `usage`, a Gemini image model's
 /// `usageMetadata`). They are RECORDED, never billed (see [`ImageResp::billing`]). `None` is
 /// UNKNOWN: the provider sent a count this build cannot read. An unknown count is left out of the
-/// record, never written as 0, and never refuses the answer (1.5.5 served it whatever the usage
+/// record, never written as 0, and never refuses the answer (it is served whatever the usage
 /// said).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ImageTokens {
@@ -195,14 +195,11 @@ pub const IMAGE_OUTPUT_TOKENS_RESIDUAL: &str = "image.output_tokens";
 impl ImageResp {
     /// Billing projection. An answer that reports token usage (gpt-image-1, a Gemini image model)
     /// bills NO token: its counts are RECORDED on [`TokenUsage::residual_units`] (the settle's one
-    /// `usage.residual` audit row), never on the four billed tiers. 1.5.5 billed no image token on
-    /// any path: its OpenAI, Gemini and Bedrock image readers set neither `usage` nor `cost_basis`
-    /// (v1.5.5 `crates/busbar/src/handlers/openai.rs:731-758`, `handlers/gemini.rs:446-472`), and
-    /// no image handler tapped a same-dialect body (the only `taps_usage` overrides were
-    /// embeddings and chat). Billing the tokens would charge a key, and spend its `tokens:` caps,
-    /// where 1.5.5 charged nothing, and nothing signs that (LEDGER-100 records a reported
-    /// unit; it does not sign a new charge). A per-image answer with no usage body bills its
-    /// `images` count (LEDGER-100, CHANGELOG 1.6.0 Upgrade).
+    /// `usage.residual` audit row), never on the four billed tiers. No image token is billed on any path: the OpenAI, Gemini and
+    /// Bedrock image readers set neither `usage` nor `cost_basis`, and no image handler taps a
+    /// same-dialect body (the only `taps_usage` overrides are embeddings and chat). Billing the
+    /// tokens would charge a key, and spend its `tokens:` caps, where nothing is charged today.
+    /// A per-image answer with no usage body bills its `images` count.
     pub fn billing(&self) -> Option<Billing> {
         if let Some(u) = &self.usage {
             let mut residual_units = std::collections::BTreeMap::new();

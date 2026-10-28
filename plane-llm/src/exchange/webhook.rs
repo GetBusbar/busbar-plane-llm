@@ -3,15 +3,14 @@
 //!
 //! A client that creates a Responses turn with `background: true` gets a `resp_…` id at once; when
 //! the turn finishes, the provider delivers a SIGNED webhook to a URL the operator registered. This
-//! module reads that delivery's body and answers its acknowledgement. It is new 1.6.0 surface: the
-//! published 1.5.5 binary had no receiver (F26 correction), so nothing here has a 1.5.5 golden.
+//! module reads that delivery's body and answers its acknowledgement.
 //!
-//! WHO DECIDES WHAT, as the rulings place it:
-//! - ON OR OFF is the plugin's own setting, never a kernel or core switch (F26): the plane owns the
+//! Who decides what:
+//! - On or off is the plugin's own setting, never a kernel or core switch: the plane owns the
 //!   top-level `webhooks:` section ([`SECTION`]) and claims [`PATH`] only when it says
-//!   `openai_responses: true`. A config without the key answers on that path exactly what 1.5.5's
-//!   default build answered there.
-//! - THE SIGNATURE is the auth kind's (D4, and the design's "Auth points and guest lists"): the
+//!   `openai_responses: true`. A config without the key answers on that path as it does for any
+//!   unclaimed path.
+//! - The signature is the auth kind's: the
 //!   operator's `auth.chain` names an auth step of the webhook-signature kind (the Standard Webhooks
 //!   scheme), which verifies the HMAC over the body and refuses a replayed
 //!   `webhook-id` through the claim record. A request carrying none of its headers is all-PASS, so
