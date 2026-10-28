@@ -24,7 +24,7 @@ fn rows(doc: &serde_json::Value, key: &str) -> Vec<serde_json::Value> {
 }
 
 fn bytes(v: &serde_json::Value) -> Vec<u8> {
-    crate::codec::hex::decode(v.as_str().expect("hex string")).expect("hex")
+    ::hex::decode(v.as_str().expect("hex string")).expect("hex")
 }
 
 #[test]
