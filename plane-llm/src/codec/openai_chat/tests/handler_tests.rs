@@ -311,7 +311,7 @@ fn transcription_egress_field_strips_crlf_injection() {
     );
     // No injected part boundary either: the only `--boundary` delimiters are the two the writer
     // frames (model, file) plus the closing one — the flattened injection cannot add its own.
-    let delim = format!("--{}", transcription_boundary());
+    let delim = format!("--{TRANSCRIPTION_BOUNDARY}");
     assert_eq!(text.matches(&delim).count(), 3);
 }
 
@@ -349,7 +349,7 @@ fn a_transcription_whose_audio_carries_the_delimiter_is_refused_at_the_seam() {
 /// SAME boundary the body is framed with. RED while it was a per-process `OnceLock` draw.
 #[test]
 fn transcription_boundary_is_1_5_5_s_literal_and_matches_the_declared_content_type() {
-    let b = transcription_boundary();
+    let b = TRANSCRIPTION_BOUNDARY;
     assert_eq!(b, "----busbaraudioMIME");
     let ct = OpenAiTranscription.egress_request_content_type();
     assert_eq!(ct, format!("multipart/form-data; boundary={b}"));
@@ -375,7 +375,7 @@ fn transcription_boundary_is_1_5_5_s_literal_and_matches_the_declared_content_ty
 /// that ends the part headers completes it).
 #[test]
 fn transcription_egress_refuses_audio_carrying_the_live_boundary() {
-    let b = transcription_boundary();
+    let b = TRANSCRIPTION_BOUNDARY;
     for payload in [
         format!("RIFF\r\n--{b}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nevil\r\n"),
         format!("--{b}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nevil\r\n"),
@@ -821,7 +821,7 @@ fn transcription_temperature_round_trips_openai_multipart() {
     let back = super::super::super::leaf_codec::transcription_read_request(
         "openai",
         &out,
-        &format!("multipart/form-data; boundary={}", transcription_boundary()),
+        &format!("multipart/form-data; boundary={TRANSCRIPTION_BOUNDARY}"),
     )
     .expect("re-read");
     assert_eq!(back.temperature, Some(0.5));
