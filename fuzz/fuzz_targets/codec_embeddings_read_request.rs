@@ -1,8 +1,8 @@
 #![no_main]
 //! Fuzz the ingress decode of an untrusted embeddings request body.
 //!
-//! `embeddings_read_request` dispatches to each provider dialect's production
-//! `read_embeddings_request` reader — the code path that turns bytes off the wire into typed IR.
+//! Each provider dialect's production `read_embeddings_request` reader (its registration's
+//! embeddings row) — the code path that turns bytes off the wire into typed IR.
 //! The invariant under test: **arbitrary bytes must never panic the reader.** A malformed body is
 //! a `Result::Err` (`IngressReject`), never a crash — so libFuzzer only fails on a genuine panic,
 //! abort, OOM, or timeout, i.e. a real robustness defect in the parse surface.
@@ -32,5 +32,11 @@ fuzz_target!(|data: &[u8]| {
         "application/octet-stream"
     };
 
-    let _ = busbar_plane_llm::codec::leaf_codec::embeddings_read_request(proto, body, content_type);
+    // The dialect's declared embeddings reader, as its registration row names it.
+    let reader = busbar_plane_llm::codec::proto_codec::entry_of(proto)
+        .and_then(|d| d.leaf.embeddings.as_ref())
+        .map(|c| c.read_request);
+    if let Some(read) = reader {
+        let _ = read(body, content_type);
+    }
 });
