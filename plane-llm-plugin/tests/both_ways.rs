@@ -1428,3 +1428,82 @@ fn the_fee_is_decided_by_the_leg_and_the_client_facing_status() {
         "a probe's 2xx is no billable request: {probe_far}"
     );
 }
+
+// ── THE HOST LOG ────────────────────────────────────────────────────────────────────────────────
+
+/// The host's envelope sink, keeping the text of every diagnostic and log record a call carried:
+/// what the host writes to the plugin's own log file.
+#[derive(Default)]
+struct HostLog(std::sync::Mutex<Vec<String>>);
+
+impl busbar_plugin_loader::dispatch::EnvelopeSink for HostLog {
+    fn metric(&self, _: busbar_plugin_loader::dispatch::Metric<'_>) {}
+    fn diag(&self, d: busbar_plugin_loader::dispatch::Diagnostic<'_>) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(String::from_utf8_lossy(d.text).into_owned());
+    }
+    fn dropped(&self, _: busbar_plugin_loader::dispatch::Dropped) {}
+}
+
+/// THE PLANE'S LOG REACHES THE HOST'S LOG, DROPPED IN AS LINKED (owner ruling 2026-10-27): the
+/// line an unreadable usage raises (`busbar_contract::diag_warn!`, the plane's in-process
+/// `tracing`) is carried by the door's call capture in the answer's envelope to the host's sink,
+/// the one that writes the plugin's own log file, from the dropped-in image as from the linked one.
+#[test]
+fn an_unreadable_usage_line_reaches_the_host_log_dropped_in_as_linked() {
+    let d = Dispatcher::new(DispatchConfig::default());
+    let exe = std::env::current_exe().expect("the test binary has a path");
+    let deps = exe.parent().expect("target/<profile>/deps").to_path_buf();
+    let profile = deps.parent().expect("target/<profile>").to_path_buf();
+    let file = busbar_plugin_loader::plugin_library_filename("busbar_plane_llm_plugin");
+    let path = [profile.join(&file), deps.join(&file)]
+        .into_iter()
+        .find(|p| p.exists())
+        .unwrap_or_else(|| panic!("this crate's cdylib ({file}) is not built"));
+    for dropped_in in [false, true] {
+        let log = Arc::new(HostLog::default());
+        let bound = Bind {
+            sink: log.clone(),
+            ..bind(&d)
+        };
+        let p: Plugin<Plane> = if dropped_in {
+            let stated = rendering_of(plane_door::door).expect("the door renders its Statement");
+            load_dropped(&path, &stated, bound).expect("the dropped door loads")
+        } else {
+            let row =
+                LinkedRow::of(plane_door::door).expect("the linked door states its Statement");
+            load_linked(&row, bound).expect("the linked door loads")
+        };
+        let mut i: PlaneOpenIn = z();
+        i.open.head = in_head();
+        (i.open.generation, i.open.settings) = (1, octets(SETTINGS));
+        let mut o: PlaneOpenOut = z();
+        o.open.head = out_head();
+        assert_eq!(p.open(&mut Frame::new(i, o)).0.outcome, Outcome::Ready);
+        assert!(arrive(&p, 12, b"/v1/messages", CHAT).starts_with("arrive Ready"));
+        let mut piece = Piece::new(1 << 12);
+        piece.call(&p, 12, FROM_KERNEL, 0, b"", 1);
+        piece.call(&p, 12, FROM_CALLER, PIECE_LAST, CHAT, 0);
+        piece.status = 200;
+        piece.call(
+            &p,
+            12,
+            FROM_FAR_END,
+            PIECE_HAS_STATUS | PIECE_LAST,
+            UNREADABLE,
+            0,
+        );
+        let lines = log
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("usage is present but unreadable")),
+            "dropped-in {dropped_in}: the plane's line reaches the host log: {lines:?}"
+        );
+    }
+}
