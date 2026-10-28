@@ -80,51 +80,6 @@ pub fn request_id_from_entropy(entropy: &[u8]) -> String {
 /// counter at all: a 24-char base62 token is ~142 bits of entropy with a ~2^71 birthday bound, so
 /// pure CSPRNG output is collision-free in practice and every position stays fully random, exactly
 /// like a native Anthropic id. Never panics on the request path.
-/// Fill `out` with uniformly-distributed base62 characters drawn from `alphabet`, via REJECTION
-/// SAMPLING. A bare `byte % 62` is biased: 256 = 4*62 + 8, so the residues 0..7 are drawn from 5
-/// source bytes and 8..61 from only 4 — over-representing the low characters by ~25%, a
-/// statistical fingerprint that distinguishes a synthesized id from a native (uniform) one. We
-/// therefore reject any byte >= 248 (the largest multiple of 62 that fits in a u8) and consume
-/// only the in-range bytes — the ONE bias-elimination scheme this module uses, shared by both
-/// `synth_id_with_prefix` and `synth_anthropic_request_id` (mirrors
-/// `openai_chat::synth_completion_id`, the other rejection-sampling base62 synth). Returns `false`
-/// on an entropy failure — callers decide what to do with the partially-filled buffer; `out` is
-/// left with whatever prefix was already written plus its initial contents for the rest.
-pub(super) fn fill_base62(
-    host: &dyn busbar_contract::codec::CodecHost,
-    out: &mut [u8],
-    alphabet: &[u8; 62],
-) -> bool {
-    const BASE62_REJECT_FLOOR: u8 = crate::codec::dialect::BASE62_REJECT_THRESHOLD;
-    // Fixed stack buffer, no heap allocation on this hot path — both callers' tokens (24 chars)
-    // fit comfortably; a batch this size draws `len` fresh bytes per retry round, same as before.
-    debug_assert!(
-        out.len() <= 32,
-        "fill_base62 batch buffer is sized for <=32 chars"
-    );
-    let len = out.len();
-    let mut filled = 0usize;
-    'outer: while filled < len {
-        let mut batch = [0u8; 32];
-        let batch = &mut batch[..len];
-        // Draw from the host's entropy source; false on CSPRNG failure.
-        if !host.fill_entropy(batch) {
-            return false;
-        }
-        for &byte in batch.iter() {
-            if byte >= BASE62_REJECT_FLOOR {
-                continue; // biased residue — discard to keep the distribution uniform
-            }
-            out[filled] = alphabet[(byte % 62) as usize];
-            filled += 1;
-            if filled == len {
-                break 'outer;
-            }
-        }
-    }
-    true
-}
-
 pub(super) fn synth_id_with_prefix(
     host: &dyn busbar_contract::codec::CodecHost,
     prefix: &str,
@@ -133,7 +88,7 @@ pub(super) fn synth_id_with_prefix(
     // ordering-independent reduction cutoff as every other base62 synth (4 * 62 = 248); only this
     // module's ALPHABET *ordering* (uppercase-first) is intentionally local.
     let mut token = [b'0'; SYNTH_ID_TOKEN_LEN];
-    fill_base62(host, &mut token, ANTHROPIC_NATIVE_ALPHABET);
+    crate::codec::dialect::fill_base62(host, &mut token, ANTHROPIC_NATIVE_ALPHABET);
 
     // `token` is ASCII base62 by construction, hence always valid UTF-8; the fallback only guards
     // against an impossible non-ASCII byte and keeps the path panic-free.
@@ -162,7 +117,8 @@ pub fn synth_anthropic_request_id(host: &dyn busbar_contract::codec::CodecHost) 
     // `Option` contract (omit the header on entropy failure) differs from that sibling's
     // '0'-fill-on-failure contract, so this stays a separate call rather than delegating to it.
     let mut token = [0u8; 24];
-    if !fill_base62(host, &mut token, crate::codec::dialect::BASE62_ALPHABET) {
+    if !crate::codec::dialect::fill_base62(host, &mut token, crate::codec::dialect::BASE62_ALPHABET)
+    {
         return None;
     }
     // token is ASCII base62, always valid UTF-8.

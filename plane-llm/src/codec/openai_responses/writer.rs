@@ -1564,16 +1564,6 @@ impl ProtocolWriter for ResponsesWriter {
             .collect()
     }
 
-    fn write_error_frame(
-        &self,
-        host: &dyn busbar_contract::codec::CodecHost,
-        err: &IrError,
-    ) -> Option<(String, serde_json::Value)> {
-        // The streaming-error seam: delegate to this dialect's own event writer so the mid-stream
-        // error frame is byte-for-byte what an `Error` event produces on this wire.
-        self.write_response_event(host, &IrStreamEvent::Error(err.clone()))
-    }
-
     fn write_response(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
