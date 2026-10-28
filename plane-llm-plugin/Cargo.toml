@@ -28,4 +28,5 @@ busbar-contract = { workspace = true }
 # dlopens the built cdylib over busbar's REAL loader: dev-only, never in the shipped artifact. The
 # op-by-op both-ways script (`tests/both_ways.rs`, moved here with the crate from busbar's
 # crates/busbar-plane-llm/tests/conformance.rs) drives the same two doors through it.
-busbar-plugin-loader = { workspace = true, features = ["conformance"] }
+busbar-plugin-loader = { workspace = true }
+busbar-test-kit = { workspace = true }

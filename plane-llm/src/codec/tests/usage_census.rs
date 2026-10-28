@@ -58,11 +58,9 @@ pub(crate) const fn at(slot: usize, n: i64) -> Ledgered {
 /// (`testing/llm-conformance/wire/<dialect>.wire.json`) declares under `prefix` in `section`: every
 /// integer- or number-typed member below it (a dotted path, no list member).
 pub(crate) fn lock_counts(dialect: &str, section: &str, prefix: &str) -> Vec<String> {
-    let lock_path =
-        std::path::PathBuf::from(std::env::var_os("BUSBAR_CHECKOUT").expect(
-            "BUSBAR_CHECKOUT is unset: busbar's tree at .busbar-ref (plugin CI exports it)",
-        ))
-        .join(format!("testing/llm-conformance/wire/{dialect}.wire.json"));
+    let lock_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "../testing/llm-conformance/wire/{dialect}.wire.json"
+    ));
     let lock: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&lock_path).expect("the pinned wire lock"))
             .expect("wire lock json");
