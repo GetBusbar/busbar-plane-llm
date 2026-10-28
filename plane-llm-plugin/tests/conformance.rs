@@ -13,7 +13,7 @@
 //! plugin repo keeps it (`tests/conformance.rs`). The op-by-op script the crate carried in busbar is
 //! `tests/both_ways.rs` beside it.
 
-busbar_plugin_loader::conformance_suite! {
+busbar_test_kit::conformance_suite! {
     door: busbar_plane_llm::plane_door::door,
     cdylib: "busbar_plane_llm_plugin",
     inputs: include_str!("conformance.json"),

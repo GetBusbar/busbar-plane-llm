@@ -272,13 +272,9 @@ fn bases(lock: &str) -> (Value, Value) {
 }
 
 fn probe(lock_name: &str) {
-    let path =
-        std::path::PathBuf::from(std::env::var_os("BUSBAR_CHECKOUT").expect(
-            "BUSBAR_CHECKOUT is unset: busbar's tree at .busbar-ref (plugin CI exports it)",
-        ))
-        .join(format!(
-            "testing/llm-conformance/wire/{lock_name}.wire.json"
-        ));
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "../testing/llm-conformance/wire/{lock_name}.wire.json"
+    ));
     let lock: Value =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("lock")).expect("lock json");
     let proto = protocol_for(lock_name).expect("registered dialect");
