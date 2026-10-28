@@ -130,7 +130,7 @@ impl ProtocolReader for GeminiReader {
                     || (lower.contains("exceeds the maximum")
                         && (lower.contains(keys::TOKEN) || lower.contains("context")))
                 {
-                    Some(busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
+                    Some(crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
                 } else {
                     provider_code
                 }

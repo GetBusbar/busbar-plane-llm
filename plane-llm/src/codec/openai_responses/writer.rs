@@ -1856,7 +1856,7 @@ impl ProtocolWriter for ResponsesWriter {
             // non-native `type` such as `{"error":{"type":"timeout"}}` or `{"error":{"type":"5xx"}}`
             // to a Responses-API client: a deterministic cross-protocol tell that breaks SDK
             // consumers switching on `error.type`. Mirrors openai_chat.rs's `server_error` bucket.
-            busbar_contract::protocol::KIND_TIMEOUT
+            crate::codec::framework::KIND_TIMEOUT
             | "network"
             | "connect"
             | "5xx"
@@ -1865,7 +1865,7 @@ impl ProtocolWriter for ResponsesWriter {
             // A context-length overflow is surfaced by proxy engine as `context_length_exceeded`; the
             // Responses vocabulary has no dedicated type for it (as openai_chat.rs also maps it), so it
             // folds into `invalid_request_error`. `bad_request` is the same client-error class.
-            busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH | "bad_request" => {
+            crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH | "bad_request" => {
                 ERR_TYPE_INVALID_REQUEST
             }
             "billing" | ERR_TYPE_INSUFFICIENT_QUOTA => ERR_TYPE_INSUFFICIENT_QUOTA,

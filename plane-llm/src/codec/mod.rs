@@ -111,7 +111,7 @@ macro_rules! dialect_identity {
             &self,
             op: busbar_contract::operation::OpVerb,
         ) -> Option<&dyn busbar_contract::codec::OperationHandler> {
-            busbar_contract::codec::cell_of(CELLS, op)
+            crate::codec::framework::cell_of(CELLS, op)
         }
     };
 }
@@ -128,6 +128,10 @@ pub mod carry;
 
 /// The wire words two or more dialects spell alike, one const each.
 pub mod keys;
+
+/// The dialect framework's plane-only items: codec-row lookups, media carriers, the duration
+/// rendering, and the shared error kinds, signals and head reader.
+pub mod framework;
 
 /// The dialects' shared wire helpers: the OpenAI-family error helpers, the SSE `[DONE]` terminator
 /// and frame probe/parse/write, the base62 id alphabet, the `usage` stripper.

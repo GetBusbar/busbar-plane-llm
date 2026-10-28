@@ -123,7 +123,7 @@ fn bearer_error_code_mirrors_native_type_code_pairing() {
         busbar_contract::protocol::KIND_PERMISSION,
         busbar_contract::protocol::KIND_NOT_FOUND,
         busbar_contract::protocol::KIND_RATE_LIMIT,
-        busbar_contract::protocol::KIND_SERVER_ERROR,
+        crate::codec::framework::KIND_SERVER_ERROR,
         busbar_contract::protocol::KIND_API_ERROR,
     ] {
         assert_eq!(code(t), serde_json::Value::Null, "{t} must emit code:null");
