@@ -494,26 +494,16 @@ fn read_cohere_response_format(
 ) -> Option<crate::codec::ir::IrResponseFormat> {
     let o = v.as_object()?;
     match o.get(keys::TYPE).and_then(|t| t.as_str()) {
-        Some(keys::TEXT) => Some(crate::codec::ir::IrResponseFormat {
-            json: false,
-            schema: None,
-            name: None,
-            strict: None,
-            description: None,
-        }),
+        Some(keys::TEXT) => Some(crate::codec::ir::IrResponseFormat::bare(false, None)),
         // `json_object` may carry the schema directly under `json_schema`. An unrecognized `type` is
         // treated as free-form JSON (safe default).
-        Some(_) => Some(crate::codec::ir::IrResponseFormat {
-            json: true,
-            schema: o
-                .get(keys::JSON_SCHEMA)
+        Some(_) => Some(crate::codec::ir::IrResponseFormat::bare(
+            true,
+            o.get(keys::JSON_SCHEMA)
                 .filter(|s| s.is_object())
                 .cloned()
                 .or_else(|| o.get("schema").cloned()),
-            name: None,
-            strict: None,
-            description: None,
-        }),
+        )),
         None => None,
     }
 }
