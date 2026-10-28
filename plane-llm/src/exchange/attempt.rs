@@ -22,6 +22,7 @@ use busbar_contract::protocol::{
 use serde_json::Value;
 
 use super::arrive::Arrived;
+use super::invoke::HeadField;
 use super::shaping::{FarShape, Lane, Shaping};
 use crate::codec::json_splice::{self, Edit};
 use crate::codec::translate::{TranslateCodec as _, TranslateReqInput, TranslateReqReject};
@@ -592,13 +593,13 @@ pub fn with_caller_query(dialect: &str, target: &str, caller_query: &str) -> Opt
 /// name replaces, and the forced ones, which go out whatever the caller sent (the dialect governs
 /// them, so a caller's never passes).
 #[must_use]
-pub fn option_fields(lane: &Lane) -> (Vec<(String, Vec<u8>)>, Vec<(String, Vec<u8>)>) {
+pub fn option_fields(lane: &Lane) -> (Vec<HeadField>, Vec<HeadField>) {
     let (forced, defaults): (Vec<_>, Vec<_>) = lane
         .options
         .iter()
         .filter(|o| o.place == Place::Header)
         .partition(|o| o.precedence == Precedence::Forced);
-    let pairs = |v: Vec<&SetOption>| -> Vec<(String, Vec<u8>)> {
+    let pairs = |v: Vec<&SetOption>| -> Vec<HeadField> {
         v.into_iter()
             .map(|o| (o.wire.clone(), o.value.as_bytes().to_vec()))
             .collect()
