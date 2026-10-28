@@ -374,10 +374,6 @@ const TOOL_TYPE_FUNCTION: &str = keys::FUNCTION;
 /// Tool `type` field value for a Chat Completions custom (free-text / grammar input) tool.
 const TOOL_TYPE_CUSTOM: &str = keys::CUSTOM;
 
-/// Fallback `json_schema.name` synthesized when the IR carries none.
-/// OpenAI REQUIRES this field and the SDK rejects it when absent.
-const JSON_SCHEMA_DEFAULT_NAME: &str = "response";
-
 /// Prefix of every native OpenAI chat-completion id (`chatcmpl-<24 base62 chars>`).
 const COMPLETION_ID_PREFIX: &str = "chatcmpl-";
 
@@ -527,40 +523,13 @@ fn read_openai_response_format(
 ) -> Option<crate::codec::ir::IrResponseFormat> {
     let o = v.as_object()?;
     match o.get(keys::TYPE).and_then(|t| t.as_str()) {
-        Some(RESP_FORMAT_TEXT) => Some(crate::codec::ir::IrResponseFormat {
-            json: false,
-            schema: None,
-            name: None,
-            strict: None,
-            description: None,
-        }),
-        Some(RESP_FORMAT_JSON_SCHEMA) => {
-            let js = o.get(keys::JSON_SCHEMA);
-            Some(crate::codec::ir::IrResponseFormat {
-                json: true,
-                schema: js.and_then(|j| j.get(keys::SCHEMA)).cloned(),
-                name: js
-                    .and_then(|j| j.get(keys::NAME))
-                    .and_then(|n| n.as_str())
-                    .map(String::from),
-                strict: js
-                    .and_then(|j| j.get(keys::STRICT))
-                    .and_then(|s| s.as_bool()),
-                description: js
-                    .and_then(|j| j.get(keys::DESCRIPTION))
-                    .and_then(|d| d.as_str())
-                    .map(String::from),
-            })
-        }
+        Some(RESP_FORMAT_TEXT) => Some(crate::codec::ir::IrResponseFormat::bare(false, None)),
+        Some(RESP_FORMAT_JSON_SCHEMA) => Some(
+            crate::codec::ir::IrResponseFormat::from_json_schema_members(o.get(keys::JSON_SCHEMA)),
+        ),
         // `json_object` carries no schema; an unrecognized `type` is treated as free-form JSON (the
         // safe non-rejecting default) rather than dropped.
-        Some(_) => Some(crate::codec::ir::IrResponseFormat {
-            json: true,
-            schema: None,
-            name: None,
-            strict: None,
-            description: None,
-        }),
+        Some(_) => Some(crate::codec::ir::IrResponseFormat::bare(true, None)),
         None => None,
     }
 }
@@ -574,18 +543,7 @@ fn write_openai_response_format(rf: &crate::codec::ir::IrResponseFormat) -> serd
     match &rf.schema {
         Some(schema) => {
             let mut js = serde_json::Map::new();
-            // OpenAI REQUIRES `json_schema.name`; synthesize a valid one when the source had none.
-            js.insert(
-                keys::NAME.to_string(),
-                serde_json::json!(rf.name.as_deref().unwrap_or(JSON_SCHEMA_DEFAULT_NAME)),
-            );
-            js.insert(keys::SCHEMA.to_string(), schema.clone());
-            if let Some(s) = rf.strict {
-                js.insert(keys::STRICT.to_string(), serde_json::json!(s));
-            }
-            if let Some(d) = &rf.description {
-                js.insert(keys::DESCRIPTION.to_string(), serde_json::json!(d));
-            }
+            rf.write_json_schema_members(schema, &mut js);
             serde_json::json!({(keys::TYPE): RESP_FORMAT_JSON_SCHEMA, (keys::JSON_SCHEMA): js})
         }
         None => serde_json::json!({(keys::TYPE): RESP_FORMAT_JSON_OBJECT}),
