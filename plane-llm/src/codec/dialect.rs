@@ -9,10 +9,10 @@
 //! the contract carries only the vocabulary both sides of the seam must spell alike
 //! (`busbar_contract::protocol`: the error-`type` bank, the SSE frame-boundary scan and line walkers).
 
+use crate::codec::framework::ERR_TYPE_SERVER_ERROR;
 use busbar_contract::protocol::{
     sse_line_spans, ERR_TYPE_API_ERROR, ERR_TYPE_AUTHENTICATION, ERR_TYPE_INSUFFICIENT_QUOTA,
     ERR_TYPE_INVALID_REQUEST, ERR_TYPE_NOT_FOUND, ERR_TYPE_PERMISSION, ERR_TYPE_RATE_LIMIT,
-    ERR_TYPE_SERVER_ERROR,
 };
 
 /// Machine-readable `code` field emitted in a bad-key 401 OpenAI-family error envelope.
@@ -112,7 +112,7 @@ pub fn warn_dropped<'a>(dropped: impl IntoIterator<Item = &'a str>, warn: &DropW
 pub fn ir_parse_error() -> busbar_contract::protocol::IrError {
     busbar_contract::protocol::IrError {
         class: busbar_contract::upstream::StatusClass::ClientError,
-        provider_signal: Some(busbar_contract::protocol::SIGNAL_IR_PARSE.to_string()),
+        provider_signal: Some(crate::codec::framework::SIGNAL_IR_PARSE.to_string()),
         retry_after: None,
     }
 }

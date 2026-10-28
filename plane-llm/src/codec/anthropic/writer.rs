@@ -92,11 +92,11 @@ impl ProtocolWriter for AnthropicWriter {
             // Anthropic wire an over-long prompt is a request the model cannot accept, i.e.
             // `invalid_request_error` (real Anthropic returns exactly that, with a
             // "prompt is too long" message).
-            busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH
+            crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH
             | busbar_contract::protocol::DISPOSITION_CONTEXT_LENGTH => ERR_TYPE_INVALID_REQUEST,
             busbar_contract::protocol::KIND_OVERLOADED => ERR_TYPE_OVERLOADED,
-            busbar_contract::protocol::KIND_TIMEOUT => ERR_TYPE_TIMEOUT,
-            ERR_TYPE_API_ERROR | busbar_contract::protocol::KIND_SERVER_ERROR | "internal" => {
+            crate::codec::framework::KIND_TIMEOUT => ERR_TYPE_TIMEOUT,
+            ERR_TYPE_API_ERROR | crate::codec::framework::KIND_SERVER_ERROR | "internal" => {
                 ERR_TYPE_API_ERROR
             }
             // Already an Anthropic-native type (e.g. "invalid_request_error") or an unmapped value:

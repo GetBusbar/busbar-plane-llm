@@ -72,7 +72,7 @@ impl RequestHandler for OpenAiRequestHandler {
     fn upstream_path(&self, ctx: &EgressCtx) -> String {
         // The fallback is unreachable in practice: a verb with no cell above never reaches egress
         // here. It keeps the pre-1.6.0 answer verbatim rather than inventing a new one.
-        busbar_contract::codec::path_of(PATHS, ctx.operation)
+        crate::codec::framework::path_of(PATHS, ctx.operation)
             .unwrap_or(PATH_RERANK)
             .into()
     }
@@ -100,9 +100,11 @@ impl RequestHandler for OpenAiRequestHandler {
 
 // -------------------------------------------------- audio cells (real codecs, cross-protocol)
 
+use crate::codec::framework::MediaBlob;
+use crate::codec::framework::MediaPayload;
 use crate::codec::ir::audio::{SpeechReq, SpeechResp, TranscriptionReq, TranscriptionResp};
 use busbar_contract::billing::Billing;
-use busbar_contract::media::{base64_decode, MediaBlob, MediaPayload};
+use busbar_contract::media::base64_decode;
 
 /// One decoded part of a `multipart/form-data` body (its value borrowed from the request bytes).
 struct MultipartField<'a> {
@@ -428,7 +430,7 @@ pub fn write_transcription_response(r: &TranscriptionResp) -> WireBody {
         Some(Billing::Duration { seconds }) => {
             // The one render boundary — byte-identical to what this wrote before the quantity
             // became exact (see `billing::duration_seconds_to_wire`).
-            let seconds = busbar_contract::billing::duration_seconds_to_wire(*seconds);
+            let seconds = crate::codec::framework::duration_seconds_to_wire(*seconds);
             body[keys::USAGE] =
                 json!({ (keys::TYPE): super::W_DURATION, (super::SECONDS): seconds });
         }
@@ -628,8 +630,8 @@ pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
 
 // ---------------------------------------------------------------- image OperationHandler (real, cross-protocol)
 
+use crate::codec::framework::ImageOutput;
 use crate::codec::ir::image::{ImageOp, ImageReq, ImageResp, ImageSize};
-use busbar_contract::media::ImageOutput;
 
 struct OpenAiImage;
 

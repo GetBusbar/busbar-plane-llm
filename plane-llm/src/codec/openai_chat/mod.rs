@@ -12,6 +12,7 @@ use busbar_contract::http::StatusCode;
 use crate::codec::dialect::{bearer_error_code, context_length_prose_scan};
 // The neutral canonical error-type vocabulary lives in the substrate; read it there, not via core's
 // re-export, so this plugin names no `busbar-core` implementation path for it.
+use crate::codec::framework::{ERR_TYPE_OVERLOADED, ERR_TYPE_SERVER_ERROR};
 use busbar_contract::protocol::*;
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
@@ -637,7 +638,7 @@ const STREAM_ERR_CODE_RATE_LIMIT: &str = "rate_limit_exceeded";
 fn stream_inline_error_class(error_type: Option<&str>, code: Option<&str>) -> StatusClass {
     let signal = code.filter(|c| !c.is_empty()).or(error_type);
     match signal {
-        Some(busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH) => StatusClass::ContextLength,
+        Some(crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH) => StatusClass::ContextLength,
         Some(STREAM_ERR_CODE_RATE_LIMIT)
         | Some(ERR_TYPE_RATE_LIMIT)
         | Some(ERR_TYPE_INSUFFICIENT_QUOTA) => StatusClass::RateLimit,

@@ -87,7 +87,7 @@ impl ProtocolReader for OpenAiReader {
                 .unwrap_or("")
                 .to_lowercase();
             if context_length_prose_scan(&message) {
-                Some(busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
+                Some(crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
             } else {
                 None
             }

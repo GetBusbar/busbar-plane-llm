@@ -12,11 +12,12 @@ use busbar_contract::http::StatusCode;
 use crate::codec::dialect::{bearer_error_code, CODE_INVALID_API_KEY};
 // The neutral canonical error-type vocabulary lives in the substrate; read it there, not via core's
 // re-export, so this plugin names no `busbar-core` implementation path for it.
+use crate::codec::framework::ERR_TYPE_OVERLOADED;
+use crate::codec::framework::ERR_TYPE_SERVER_ERROR;
 use busbar_contract::protocol::*;
 use busbar_contract::protocol::{
     ERR_TYPE_AUTHENTICATION, ERR_TYPE_INSUFFICIENT_QUOTA, ERR_TYPE_INVALID_REQUEST,
-    ERR_TYPE_NOT_FOUND, ERR_TYPE_OVERLOADED, ERR_TYPE_PERMISSION, ERR_TYPE_RATE_LIMIT,
-    ERR_TYPE_SERVER_ERROR,
+    ERR_TYPE_NOT_FOUND, ERR_TYPE_PERMISSION, ERR_TYPE_RATE_LIMIT,
 };
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
@@ -862,7 +863,7 @@ fn class_for_response_failed(signal: &str) -> StatusClass {
     match signal {
         CODE_INVALID_API_KEY | ERR_TYPE_AUTHENTICATION => StatusClass::Auth,
         ERR_CODE_RATE_LIMIT | ERR_TYPE_INSUFFICIENT_QUOTA => StatusClass::RateLimit,
-        busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH | ERR_CODE_STRING_ABOVE_MAX => {
+        crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH | ERR_CODE_STRING_ABOVE_MAX => {
             StatusClass::ContextLength
         }
         ERR_TYPE_SERVER_ERROR | ERR_TYPE_OVERLOADED => StatusClass::ServerError,
