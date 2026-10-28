@@ -804,6 +804,19 @@ fn a_spent_budget_is_400_service_quota_exceeded_not_a_retryable_throttle() {
         error_kind_to_bedrock_type("rate_limit_error"),
         "ThrottlingException"
     );
+    // and the refusal is the dialect's own DECLARED one: the shipped table names this exception
+    // at the status the dialect answers, so the conformance rig judges exactly what is emitted
+    let table: serde_json::Value =
+        serde_json::from_str(super::REFUSALS_JSON).expect("refusals.json is JSON");
+    let row = &table["refusals"][0];
+    assert_eq!(row["exception"], "ServiceQuotaExceededException");
+    assert_eq!(
+        row["status"].as_u64(),
+        Some(u64::from(super::DECL.quota_exceeded_status))
+    );
+    assert!(row["kinds"]
+        .as_array()
+        .is_some_and(|k| k.iter().any(|k| k == ERR_TYPE_INSUFFICIENT_QUOTA)));
 }
 
 /// Kind → Bedrock exception-name mapping covers the common categories and falls back to a real
