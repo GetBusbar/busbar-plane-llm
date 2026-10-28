@@ -423,17 +423,11 @@ const AUTH_FAILURE_MSG: &str = "Incorrect API key provided.";
 /// whatever position it occupies that a native, fully-random vendor id never carries. The opaque
 /// suffixes here are wide (>= 48 chars ≈ 285 bits of base62 entropy), so pure CSPRNG output is
 /// collision-free in practice for a per-process id stream and needs no monotonic-counter backstop.
-/// On entropy failure the buffer stays zeroed (all '0'), so this never panics on the request path.
-/// Returns an owned `String` of exactly `N` base62 characters, each drawn from a UNIFORM base62
-/// distribution: a raw `byte % 62` reduction is biased (256 is not a multiple of 62, so bytes
-/// 248..=255 wrap to base62 digits 0..=7, making those eight chars ~1.25x more likely than 8..=61
-/// and leaving a faint statistical fingerprint a native uniform-random id never carries). We instead
-/// use REJECTION SAMPLING: any byte >= 248 (= 62 * 4, the largest multiple of 62 that fits in a u8)
-/// is rejected and a fresh CSPRNG byte is drawn for that slot, so every base62 character is
-/// equiprobable. Rejection keeps the function infallible/panic-free — on an entropy failure a slot
-/// simply keeps its all-zero fallback rather than retrying.
+/// On entropy failure the unfilled tail stays '0', so this never panics on the request path.
+/// Returns an owned `String` of exactly `N` base62 characters drawn by `dialect::fill_base62`
+/// (rejection sampling, so each character is uniform like a native id's).
 ///
-/// `N` MUST be >= 11. A token narrower than that carries too little base62 entropy to stay
+/// `N` MUST be >= 11 (and at most the 64 `fill_base62` draws). A token narrower than that carries too little base62 entropy to stay
 /// collision-free across a per-process id stream and falls below the opaque-suffix width a native
 /// vendor id never goes under — making a short synthesized id a distinguishability tell. The bound
 /// is enforced at COMPILE TIME by the `const _` assertion below: instantiating `synth_token` with a
@@ -448,34 +442,14 @@ fn synth_token<const N: usize>(host: &dyn busbar_contract::codec::CodecHost) -> 
     // any `N < 11` instantiation into a build error.
     struct MinWidth<const M: usize>;
     impl<const M: usize> MinWidth<M> {
-        const OK: () = assert!(M >= 11, "synth_token<N>: N must be >= 11 base62 chars");
+        const OK: () = assert!(
+            M >= 11 && M <= 64,
+            "synth_token<N>: N must be 11..=64 base62 chars"
+        );
     }
     let () = MinWidth::<N>::OK;
-
-    // Largest multiple of 62 that fits in a u8 (62 * 4). A byte in `0..REJECT_THRESHOLD` maps to a
-    // base62 digit with NO modular bias; a byte >= this threshold (248..=255) is rejected so every
-    // base62 character stays equiprobable. See the docstring for the bias rationale.
-    const REJECT_THRESHOLD: u8 = crate::codec::dialect::BASE62_REJECT_THRESHOLD;
-
     let mut token = [b'0'; N];
-    for slot in token.iter_mut() {
-        // Draw fresh bytes until one falls in the unbiased range. A small scratch buffer is refilled
-        // from the CSPRNG as needed; on an entropy failure the draw yields zeros, which are < the
-        // threshold and accepted, so the slot stays at base62 '0' (the existing all-zero fallback)
-        // and the loop still terminates — keeping the function infallible and panic-free.
-        let mut buf = [0u8; 1];
-        loop {
-            if !host.fill_entropy(&mut buf) {
-                // Entropy failure: leave this slot at its existing '0' fallback and move on.
-                break;
-            }
-            if buf[0] < REJECT_THRESHOLD {
-                *slot = BASE62[(buf[0] % 62) as usize];
-                break;
-            }
-            // buf[0] >= REJECT_THRESHOLD: biased region, reject and redraw.
-        }
-    }
+    crate::codec::dialect::fill_base62(host, &mut token, BASE62);
 
     // `token` is ASCII base62 by construction, hence always valid UTF-8; the fallback only guards an
     // impossible non-ASCII byte and keeps the path panic-free (no unwrap/expect on the request path).

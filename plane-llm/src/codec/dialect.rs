@@ -197,6 +197,39 @@ pub const BASE62_ALPHABET: &[u8; 62] =
 /// The rejection-sampling threshold paired with [`BASE62_ALPHABET`]; see its docs.
 pub const BASE62_REJECT_THRESHOLD: u8 = 248;
 
+/// Fill `out` (at most 64 characters) with uniformly-distributed characters of `alphabet` drawn
+/// from the host's entropy, by rejection sampling: a bare `byte % 62` over-represents the residues
+/// 0..7 by ~25%, a statistical tell against a native (uniform) id, so a byte at or above
+/// [`BASE62_REJECT_THRESHOLD`] is discarded. Each round draws `out.len()` bytes. Returns `false` on
+/// an entropy failure, leaving the unfilled tail of `out` as it was (the callers' `'0'` fill).
+pub(crate) fn fill_base62(
+    host: &dyn busbar_contract::codec::CodecHost,
+    out: &mut [u8],
+    alphabet: &[u8; 62],
+) -> bool {
+    debug_assert!(out.len() <= 64, "fill_base62 draws at most 64 chars");
+    let len = out.len();
+    let mut filled = 0usize;
+    'outer: while filled < len {
+        let mut batch = [0u8; 64];
+        let batch = &mut batch[..len];
+        if !host.fill_entropy(batch) {
+            return false;
+        }
+        for &byte in batch.iter() {
+            if byte >= BASE62_REJECT_THRESHOLD {
+                continue;
+            }
+            out[filled] = alphabet[(byte % 62) as usize];
+            filled += 1;
+            if filled == len {
+                break 'outer;
+            }
+        }
+    }
+    true
+}
+
 /// Project each message's `(role, content)` into a `(String, String)` pair when BOTH are plain
 /// strings, or `None` if any message is missing a string role/content. A neutral serde_json projection
 /// with no protocol knowledge.
