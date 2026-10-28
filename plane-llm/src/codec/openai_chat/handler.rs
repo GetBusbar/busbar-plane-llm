@@ -274,11 +274,6 @@ pub const TRANSCRIPTION_BOUNDARY: &str = "----busbaraudioMIME";
 /// The Content-Type the transcription egress form is declared with; names [`TRANSCRIPTION_BOUNDARY`].
 const TRANSCRIPTION_CONTENT_TYPE: &str = "multipart/form-data; boundary=----busbaraudioMIME";
 
-/// The transcription egress boundary ([`TRANSCRIPTION_BOUNDARY`]).
-pub fn transcription_boundary() -> &'static str {
-    TRANSCRIPTION_BOUNDARY
-}
-
 /// Does `part` contain the multipart delimiter, i.e. can splicing it into a body framed with
 /// `boundary` terminate its own part and start a new one?
 ///
@@ -305,7 +300,7 @@ fn part_carries_delimiter(part: &[u8], boundary: &str) -> bool {
 /// refused 4xx at the seam and never dispatched. It is never truncated or silently sanitized: a
 /// request that tried to inject parts does not go upstream at all.
 pub fn write_transcription_request(r: &TranscriptionReq) -> Bytes {
-    let boundary = transcription_boundary();
+    let boundary = TRANSCRIPTION_BOUNDARY;
     let mut out: Vec<u8> = Vec::new();
     let mut push_field = |name: &str, val: &str| {
         // Strip CR/LF from the value: any field (model, language, prompt, response_format) can
@@ -768,9 +763,9 @@ pub fn write_moderation_response(r: &ModerationResp) -> WireBody {
         .map(|res| {
             json!({
                 (super::FLAGGED): res.flagged,
-                (super::CATEGORIES): map_bool(&res.categories),
-                (super::CATEGORY_SCORES): map_f64(&res.category_scores),
-                (super::CATEGORY_APPLIED_INPUT_TYPES): map_strs(&res.applied_input_types),
+                (super::CATEGORIES): json_map(&res.categories),
+                (super::CATEGORY_SCORES): json_map(&res.category_scores),
+                (super::CATEGORY_APPLIED_INPUT_TYPES): json_map(&res.applied_input_types),
             })
         })
         .collect();
@@ -863,13 +858,7 @@ fn obj_map<T>(v: Option<&Value>, f: impl Fn(&Value) -> Option<T>) -> BTreeMap<St
         .unwrap_or_default()
 }
 
-fn map_bool(m: &BTreeMap<String, bool>) -> Value {
-    Value::Object(m.iter().map(|(k, v)| (k.clone(), json!(v))).collect())
-}
-fn map_f64(m: &BTreeMap<String, f64>) -> Value {
-    Value::Object(m.iter().map(|(k, v)| (k.clone(), json!(v))).collect())
-}
-fn map_strs(m: &BTreeMap<String, Vec<String>>) -> Value {
+fn json_map<V: serde::Serialize>(m: &BTreeMap<String, V>) -> Value {
     Value::Object(m.iter().map(|(k, v)| (k.clone(), json!(v))).collect())
 }
 
