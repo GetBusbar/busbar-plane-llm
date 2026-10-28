@@ -13,12 +13,14 @@ static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
         code: super::RESPONSE_CODE,
         drops: super::RESPONSE_DROPS,
         defaults: &[],
+        reroot: None,
     }),
     stream_carried: Some(crate::codec::drops::Carried {
         map: super::map::STREAM_PATHS,
         code: super::STREAM_CODE,
         drops: super::STREAM_DROPS,
         defaults: &[],
+        reroot: None,
     }),
     stream_keyed_by_event: false,
     block_kinds: super::IR_BLOCK_KINDS,
@@ -44,9 +46,9 @@ impl ProtocolReader for CohereReader {
         let v = super::super::usage_tail::isolate_tail_usage_object(tail, b"\"usage\"")?;
         // The usage object is read exactly as `read_response` reads it (one table, `USAGE`), so a
         // head-truncated body ledgers what its untruncated twin ledgers: the raw `tokens` counts,
-        // as 1.5.5 billed them, with the separately-metered `billed_units` carried beside them as
+        // with the separately-metered `billed_units` carried beside them as
         // attribution (`to_token_usage`). An unreadable count is refused on its own and bills
-        // nothing; the readable counts recover (#42; ARCHITECT ruling 2026-10-15).
+        // nothing; the readable counts recover.
         Some(read_cohere_usage(Some(&v)).ok()?.to_token_usage())
     }
 
@@ -94,7 +96,7 @@ impl ProtocolReader for CohereReader {
             || status == StatusCode::PAYLOAD_TOO_LARGE)
             && Self::body_signals_context_length(body)
         {
-            Some(busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
+            Some(crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
         } else {
             provider_code
         };
@@ -120,8 +122,8 @@ impl ProtocolReader for CohereReader {
 
         let mut extra = serde_json::Map::new();
         let mut system_blocks: Vec<crate::codec::ir::IrBlock> = Vec::new();
-        // Count of `system`-role entries folded out of `messages` below — restores the 1.5.5
-        // `message_count` semantics (the raw wire array length) onto `IrFacts::shape()`.
+        // Count of `system`-role entries folded out of `messages` below — keeps
+        // `message_count` the raw wire array length on `IrFacts::shape()`.
         let mut system_turns_folded: usize = 0;
         // Where each folded entry stood, for the hook view (`IrRequest::system_folds`).
         let mut system_folds: Vec<crate::codec::ir::IrSystemFold> = Vec::new();
@@ -970,7 +972,7 @@ impl ProtocolReader for CohereReader {
                     }));
                 }
 
-                // BILLED COUNTS: absent is zero, a present-but-UNREADABLE count REFUSES (#42) —
+                // Billed counts: absent is zero, a present-but-unreadable count refuses —
                 // the stream ends in an error instead of ledgering zero tokens.
                 let usage = data
                     .get(keys::DELTA)
@@ -1316,9 +1318,9 @@ impl ProtocolReader for CohereReader {
         // `Option`, so each token lookup below already defaults to 0.
         let usage_val = obj.get(keys::USAGE);
         // `cached_tokens` (Cohere's prompt-cache hit, counted inside `tokens.input_tokens`) stays
-        // inside the input count, as 1.5.5 billed it. `billed_units.search_units` is a separately metered unit that is not a token count at
+        // inside the input count. `billed_units.search_units` is a separately metered unit that is not a token count at
         // all, so its loss would be invisible in a token total that reconciles perfectly. See
-        // `USAGE`. Absent is zero, a present-but-UNREADABLE count REFUSES (#42).
+        // `USAGE`. Absent is zero, a present-but-unreadable count refuses.
         let usage = read_cohere_usage(usage_val)?;
 
         // Cohere v2 response `logprobs[]`: one item per decoded text chunk, mapped to the neutral
@@ -1366,23 +1368,21 @@ impl ProtocolReader for CohereReader {
     }
 }
 
-// ── USAGE COUNTS (#42) ───────────────────────────────────────────────────────────────────────────
+// Usage counts.
 
-/// COHERE'S USAGE COUNTS, AS DATA. The raw `tokens` bucket gives the totals; `billed_units` is the
+/// Cohere's usage counts, as data. The raw `tokens` bucket gives the totals; `billed_units` is the
 /// provider-metered bucket — its token counts, its `search_units` and its `classifications`.
-/// `cached_tokens`, the cache hit, is a slice INSIDE `tokens.input_tokens` and is NOT split out: the
-/// cached share bills at the input tier, exactly as 1.5.5 billed it (v1.5.5
-/// `crates/busbar/src/proto/cohere/reader.rs:964-979` buffered and `:709-729` stream read only
-/// `tokens.*` and set `cache_read_input_tokens: None`). Moving the share to the cache-read tier
-/// would change what a key is charged, and no owner ruling signs that move (CHANGELOG 1.6.0: "The
-/// token classes, their figures and every `tokens:` cap count exactly what 1.5.5 counted").
+/// `cached_tokens`, the cache hit, is a slice inside `tokens.input_tokens` and is not split out:
+/// the cached share bills at the input tier (only `tokens.*` is read and
+/// `cache_read_input_tokens` is `None`); moving the share to the cache-read tier would change what
+/// a key is charged.
 ///
-/// WHERE EACH COUNT IS LEDGERED (MONEY-AUDIT A-F1; the census over the pinned wire lock,
+/// Where each count is ledgered (the census over the pinned wire lock,
 /// `testing/llm-conformance/wire/cohere.wire.json`, is `usage_census_tests`): the raw token
-/// counts are the reserved input/output classes, as 1.5.5 billed them, and the billed token
+/// counts are the reserved input/output classes, and the billed token
 /// counts ride beside them as attribution only (`IrUsage::to_token_usage`),
 /// `search_units` is the open class `search_units`, and `classifications` is the open class
-/// `classifications` (owner LEDGER-100).
+/// `classifications`.
 const USAGE: &[UsageCount] = &[
     (
         CountSlot::Input,

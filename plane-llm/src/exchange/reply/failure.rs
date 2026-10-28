@@ -11,8 +11,9 @@
 
 use std::collections::HashMap;
 
+use crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH;
 use busbar_contract::operation::OpVerb;
-use busbar_contract::protocol::{HeadFields, KIND_AUTHENTICATION, PROVIDER_CODE_CONTEXT_LENGTH};
+use busbar_contract::protocol::{HeadFields, KIND_AUTHENTICATION};
 use busbar_contract::upstream::{CanonicalSignal, Disposition, RawUpstreamError, StatusClass};
 
 use super::super::decl;

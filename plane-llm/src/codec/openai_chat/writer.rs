@@ -1013,7 +1013,7 @@ impl ProtocolWriter for OpenAiWriter {
             | "timeout"
             | "network"
             | "5xx" => ERR_TYPE_SERVER_ERROR,
-            busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH => ERR_TYPE_INVALID_REQUEST,
+            crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH => ERR_TYPE_INVALID_REQUEST,
             // Empty kind: derive a valid OpenAI type from the HTTP status bucket rather than emitting
             // an empty `type`, so the SDK still sees a real error type.
             "" => {
@@ -1038,16 +1038,6 @@ impl ProtocolWriter for OpenAiWriter {
                 (keys::CODE): bearer_error_code(error_type),
             }
         })
-    }
-
-    fn write_error_frame(
-        &self,
-        host: &dyn busbar_contract::codec::CodecHost,
-        err: &IrError,
-    ) -> Option<(String, serde_json::Value)> {
-        // The streaming-error seam: delegate to this dialect's own event writer so the mid-stream
-        // error frame is byte-for-byte what an `Error` event produces on this wire.
-        self.write_response_event(host, &IrStreamEvent::Error(err.clone()))
     }
 
     fn write_response(

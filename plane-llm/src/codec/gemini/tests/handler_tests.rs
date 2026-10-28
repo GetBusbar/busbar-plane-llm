@@ -653,10 +653,10 @@ fn gemini_transcription_forwards_caller_prompt_and_temperature() {
         model: "gemini-2.0-flash".into(),
         prompt: Some("Spell Busbar correctly.".into()),
         temperature: Some(0.5),
-        audio: Some(busbar_contract::media::MediaBlob {
-            payload: busbar_contract::media::MediaPayload::Bytes(busbar_contract::SlabBytes::from(
-                &b"x"[..],
-            )),
+        audio: Some(crate::codec::framework::MediaBlob {
+            payload: crate::codec::framework::MediaPayload::Bytes(
+                busbar_contract::SlabBytes::from(&b"x"[..]),
+            ),
             mime_type: "audio/mpeg".into(),
             pcm: None,
         }),
@@ -870,7 +870,7 @@ fn transcription_response_reads_token_usage() {
 #[test]
 fn image_response_writer_writes_no_usage_metadata() {
     let resp = crate::codec::ir::image::ImageResp {
-        images: vec![busbar_contract::media::ImageOutput {
+        images: vec![crate::codec::framework::ImageOutput {
             b64: Some("aGVsbG8=".into()),
             ..Default::default()
         }],
@@ -893,7 +893,7 @@ fn image_response_writer_writes_no_usage_metadata() {
 #[test]
 fn image_response_writer_omits_usage_when_absent() {
     let resp = crate::codec::ir::image::ImageResp {
-        images: vec![busbar_contract::media::ImageOutput {
+        images: vec![crate::codec::framework::ImageOutput {
             b64: Some("aGVsbG8=".into()),
             ..Default::default()
         }],

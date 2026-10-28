@@ -92,11 +92,11 @@ impl ProtocolWriter for AnthropicWriter {
             // Anthropic wire an over-long prompt is a request the model cannot accept, i.e.
             // `invalid_request_error` (real Anthropic returns exactly that, with a
             // "prompt is too long" message).
-            busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH
+            crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH
             | busbar_contract::protocol::DISPOSITION_CONTEXT_LENGTH => ERR_TYPE_INVALID_REQUEST,
             busbar_contract::protocol::KIND_OVERLOADED => ERR_TYPE_OVERLOADED,
-            busbar_contract::protocol::KIND_TIMEOUT => ERR_TYPE_TIMEOUT,
-            ERR_TYPE_API_ERROR | busbar_contract::protocol::KIND_SERVER_ERROR | "internal" => {
+            crate::codec::framework::KIND_TIMEOUT => ERR_TYPE_TIMEOUT,
+            ERR_TYPE_API_ERROR | crate::codec::framework::KIND_SERVER_ERROR | "internal" => {
                 ERR_TYPE_API_ERROR
             }
             // Already an Anthropic-native type (e.g. "invalid_request_error") or an unmapped value:
@@ -173,7 +173,7 @@ impl ProtocolWriter for AnthropicWriter {
         // it IS listed — the seam records the drop rather than it vanishing.
         let mut dropped = Vec::new();
         // A NATIVE-structured-output lane drops only a schema-less JSON mode; every other lane
-        // drops the directive, as 1.5.5 did.
+        // drops the directive.
         if req
             .response_format
             .as_ref()
@@ -185,7 +185,7 @@ impl ProtocolWriter for AnthropicWriter {
             crate::codec::carry::dropped(super::map::REQUEST, super::map::CONTROLS, req)
                 .map(crate::codec::carry::Slot::name),
         );
-        // Every hosted tool that crossed the seam is dropped on Anthropic egress (1.5.5).
+        // Every hosted tool that crossed the seam is dropped on Anthropic egress.
         dropped.extend(req.hosted_tools.iter().map(|h| h.kind_str()));
         dropped
     }
@@ -257,13 +257,10 @@ impl ProtocolWriter for AnthropicWriter {
         // carries the mode (auto / required → `auto` / `any`).
         //
         // A hosted tool that crossed the seam (a Responses `web_search`, a Chat
-        // `web_search_options`, a web fetch or code execution) is DROPPED with a warn, as 1.5.5
-        // dropped it (its writer saw none: "prepare_for_egress strips hosted tools", v1.5.5
-        // `crates/busbar/src/proto/anthropic/writer.rs:171-178`). Writing it as an Anthropic server
-        // tool ran Anthropic searches that 1.5.5 did not, and the turn's
-        // `server_tool_use.web_search_requests` then charged the key `search_units` it was never
-        // charged; no owner ruling signs that (BUSBAR-1.6.0.md THE LLM DIALECT FIDELITY RULE:
-        // "Billing never moves").
+        // `web_search_options`, a web fetch or code execution) is dropped with a warn. Writing it as an Anthropic
+        // server tool would run Anthropic searches, and the turn's
+        // `server_tool_use.web_search_requests` would then charge the key `search_units` it was
+        // never charged.
         crate::codec::dialect::warn_dropped(
             req.hosted_tools.iter().map(|h| h.kind_str()),
             &super::map::DROP_WARN,
@@ -349,8 +346,8 @@ impl ProtocolWriter for AnthropicWriter {
         // (`LaneCaps::native_structured_output`, declared per provider / model in the catalog), not
         // something this writer can see from the request: the native form 400s on models that
         // predate it (Claude 3.x, Sonnet 4 / Opus 4.0), and the forced-tool form 400s on models that
-        // reject forced tool use (Opus 4.7+/5.x, Sonnet 5, Fable 5.1). The default is 1.5.5's drop
-        // — what this writer sent before the capability existed — so nothing that worked stops.
+        // reject forced tool use (Opus 4.7+/5.x, Sonnet 5, Fable 5.1). The default is the drop,
+        // so nothing that worked stops.
         if caps.native_structured_output {
             if let Some(rf) = req.response_format.as_ref().filter(|rf| rf.json) {
                 match &rf.schema {
@@ -382,9 +379,8 @@ impl ProtocolWriter for AnthropicWriter {
             }
         } else if req.response_format.as_ref().is_some_and(|rf| rf.json) {
             // A lane that does not declare native structured outputs has no Anthropic form for the
-            // directive: it is DROPPED with a warn, exactly as 1.5.5 dropped it (v1.5.5
-            // `crates/busbar/src/proto/anthropic/writer.rs:343-347`) and as the lane-capability key's
-            // contract states ("an omitted key sends what 1.5.5 sent", CHANGELOG 1.6.0). A synthetic
+            // directive: it is dropped with a warn, as the lane-capability key's contract states
+            // (an omitted key sends the drop). A synthetic
             // forced tool is not the directive's mapping: it overwrote the caller's own `tool_choice`
             // and `disable_parallel_tool_use`, and a streamed answer reached the client as a call to
             // that tool instead of JSON content.
@@ -548,7 +544,7 @@ impl ProtocolWriter for AnthropicWriter {
         out.insert(keys::STREAM.to_string(), serde_json::json!(req.stream));
         // (response_format is handled ABOVE via native `output_config.format`.)
         // The controls with no Anthropic Messages form (the penalties, `seed`, `n`, a tier Anthropic
-        // cannot name, the Q57 slots it has no member for): dropped, observably, each warned in the
+        // cannot name, the typed slots it has no member for): dropped, observably, each warned in the
         // mapping file's words and reported by `dropped_egress_controls` for the seam audit.
         crate::codec::carry::warn_drops(
             super::map::REQUEST,
@@ -925,10 +921,10 @@ impl ProtocolWriter for AnthropicWriter {
                 // human-readable description, required in the documented shape).
                 //
                 // `error.type` is a member of the published ErrorResponse discriminator (nine tokens).
-                // v1.5.5 put the provider signal there VERBATIM, so free text ("The response stream was
-                // interrupted.") landed in `type` and no SDK could map it (owner-approved fidelity fix,
-                // 2026-10-26). Now: a signal that IS one of the nine tokens stays the type; any other
-                // signal is the MESSAGE, and the type is the token for the error's class.
+                // The provider signal is not put there verbatim (free text such as "The response
+                // stream was interrupted." would land in `type` and no SDK could map it): a signal
+                // that is one of the nine tokens stays the type; any other signal is the message,
+                // and the type is the token for the error's class.
                 let signal = err.provider_signal.as_deref().filter(|s| !s.is_empty());
                 let (err_type, message) = match signal {
                     Some(ps) if is_error_type_token(ps) => (ps, ps.to_string()),
@@ -958,8 +954,8 @@ impl ProtocolWriter for AnthropicWriter {
                 // The event's body is Anthropic's ErrorResponse, whose published schema REQUIRES a
                 // top-level `request_id` (nullable); Anthropic's error bodies carry one, and this
                 // writer's buffered error envelope already mints it (`error_envelope`). The
-                // in-stream event now carries one too (v1.5.5 omitted it: OWNER rule 22, the llm
-                // spec-conformance rig judges this event against ErrorResponse).
+                // in-stream event carries one too (the llm spec-conformance rig judges this event against
+                // ErrorResponse).
                 data_obj.insert(
                     super::REQUEST_ID.to_string(),
                     serde_json::json!(synth_request_id(host)),

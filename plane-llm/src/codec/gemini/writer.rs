@@ -805,12 +805,12 @@ impl ProtocolWriter for GeminiWriter {
                 ERR_TYPE_OVERLOADED
                 | busbar_contract::protocol::KIND_OVERLOADED
                 | "unavailable" => Some(GRPC_UNAVAILABLE),
-                "deadline_exceeded" | busbar_contract::protocol::KIND_TIMEOUT => {
+                "deadline_exceeded" | crate::codec::framework::KIND_TIMEOUT => {
                     Some(GRPC_DEADLINE_EXCEEDED)
                 }
                 busbar_contract::protocol::KIND_API_ERROR
                 | "internal"
-                | busbar_contract::protocol::KIND_SERVER_ERROR => Some(GRPC_INTERNAL),
+                | crate::codec::framework::KIND_SERVER_ERROR => Some(GRPC_INTERNAL),
                 "unimplemented" | "not_implemented" => Some(GRPC_UNIMPLEMENTED),
                 _ => None,
             }

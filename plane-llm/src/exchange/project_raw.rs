@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE HOOK VIEW OF A BODY THE OPERATION'S READER REFUSES, read off the raw body as 1.5.5 read
-//! every body (`v1.5.5 crates/busbar/src/proxy/hooks.rs:255-830`: `conversation_turns`,
-//! `turn_count`, `block_text`, `system_text_chars`, `total_text_chars`, `body_end_user`,
-//! `build_prompt_projection`). 1.5.5's projection never failed: a turn whose role no reader knows
-//! (`role: "wizard"`) was screened under its own role and the request went on. A same-dialect
-//! request was then relayed verbatim, and only a translation to another dialect read the body and
-//! refused it (`v1.5.5 crates/busbar/src/proxy/wire.rs:456`). A body the reader accepts is still
+//! The hook view of a body the operation's reader refuses, read off the raw body. The projection
+//! never fails: a turn whose role no reader knows (`role: "wizard"`) is screened under its own
+//! role and the request goes on. A same-dialect request is then relayed verbatim, and only a
+//! translation to another dialect reads the body and refuses it. A body the reader accepts is still
 //! projected by the reader ([`super::project`]); this view is for the rest.
 
 use std::borrow::Cow;
