@@ -1119,6 +1119,60 @@ pub struct IrResponseFormat {
     pub description: Option<String>,
 }
 
+impl IrResponseFormat {
+    /// A directive with no `name`/`strict`/`description`: plain text (`json: false`), free-form JSON,
+    /// or a bare schema.
+    pub fn bare(json: bool, schema: Option<Value>) -> Self {
+        Self {
+            json,
+            schema,
+            name: None,
+            strict: None,
+            description: None,
+        }
+    }
+
+    /// A `json_schema` directive read from the object holding its `name`/`schema`/`strict`/
+    /// `description` members: nested under `json_schema` in Chat Completions, flat beside `type`
+    /// in a Responses `text.format`.
+    pub fn from_json_schema_members(js: Option<&Value>) -> Self {
+        let text = |k: &str| {
+            js.and_then(|j| j.get(k))
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        };
+        Self {
+            json: true,
+            schema: js.and_then(|j| j.get(crate::codec::keys::SCHEMA)).cloned(),
+            name: text(crate::codec::keys::NAME),
+            strict: js
+                .and_then(|j| j.get(crate::codec::keys::STRICT))
+                .and_then(|s| s.as_bool()),
+            description: text(crate::codec::keys::DESCRIPTION),
+        }
+    }
+
+    /// Write the `name`/`schema`/`strict`/`description` members of a `json_schema` directive into
+    /// `out` (the inverse of [`Self::from_json_schema_members`]). OpenAI REQUIRES `name`, so a
+    /// valid one is synthesized when the source had none.
+    pub fn write_json_schema_members(
+        &self,
+        schema: &Value,
+        out: &mut serde_json::Map<String, Value>,
+    ) {
+        use crate::codec::keys;
+        let name = self.name.as_deref().unwrap_or(keys::RESPONSE);
+        out.insert(keys::NAME.to_string(), serde_json::json!(name));
+        out.insert(keys::SCHEMA.to_string(), schema.clone());
+        if let Some(s) = self.strict {
+            out.insert(keys::STRICT.to_string(), serde_json::json!(s));
+        }
+        if let Some(d) = &self.description {
+            out.insert(keys::DESCRIPTION.to_string(), serde_json::json!(d));
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CacheControl {
     pub kind: CacheKind,
