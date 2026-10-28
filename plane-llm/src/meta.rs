@@ -8,9 +8,8 @@ pub const KEY: &str = "llm";
 
 /// The operation classes a unit of this plane can be.
 ///
-/// These are the classes that PRICE a unit, so the list is the one the previous release billed
-/// against and no wider. The draft names one at the decode step and the audit step is checked
-/// against it.
+/// These are the classes that price a unit, so the list is no wider than what is billed. The
+/// draft names one at the decode step and the audit step is checked against it.
 pub const OP_CLASSES: &[OpClassId] = &[
     OpClassId::new("chat"),
     OpClassId::new("embeddings"),
@@ -30,7 +29,7 @@ macro_rules! help_tagline {
 
 /// The one-line description `busbar --help` opens with (`busbar <version> — <this>`), byte for byte
 /// as the binary has always printed it (shadow-oracle cells `cli__--help` / `cli__-h`). It names
-/// this plane, so this plane owns it (#47/#49) and the composition root reads it from here.
+/// this plane, so this plane owns it and the composition root reads it from here.
 pub const HELP_TAGLINE: &str = help_tagline!();
 
 /// [`HELP_ENDPOINTS`]'s text, spelled once for it and for [`CLI_HELP_TEXT`].
@@ -52,7 +51,7 @@ macro_rules! help_endpoints {
 
 /// This plane's lines in the `ENDPOINTS` block of `busbar --help` — the doors its dialects answer
 /// on — byte for byte as the binary has always printed them (shadow-oracle cells `cli__--help` /
-/// `cli__-h`). They name this plane's dialects, so this plane owns them (#47/#49); no trailing
+/// `cli__-h`). They name this plane's dialects, so this plane owns them; no trailing
 /// newline, the root splices them between two lines it owns.
 pub const HELP_ENDPOINTS: &str = help_endpoints!();
 
@@ -66,12 +65,11 @@ pub const CLI_HELP_TEXT: &str = concat!(
     help_endpoints!()
 );
 
-/// THE PROVIDER KEYS THIS PLANE OWNS, per form of a `providers:` entry (row 155 B1c, ARCHITECT
-/// ruling "Option A"): the descriptor this plane states in its Statement's extensions under
+/// The provider keys this plane owns, per form of a `providers:` entry: the descriptor this plane states in its Statement's extensions under
 /// `busbar_contract::provider_keys::EXT_PROVIDER_KEYS`, in the contract's neutral shape vocabulary,
 /// so the kernel parses an entry without holding one of these names.
 ///
-/// Each form's keys are in the order of the previous release's frozen grammar for that form (the
+/// Each form's keys are in the order of the grammar for that form (the
 /// catalog definition, the operator deployment, the whole resolved entry), with the kernel's own keys
 /// left out; each says whether it must be written, and each form whether it refuses a key it does not
 /// name. No form refuses one here: a key that is not busbar's is a provider option, judged by the

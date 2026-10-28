@@ -105,11 +105,10 @@ leaf_op! {
     }
 }
 
-/// A request or answer member the Bedrock InvokeModel writers do not send, DROPPED WITH A WARN
-/// (the one drop path, `codec::drops`). These writers send exactly the members v1.5.5 sent.
-/// Carrying
-/// more put new bytes on the far end's wire: an OpenAI `quality` (`hd`, `high`, `auto`) or size
-/// is off Titan's vocabulary (`standard|premium`), so a request 1.5.5 served could be refused
+/// A request or answer member the Bedrock InvokeModel writers do not send, dropped with a warn
+/// (the one drop path, `codec::drops`). These writers send only the members they always send.
+/// Carrying more would put new bytes on the far end's wire: an OpenAI `quality` (`hd`, `high`,
+/// `auto`) or size is off Titan's vocabulary (`standard|premium`), so a request could be refused
 /// upstream with a 400.
 fn invoke_drop(name: &'static str) {
     crate::codec::drops::writer_drop!(
@@ -122,8 +121,7 @@ fn invoke_drop(name: &'static str) {
 }
 
 /// IR → Titan image request wire (the body of [`BedrockImage::write_request`], moved behind the
-/// `(image, bedrock)` key). Byte-identical to v1.5.5's write (v1.5.5
-/// `crates/busbar/src/handlers/bedrock.rs:121-131`): `taskType`, the prompt `text` and
+/// `(image, bedrock)` key). `taskType`, the prompt `text` and
 /// `numberOfImages`, nothing else. Every other generation control the IR carries (a negative
 /// prompt, a seed, a guidance scale, a size, a quality tier) is dropped with a warn
 /// ([`invoke_drop`]).
@@ -208,8 +206,7 @@ pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
     if let Some(d) = r.dimensions {
         body[keys::DIMENSIONS] = json!(d);
     }
-    // `inputText` and `dimensions` only, as v1.5.5 wrote them (v1.5.5
-    // `crates/busbar/src/handlers/bedrock.rs:196-228`): a `normalize` the IR carries is dropped
+    // `inputText` and `dimensions` only: a `normalize` the IR carries is dropped
     // with a warn ([`invoke_drop`]), and Titan applies its own default.
     if r.normalize.is_some() {
         invoke_drop(super::NORMALIZE);
@@ -266,8 +263,7 @@ pub fn write_rerank_request(r: &crate::codec::ir::rerank::RerankReq) -> Bytes {
     if let Some(n) = r.top_n {
         body[keys::TOP_N] = json!(n);
     }
-    // `query`, `documents`, `api_version` and `top_n` only, as v1.5.5 wrote them (v1.5.5
-    // `crates/busbar/src/handlers/bedrock.rs:311-324`): a `return_documents` the IR carries is
+    // `query`, `documents`, `api_version` and `top_n` only: a `return_documents` the IR carries is
     // dropped with a warn ([`invoke_drop`]).
     if r.return_documents.is_some() {
         invoke_drop(keys::RETURN_DOCUMENTS);
@@ -278,8 +274,7 @@ pub fn write_rerank_request(r: &crate::codec::ir::rerank::RerankReq) -> Bytes {
 /// IR → bedrock rerank response wire (the body of [`BedrockRerank::write_response`], moved behind the
 /// `(rerank, bedrock)` key). Byte-identical to the pre-cutover inline write.
 pub fn write_rerank_response(r: &crate::codec::ir::rerank::RerankResp) -> WireBody {
-    // `index` and `relevance_score` per result, and the `id`, as v1.5.5 wrote them (v1.5.5
-    // `crates/busbar/src/handlers/bedrock.rs:334-348`): a ranked `document` the IR carries is
+    // `index` and `relevance_score` per result, and the `id`: a ranked `document` the IR carries is
     // dropped with a warn ([`invoke_drop`]).
     if r.results.iter().any(|x| x.document.is_some()) {
         invoke_drop(keys::DOCUMENT);
@@ -441,10 +436,8 @@ pub fn read_embeddings_response(
             ),
         );
     }
-    // BILLED COUNT: absent or `null` is no usage (unchanged); an UNREADABLE one is refused on its
-    // own (`refused_count`): it bills nothing and the vector is served. That is v1.5.5's figure for
-    // the body: `.and_then(Value::as_u64).map(..)` read no usage (v1.5.5
-    // `crates/busbar/src/handlers/bedrock.rs:243-249`).
+    // Billed count: absent or `null` is no usage; an unreadable one is refused on its own
+    // (`refused_count`): it bills nothing and the vector is served.
     let usage =
         crate::codec::usage_count::billed_count_opt(Some(&v), super::INPUT_TEXT_TOKEN_COUNT)
             .unwrap_or_else(|unreadable| {

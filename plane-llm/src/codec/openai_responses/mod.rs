@@ -81,8 +81,8 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     array_stream_shim_key: None,
     native_tool_id_prefix: Some("call_"),
     ingress_auth: IngressAuth::Bearer,
-    // The `/v1/responses` surface shares OpenAI's plain `Authorization: Bearer <key>` — DECLARED here
-    // as data (#83a S2-a, #40(b)): the kernel's egress-auth unit presents the lane credential under
+    // The `/v1/responses` surface shares OpenAI's plain `Authorization: Bearer <key>` — declared here
+    // as data: the kernel's egress-auth unit presents the lane credential under
     // it (lane-constant, so the boot path prebuilds it), and the key never passes through this plane.
     egress_auth_headers: None,
     egress_auth_lane_constant: false,
@@ -102,8 +102,8 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     max_citations_per_delta: None,
     // Same OpenAI Python SDK UA as the Chat surface (one vendor, two surfaces). RELEASE OBLIGATION:
     // re-verify/bump per release; `test_egress_ua_versions_are_pinned_and_present` guards drift.
-    // OWNER RULING Q10: the plane writes this on a translated route into this dialect, on a
-    // same-dialect route whose caller sent no user-agent (1.5.5's bytes), and on the
+    // The plane writes this on a translated route into this dialect, on a
+    // same-dialect route whose caller sent no user-agent, and on the
     // kernel-originated health probe; a same-dialect caller's own user-agent replaces it.
     egress_user_agent: "OpenAI/Python 1.54.0",
     has_model_in_url: false,
@@ -319,7 +319,7 @@ const EVT_RESPONSE_INCOMPLETE: &str = "response.incomplete";
 /// part — the Responses spelling of the Chat Completions `logprobs: true` switch.
 const INCLUDE_OUTPUT_TEXT_LOGPROBS: &str = "message.output_text.logprobs";
 
-// One spelling per wire word (OWNER 2026-10-01): each word-shaped literal is written once.
+// One spelling per wire word: each word-shaped literal is written once.
 /// Wire word `call_id`.
 const CALL_ID: &str = "call_id";
 /// Wire word `code_interpreter`.
@@ -512,8 +512,7 @@ fn synthesize_item_id(host: &dyn busbar_contract::codec::CodecHost, prefix: &str
 //
 // With none supplied the writer stamps the HOST's wall clock, read once per stream through the
 // host the caller handed (`CodecHost::wall_clock_now`, the reading the Chat writer's `created`
-// takes too), as 1.5.5 stamped `now_unix_secs()` (v1.5.5
-// `crates/busbar/src/proto/openai_responses/writer.rs:479`); `UNSTAMPED_CREATED_AT` only when the
+// takes too); `UNSTAMPED_CREATED_AT` only when the
 // host holds no clock.
 //
 // The rule is about FABRICATING a time, not about clocks as such. The crate does read a monotonic
@@ -1141,11 +1140,11 @@ const STREAM_CODE: &[&str] = &[
 ];
 
 /// The answer paths INSIDE a subtree this dialect carries that its code does not carry, named by the
-/// drop walk (DF-MAP-IR-GAPS section E: its A, B and C paths that a coarse map row covers).
-/// THE REQUEST DEFAULTS A RESPONSES ANSWER ECHOES (the response object restates the request's
+/// drop walk (the paths that a coarse map row covers).
+/// The request defaults a Responses answer echoes (the response object restates the request's
 /// `tools`, `tool_choice` and `parallel_tool_calls`, at their defaults when the request set none):
 /// an echoed default is no control the caller set, so a TRANSLATE answer that cannot carry it
-/// names no drop for it (ARCHITECT RULING 2026-10-04). Keyed by the member, its default as JSON.
+/// names no drop for it. Keyed by the member, its default as JSON.
 pub(super) const ANSWER_DEFAULTS: &[(&str, &str)] = &[
     (keys::TOOLS, "[]"),
     (keys::TOOL_CHOICE, "\"auto\""),
@@ -1234,7 +1233,7 @@ const RESPONSE_DROPS: &[&str] = &[
     "output[].type=web_search_call.action.type=search.queries",
 ];
 // The events themselves are carried (the map's stream rows, `STREAM_CODE`); these are the members
-// inside them that no code carries (DF-MAP-IR-GAPS section E).
+// inside them that no code carries.
 const STREAM_DROPS: &[&str] = &[
     "type=response.content_part.added.part.type=output_text.annotations[].type=container_file_citation",
     "type=response.content_part.added.part.type=output_text.annotations[].type=container_file_citation.container_id",
@@ -2193,14 +2192,12 @@ fn write_text_format(rf: &crate::codec::ir::IrResponseFormat) -> serde_json::Val
     }
 }
 
-/// THE RESPONSES API'S USAGE COUNTS, AS DATA (#42). `input_tokens` is a TOTAL that already INCLUDES
+/// The Responses API's usage counts, as data. `input_tokens` is a total that already includes
 /// the cached prefix (`input_tokens_details.cached_tokens`), so that is subtracted (saturating) to
 /// leave the uncached input and carried as the IR's ADDITIVE cache read; `None` when absent, never a
 /// spurious `Some(0)`. The cache-write slice (`input_tokens_details.cache_write_tokens`) is NOT
-/// split out: it stays inside the input count, billed at the input tier, exactly as 1.5.5 billed it
-/// (v1.5.5 `crates/busbar/src/proto/openai_responses/reader.rs:1022` stream and `:1341` buffered,
-/// `cache_creation_input_tokens: None`). No owner ruling signs moving it to the cache-write tier
-/// (BUSBAR-1.6.0.md, THE LLM DIALECT FIDELITY RULE: "Billing never moves").
+/// split out: it stays inside the input count, billed at the input tier
+/// (`cache_creation_input_tokens: None`), never moved to the cache-write tier.
 /// `output_tokens_details.reasoning_tokens` is a SLICE of `output_tokens`, carried as attribution.
 /// The buffered response, the stream's terminal usage and a truncated-body recovery read this one
 /// table.
@@ -2228,13 +2225,14 @@ const RESPONSES_USAGE_IDENTITY: &str = "openai_responses.usage";
 /// A Responses `usage` object (`None` when absent) → the IR usage, through [`USAGE`]; the tier that
 /// served the response (RSP-17) is a word on `response`, not a count.
 ///
-/// EVERY COUNT THE PINNED WIRE LOCK (`testing/llm-conformance/wire/responses.wire.json`) DECLARES
-/// UNDER `usage` IS EITHER LEDGERED OR A SLICE OF A LEDGERED TOTAL: `input_tokens` (input, less its
+/// Every count the pinned wire lock (`testing/llm-conformance/wire/responses.wire.json`) declares
+/// under `usage` is either ledgered or a slice of a ledgered total: `input_tokens` (input, less its
 /// cached slice), `cached_tokens` (cache read), `output_tokens` (output);
-/// `input_tokens_details.cache_write_tokens` is a slice of `input_tokens` and bills as input, as in
-/// 1.5.5, and `output_tokens_details.reasoning_tokens` is a slice of `output_tokens`. `total_tokens` is OpenAI's sum, never a unit: it is cross-checked against the
+/// `input_tokens_details.cache_write_tokens` is a slice of `input_tokens` and bills as input,
+/// and `output_tokens_details.reasoning_tokens` is a slice of `output_tokens`. `total_tokens` is
+/// OpenAI's sum, never a unit: it is cross-checked against the
 /// ledgered classes, a gap is WARN-logged and carried as the usage identity note, and a total ABOVE
-/// the itemized classes is the open class `unitemized_tokens` (owner LEDGER-100).
+/// the itemized classes is the open class `unitemized_tokens`.
 fn read_responses_usage(
     usage: Option<&serde_json::Value>,
     response: Option<&serde_json::Value>,
@@ -2623,8 +2621,7 @@ impl ResponsesWriter {
     }
 
     /// The `created_at` for an answer that carries none: the wall clock of the HOST the caller
-    /// handed (`CodecHost::wall_clock_now`, the reading the Chat writer stamps), as 1.5.5 stamped `now_unix_secs()` (v1.5.5
-    /// `crates/busbar/src/proto/openai_responses/writer.rs:479`). A translated stream clears the
+    /// handed (`CodecHost::wall_clock_now`, the reading the Chat writer stamps). A translated stream clears the
     /// upstream's creation time, so without this every translated stream into a Responses client
     /// carried `created_at: 0` (1970). `UNSTAMPED_CREATED_AT` only when the host holds no clock.
     pub(crate) fn default_created_at(&self, host: &dyn busbar_contract::codec::CodecHost) -> u64 {
@@ -3009,7 +3006,7 @@ mod float_usage_tests;
 #[path = "tests/annotation_stream_tests.rs"]
 mod annotation_stream_tests;
 
-// IR mapping wave (owner directive Q57): one probe per RSP defect id, driving the production
+// One probe per defect id, driving the production
 // reader → seam → writer steps and the stream translator on real bodies.
 #[cfg(test)]
 #[path = "tests/ir_mapping_tests.rs"]
@@ -3033,7 +3030,7 @@ mod usage_census_tests;
 #[path = "tests/df_map_audit_tests.rs"]
 mod df_map_audit_tests;
 
-// ── DF-MAP answer slots (ARCHITECT rulings 2026-10-02, items 2 and 5) ──────────────────────────────
+// Answer slots.
 
 const ACTION: &str = "action";
 const SOURCES: &str = "sources";
@@ -3159,7 +3156,7 @@ const MODERATION_OUTPUT: &str = "output";
 const MODERATION_CATEGORIES: &str = "categories";
 
 /// A response's `moderation.{input,output}` (each a `moderation_result`) -> the IR's safety verdicts
-/// (DF-MAP item 1): one flagged verdict per category set `true`; scores do not cross.
+/// one flagged verdict per category set `true`; scores do not cross.
 fn read_moderation(body: &serde_json::Value) -> Vec<crate::codec::ir::IrSafetyVerdict> {
     [MODERATION_INPUT, MODERATION_OUTPUT]
         .into_iter()
