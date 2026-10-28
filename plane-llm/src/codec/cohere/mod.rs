@@ -82,7 +82,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     native_tool_id_prefix: None,
     ingress_auth: IngressAuth::Bearer,
     // Cohere's native credential scheme is a plain `Authorization: Bearer <key>` — DECLARED here as
-    // data (#83a S2-a, #40(b)): the kernel's egress-auth unit presents the lane credential under it
+    // data: the kernel's egress-auth unit presents the lane credential under it
     // (lane-constant, so prebuilt), and the key never passes through this plane.
     egress_auth_headers: None,
     egress_auth_lane_constant: false,
@@ -107,8 +107,8 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     max_citations_per_delta: Some(1),
     // Cohere Python SDK UA. RELEASE OBLIGATION: re-verify/bump per release;
     // `test_egress_ua_versions_are_pinned_and_present` guards drift.
-    // OWNER RULING Q10: the plane writes this on a translated route into this dialect, on a
-    // same-dialect route whose caller sent no user-agent (1.5.5's bytes), and on the
+    // The plane writes this on a translated route into this dialect, on a
+    // same-dialect route whose caller sent no user-agent, and on the
     // kernel-originated health probe; a same-dialect caller's own user-agent replaces it.
     egress_user_agent: "cohere-python/5.11.0",
     has_model_in_url: false,
@@ -269,7 +269,7 @@ fn write_cohere_citation(c: &crate::codec::ir::IrCitation) -> serde_json::Value 
 /// re-emits it; a foreign writer, which could only mangle it, drops it with a warn.
 const VENDOR_NAME: &str = "cohere";
 
-// Cohere wire words no other dialect speaks: one const each, spelled once (OWNER 2026-10-01).
+// Cohere wire words no other dialect speaks: one const each, spelled once.
 /// The cohere wire word `binary`, spelled once.
 const BINARY: &str = "binary";
 
@@ -345,7 +345,7 @@ const RESPONSE_CODE: &[&str] = &["usage.cached_tokens", "model"];
 const STREAM_CODE: &[&str] = &[];
 
 /// The answer paths INSIDE a subtree this dialect carries that its code does not carry, named by the
-/// drop walk (DF-MAP-IR-GAPS section E: its A, B and C paths that a coarse map row covers).
+/// drop walk (the paths that a coarse map row covers).
 const RESPONSE_DROPS: &[&str] = &[
     "message.citations[].content_index",
     "message.citations[].sources[].type=tool.tool_output",
@@ -582,7 +582,7 @@ fn write_cohere_reasoning(
 /// - any other `data` is a JSON map of fields (`title`/`snippet`/`url`/…, which Cohere itself renders
 ///   to the model as fields of text): it carries the map's JSON text. It used to ride the opaque
 ///   cohere `Vendor` escape, which every foreign writer drops, so a grounding document never reached
-///   a foreign model (Q57 — "map where it can").
+///   a foreign model (map where it can).
 ///
 /// The name is the string `title`, else the `id`. Only a document with no readable content (no
 /// `data`, or a non-string non-object `data`) keeps the `Vendor` escape: this dialect's writer
@@ -757,11 +757,9 @@ fn read_cohere_stop_reason(token: &str) -> crate::codec::ir::IrStopReason {
         // `ERROR_TOXIC` is the content-moderation stop; generic `ERROR` is an infra failure.
         COHERE_FINISH_ERROR_TOXIC => S::Safety,
         COHERE_FINISH_ERROR => S::Error,
-        // `TIMEOUT` reads as `Other`, as in 1.5.5 (v1.5.5 `crates/busbar/src/proto/cohere/mod.rs:179-191`,
-        // `_ => S::Other`): the answer Cohere returned is served and billed as 1.5.5 served and
-        // billed it. Reading it as `Error` turned a translated buffered answer into a billed 502
-        // and a lane fault, a money and serving change no owner ruling signs (CHANGELOG 1.6.0
-        // registers only the generic stream `ERROR`).
+        // `TIMEOUT` reads as `Other` (`_ => S::Other`): the answer Cohere returned is served and
+        // billed. Reading it as `Error` would turn a translated buffered answer into a billed 502
+        // and a lane fault (only the generic stream `ERROR` reads as an error).
         _ => S::Other,
     }
 }
@@ -801,7 +799,7 @@ fn write_cohere_stop_reason(reason: crate::codec::ir::IrStopReason) -> &'static 
 /// with the cache read and the cache write carried ADDITIVELY beside it (`IrUsage`'s documented
 /// convention). Cohere's `tokens.input_tokens` is the whole prompt, the cached share included, and
 /// it reports the cache hit separately as `usage.cached_tokens` (a slice this dialect's reader
-/// leaves inside the input count, as 1.5.5 did).
+/// leaves inside the input count).
 ///
 /// The writer used to copy the IR's uncached count straight into `tokens.input_tokens`, so a
 /// Cohere-dialect client of a foreign backend was told a prompt SMALLER than the one it sent: an
@@ -1197,7 +1195,7 @@ mod ir_round3_tests;
 #[path = "tests/usage_census_tests.rs"]
 mod usage_census_tests;
 
-/// DF-MAP audit: the answer slots on the Cohere wire, and the cache-read count row.
+/// The answer slots on the Cohere wire, and the cache-read count row.
 #[cfg(test)]
 #[path = "tests/df_map_audit_tests.rs"]
 mod df_map_audit_tests;

@@ -1,4 +1,4 @@
-//! THE PROVIDER OPTIONS (owner ruling 2026-10-27): every value a dialect's far end takes in a
+//! The provider options: every value a dialect's far end takes in a
 //! request head field or a query parameter that an operator may set once, statically, for a
 //! provider.
 //!

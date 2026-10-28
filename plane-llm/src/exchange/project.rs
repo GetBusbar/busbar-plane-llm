@@ -1,16 +1,14 @@
-//! THE HOOK PROJECTION, sans I/O: what a hook is shown of an arrival (`BUSBAR-1.6.0.md` Part 3,
-//! section 12, "Hooks"), and a request-stage hook's rewrite applied to
-//! the arrival in its own dialect.
+//! The hook projection, sans I/O: what a hook is shown of an arrival, and a request-stage hook's
+//! rewrite applied to the arrival in its own dialect.
 //!
-//! One read, through the operation's own reader, as the previous release's hook seam read it: the
-//! size signals (turns, characters, tools), the end user the dialect spells, and the prompt view
+//! One read, through the operation's own reader: the size signals (turns, characters, tools), the end user the dialect spells, and the prompt view
 //! (the system field and one `(role, text)` entry per wire turn, an in-band system turn at its wire
 //! position, a turn with nothing readable still an entry). A body the reader refuses is projected
-//! off its raw JSON as 1.5.5 projected every body (`project_raw.rs`): 1.5.5's projection never
-//! failed, and the request went on. A body there is no reader for projects
+//! off its raw JSON (`project_raw.rs`): the projection never fails, and the request goes on. A
+//! body there is no reader for projects
 //! the zeroed shape.
 //!
-//! The output-cap signal is the previous release's own read (`max_tokens_for` at `v1.5.5`): the
+//! The output-cap signal (`max_tokens_for`): the
 //! dialect's cap key off the caller's body, an out-of-range cap saturated to `u32::MAX`, never
 //! dropped; a Bedrock body's nested `inferenceConfig.maxTokens` is read where that key is absent. The IR's cap is the far end's, and a reader drops a cap it cannot carry; the hook
 //! signal is the caller's ask.
@@ -28,7 +26,7 @@ use crate::codec::translate::TranslateCodec;
 #[path = "project_raw.rs"]
 mod raw;
 
-/// The dialect whose output cap the previous release read under `max_output_tokens`.
+/// The dialect whose output cap is read under `max_output_tokens`.
 const RESPONSES: &str = "responses";
 
 /// What a hook is shown of one arrival.
@@ -59,13 +57,12 @@ struct Unreadable;
 const BEDROCK: &str = "bedrock";
 const BEDROCK_CAP: &str = "/inferenceConfig/maxTokens";
 
-/// The previous release's output-cap signal: the dialect's cap key (`max_output_tokens` for the
+/// The output-cap signal: the dialect's cap key (`max_output_tokens` for the
 /// responses dialect, `max_tokens` for every other) off the caller's body, saturated.
 ///
-/// A Bedrock Converse body spells its cap `inferenceConfig.maxTokens`, where 1.5.5's top-level read
-/// found nothing and showed a hook `None`; the pre-door engine read it, and the driver
+/// A Bedrock Converse body spells its cap `inferenceConfig.maxTokens`; the driver
 /// proof `max_tokens_signal_reads_the_bedrock_inference_config` pins it. It is read when the
-/// top-level key is absent, so every body 1.5.5 showed a cap for shows the same cap.
+/// top-level key is absent.
 #[must_use]
 pub fn max_tokens_for(v: &Value, dialect: &str) -> Option<u32> {
     let key = if dialect == RESPONSES {
@@ -138,7 +135,7 @@ fn prompt(ir: &dyn IrFacts) -> (Option<String>, Vec<(String, String)>) {
     )
 }
 
-/// PROJECT one arrival for the hooks. Never fails, as 1.5.5's projection never failed.
+/// Project one arrival for the hooks. Never fails.
 #[must_use]
 pub fn project(arrived: &Arrived) -> HookView {
     let stream = handler_of(arrived)
@@ -150,8 +147,7 @@ pub fn project(arrived: &Arrived) -> HookView {
         .and_then(|v| max_tokens_for(v, arrived.dialect));
     let read = match facts(arrived) {
         Ok(read) => read,
-        // The reader refuses the body: 1.5.5's raw projection, which never failed (v1.5.5
-        // proxy/hooks.rs:682). A same-dialect request goes on verbatim; a translation to another
+        // The reader refuses the body: the raw projection, which never fails. A same-dialect request goes on verbatim; a translation to another
         // dialect still refuses it when the attempt is written.
         Err(Unreadable) => {
             let null = Value::Null;
@@ -213,9 +209,9 @@ fn read_rewrite(rewrite: &[u8]) -> Option<RewriteReply> {
     })
 }
 
-/// APPLY a request-stage hook's rewrite to `arrived` in its own dialect: the dialect frames the
+/// Apply a request-stage hook's rewrite to `arrived` in its own dialect: the dialect frames the
 /// rewrite's messages (and tools) into its conversation container. Answers the rewritten body when
-/// it applied; `None` leaves the arrival untouched (the previous release: a rewrite that cannot be
+/// it applied; `None` leaves the arrival untouched (a rewrite that cannot be
 /// applied leaves the request unmodified).
 ///
 /// THE REWRITE IS SPLICED, NEVER RE-SERIALIZED ("hook `rw` edits, spliced per changed block. Never parse-edit-reserialize"):

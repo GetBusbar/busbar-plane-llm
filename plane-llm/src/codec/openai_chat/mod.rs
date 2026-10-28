@@ -111,8 +111,8 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     // `call_…` is the documented native tool-call id shape for both OpenAI surfaces.
     native_tool_id_prefix: Some("call_"),
     ingress_auth: IngressAuth::Bearer,
-    // OpenAI's native credential scheme is a plain `Authorization: Bearer <key>` — DECLARED here as
-    // data (#83a S2-a, #40(b)): the kernel's egress-auth unit presents the lane credential under it,
+    // OpenAI's native credential scheme is a plain `Authorization: Bearer <key>` — declared here as
+    // data: the kernel's egress-auth unit presents the lane credential under it,
     // so the key never passes through this plane.
     egress_auth_headers: None,
     egress_auth_lane_constant: false,
@@ -132,8 +132,8 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     max_citations_per_delta: None,
     // OpenAI Python SDK UA (the Responses surface shares it). RELEASE OBLIGATION: re-verify/bump per
     // release; the `test_egress_ua_versions_are_pinned_and_present` guard forces a conscious change.
-    // OWNER RULING Q10: the plane writes this on a translated route into this dialect, on a
-    // same-dialect route whose caller sent no user-agent (1.5.5's bytes), and on the
+    // The plane writes this on a translated route into this dialect, on a
+    // same-dialect route whose caller sent no user-agent, and on the
     // kernel-originated health probe; a same-dialect caller's own user-agent replaces it.
     egress_user_agent: "OpenAI/Python 1.54.0",
     has_model_in_url: false,
@@ -182,15 +182,13 @@ const MAX_TOOL_INDEX: u64 = 127;
 /// emitting unbounded unique indices. Matches OpenAI's documented parallel-tool-call limit (128).
 const MAX_OPEN_TOOLS: usize = crate::codec::dialect::MAX_OPEN_TOOL_CALLS;
 
-/// OPENAI CHAT'S USAGE COUNTS, AS DATA (#42). `prompt_tokens` is a TOTAL that already INCLUDES the
+/// OpenAI Chat's usage counts, as data. `prompt_tokens` is a total that already includes the
 /// cached prefix (`prompt_tokens_details.cached_tokens`), so that is subtracted (saturating) to
-/// leave the uncached input and carried as the IR's ADDITIVE cache read. The cache-write slice
-/// (`prompt_tokens_details.cache_write_tokens`) is NOT split out: it stays inside the input count,
-/// billed at the input tier, exactly as 1.5.5 billed it (v1.5.5
-/// `crates/busbar/src/proto/openai_chat/reader.rs:966`, `cache_creation_input_tokens: None`; stream
-/// `:693`). Moving it to the cache-write tier would change what a key is charged, and no owner
-/// ruling signs that move (BUSBAR-1.6.0.md, THE LLM DIALECT FIDELITY RULE: "Billing never moves").
-/// The `*_details` sub-buckets (reasoning, audio, predicted outputs) are SLICES of the totals,
+/// leave the uncached input and carried as the IR's additive cache read. The cache-write slice
+/// (`prompt_tokens_details.cache_write_tokens`) is not split out: it stays inside the input count,
+/// billed at the input tier (`cache_creation_input_tokens: None`). Moving it to the cache-write
+/// tier would change what a key is charged.
+/// The `*_details` sub-buckets (reasoning, audio, predicted outputs) are slices of the totals,
 /// carried as attribution: a lenient read, never a refusal. The buffered response, the stream's
 /// `include_usage` chunk and a truncated-body recovery read this one table.
 const USAGE: &[UsageCount] = &[
@@ -238,13 +236,12 @@ const OPENAI_USAGE_IDENTITY: &str = "openai.usage";
 /// UNDER `usage` IS EITHER LEDGERED OR A SLICE OF A LEDGERED TOTAL. Ledgered: `prompt_tokens`
 /// (input, less its cached slice), `cached_tokens` (cache read), `completion_tokens` (output).
 /// Slices, never ledgered twice: `prompt_tokens_details.cache_write_tokens` sits inside
-/// `prompt_tokens` and bills as input, as in 1.5.5; `prompt_tokens_details.{audio,image,text}_tokens`
+/// `prompt_tokens` and bills as input; `prompt_tokens_details.{audio,image,text}_tokens`
 /// partition `prompt_tokens` (read for attribution where the IR has a slot), `completion_tokens_details.{reasoning,audio,text,accepted_prediction,
 /// rejected_prediction}_tokens` sit inside `completion_tokens` (OpenAI bills rejected predictions as
 /// completion tokens, and counts them there). `total_tokens` is OpenAI's sum, never a unit: it is
 /// cross-checked against the ledgered classes, a gap is WARN-logged and carried as the usage
-/// identity note, and a total ABOVE the itemized classes is the open class `unitemized_tokens`
-/// (owner LEDGER-100).
+/// identity note, and a total ABOVE the itemized classes is the open class `unitemized_tokens`.
 fn read_openai_usage(
     usage: Option<&serde_json::Value>,
     tier: Option<&serde_json::Value>,
@@ -267,7 +264,7 @@ fn read_openai_usage(
 }
 
 /// `{prompt,completion}_tokens_details.{text,image,audio}_tokens` -> the IR's by-modality split
-/// (DF-MAP item 4; presentation only, never billed). `None` when neither side reports a text or
+/// (presentation only, never billed). `None` when neither side reports a text or
 /// image slice (the audio slices alone keep riding `input_audio_tokens` / `output_audio_tokens`).
 fn read_by_modality(usage: &serde_json::Value) -> Option<crate::codec::ir::IrUsageByModality> {
     let side = |details: &str| {
@@ -850,7 +847,7 @@ const STREAM_CODE: &[&str] = &[
 ];
 
 /// The answer paths INSIDE a subtree this dialect carries that its code does not carry, named by the
-/// drop walk (DF-MAP-IR-GAPS section E: its A, B and C paths that a coarse map row covers).
+/// drop walk (the paths that a coarse map row covers).
 const RESPONSE_DROPS: &[&str] = &["choices[].message.audio.expires_at"];
 const STREAM_DROPS: &[&str] = &[
     "usage.completion_tokens_details.text_tokens",
@@ -1561,8 +1558,7 @@ mod usage_census_tests;
 #[path = "tests/df_map_audit_tests.rs"]
 mod df_map_audit_tests;
 
-/// A Chat completion's `moderation.{input,output}` results -> the IR's safety verdicts (DF-MAP item
-/// 1): one verdict per category a result flags (`categories.<name> = true`), `blocked` = false (a
+/// A Chat completion's `moderation.{input,output}` results -> the IR's safety verdicts: one verdict per category a result flags (`categories.<name> = true`), `blocked` = false (a
 /// moderation result reports, it does not block). Scores do not cross. An `error` arm yields none.
 fn read_moderation(
     moderation: Option<&serde_json::Value>,
@@ -1586,7 +1582,7 @@ const MODERATION_INPUT: &str = "input";
 const MODERATION_OUTPUT: &str = "output";
 const MODERATION_RESULTS: &str = "results";
 
-/// A Chat `message.audio` -> the IR's audio output (DF-MAP item 3): its base64 `data` and its
+/// A Chat `message.audio` -> the IR's audio output: its base64 `data` and its
 /// `transcript`. The audio `id` and `expires_at` are OpenAI's own handle and do not cross.
 fn read_message_audio(
     audio: Option<&serde_json::Value>,

@@ -18,13 +18,12 @@ pub struct IrRequest {
     /// `system` (OpenAI/Cohere/Responses readers accept a `system`/`developer`-role entry anywhere in
     /// `messages`/`input` and fold it here rather than modeling a System-role `IrMessage`).
     /// Zero for a protocol whose wire already carries system as its own separate field
-    /// (Anthropic/Bedrock/Gemini never fold from the turn array). 1.6.0 owner rule: a 1.5.5 hook's
-    /// `message_count` counted the RAW wire array length, including any embedded system turn — so
-    /// `IrFacts::shape().turn_count` adds this back onto `messages.len()` to stay byte-for-byte with
-    /// 1.5.5 rather than reporting the IR-normalized (system-excluded) count.
+    /// (Anthropic/Bedrock/Gemini never fold from the turn array). A hook's `message_count` counts the raw wire array length,
+    /// including any embedded system turn, so `IrFacts::shape().turn_count` adds this back onto
+    /// `messages.len()` rather than reporting the IR-normalized (system-excluded) count.
     pub system_turns_folded: usize,
     /// Where each of those folded turns stood on the wire, in wire order. The hook view reads it:
-    /// a 1.5.5 hook was shown an in-band system turn AS A TURN, at its position and under its own
+    /// a hook is shown an in-band system turn as a turn, at its position and under its own
     /// role, and a `prompt: rw` hook's reply replaces the whole turn array, so a view without it
     /// deletes the operator's system prompt upstream. Writers never read it.
     pub system_folds: Vec<IrSystemFold>,
@@ -124,9 +123,9 @@ pub struct IrRequest {
     /// different location, so it carries between the two. `None` == caller never said, nothing
     /// emitted (both defaults are "parallel allowed", so absence round-trips as absence).
     pub parallel_tool_calls: Option<bool>,
-    // ── Q57 IR-slot wave (IR-CORE): typed request slots. Every one is ABSENT (`None`/empty) unless
-    // the source dialect carried the concept, and a writer emits nothing for an absent slot. The
-    // reader/writer contract for each is in ir-slots-landed.md and on the slot's type.
+    // Typed request slots. Every one is absent (`None`/empty) unless the source dialect carried
+    // the concept, and a writer emits nothing for an absent slot. The reader/writer contract for
+    // each is on the slot's type.
     /// IR-03. Caller metadata map, in the caller's key order: OpenAI Chat / Responses `metadata`,
     /// Bedrock `requestMetadata`, Gemini `labels` (all string -> string). `None` == absent; `Some`
     /// of an empty vec == the caller sent `{}`. A writer that validates keys (Gemini label syntax)
@@ -226,8 +225,8 @@ pub fn read_stop_sequences(val: Option<&Value>) -> Vec<String> {
 /// warns only when it actually truncates, naming `proto`, the cap, and how many sequences were
 /// dropped.
 ///
-/// This restores the v1.5.4 silent-degrade (clamp-to-cap + `warn!` + forward at HTTP 200) on a
-/// cross-protocol chat route, in place of a 1.6.0 hard 400. The published caps in each protocol's
+/// This is a silent degrade (clamp-to-cap + `warn!` + forward at HTTP 200) on a cross-protocol
+/// chat route, not a hard 400. The published caps in each protocol's
 /// declaration (`stop_sequence_cap`) are retained for other planes; this is the write-side clamp
 /// that consumes them.
 pub fn clamp_stop(stop: &[String], cap: usize, proto: &'static str) -> Vec<String> {
@@ -388,17 +387,17 @@ pub struct IrResponse {
     /// the nearest coarse variant beside it. `None` == no refinement.
     pub stop_detail: Option<IrStopDetail>,
     pub request_echo: Option<Value>,
-    /// The safety / moderation verdicts the upstream reported on this exchange (ARCHITECT ruling
-    /// 2026-10-02, DF-MAP item 1): the common core only, one per category. Empty == none reported.
+    /// The safety / moderation verdicts the upstream reported on this exchange: the common core
+    /// only, one per category. Empty == none reported.
     pub safety: Vec<IrSafetyVerdict>,
-    /// Audio the model produced (ARCHITECT ruling 2026-10-02, DF-MAP item 3). `None` == none.
+    /// Audio the model produced. `None` == none.
     pub audio: Option<IrAudioOutput>,
 }
 
 /// A safety or moderation verdict, the core every dialect that reports one shares (Gemini
 /// `safetyRatings`, the OpenAI family's `moderation`, Bedrock's guardrail trace): which category,
 /// whether it was flagged, whether it blocked content. Scores, probabilities and trace detail are not
-/// comparable across providers and do not cross (ARCHITECT ruling 2026-10-02, DF-MAP item 1).
+/// comparable across providers and do not cross.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct IrSafetyVerdict {
     /// The category as the provider names it.
@@ -425,7 +424,7 @@ impl IrSafetyVerdict {
     }
 }
 
-/// Audio the model produced in its answer (ARCHITECT ruling 2026-10-02, DF-MAP item 3).
+/// Audio the model produced in its answer.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct IrAudioOutput {
     /// The audio bytes, base64, as the provider sent them.
@@ -437,7 +436,7 @@ pub struct IrAudioOutput {
 }
 
 /// The kind of a [`IrBlock::HostedToolRecord`]: only web search has a counterpart in more than one
-/// dialect (ARCHITECT ruling 2026-10-02, DF-MAP item 2).
+/// dialect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IrHostedToolKind {
     WebSearch,
@@ -453,7 +452,7 @@ pub struct IrSearchResult {
 
 /// An empty assistant answer: no content, no stop reason, zero usage, no identity. Exists so a
 /// construction site can spread `..Default::default()` and stay source-compatible when the IR gains
-/// a response slot (Q57 IR-slot wave): a literal that names every field breaks on every addition,
+/// a response slot: a literal that names every field breaks on every addition,
 /// one that spreads the default does not. `role` is `Assistant` because every response the IR
 /// carries is the model's turn.
 impl Default for IrResponse {
@@ -777,7 +776,7 @@ pub enum IrBlock {
     /// stringly-typed smell). Bedrock re-emits it natively; protocols whose tool-result content is
     /// text/image-only drop it with a warn (there is no lossless cross-protocol projection).
     Json(Value),
-    /// A record of a tool the PROVIDER ran (ARCHITECT ruling 2026-10-02, DF-MAP item 2): Anthropic
+    /// A record of a tool the provider ran: Anthropic
     /// `web_search_tool_result`, Responses `web_search_call`, Gemini grounding. Its citations stay on
     /// the text blocks ([`IrCitation`]).
     HostedToolRecord {
@@ -789,7 +788,7 @@ pub enum IrBlock {
 }
 
 /// THE SEARCH-RESULT SLOT, read back: a caller-supplied RAG passage (Anthropic `search_result`,
-/// Converse `searchResult`; ARCHITECT 2026-10-02, DF-MAP-2) as the parts both wires spell.
+/// Converse `searchResult`) as the parts both wires spell.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrSearchResultParts<'a> {
     pub source: &'a str,
@@ -825,7 +824,7 @@ impl IrBlock {
         }
     }
 
-    /// THE SEARCH-RESULT SLOT (ARCHITECT 2026-10-02, DF-MAP-2): one caller-supplied RAG passage —
+    /// The search-result slot: one caller-supplied RAG passage —
     /// Anthropic `search_result`, Converse `searchResult` — modelled as a `Text` block a model of
     /// any dialect can read (a `title — source` header line, then the passage), carrying ONE
     /// provenance citation of kind `search_result_location` with no location indices (which is what
@@ -1242,7 +1241,7 @@ pub struct IrCitation {
     /// `domain` member (`{url, domain}`). Only Bedrock carries it natively; `None` elsewhere.
     pub domain: Option<String>,
     /// A citation of an uploaded file (Responses `file_citation` / `container_file_citation` /
-    /// `file_path`; ARCHITECT ruling 2026-10-02, DF-MAP item 5). `None` for every other location.
+    /// `file_path`). `None` for every other location.
     pub file: Option<IrFileLocation>,
 }
 
@@ -1322,10 +1321,10 @@ pub struct IrUsage {
 /// It exists because the totals were already right and the ATTRIBUTION was not, and attribution is
 /// what a customer reconciles a bill against.
 ///
-/// THE ONE BUCKET THAT IS NOT A SLICE: the Cohere `billed_*` trio
+/// The one bucket that is not a slice: the Cohere `billed_*` trio
 /// (`billed_input_tokens`/`billed_output_tokens`/`billed_classifications`) is Cohere's
 /// SEPARATELY-METERED billed bucket, reported beside the raw totals. [`IrUsage::to_token_usage`]
-/// ledgers the raw totals, as 1.5.5 billed them; the billed token counts are attribution the Cohere
+/// ledgers the raw totals; the billed token counts are attribution the Cohere
 /// writer re-emits, and `billed_classifications` is the open class `classifications`.
 /// `billable_tokens` (the normalization test surface) ignores the whole struct.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1362,7 +1361,7 @@ pub struct IrUsageDetail {
     pub web_search_requests: Option<u64>,
     /// Anthropic `usage.server_tool_use.web_fetch_requests` — the server-side URL fetches Anthropic
     /// performed for the turn. A reported count beside the tokens, ledgered as the open class
-    /// `web_fetch_requests` (owner LEDGER-100). Only the Anthropic reader populates it.
+    /// `web_fetch_requests`. Only the Anthropic reader populates it.
     pub web_fetch_requests: Option<u64>,
     /// Anthropic `usage.service_tier` — which service tier actually SERVED/BILLED the request
     /// (`standard` / `priority` / `batch`). Attribution of which tier the usage was charged at (a
@@ -1394,17 +1393,14 @@ pub struct IrUsageDetail {
     /// server-side tool-use portion of a turn. Only the Gemini reader populates it and only the
     /// Gemini writer re-emits it; other protocols have no native analog and leave it `None`.
     ///
-    /// CORRECTED 2026-09-07 — THIS IS NOT A SUB-BUCKET. It was carried here (and described in
-    /// `docs/design/BUSBAR-1.6.0.md` THE DESIGN, §7 and `docs/design/BUSBAR-1.6.0.md` THE DESIGN, §7) as `⊂ prompt`,
-    /// "never an addition". A real Vertex AI recording disproves that: on
+    /// This is not a sub-bucket of the prompt count, nor "never an addition". A real Vertex AI
+    /// recording shows it: on
     /// `src/tests/proto/golden/vendor/resp_g2g_vertex_grounding.json` this field is **32** while the
     /// entire `promptTokenCount` is **18**, and Google's stated `totalTokenCount` reconciles only
     /// when it is ADDED as a fourth term. See `gemini/mod.rs::GEMINI_USAGE_ADDITIVE_TERMS`.
     ///
-    /// IT IS THEREFORE BILLED (busbar 1.6.0, a registered money change with its own CHANGELOG line):
-    /// the Gemini reader adds it to `input_tokens` — Google charges it at the input rate — so a
-    /// grounded turn now bills Google's own stated total instead of under-counting by exactly this
-    /// amount. This field keeps the ATTRIBUTION: how many of those input tokens were server-side
+    /// It is therefore billed: the Gemini reader adds it to `input_tokens` (Google charges it at
+    /// the input rate), so a grounded turn bills Google's own stated total. This field keeps the ATTRIBUTION: how many of those input tokens were server-side
     /// tool use, which is also what lets the Gemini writer put the term back BESIDE
     /// `promptTokenCount` on the wire instead of inside it. Like every other field on this struct it
     /// is invisible to `billable_tokens`, so reading it can never double-count the charge.
@@ -1415,8 +1411,7 @@ pub struct IrUsageDetail {
     /// carries no number a customer could reconcile a bill against and `billable_tokens` ignores it
     /// for that reason as much as for the "never touch totals" one. Only the Gemini reader populates
     /// it and only the Gemini writer re-emits it; other protocols have no native analog and leave it
-    /// `None` (OWNER RULING Q1, docs/design/1.6.0-QUESTIONS.md Q36 — carry it rather than declare it
-    /// a gap; keep it OUT of billing).
+    /// `None` (carried rather than declared a gap; kept out of billing).
     pub traffic_type: Option<String>,
     /// Gemini/Vertex top-level `createTime` — an RFC3339 timestamp the vendor stamps on every
     /// `GenerateContentResponse` (`2026-09-07T16:54:20.179017Z`). NOT a usage figure at all; it
@@ -1429,17 +1424,16 @@ pub struct IrUsageDetail {
     /// `IrResponse::created` (Unix epoch seconds): converting would lose precision, and the field
     /// is Gemini-only so a foreign writer has nowhere to put it either way. `None` for every
     /// non-Gemini protocol and for a Gemini body that carried none. Only the Gemini reader
-    /// populates it and only the Gemini writer re-emits it (OWNER RULING Q1,
-    /// docs/design/1.6.0-QUESTIONS.md Q36 — carry it rather than declare it a gap).
+    /// populates it and only the Gemini writer re-emits it (carried rather than declared a gap).
     pub create_time: Option<String>,
-    // ADDED (cohere field-carry, 2026-08-30): Cohere reports usage TWICE — a raw `tokens` bucket and
+    // Cohere reports usage twice — a raw `tokens` bucket and
     // a separately-metered `billed_units` bucket that ROUNDS/attributes the charge (e.g. a short
     // request still bills a minimum). The raw totals live in `IrUsage.{input,output}_tokens`; these
     // three carry the Cohere-specific BILLED attribution so it survives a Cohere->Cohere read->write
     // (the raw-token totals reconcile perfectly, so a dropped billed count is invisible — the same
     // trap `search_units` sits in). No cross-protocol analog: a foreign writer simply never emits
     // them. `Option` = "this provider did not report it" (never `Some(0)`), matching the sibling
-    // buckets. Owner reconciles IR.
+    // buckets.
     /// Cohere `usage.billed_units.input_tokens` — the BILLED input attribution (distinct from the raw
     /// `usage.tokens.input_tokens` total).
     pub billed_input_tokens: Option<u64>,
@@ -1449,7 +1443,7 @@ pub struct IrUsageDetail {
     /// Cohere `usage.billed_units.classifications` — billed classification units, a SEPARATELY BILLED
     /// unit (like `search_units`) that is not a token count at all.
     pub billed_classifications: Option<u64>,
-    // ── 1.6.0 usage-identity cross-check (gemini vendor recording, 2026-09-07) ───────────────────
+    // Usage-identity cross-check.
     /// A REPORTED DISAGREEMENT between the total the provider stated and the sum of the per-bucket
     /// counts busbar decoded from the same `usage` block. `None` is the ordinary case: either the
     /// provider states no total, or the buckets reconcile against it exactly.
@@ -1467,7 +1461,7 @@ pub struct IrUsageDetail {
     pub usage_identity_note: Option<UsageIdentityNote>,
     /// Counts the reader found under an open class it names (Bedrock's guardrail policy units),
     /// keyed by that class ([`crate::codec::ir::open_class`]). Billed: [`IrUsage::to_token_usage`]
-    /// carries them onto [`busbar_contract::billing::TokenUsage::open_units`] (owner LEDGER-100).
+    /// carries them onto [`busbar_contract::billing::TokenUsage::open_units`].
     pub open_units: std::collections::BTreeMap<String, u64>,
     /// Counts the reader found that no billing class records, keyed by the provider's own count
     /// name. Never billed: [`IrUsage::to_token_usage`] carries them onto
@@ -1475,8 +1469,7 @@ pub struct IrUsageDetail {
     /// reads. Under LEDGER-100 no reader puts a reported unit here: every one has an open class.
     pub residual_units: std::collections::BTreeMap<String, u64>,
     /// The tokens split by modality (OpenAI `*_tokens_details.{text,image,audio}_tokens`, Gemini
-    /// `*TokensDetails[].{modality,tokenCount}`). PRESENTATION ONLY (ARCHITECT ruling 2026-10-02,
-    /// DF-MAP item 4, MONEY LAW): it creates no meter class, feeds no ledger, and changes no billed
+    /// `*TokensDetails[].{modality,tokenCount}`). presentation only: it creates no meter class, feeds no ledger, and changes no billed
     /// figure; `billable_tokens` and the facts projection ignore it.
     pub by_modality: Option<IrUsageByModality>,
 }
@@ -1543,18 +1536,12 @@ impl IrUsage {
     /// with `IrUsage`, so it follows it to busbar-llm at the cutover, where it becomes an
     /// `impl From<&IrUsage> for busbar_contract::billing::TokenUsage`.
     ///
-    /// THE RAW TOKEN TOTALS ARE WHAT A KEY IS CHARGED, for every dialect. Cohere reports usage
-    /// twice, a raw `tokens` bucket and a separately-metered `billed_units` bucket, and 1.5.5 read
-    /// only `tokens` and billed those, buffered and streamed alike (v1.5.5
-    /// `crates/busbar/src/proto/cohere/reader.rs`, the `read_response` usage and the
-    /// `message-end` usage). No signed register entry moves that charge (the one that did, M-3,
-    /// was retired), and the release holds the token classes to what 1.5.5 counted (CHANGELOG
-    /// 1.6.0: "The token classes, their figures and every `tokens:` cap count exactly what 1.5.5
-    /// counted"). So Cohere's billed token counts (`billed_input_tokens`/`billed_output_tokens`)
+    /// The raw token totals are what a key is charged, for every dialect. Cohere reports usage
+    /// twice, a raw `tokens` bucket and a separately-metered `billed_units` bucket, and only
+    /// `tokens` is billed, buffered and streamed alike. So Cohere's billed token counts (`billed_input_tokens`/`billed_output_tokens`)
     /// stay on `IrUsageDetail` as attribution the Cohere writer re-emits, and never replace a
     /// ledgered count. Cohere's billed `search_units` is the open class `search_units` and its
-    /// billed `classifications` the open class `classifications` (see `open_units`; owner
-    /// LEDGER-100).
+    /// billed `classifications` the open class `classifications` (see `open_units`).
     pub fn to_token_usage(&self) -> busbar_contract::billing::TokenUsage {
         busbar_contract::billing::TokenUsage {
             input: self.input_tokens,
@@ -1567,9 +1554,9 @@ impl IrUsage {
         }
     }
 
-    /// THE SEPARATELY REPORTED COUNTS, by the open class each is ledgered under (owner LEDGER-100,
-    /// 2026-10-03: every unit a provider reports is a ledger line under its meter class, priced by
-    /// the ratecard; the plane reports units, never a price):
+    /// The separately reported counts, by the open class each is ledgered under (every unit a
+    /// provider reports is a ledger line under its meter class, priced by the ratecard; the plane
+    /// reports units, never a price):
     ///
     /// - `search_units`: Anthropic bills each server-side web search
     ///   (`usage.server_tool_use.web_search_requests`) as one search, and Cohere's chat
@@ -1620,9 +1607,8 @@ impl IrUsage {
         open
     }
 
-    /// THE RESIDUALS this usage reports, never billed (MONEY LAW, owner 2026-10-02): every count
-    /// the reader carried on [`IrUsageDetail::residual_units`]. Under LEDGER-100 (owner 2026-10-03)
-    /// every reported unit has an open class ([`Self::open_units`]), so no reader carries one here
+    /// The residuals this usage reports, never billed: every count the reader carried on
+    /// [`IrUsageDetail::residual_units`]. Every reported unit has an open class ([`Self::open_units`]), so no reader carries one here
     /// and the map is empty; the carrier and its `usage.residual` audit row stay for a count a
     /// reader cannot class.
     fn residual_units(&self) -> std::collections::BTreeMap<String, u64> {
@@ -1843,13 +1829,10 @@ impl StreamDecodeState {
     }
 }
 
-// ─────────────────────────── Q57 IR-slot wave: the typed slot vocabulary ───────────────────────────
-//
-// Owner directive Q57 (2026-09-24): a field the source dialect carries, that the IR and the target
-// can carry, must map. The types below are the typed carriers for the concepts the IR-mapping audit
-// (`ir-mapping-audit.md` §4.8, IR-01..IR-21) found with NO IR slot even though two or more dialects
-// model them natively. Architect rule: a TYPED slot per concept, never a generic passthrough bag;
-// `IrRequest::extra` stays same-dialect-only and is still cleared on the cross-protocol seam.
+// The typed slot vocabulary: a field the source dialect carries, that the IR and the target can
+// carry, must map. The types below are the typed carriers for concepts two or more dialects model
+// natively. One typed slot per concept, never a generic passthrough bag; `IrRequest::extra` stays
+// same-dialect-only and is cleared on the cross-protocol seam.
 //
 // Every type here is protocol-neutral: the variant names are the concept, not a wire spelling. Where
 // the OpenAI family's word happens to be the most general spelling, `as_str`/`parse` use it (the same

@@ -15,7 +15,7 @@
 
 use busbar_contract::http::StatusCode;
 // A dialect fact this crate looks up by name is read off the plane's OWN declaration table
-// (`crate::codec::decl_of`, Law 5); the declaration shape itself is the contract's.
+// (`crate::codec::decl_of`); the declaration shape itself is the contract's.
 /// A lane's request-shape capabilities, handed to [`ProtocolWriter::write_request_for_lane`].
 use busbar_contract::ir::egress_prep::LaneCaps;
 use busbar_contract::protocol::{ArrayStreamFramer, DialectCodec, IrError};
@@ -64,7 +64,7 @@ pub trait ProtocolReader: Send + Sync {
     /// `extract_error` + `normalize_raw_error`). The release path runs those two stages explicitly
     /// (so it can apply the lane's `error_map`); this all-in-one form has no production caller and
     /// exists solely to back the per-protocol classification unit tests, so it is compiled only
-    /// into this crate's own test build (#83a SD-3: dev-only — the operator `error_map` classifier it
+    /// into this crate's own test build (dev-only — the operator `error_map` classifier it
     /// runs is the host's, reached through [`crate::codec::test_host`]) and kept out of every shipped and
     /// dependent build. DEFAULT provided (the two release-path stages with an
     /// empty `error_map`) for a dialect that does not override it.
@@ -206,7 +206,7 @@ pub trait ProtocolWriter: Send + Sync {
 
     // Outbound auth moved OFF the protocol writer (protocol is post-auth): a lane's credential is
     // presented by the host's egress-auth unit under the scheme each dialect DECLARES
-    // (`ProtocolDecl::egress_scheme`, #83a S2-a), followed by its declared `static_headers`.
+    // (`ProtocolDecl::egress_scheme`), followed by its declared `static_headers`.
 
     /// Rewrites the model field in the request body, returning whether the body actually CHANGED.
     ///
@@ -327,7 +327,7 @@ pub trait ProtocolWriter: Send + Sync {
 
     /// Whether this dialect's request carries an input image's requested fidelity (IR-08,
     /// `image_url.detail`). A dialect without the slot answers `false`, and the egress seam warns for
-    /// each image whose ask it drops (1.5.5's operator warning).
+    /// each image whose ask it drops (the operator warning).
     fn carries_image_detail(&self) -> bool {
         true
     }
@@ -956,10 +956,9 @@ pub fn protocol_for(name: &str) -> Option<Protocol> {
     entry_of(name).map(|d| (d.protocol)())
 }
 
-/// ONE DIALECT'S REGISTRATION: everything this plane resolves BY NAME about a dialect, declared by
-/// the dialect itself in its own module (design F3 SELF-CONTAINED: "central name-`match` registries
-/// become per-dialect registration"; spec Part 3 #5: adding a dialect = adding a file). The plane's
-/// one list of them is [`crate::codec::DIALECTS`], so a new dialect is a new module plus ONE line
+/// One dialect's registration: everything this plane resolves by name about a dialect, declared by
+/// the dialect itself in its own module (adding a dialect = adding a file). The plane's
+/// one list of them is [`crate::codec::DIALECTS`], so a new dialect is a new module plus one line
 /// there; nothing in this file names a dialect.
 pub struct DialectEntry {
     /// The dialect's declaration (its name is the registry key).
@@ -994,7 +993,7 @@ pub fn entry_of(name: &str) -> Option<&'static DialectEntry> {
 /// Every writer now carries per-stream state (an id slot, open-block sets), so it is no longer a
 /// zero-sized type and `Protocol::new`'s `Box::new(writer)` is a real heap allocation. The neutral
 /// [`DialectRef`] methods are stateless one-shot calls on the request hot path (model rewrite,
-/// path-base reshape, error envelopes), and the plane's perf ruling is "no malloc on hot calls", so
+/// path-base reshape, error envelopes), and no hot call mallocs, so
 /// they take the writer as a fresh stack value instead: each dialect's `const` writer is a pristine
 /// instance, the empty sets and `None` slots allocate nothing, and the value is dropped at the
 /// closing brace. Per-call fresh state, exactly as before — minus the two boxes. `None` for a name

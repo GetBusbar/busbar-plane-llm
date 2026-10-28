@@ -1,43 +1,40 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE LLM PLANE'S DOOR: the plane kind's memory-ABI table (`busbar_contract::abi::plane`) built
+//! The LLM plane's door: the plane kind's memory-ABI table (`busbar_contract::abi::plane`) built
 //! with the SDK's `plugin_door!` on its safe surface, over the exchange's sans-I/O answers
-//! ([`crate::exchange`], `BUSBAR-1.6.0.md` Part 3, section 12). [`door`] is the LINKED door; the
-//! same function is the DROPPED door once a `cdylib` exports it (`busbar-plane-llm-plugin`, through
-//! `busbar_contract::export_door!`), so the two cannot answer differently. That twin's
-//! `tests/both_ways.rs` loads both through the one loader and requires one transcript (Part 2 #2).
+//! ([`crate::exchange`]). [`door`] is the linked door; the same function is the dropped-in door
+//! once a `cdylib` exports it (`busbar-plane-llm-plugin`, through `busbar_contract::export_door!`),
+//! so the two cannot answer differently. That twin's `tests/both_ways.rs` loads both through the
+//! one loader and requires one transcript.
 //!
-//! The composition root links [`door`] on its `plane-door` axis (its `plane-llm-door` row, carried by
-//! the plane's one switch `plane-llm`, in the default build) and binds it through the loader's one
-//! load beside the dropped-in plane doors. The serve path composes this door with the kernel-owned
-//! sections it reads and mounts its claims as the data routes, ahead of the root's legacy llm row, so
-//! every arrival this door claims is served through the plane driver and the row answers none of
-//! them (`BUSBAR-1.6.0.md` Part 3, section 12; the fold's development-only switch is deleted, status
-//! row 155).
+//! The composition root links [`door`] on its `plane-door` axis (the plane's one switch
+//! `plane-llm`, in the default build) and binds it through the loader's one load beside the
+//! dropped-in plane doors. The serve path composes this door with the kernel-owned sections it
+//! reads and mounts its claims as the data routes, so every arrival this door claims is served
+//! through the plane driver.
 //!
 //! One unit, as the plane driver serves it:
 //!
 //! | crossing | here |
 //! |---|---|
-//! | `arrive` | [`crate::exchange::arrive::arrive`]: the dialect, the operation and the model, or the previous release's refusal; a probe claim needs no principal |
+//! | `arrive` | [`crate::exchange::arrive::arrive`]: the dialect, the operation and the model, or the refusal; a probe claim needs no principal |
 //! | `on_piece`, ATTEMPT | [`crate::exchange::attempt::build`] for the member the walk picked (or [`crate::exchange::probe::request`] for a probe unit) |
 //! | `on_piece`, the caller's body | the far-end body the attempt wrote for this member |
 //! | `on_piece`, the far end | [`crate::exchange::reply::Reply`]: the caller's head, bytes, verdict and cumulative counts |
 //! | `refusal` | [`crate::exchange::refuse`]: the declined arrival's own envelope, else the kernel's refusal in the unit's dialect |
 //!
-//! The plane states its paths as claims, like every plane ([`claims`], ARCHITECT Q-FL1): each
-//! dialect's own paths, then the previous release's fallback as prefix claims on `/`, which the
-//! claim precedence ranks below every more specific claim. Its detection decides the dialect of an
-//! arrival as the previous release's did.
+//! The plane states its paths as claims, like every plane ([`claims`]): each dialect's own paths,
+//! then the fallback as prefix claims on `/`, which the claim precedence ranks below every more
+//! specific claim. Its detection decides the dialect of an arrival.
 //!
-//! An answer is computed ONCE per piece and kept with its unit: a re-call after a short answer or
+//! An answer is computed once per piece and kept with its unit: a re-call after a short answer or
 //! `more = 1` re-delivers it, never re-computes it. The host's `clock.now`
 //! ([`Services::clock_now`]) is read at an ATTEMPT (the attempt's start) and on the last piece of
 //! an answer taken whole (its creation stamp and elapsed milliseconds), never per relayed chunk;
 //! the plane reads no clock of its own.
 //!
-//! COUNTS, NEVER MONEY: a unit reports the far end's cumulative token counts, and each open count
+//! Counts, never money: a unit reports the far end's cumulative token counts, and each open count
 //! it counted beside them ([`OPEN_CLASSES`]), in the tail's billable classes; the kernel prices
 //! them.
 
@@ -98,14 +95,12 @@ use crate::exchange::webhook::{self, Webhooks};
 use crate::exchange::{handler_of, probe, project, refuse};
 use crate::meta::PROVIDER_KEYS;
 
-/// THE PROTOCOL AXIS of the door's linked row: the plane's own six dialect declarations, in the
+/// The protocol axis of the door's linked row: the plane's own six dialect declarations, in the
 /// order an operator sees, as contract data (`busbar_contract::protocol::ProtocolDecl`). A
 /// composition root that links this door seeds the kernel's protocol registry from them, so the
-/// kernel names no dialect (ARCHITECT 2026-10-16 ruling 3). busbar's `build.rs` names it in every
+/// kernel names no dialect. busbar's `build.rs` names it in every
 /// linked roster (`<module>::PROTOCOLS`), so it is this crate's public surface, not dead code.
 pub use crate::codec::DECLS as PROTOCOLS;
-
-// ── the Statement ────────────────────────────────────────────────────────────────────────────────
 
 /// The version the Statement names: the crate's (a test pins the two equal).
 pub const VERSION: &str = "1.6.0";
@@ -130,9 +125,9 @@ const fn section(name: &'static str, flags: u32) -> Section {
 }
 
 /// `pools:` declared; `providers:`, `models:` and `limits:` read beside it; `webhooks:` its own,
-/// opened with as written (the receivers it switches on, [`webhook`]). `models:` also SELECTS the
-/// plane (Law 7): a document that routes to its models directly, with no `pools:`, uses it, as
-/// 1.5.5 served `/<model>/v1/messages` with no pool configured.
+/// opened with as written (the receivers it switches on, [`webhook`]). `models:` also selects the
+/// plane: a document that routes to its models directly, with no `pools:`, uses it, serving
+/// `/<model>/v1/messages` with no pool configured.
 const SECTIONS: &[Section] = &[
     section(sections::POOLS, SECTION_DECLARING),
     section(sections::PROVIDERS, SECTION_CONSUMED | SECTION_REQUIRED),
@@ -168,12 +163,10 @@ const fn op(i: usize) -> OpClass {
     OpClass { op: name, name }
 }
 
-/// THE TOKEN CLASSES, THE ONE SOURCE of this plane's token class names (ARCHITECT, `$` meter
-/// classes: "The door's billable classes, which are what the dispatcher checks, are the source"):
-/// the first four of the tail's billable classes. They are 1.5.5's own names,
-/// byte for byte: the tiers its `rate_card:` prices (`input_utok`, `output_utok`, `cache_read_utok`,
-/// `cache_write_utok`), its ledger's `TierTokens` fields and its spend metrics' `tier` label, so a
-/// door-served count is priced by the card as written and ledgered under the tier 1.5.5 wrote.
+/// The token classes, the one source of this plane's token class names: the first four of the
+/// tail's billable classes. They are the tiers the `rate_card:` prices (`input_utok`,
+/// `output_utok`, `cache_read_utok`, `cache_write_utok`), the ledger's `TierTokens` fields and the
+/// spend metrics' `tier` label, so a door-served count is priced by the card as written.
 pub const TOKEN_CLASSES: [&str; 4] = [
     busbar_contract::records::UNIT_INPUT,
     busbar_contract::records::UNIT_OUTPUT,
@@ -190,9 +183,9 @@ const fn billable(i: usize) -> BillableClass {
 
 const DIALECT_NAMES: &[AbiStr] = &rows!(AbiStr; DIALECTS.len(), dialect);
 const OP_CLASSES: &[OpClass] = &rows!(OpClass; OPS.len(), op);
-/// THE OPEN CLASSES a far end counts beside its tokens, each `(class, family)`: every name the
+/// The open classes a far end counts beside its tokens, each `(class, family)`: every name the
 /// reply can report in its open counts, enumerated from the codec (`codec/ir/open_class.rs`, each
-/// priced under `rate_card.<model>.units`), so no reported count is dropped (owner LEDGER-100).
+/// priced under `rate_card.<model>.units`), so no reported count is dropped.
 /// They follow the token classes in the tail's billable classes.
 pub use crate::codec::ir::open_class::OPEN_CLASSES;
 
@@ -203,10 +196,10 @@ const fn open_class(k: usize) -> BillableClass {
     }
 }
 
-/// THE FEE UNIT the plane counts: one per billable request (`busbar_contract::plane::PER_REQUEST`),
-/// reported as a count of 1 exactly where 1.5.5 billed its flat request fee (a reply whose caller
-/// status is a success) and never where 1.5.5 refunded it (owner #77, money-B1: the plane's report is
-/// the ONE fee decider). It is the last of the tail's billable classes, and never usage.
+/// The fee unit the plane counts: one per billable request (`busbar_contract::plane::PER_REQUEST`),
+/// reported as a count of 1 exactly where the flat request fee is billed (a reply whose caller
+/// status is a success) and never where it is refunded (the plane's report is the one fee
+/// decider). It is the last of the tail's billable classes, and never usage.
 pub const FEE_CLASS: &str = busbar_contract::plane::PER_REQUEST;
 /// [`FEE_CLASS`]'s index in the tail's billable classes.
 pub const FEE_CLASS_INDEX: u32 = (TOKEN_CLASSES.len() + OPEN_CLASSES.len()) as u32;
@@ -230,7 +223,7 @@ const BILLABLE_CLASSES: &[BillableClass] =
 /// The tail's fee units: [`FEE_CLASS`].
 const FEE_UNITS: &[AbiStr] = &[abi_str(FEE_CLASS)];
 
-/// THE OUTBOUND AUTH STYLES THE PLANE'S MEMBERS ARE BOUND UNDER (the design's auth points): each
+/// The outbound auth styles the plane's members are bound under: each
 /// dialect's default ([`DIALECTS`]' `egress_style`), then the provider `auth:` overrides the
 /// configuration grammar accepts (`api-key` is also a dialect default), each named once. One
 /// outbound need per style ([`NEEDS`]): a member dials the need its resolved style names.
@@ -251,7 +244,7 @@ const _: () = assert!(
     "EGRESS_STYLES names every dialect's default style, each once"
 );
 
-/// THE TAIL'S PER-DIALECT FLAGS (ARCHITECT ruling 2026-10-16, item 3): a provider's `protocol`
+/// The tail's per-dialect flags: a provider's `protocol`
 /// may name every dialect this plane speaks ([`DIALECT_PROVIDER`]); the kernel reads it as declared
 /// data.
 const DIALECT_FLAG: u32 = DIALECT_PROVIDER;
@@ -262,7 +255,7 @@ const fn dialect_auth(i: usize) -> DialectAuth {
         dialect: i as u32,
         flags: DIALECT_FLAG,
         style: abi_str(DIALECTS[i].egress_style),
-        // The default style's parameters (ARCHITECT RULING 2026-10-03, Q-L6-AUTHPARAMS).
+        // The default style's parameters.
         params: if params.is_empty() {
             Blob::ABSENT
         } else {
@@ -271,7 +264,7 @@ const fn dialect_auth(i: usize) -> DialectAuth {
     }
 }
 
-/// THE TAIL'S `dialect_auth`: each dialect's default outbound style (ARCHITECT Q-L1-AUTH (A)).
+/// The tail's `dialect_auth`: each dialect's default outbound style.
 const DIALECT_AUTH: &[DialectAuth] = &rows!(DialectAuth; DIALECTS.len(), dialect_auth);
 
 pub(crate) const fn const_eq(a: &str, b: &str) -> bool {
@@ -331,11 +324,10 @@ pub const NEEDS: &[Need] = &[
     need(EGRESS_STYLES[5]),
 ];
 
-/// THE RESOURCE A GRANT NAMES on this plane: a pool (a key's `allowed_pools`, the previous release's
-/// `scope_kinds: ["pool"]`), so the kernel judges a route as named against the caller's grant.
+/// The resource a grant names on this plane: a pool (a key's `allowed_pools`), so the kernel judges a route as named against the caller's grant.
 const SCOPE_KINDS: &[AbiStr] = &[abi_str("pool")];
 
-/// THE STATEMENT TAIL: the plane's static facts.
+/// The Statement tail: the plane's static facts.
 const TAIL_ROW: PlaneTail = {
     let mut t = PlaneTail::EMPTY
         .with_dialects(DIALECT_NAMES)
@@ -354,13 +346,13 @@ const TAIL_ROW: PlaneTail = {
     t.scope = abi_str(sections::POOLS);
     t.label = abi_str(LABEL);
     // What one registration of the `pools:` map is called, in a refusal naming it ("a pool may not
-    // be named `hooks`") and in the admin surface, as the previous release's declaration named it.
+    // be named `hooks`") and in the admin surface.
     t.subject_noun = abi_str(POOL_NOUN);
     t.admin_noun = abi_str(POOL_NOUN);
     t.cli_help = abi_str(crate::meta::CLI_HELP_TEXT);
     t
 };
-/// THE STATEMENT TAIL, as the Statement points at it.
+/// The Statement tail, as the Statement points at it.
 pub const TAIL: &PlaneTail = &TAIL_ROW;
 
 /// The Statement's extensions: the plane's provider keys ([`crate::meta::PROVIDER_KEYS`]) under the
@@ -369,7 +361,7 @@ const EXTENSIONS: &[u8] = &extensions::entry::<
     { extensions::entry_len(EXT_PROVIDER_KEYS, PROVIDER_KEYS.as_bytes()) },
 >(EXT_PROVIDER_KEYS, PROVIDER_KEYS.as_bytes());
 
-/// THE STATEMENT: the plane's key and version, its sections, its needs, its tail and its extensions.
+/// The Statement: the plane's key and version, its sections, its needs, its tail and its extensions.
 pub const STATEMENT: Statement = {
     let mut s = statement(crate::meta::KEY, VERSION, MAX_INFLIGHT)
         .with_kind_tail(TAIL)
@@ -420,21 +412,21 @@ struct Answer {
     /// The reason that reading states, in neutral words, written with it (empty: none).
     fault_reason: Vec<u8>,
     /// `TAP_FAULT_*`: why the usage tap could not read the body, beside the units; written once,
-    /// on the first window, for the kernel to count (row 155).
+    /// on the first window, for the kernel to count.
     tap_fault: u8,
     /// The caller's reply is complete.
     done: bool,
     /// The unit's audit rows, `(outcome, action, resource)`, each written as a `RECORD_AUDIT`: what a
-    /// TRANSLATE attempt could not carry (1.5.5's degraded `egress.control_unrepresentable` rows),
+    /// TRANSLATE attempt could not carry (degraded `egress.control_unrepresentable` rows),
     /// and a stream synthesised from a whole answer ([`STREAM_SYNTHESIZED`]).
     audits: Vec<(u32, Vec<u8>, Vec<u8>)>,
 }
 
-/// The action of a dropped control's audit row (1.5.5's).
+/// The action of a dropped control's audit row.
 const DROPPED_CONTROL: &[u8] = b"egress.control_unrepresentable";
 
-/// The action of the audit row a stream synthesised from a whole answer writes (OWNER 2026-10-27:
-/// busbar answers in the caller's dialect AND mode, and marks the conversion): its outcome is
+/// The action of the audit row a stream synthesised from a whole answer writes (busbar answers in
+/// the caller's dialect and mode, and marks the conversion): its outcome is
 /// `applied`, its resource names the far end's dialect.
 pub const STREAM_SYNTHESIZED: &[u8] = b"egress.stream_synthesized";
 
@@ -531,8 +523,8 @@ impl UnitState {
 
 /// THE DOOR'S UNIT BOOK: each unit the door holds, by the kernel's key, from its `arrive` to its
 /// end, and the ticket its pieces last came on (how a `cancel` that names no unit finds it). Every
-/// way a unit ends leaves NOTHING of it here, its ticket binding included (THE DESIGN section 2:
-/// what a plugin keeps is bounded by its units), so neither map grows with the units the instance
+/// way a unit ends leaves NOTHING of it here, its ticket binding included (what a plugin keeps
+/// is bounded by its units), so neither map grows with the units the instance
 /// has served.
 #[derive(Debug)]
 pub struct UnitBook<S> {
@@ -685,13 +677,13 @@ impl busbar_contract::codec::CodecHost for DoorHost {
 /// dialect a refusal on it wears before `arrive` has read the arrival.
 type ClaimRow = (&'static str, &'static str, bool, &'static str);
 
-/// The verbs the previous release's fallback answered on any path (a dialect path hit with another
+/// The verbs the fallback answers on any path (a dialect path hit with another
 /// verb reads the dialect's 405 from `arrive`; any other path its not-found).
 const FALLBACK_VERBS: [&str; 5] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
-/// THE DIALECTS' OWN PATHS (ARCHITECT Q-FL1, 2026-10-02), each with the dialect its path shape
-/// names (the rule [`crate::exchange::arrive::envelope_for`] renders a refusal by): exact where
-/// the previous release named one path, the whole subtree where it named a family.
+/// The dialects' own paths, each with the dialect its path shape names (the rule
+/// [`crate::exchange::arrive::envelope_for`] renders a refusal by): exact where one path is
+/// named, the whole subtree where a family is.
 const DIALECT_CLAIMS: [ClaimRow; 7] = [
     ("POST", "/v1/messages", true, "anthropic"),
     ("POST", "/v1/chat/completions", true, "openai"),
@@ -702,26 +694,23 @@ const DIALECT_CLAIMS: [ClaimRow; 7] = [
     ("POST", "/v1/models", false, "openai"),
 ];
 
-/// The previous release's Gemini entry span (v1.5.5 `ingress/mod.rs:788`).
+/// The Gemini entry span.
 const GEMINI_INGRESS: &str = "gemini_ingress";
-/// The previous release's Bedrock Converse entry span (v1.5.5 `ingress/mod.rs:1043`).
+/// The Bedrock Converse entry span.
 const BEDROCK_CONVERSE: &str = "bedrock_converse";
-/// The previous release's Bedrock Converse stream entry span (v1.5.5 `ingress/mod.rs:1070`).
+/// The Bedrock Converse stream entry span.
 const BEDROCK_CONVERSE_STREAM: &str = "bedrock_converse_stream";
 /// No entry span: the request's entry is read here, and it opens none.
 const NO_ENTRY: &str = "";
 
-/// THE ENTRY FACTS (status row 173; `docs/observability.md`, Tracing): which entry span an arrival
+/// The entry facts (`docs/observability.md`, Tracing): which entry span an arrival
 /// opens, read by the host in this order ahead of any claim's own, each an entry fact
-/// ([`CLAIM_ENTRY`]) that mounts no route, `(target, span)`. They are the previous release's choice
-/// of entry, rung for rung:
+/// ([`CLAIM_ENTRY`]) that mounts no route, `(target, span)`, rung for rung:
 ///
-/// 1. its named and ad-hoc routes, matched before anything else (v1.5.5 `main.rs:3835-3836`):
-///    `named` records `pool`, `adhoc` records `provider` and `model` (v1.5.5 `ingress/mod.rs:1161`,
-///    `:1292`);
-/// 2. its protocol ladder (v1.5.5 `proto/detect.rs` `protocol_id`), head fields first: a SigV4
-///    `authorization` is Bedrock, whose entry is Converse or Converse stream by the path's end
-///    (v1.5.5 `ingress/dispatch.rs:362-385`) and none otherwise; `anthropic-version`,
+/// 1. its named and ad-hoc routes, matched before anything else: `named` records `pool`, `adhoc`
+///    records `provider` and `model`;
+/// 2. its protocol ladder, head fields first: a SigV4 `authorization` is Bedrock, whose entry is
+///    Converse or Converse stream by the path's end and none otherwise; `anthropic-version`,
 ///    `anthropic-beta` and `x-api-key` are Anthropic (no entry span); `x-goog-api-key` is Gemini;
 /// 3. then the path: a Gemini action verb anywhere in it, the Gemini models surfaces under
 ///    `/v1/models/` and `/v1beta/models/` (never the bare surface), a path holding `/v1/messages`
@@ -754,27 +743,25 @@ const ENTRY_FACTS: [(&str, &str); 19] = [
     ("path:*/converse-stream", BEDROCK_CONVERSE_STREAM),
 ];
 
-/// THE SIGNED PATHS (ARCHITECT rulings 2026-10-16, 3b A, and 2026-10-17): the request shapes whose
-/// callers sign each request (the bedrock dialect's converse surfaces), claimed as raw affixes
-/// flagged `CLAIM_SIGNED_INGRESS`. The kernel matches each against the raw path as the previous
-/// release did (`starts_with("/model/")` and `ends_with` the surface), odd paths included, an
+/// The signed paths: the request shapes whose callers sign each request (the bedrock dialect's
+/// converse surfaces), claimed as raw affixes flagged `CLAIM_SIGNED_INGRESS`. The kernel matches
+/// each against the raw path (`starts_with("/model/")` and `ends_with` the surface), odd paths included, an
 /// unencoded inference-profile ARN's raw `/` and an encoded one alike, whatever the verb. They mount
 /// no route: the `/model` subtree claim serves the dialect's paths, and its other surfaces
 /// (`/model/{id}/invoke`) sign nothing.
 const SIGNED_CLAIMS: [&str; 2] = ["/model/*/converse", "/model/*/converse-stream"];
 
-/// THE LIST-MODELS CATALOG ROUTES (ARCHITECT ruling 2026-10-16, 3b C): `GET` on each listing path,
+/// The list-models catalog routes: `GET` on each listing path,
 /// exact, answered with no unit by [`CatalogSlot`] over the names the kernel lists for the caller.
 const CATALOG_PATHS: [&str; 2] = [
     crate::exchange::catalog::PATH,
     crate::exchange::catalog::BETA_PATH,
 ];
 
-/// THE PLANE'S CLAIMS: [`DIALECT_CLAIMS`], the [`ENTRY_FACTS`], the [`SIGNED_CLAIMS`], the
-/// [`CATALOG_PATHS`], then the previous release's
-/// fallback, a prefix claim on `/` per verb wearing the residual default dialect. The fallback
-/// reaches every path at any depth no more specific claim or kernel route takes (CG-62); the router
-/// has no plane-shaped branch.
+/// The plane's claims: [`DIALECT_CLAIMS`], the [`ENTRY_FACTS`], the [`SIGNED_CLAIMS`], the
+/// [`CATALOG_PATHS`], then the fallback, a prefix claim on `/` per verb wearing the residual
+/// default dialect. The fallback reaches every path at any depth no more specific claim or kernel
+/// route takes; the router has no plane-shaped branch.
 #[must_use]
 pub fn claims() -> Vec<ClaimSpec> {
     let fallback = crate::exchange::arrive::envelope_for("/");
@@ -819,9 +806,9 @@ pub fn claims() -> Vec<ClaimSpec> {
         .collect()
 }
 
-/// THE RECEIVERS' CLAIMS: each webhook receiver its `webhooks:` section switches on, an exact path
+/// The receivers' claims: each webhook receiver its `webhooks:` section switches on, an exact path
 /// that ranks above the fallback's prefix claim. None when the section names none, so a document
-/// without it claims exactly what the previous release answered.
+/// without it claims nothing extra.
 #[must_use]
 pub fn webhook_claims(webhooks: Webhooks) -> Vec<ClaimSpec> {
     webhooks
@@ -859,11 +846,11 @@ fn dialect_index(name: &str) -> u32 {
         .unwrap_or(0)
 }
 
-/// THE ROUTE AN ARRIVAL NAMES (ARCHITECT Q-SW6 / Q-FL3, 2026-10-02): the model it asked for, as the
-/// entry inside the plane's own sections, and what that entry is. The previous release resolved the
-/// model as a pool first, then as a configured model (its by-model lane); the plane says which by its
-/// own tables, and the kernel resolves the entry. A model that is neither is named as a direct entry
-/// the kernel does not hold, so the kernel refuses it (`no_destination`, rendered as 1.5.5's 404).
+/// The route an arrival names: the model it asked for, as the entry inside the plane's own
+/// sections, and what that entry is. A model resolves as a pool first, then as a configured model
+/// (its by-model lane); the plane says which by its own tables, and the kernel resolves the entry.
+/// A model that is neither is named as a direct entry the kernel does not hold, so the kernel
+/// refuses it (`no_destination`, rendered as a 404).
 #[must_use]
 pub fn route_of<'a>(shaping: &Shaping, model: &'a str) -> (u8, &'a str) {
     let class = if shaping.pools.contains_key(model) {
@@ -938,14 +925,13 @@ pub fn counts(units: &Units) -> Vec<UnitCount> {
     out
 }
 
-/// THE BREAKER'S READING of a judged answer (ARCHITECT BREAKER OUTCOME: one neutral vocabulary,
-/// stated apart from the walk's verdict), as 1.5.5's classifier recorded it per disposition (v1.5.5
-/// `crates/busbar-llm/src/engine/attempt/classify.rs`): the caller's own bad input records nothing
+/// The breaker's reading of a judged answer (one neutral vocabulary, stated apart from the walk's
+/// verdict), recorded per disposition: the caller's own bad input records nothing
 /// against the destination; a transient failure (an `error_map` entry naming `rate_limit` among
 /// them) counts toward the pool cell's trip; a refused credential or account trips every cell; a
 /// request too large for the window fails over with nothing recorded. A 2xx that failed after its
 /// head (a stream's terminal error, a cut body, an untranslatable answer, a failed generation) is
-/// the compensating transient 1.5.5 recorded.
+/// the compensating transient recorded.
 #[must_use]
 pub fn breaker_fault(f: Option<&Fault>) -> u8 {
     match f {
@@ -960,11 +946,9 @@ pub fn breaker_fault(f: Option<&Fault>) -> u8 {
     }
 }
 
-/// THE REASON THE BREAKER'S READING STATES (the far-end fault reading): the plane classifies the
+/// The reason the breaker's reading states (the far-end fault reading): the plane classifies the
 /// far end's answer and states why in neutral words, which the kernel carries verbatim to the
-/// breaker's record (the member's down reason and its operator diagnostic). They are 1.5.5's own,
-/// byte for byte (v1.5.5 `crates/busbar/src/proxy/engine/mod.rs`, the `HardDown` arm; retired as
-/// `crates/busbar-llm/src/engine/attempt/classify.rs`): an exhausted account is
+/// breaker's record (the member's down reason and its operator diagnostic): an exhausted account is
 /// `billing / insufficient balance`, a refused own credential `auth rejected (HTTP <status>)`, any
 /// other hard-down `request rejected (HTTP <status>)`. Every other reading states none.
 #[must_use]
@@ -992,10 +976,9 @@ fn verdict(v: Verdict) -> u32 {
     }
 }
 
-/// THE REQUEST'S FEE UNIT on `answer` (owner #77, money-B1: the plane's report is the one fee
-/// decider): incurred when the caller's reply opens under a success status, which is where 1.5.5
-/// kept its flat request fee (its finish refunded the fee for a non-2xx caller status, and only
-/// then). From that answer on, every answer that carries counts carries the fee unit's 1 beside the
+/// The request's fee unit on `answer` (the plane's report is the one fee decider): incurred when
+/// the caller's reply opens under a success status (the fee is refunded for a non-2xx caller
+/// status, and only then). From that answer on, every answer that carries counts carries the fee unit's 1 beside the
 /// far end's last cumulative counts; an answer that carries none leaves the last report standing.
 /// A probe is no billable request.
 fn fee_unit(unit: &mut UnitState, answer: &mut Answer) {
@@ -1018,8 +1001,7 @@ fn fee_unit(unit: &mut UnitState, answer: &mut Answer) {
     }
 }
 
-/// THE UNIT'S STICKY-ROUTING KEY, as 1.5.5 derived it (v1.5.5 `crates/busbar/src/ingress/mod.rs`
-/// `affinity_header_for`, `crates/busbar/src/proxy/engine/mod.rs` the affinity hash): the value of
+/// The unit's sticky-routing key: the value of
 /// the pool's affinity header (`header`, matched case-blind) where the caller sent one readable as
 /// text, else the operation's body key (chat's non-empty `system`); `None` = no affinity. The kernel
 /// hashes it and picks the member; the plane never does.
@@ -1138,7 +1120,7 @@ fn attempt(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
     match built {
         Ok(mut request) => {
             // A control the far end's dialect cannot carry, one degraded row each (`<control> on
-            // <dialect>`, the row 1.5.5 wrote as it translated the request).
+            // <dialect>`).
             let egress = unit.shaping.lane(&unit.member).map_or("", |l| l.dialect);
             let answer = Answer {
                 to_far_end: true,
@@ -1204,10 +1186,10 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
         return Answer::hard();
     };
     if piece.cut {
-        // THE FAR END'S ANSWER WAS CUT (`PIECE_CUT`): the caller's answer ends as 1.5.5 ended a cut
-        // one: after a streamed first byte, an in-band error in the caller's own framing; a
+        // The far end's answer was cut (`PIECE_CUT`): the caller's answer ends as follows:
+        // after a streamed first byte, an in-band error in the caller's own framing; a
         // buffered answer, the caller's 502; a failure's body, judged on what arrived. The units
-        // the stream stated up to the cut are reported (#62: a cut bills what streamed). The
+        // the stream stated up to the cut are reported (a cut bills what streamed). The
         // kernel's far end recorded the compensating transient of a success cut after its head,
         // so a success's cut states no second reading; a failure's judged reading stands.
         let arrived = piece.bytes;
@@ -1240,7 +1222,7 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
     };
     let mut fed = reply.feed(host, &ctx, piece.bytes, piece.last, time);
     // An answer member the caller's dialect has no form for, one degraded row each (`<path> from
-    // <dialect>`, the row 1.5.5 wrote as it delivered the translated answer).
+    // <dialect>`).
     let dropped = std::mem::take(&mut fed.dropped);
     let synthesized = fed.synthesized;
     let mut answer = far_answer(fed, unit.far_status);
@@ -1518,8 +1500,8 @@ slot!(
             .get()
             .and_then(|door| guard(&door.units).cancel(input.cancel().ticket(), input.unit()));
         // A caller that left a usable part of the answer leaves a PARTIAL unit: the units the
-        // answer stated so far bill (1.5.5's drop arm; a same-dialect whole body states none while
-        // it relays, so it bills none, as 1.5.5's did). A unit whose far end answered and left the
+        // answer stated so far bill (a same-dialect whole body states none while
+        // it relays, so it bills none). A unit whose far end answered and left the
         // caller nothing usable FAILED; one cancelled before its far end answered was ABORTED.
         // Neither bills.
         let disposition = match cancelled.as_ref().and_then(|u| u.reply.as_ref()) {
@@ -1545,7 +1527,7 @@ slot!(
 slot!(
     /// `arrive`: the dialect, the operation and the op class of an arrival, kept with its unit by
     /// the kernel's key; a probe claim needs no principal; a declined arrival is refused with the
-    /// previous release's status and keeps its refusal for `refusal`.
+    /// its status and keeps its refusal for `refusal`.
     Arrive, ArriveIn, ArriveOut, |instance, input, mut out| {
         let Some(door) = instance.get() else {
             return Outcome::Failed;
@@ -1643,8 +1625,8 @@ slot!(
                 }
                 // A REFUSAL ABOUT AN ENTRY (abi/plane "A refused arrival", rule 6): it names the
                 // entry, its op class and its dialect, so the kernel holds it behind the caller's
-                // identity and grant over that entry (1.5.5 judged the ad-hoc route's governance
-                // before it answered a misnamed provider).
+                // identity and grant over that entry (the ad-hoc route's governance is judged
+                // before a misnamed provider is answered).
                 if let Some(entry) = &declined.entry {
                     out.set(|o| &o.op_class, op_class_of(busbar_contract::operation::OpVerb::CHAT));
                     out.set(|o| &o.dialect, dialect_index(declined.envelope));
@@ -1689,7 +1671,7 @@ slot!(
             if input.from() == FROM_FAR_END && input.flags() & PIECE_FINAL != 0 {
                 unit.final_answer = true;
             }
-            // THE FAR END'S TRAILERS (`PIECE_FIELDS`): no far end this plane speaks reports its
+            // The far end's trailers (`PIECE_FIELDS`): no far end this plane speaks reports its
             // outcome there, so the plane ignores the piece (the contract's "any other ignores
             // the piece"): none of its bytes reach the caller or the usage read, and no status on
             // it re-opens the answer. Only its place in the answer stands: a last one ends it.
@@ -1755,7 +1737,7 @@ slot!(
                         envelope_for(path)
                     }
                 };
-                // A model that resolved to no destination reads the previous release's not-found
+                // A model that resolved to no destination reads the not-found
                 // sentence, which names the model the caller asked for; every other refusal reads
                 // the kernel's own text.
                 let text = match arrived {
@@ -1837,7 +1819,7 @@ slot!(
     /// the host's arena and its turns in the host's turn buffer; with a request-stage hook's
     /// rewrite, the rewrite applied to the unit's request first (kept as the unit's request, so
     /// every attempt is written from it), the rewritten body answered and THAT body projected. A
-    /// body the operation's reader refuses is projected off its raw JSON, as 1.5.5 projected it,
+    /// body the operation's reader refuses is projected off its raw JSON,
     /// and the unit goes on.
     Project, ProjectIn, ProjectOut, |instance, input, mut out| {
         let Some(door) = instance.get() else {

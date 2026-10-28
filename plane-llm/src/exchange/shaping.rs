@@ -16,8 +16,7 @@
 //! | the global `default_max_tokens` and the effort → thinking-budget table | `limits` |
 //! | the translation cap, `request_body_max_bytes` (the operator's one knob) | `limits` |
 //!
-//! Each derivation is the previous release's (its boot build of the same tables), so a request is
-//! written the same way whichever build holds the tables. The grammar was already judged by the
+//! A request is written the same way whichever build holds the tables. The grammar was already judged by the
 //! kernel: a field this reading does not use is not read, and a malformed one it does use is a
 //! refusal to open.
 
@@ -31,7 +30,7 @@ use crate::codec::DECLS;
 use crate::options::{self, SetOption};
 
 /// The provider `auth:` overrides that present under a scheme of their own, not the dialect's, so
-/// carry none of its static fields (the previous release's `egress_auth::resolve`).
+/// carry none of its static fields.
 const AUTH_API_KEY: &str = "api-key";
 /// See [`AUTH_API_KEY`].
 const AUTH_JWT_BEARER: &str = "jwt-bearer";
@@ -78,7 +77,7 @@ pub struct Lane {
     /// The far end's dialect's declared static fields (`ProtocolDecl::static_headers`,), written on every far request of a lane presented under the
     /// dialect's own credential scheme; none under an operator's `auth:` override that is not the
     /// dialect's scheme (`api-key`, `jwt-bearer`, `oauth-client-credentials`), whose declaration
-    /// carries none, as the previous release wrote them.
+    /// carries none.
     pub statics: &'static [(&'static str, &'static str)],
     /// The model is served over the invoke envelope ([`super::invoke`]): its dialect is the one the
     /// envelope carries, its target, body edits, stream framing and refusals the envelope's.
@@ -375,13 +374,12 @@ pub mod sections {
     pub const LIMITS: &str = "limits";
 }
 
-/// The header a pool's session affinity reads when its `affinity` names none (1.5.5's).
+/// The header a pool's session affinity reads when its `affinity` names none.
 pub const DEFAULT_AFFINITY_HEADER: &str = "x-session-id";
 
 impl Shaping {
     /// The header the session affinity of the unit routed over `pool` reads: the pool's own
-    /// `affinity.header_name`, else [`DEFAULT_AFFINITY_HEADER`] (v1.5.5
-    /// `crates/busbar/src/ingress/mod.rs` `affinity_header_for`).
+    /// `affinity.header_name`, else [`DEFAULT_AFFINITY_HEADER`].
     #[must_use]
     pub fn affinity_header(&self, pool: &str) -> &str {
         self.affinity_headers
@@ -474,7 +472,7 @@ impl Shaping {
                 .or(p.protocol.as_deref())
                 .unwrap_or(DEFAULT_PROTOCOL);
             // The invoke envelope is a MODEL's choice alone: a provider defaulting to it states an
-            // unknown protocol, refused below in the previous release's words.
+            // unknown protocol, refused below.
             let invoke = m.protocol.as_deref() == Some(super::invoke::PROTOCOL);
             let asked = if invoke {
                 super::invoke::CARRIED
@@ -516,7 +514,7 @@ impl Shaping {
         }
         // A pool member is judged against the models the settings STATE: a blob dealt the plane's
         // own section alone (the boot's stage 3g deal, `{pools: ...}`) states none, and the
-        // kernel's config validation refuses an undefined member there in 1.5.5's words.
+        // kernel's config validation refuses an undefined member there.
         let models_stated = settings.get(sections::MODELS).is_some();
         for (name, members) in pools.iter().filter(|_| models_stated) {
             if let Some(m) = members.iter().find(|m| !lanes.contains_key(&m.model)) {
