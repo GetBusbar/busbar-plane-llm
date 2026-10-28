@@ -133,18 +133,20 @@ fn error_kind_to_bedrock_type_covers_ingress_emitted_kinds() {
         bedrock::error_kind_to_bedrock_type(KIND_PERMISSION),
         "AccessDeniedException"
     );
+    // A spent budget is not retryable: 1.5.5's `ServiceQuotaExceededException` (OWNER 2026-10-27).
     assert_eq!(
         bedrock::error_kind_to_bedrock_type(KIND_INSUFFICIENT_QUOTA),
-        "ThrottlingException"
+        "ServiceQuotaExceededException"
     );
 }
 
 /// Every kind the bedrock writer can be handed answers an exception that Converse AND
 /// ConverseStream DECLARE: the `errors` of both operations in the pinned botocore model
 /// (`testing/llm-conformance/spec-digests.tsv` row `bedrock`, bedrock-runtime 2023-09-30 at
-/// e5c8122617a2). 1.5.5 answered an exhausted budget with `ServiceQuotaExceededException`, which
-/// only InvokeModel declares, so the llm conformance rig failed `error.declared` on
-/// `llm|bedrock|bedrock|request|over_budget_total`; OWNER rule 22 (2026-10-14) makes that a defect.
+/// e5c8122617a2), with ONE owner-chosen exception: an exhausted quota or budget answers 1.5.5's
+/// `ServiceQuotaExceededException` (InvokeModel's), because every AWS SDK retries the declared
+/// `ThrottlingException` and a spent budget does not come back by retrying (OWNER 2026-10-27,
+/// overriding the rule-22 reading of 2026-10-14).
 #[test]
 fn every_bedrock_error_kind_is_a_converse_declared_exception() {
     const CONVERSE_DECLARED: [&str; 9] = [
@@ -166,13 +168,10 @@ fn every_bedrock_error_kind_is_a_converse_declared_exception() {
         KIND_INVALID_REQUEST,
         KIND_RATE_LIMIT,
         KIND_PERMISSION,
-        KIND_INSUFFICIENT_QUOTA,
         KIND_TIMEOUT,
         KIND_OVERLOADED,
         KIND_API_ERROR,
         KIND_SERVER_ERROR,
-        "quota_exceeded",
-        "service_quota_exceeded",
         "not_found",
         "forbidden",
         "unauthorized",
@@ -185,6 +184,17 @@ fn every_bedrock_error_kind_is_a_converse_declared_exception() {
         assert!(
             CONVERSE_DECLARED.contains(&exc),
             "kind {kind:?} answers {exc}, which Converse/ConverseStream do not declare"
+        );
+    }
+    for kind in [
+        KIND_INSUFFICIENT_QUOTA,
+        "quota_exceeded",
+        "service_quota_exceeded",
+    ] {
+        assert_eq!(
+            bedrock::error_kind_to_bedrock_type(kind),
+            "ServiceQuotaExceededException",
+            "{kind}: the owner's one exception, non-retryable"
         );
     }
 }

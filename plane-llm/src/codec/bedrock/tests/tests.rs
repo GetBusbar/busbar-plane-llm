@@ -782,6 +782,30 @@ fn test_write_error_native_bedrock_shape() {
     assert!(s.contains("\"__type\""));
 }
 
+/// A SPENT BUDGET IS NOT RETRYABLE (OWNER 2026-10-27, 1.5.5's answer): a Bedrock caller whose
+/// budget or quota is exhausted is refused 400 `ServiceQuotaExceededException`. RED on 429
+/// `ThrottlingException`, which every AWS SDK retries with backoff before it fails.
+#[test]
+fn a_spent_budget_is_400_service_quota_exceeded_not_a_retryable_throttle() {
+    assert_eq!(super::DECL.quota_exceeded_status, 400);
+    for kind in [
+        ERR_TYPE_INSUFFICIENT_QUOTA,
+        "quota_exceeded",
+        "service_quota_exceeded",
+    ] {
+        assert_eq!(
+            error_kind_to_bedrock_type(kind),
+            "ServiceQuotaExceededException",
+            "{kind}"
+        );
+    }
+    // a real rate limit is still the retryable throttle
+    assert_eq!(
+        error_kind_to_bedrock_type("rate_limit_error"),
+        "ThrottlingException"
+    );
+}
+
 /// Kind → Bedrock exception-name mapping covers the common categories and falls back to a real
 /// exception name (never an invented one) for anything unmapped.
 #[test]
