@@ -9,6 +9,7 @@
 //! | field | from |
 //! |---|---|
 //! | the far end's dialect, `path`, `path_base`, `error_map` | the provider |
+//! | the head fields and query parameters set statically ([`crate::options`]) | the provider |
 //! | the output-cap spelling and the two capability switches, per wire model | the provider and its `model_capabilities` |
 //! | `upstream_model`, `default_max_tokens`, `reasoning`, `prompt_caching` | the model |
 //! | `context_max` (one value per model across every pool), a member's own `reasoning` | the pools |
@@ -27,6 +28,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::codec::DECLS;
+use crate::options::{self, SetOption};
 
 /// The provider `auth:` overrides that present under a scheme of their own, not the dialect's, so
 /// carry none of its static fields (the previous release's `egress_auth::resolve`).
@@ -56,10 +58,9 @@ pub struct Lane {
     pub path: Option<String>,
     /// The provider's path base, handed to the dialect's own path builder.
     pub path_base: Option<String>,
-    /// The provider's configured tenant (`organization`, `project`), set on every far request.
-    pub organization: Option<String>,
-    /// See `organization`.
-    pub project: Option<String>,
+    /// The provider's static options ([`crate::options`]) this far end takes: the head fields and
+    /// query parameters the provider sets under its dialect's own names.
+    pub options: Vec<SetOption>,
     /// The name the far end knows the model by, when it differs.
     pub upstream_model: Option<String>,
     /// The model's own output-token default.
@@ -193,10 +194,6 @@ struct ProviderCfg {
     #[serde(default)]
     path_base: Option<String>,
     #[serde(default)]
-    organization: Option<String>,
-    #[serde(default)]
-    project: Option<String>,
-    #[serde(default)]
     error_map: HashMap<String, String>,
     #[serde(default)]
     auth: Option<String>,
@@ -307,6 +304,31 @@ fn lane_caps(p: &ProviderCfg, wire_model: &str) -> LaneCaps {
     caps
 }
 
+/// The provider's options a lane of `dialect` takes. They were judged against the provider's own
+/// dialect, so a lane that speaks it takes every one of them. A model served over the invoke
+/// envelope reaches the provider's (Bedrock's) far end, so it takes them too, the invoke-only ones
+/// included. A model whose own `protocol` names another dialect takes only the options that dialect
+/// also lists. No other lane takes an invoke-only option.
+fn lane_options(
+    set: &[SetOption],
+    provider_dialect: Option<&str>,
+    dialect: &str,
+    invoke: bool,
+) -> Vec<SetOption> {
+    let same = invoke || provider_dialect.unwrap_or(DEFAULT_PROTOCOL) == dialect;
+    let list = options::catalogue(dialect);
+    set.iter()
+        .filter(|o| invoke || !o.invoke_only)
+        .filter(|o| {
+            same || list.iter().any(|w| match w.place {
+                options::Place::Header => w.name.eq_ignore_ascii_case(&o.wire),
+                options::Place::Query => w.name == o.wire,
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 /// A pool member, bare (`model-name`) or rich (`{ model, reasoning, context_max, … }`).
 fn member(v: &Value) -> Option<(Member, Option<usize>)> {
     match v {
@@ -376,8 +398,17 @@ impl Shaping {
     /// read, a model naming no provider, a provider naming a dialect the plane does not speak, a
     /// pool member naming no model, or one model given two context windows.
     pub fn from_settings(settings: &Value) -> Result<Self, String> {
-        let providers: BTreeMap<String, ProviderCfg> =
+        let blocks: BTreeMap<String, serde_json::Map<String, Value>> =
             section(settings, sections::PROVIDERS)?.unwrap_or_default();
+        let mut providers: BTreeMap<String, (ProviderCfg, Vec<SetOption>)> = BTreeMap::new();
+        for (name, block) in blocks {
+            let p: ProviderCfg = serde_json::from_value(Value::Object(block.clone()))
+                .map_err(|e| format!("the `{}` settings do not read: {e}", sections::PROVIDERS))?;
+            // Every key of the block is busbar's or an option of the dialect it speaks.
+            let dialect = p.protocol.as_deref().unwrap_or(DEFAULT_PROTOCOL);
+            let set = options::read(&name, dialect, &block)?;
+            providers.insert(name, (p, set));
+        }
         let models: BTreeMap<String, ModelCfg> =
             section(settings, sections::MODELS)?.unwrap_or_default();
         let limits: Option<LimitsCfg> = section(settings, sections::LIMITS)?;
@@ -422,7 +453,7 @@ impl Shaping {
         }
         let mut lanes = BTreeMap::new();
         for (name, m) in models {
-            let p = providers.get(&m.provider).ok_or_else(|| {
+            let (p, set) = providers.get(&m.provider).ok_or_else(|| {
                 format!(
                     "model '{name}' references unknown provider '{}'",
                     m.provider
@@ -463,8 +494,7 @@ impl Shaping {
                 dialect,
                 path: p.path.clone(),
                 path_base: p.path_base.clone(),
-                organization: p.organization.clone(),
-                project: p.project.clone(),
+                options: lane_options(set, p.protocol.as_deref(), dialect, invoke),
                 upstream_model: m.upstream_model.clone(),
                 default_max_tokens: m.default_max_tokens,
                 context_max: context.get(&name).copied().flatten(),

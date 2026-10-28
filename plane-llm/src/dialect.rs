@@ -58,16 +58,13 @@ pub struct Dialect {
     /// settings at seal, under the provider's own (ARCHITECT RULING 2026-10-03, Q-L6-AUTHPARAMS).
     pub egress_params: &'static str,
     /// The request headers busbar GOVERNS for this dialect (lower-case): its credential headers and
-    /// its tenant selectors. A same-dialect route forwards every other client header unchanged; these
-    /// never pass, because busbar's upstream credential and configuration replace them (OWNER HARD
-    /// RULE 2026-10-02, "BUSBAR IS INVISIBLE TO UPSTREAMS", governed fields (1) and (2)).
+    /// its tenant selectors (the forced options of `crate::options::catalogue`). A same-dialect
+    /// route forwards every other client header unchanged; these never pass, because busbar's
+    /// upstream credential and configuration replace them.
     pub governed_headers: &'static [&'static str],
     /// The request URL query parameters busbar GOVERNS for this dialect: its credential parameters.
     /// A same-dialect route forwards every other caller parameter unchanged; these never pass.
     pub governed_query: &'static [&'static str],
-    /// The tenant selectors this dialect's far end reads, as `(config key, header)`: busbar sets
-    /// each from the provider's config (`organization`, `project`) on every upstream request.
-    pub tenant_headers: &'static [(&'static str, &'static str)],
     /// The response headers busbar GOVERNS for this dialect (lower-case): what the far end derives
     /// from busbar's own credential and tenant (the operator's organization or project id). A
     /// same-dialect answer relays every other upstream header; these never reach the caller.
@@ -86,16 +83,12 @@ const MODEL: Location = Location::Arrival(ArrivalLocation::FirstFrameJsonPointer
 /// the pattern's first variable, which is why one index serves both.
 const MODEL_IN_PATH: Location = Location::Arrival(ArrivalLocation::PathSegment(0));
 
-/// What the two dialects of one vendor govern: its credential headers (a bearer, and the key header
-/// a re-hosted deployment of it reads) and its two tenant selectors.
-/// The tenant selectors of the two dialects of one vendor, by provider config key.
-const OPENAI_TENANT: &[(&str, &str)] = &[
-    ("organization", "openai-organization"),
-    ("project", "openai-project"),
-];
 /// What the two dialects of one vendor govern on an answer: the operator's tenant ids it echoes.
 const OPENAI_GOVERNED_RESPONSE: &[&str] = &["openai-organization", "openai-project"];
 
+/// What the two dialects of one vendor govern: its credential headers (a bearer, and the key header
+/// a re-hosted deployment of it reads) and its two tenant selectors, which only the provider's
+/// forced options (`crate::options::OPENAI`) set.
 const OPENAI_GOVERNED: &[&str] = &[
     "authorization",
     "api-key",
@@ -162,7 +155,6 @@ pub const DIALECTS: &[Dialect] = &[
         egress_params: KEY_FAMILY_PARAMS,
         governed_headers: &["authorization", "x-api-key"],
         governed_query: &[],
-        tenant_headers: &[],
         governed_response_headers: &["anthropic-organization-id"],
     },
     Dialect {
@@ -184,7 +176,6 @@ pub const DIALECTS: &[Dialect] = &[
         egress_params: OPENAI_PARAMS,
         governed_headers: OPENAI_GOVERNED,
         governed_query: &[],
-        tenant_headers: OPENAI_TENANT,
         governed_response_headers: OPENAI_GOVERNED_RESPONSE,
     },
     Dialect {
@@ -203,7 +194,6 @@ pub const DIALECTS: &[Dialect] = &[
         egress_params: GEMINI_PARAMS,
         governed_headers: &["authorization", "x-goog-api-key", "x-goog-user-project"],
         governed_query: &["key"],
-        tenant_headers: &[],
         governed_response_headers: &[],
     },
     Dialect {
@@ -227,7 +217,6 @@ pub const DIALECTS: &[Dialect] = &[
             "x-amz-security-token",
         ],
         governed_query: &[],
-        tenant_headers: &[],
         governed_response_headers: &[],
     },
     Dialect {
@@ -245,7 +234,6 @@ pub const DIALECTS: &[Dialect] = &[
         egress_params: RESPONSES_PARAMS,
         governed_headers: OPENAI_GOVERNED,
         governed_query: &[],
-        tenant_headers: OPENAI_TENANT,
         governed_response_headers: OPENAI_GOVERNED_RESPONSE,
     },
     Dialect {
@@ -264,7 +252,6 @@ pub const DIALECTS: &[Dialect] = &[
         egress_params: COHERE_PARAMS,
         governed_headers: &["authorization"],
         governed_query: &[],
-        tenant_headers: &[],
         governed_response_headers: &[],
     },
 ];
