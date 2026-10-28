@@ -6,9 +6,6 @@
 //! name, a credential, a hop-by-hop field or a value of the wrong type fails the load. A
 //! same-dialect caller's own value beats an operator default, and a forced option beats the caller.
 
-mod common;
-
-use common::TestHost;
 use serde_json::{json, Value};
 
 use busbar_plane_llm::dialect::DIALECTS;
@@ -16,6 +13,24 @@ use busbar_plane_llm::exchange::arrive::{arrive, Arrived};
 use busbar_plane_llm::exchange::attempt::{build, governed, FarRequest};
 use busbar_plane_llm::exchange::shaping::Shaping;
 use busbar_plane_llm::options::{catalogue, Place, Precedence};
+
+/// The codec host these tests hand the plane: the OS CSPRNG and the system clock in whole seconds.
+struct TestHost;
+
+impl busbar_contract::codec::CodecHost for TestHost {
+    fn fill_entropy(&self, out: &mut [u8]) -> bool {
+        getrandom::fill(out).is_ok()
+    }
+
+    fn wall_clock_now(&self) -> Option<u64> {
+        Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_secs(),
+        )
+    }
+}
 
 const HOST: &dyn busbar_contract::codec::CodecHost = &TestHost;
 
