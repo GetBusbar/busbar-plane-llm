@@ -36,20 +36,20 @@ fn every_spec_line_terminator_pairing_ends_a_frame() {
 fn parse_sse_frame_splits_on_bare_cr() {
     assert_eq!(
         parse_sse_frame(b"event: message\rdata: {\"a\":1}"),
-        Some(("message".to_string(), "{\"a\":1}".to_string()))
+        Some(("message", "{\"a\":1}".into()))
     );
     assert_eq!(
         parse_sse_frame(b"data: line1\rdata: line2"),
-        Some((String::new(), "line1\nline2".to_string()))
+        Some(("", "line1\nline2".into()))
     );
     // CRLF and LF frames stay byte-identical to today.
     assert_eq!(
         parse_sse_frame(b"event: message\r\ndata: {\"a\":1}\r\n"),
-        Some(("message".to_string(), "{\"a\":1}".to_string()))
+        Some(("message", "{\"a\":1}".into()))
     );
     assert_eq!(
         parse_sse_frame(b"data: line1\ndata: line2"),
-        Some((String::new(), "line1\nline2".to_string()))
+        Some(("", "line1\nline2".into()))
     );
 }
 
