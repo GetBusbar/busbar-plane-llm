@@ -932,6 +932,9 @@ class Judge:
             self.checkers[spec] = Checker(doc)
         with open(os.path.join(transcribed_dir, "google-rpc-status.json")) as f:
             self.rpc_status = json.load(f)
+        # The plane's declared refusals beyond an operation's spec error list (plane-declared-errors.json).
+        with open(os.path.join(HERE, "plane-declared-errors.json")) as f:
+            self.plane_declared = json.load(f)
         self.rpc_checker = Checker(self.rpc_status)
 
     def checker(self, dialect):
@@ -1024,7 +1027,7 @@ class Judge:
         if err:
             out.append(Violation("/", "body.json", err)); return out, f"{status} {ct}", None
         if dialect == "bedrock":
-            desc = self.judge_bedrock_error(status, headers, inst, out)
+            desc = self.judge_bedrock_error(status, headers, inst, out, outcome)
             return out, f"{status} {ct}: {desc}", None
         eck, sch, note = self.error_schema_for(dialect, status)
         if sch is None:
@@ -1149,7 +1152,7 @@ class Judge:
             else:
                 out.append(Violation(p, "eventstream.message-type", f"':message-type' {mt!r}, expected event or exception"))
 
-    def judge_bedrock_error(self, status, headers, inst, out):
+    def judge_bedrock_error(self, status, headers, inst, out, outcome=None):
         doc = self.docs["bedrock"]
         ck = self.checkers["bedrock"]
         raw = doc["x-botocore-shapes"]
@@ -1167,6 +1170,13 @@ class Judge:
             out.append(Violation("/", "error.type", f"{et!r} is not an exception shape of bedrock-runtime"))
             return et
         declared = {e["shape"] for op in ("Converse", "ConverseStream") for e in doc["operations"][op].get("errors", [])}
+        # The plane's own declared refusal for this outcome (plane-declared-errors.json): the exception is
+        # still a spec exception shape (checked above), sent with its spec status and schema (below).
+        declared |= {
+            row["exception"]
+            for row in self.plane_declared.get("bedrock", [])
+            if outcome in row.get("outcomes", []) and row.get("status") == status
+        }
         if et not in declared:
             out.append(Violation("/", "error.declared", f"{et} is not an error Converse/ConverseStream declare: {sorted(declared)}"))
         want = (raw[et].get("error") or {}).get("httpStatusCode")
