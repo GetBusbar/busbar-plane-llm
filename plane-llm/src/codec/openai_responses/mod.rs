@@ -2162,33 +2162,14 @@ fn read_text_format(
     let format = text_val.and_then(|t| t.get(keys::FORMAT))?;
     let o = format.as_object()?;
     match o.get(keys::TYPE).and_then(|t| t.as_str()) {
-        Some(keys::TEXT) => Some(crate::codec::ir::IrResponseFormat {
-            json: false,
-            schema: None,
-            name: None,
-            strict: None,
-            description: None,
-        }),
+        Some(keys::TEXT) => Some(crate::codec::ir::IrResponseFormat::bare(false, None)),
         // The Responses `text.format` json_schema form is FLAT — name/schema/strict/description sit
         // beside `type` (not nested under `json_schema` as in OpenAI).
-        Some(keys::JSON_SCHEMA) => Some(crate::codec::ir::IrResponseFormat {
-            json: true,
-            schema: o.get(keys::SCHEMA).cloned(),
-            name: o.get(keys::NAME).and_then(|n| n.as_str()).map(String::from),
-            strict: o.get(keys::STRICT).and_then(|s| s.as_bool()),
-            description: o
-                .get(keys::DESCRIPTION)
-                .and_then(|d| d.as_str())
-                .map(String::from),
-        }),
+        Some(keys::JSON_SCHEMA) => {
+            Some(crate::codec::ir::IrResponseFormat::from_json_schema_members(Some(format)))
+        }
         // `json_object` / any unknown type → free-form JSON (safe default).
-        Some(_) => Some(crate::codec::ir::IrResponseFormat {
-            json: true,
-            schema: None,
-            name: None,
-            strict: None,
-            description: None,
-        }),
+        Some(_) => Some(crate::codec::ir::IrResponseFormat::bare(true, None)),
         None => None,
     }
 }
@@ -2205,17 +2186,7 @@ fn write_text_format(rf: &crate::codec::ir::IrResponseFormat) -> serde_json::Val
         Some(schema) => {
             let mut f = serde_json::Map::new();
             f.insert(keys::TYPE.to_string(), serde_json::json!(keys::JSON_SCHEMA));
-            f.insert(
-                keys::NAME.to_string(),
-                serde_json::json!(rf.name.as_deref().unwrap_or(keys::RESPONSE)),
-            );
-            f.insert(keys::SCHEMA.to_string(), schema.clone());
-            if let Some(s) = rf.strict {
-                f.insert(keys::STRICT.to_string(), serde_json::json!(s));
-            }
-            if let Some(d) = &rf.description {
-                f.insert(keys::DESCRIPTION.to_string(), serde_json::json!(d));
-            }
+            rf.write_json_schema_members(schema, &mut f);
             serde_json::Value::Object(f)
         }
         None => serde_json::json!({(keys::TYPE): "json_object"}),
