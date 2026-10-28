@@ -46,10 +46,9 @@ pub(super) fn read_block(
                 .get(keys::SIGNATURE)
                 .and_then(|v| v.as_str().map(String::from));
             let cache_control = read_cache_control(obj.get(super::CACHE_CONTROL))?;
-            // IR-18: a signature read off the Anthropic wire is Anthropic's, so a foreign writer
-            // never sends it as its own reasoning blob — unless it is busbar's provenance envelope
-            // (another family's signature handed to this client earlier), which restores the
-            // original bytes and their origin.
+            // A signature off the Anthropic wire is Anthropic's, so a foreign writer never sends
+            // it as its own, unless it is busbar's provenance envelope (another family's
+            // signature handed to this client earlier), which restores the original bytes and origin.
             let (signature, signature_origin) = crate::codec::ir::sig_envelope::read_carried_opt(
                 signature,
                 Some(crate::codec::ir::IrSignatureOrigin::Anthropic),
@@ -64,10 +63,8 @@ pub(super) fn read_block(
             })
         }
         STOP_TOOL_USE => {
-            // A present `tool_use` block MUST carry a non-empty string `id`: it is the correlation
-            // key a later `tool_result` (and any egress dialect) pairs against. An absent/blank/
-            // wrong-typed id yields an empty IR id that silently breaks that pairing — reject the
-            // malformed block rather than inventing an id.
+            // A `tool_use` block must carry a non-empty string `id`, the key a later `tool_result`
+            // pairs against; reject rather than invent one.
             let id = obj
                 .get(keys::ID)
                 .and_then(|v| v.as_str())
@@ -121,24 +118,16 @@ pub(super) fn read_block(
         }
         keys::IMAGE => {
             let source = obj.get(keys::SOURCE).ok_or_else(ir_parse_error)?;
-            // `cache_control` sits on the OUTER image block object (a sibling of `source`), not on
-            // the source — read it once and attach to whichever source shape we produce.
+            // `cache_control` sits on the outer image block, a sibling of `source`.
             let cache_control = read_cache_control(obj.get(super::CACHE_CONTROL))?;
             if let Some(src_obj) = source.as_object() {
-                // Anthropic's Messages API has TWO native image source shapes:
-                //   - `{"type":"url","url":<url>}`           — a remote image reference
-                //   - `{"type":"base64","media_type":...,"data":<b64>}` — inline bytes
-                // The base64 path below extracts `media_type`/`data`, which are BOTH absent from a
-                // url source — so a url image would otherwise flatten to empty base64 (cross-protocol
-                // image data LOSS). Round-trip the url through the same `media_type:"image_url"`
-                // sentinel the writer recognizes (see `write_block`'s Image arm): the raw url lives in
-                // `data`, and `write_block` re-emits exactly `{"type":"url","url":<url>}` for it.
-                // A Files-API `{"type":"file","file_id":…}` source (or any future source type that is
-                // neither url nor base64) is an Anthropic-hosted handle with no neutral form. It used
-                // to fall through to the base64 read below and become an EMPTY base64 image, which
-                // foreign writers emitted as `data:;base64,` / an empty `inlineData` (ANT-03). Carry it
-                // on the opaque `Vendor` escape instead: this protocol re-emits it verbatim, and every
-                // other writer drops a foreign vendor handle with a warn.
+                // Two native image sources: `{"type":"url","url":…}` and
+                // `{"type":"base64","media_type":…,"data":…}`. A url source has no `media_type`/
+                // `data`, so it round-trips through the `media_type:"image_url"` sentinel `write_block`
+                // recognizes, the raw url living in `data`.
+                // A Files-API `file_id` source (or any future type that is neither) is an
+                // Anthropic-hosted handle with no neutral form; it rides the opaque `Vendor` escape,
+                // which this protocol re-emits verbatim and every other writer drops with a warn.
                 let src_type = src_obj.get(keys::TYPE).and_then(|v| v.as_str());
                 if src_type.is_some_and(|t| t != keys::URL && t != keys::BASE64) {
                     return Ok(crate::codec::ir::IrBlock::Image {
@@ -162,9 +151,7 @@ pub(super) fn read_block(
                         detail: None,
                     });
                 }
-                // A present `media_type` that is not a string is the caller's error, answered in
-                // Anthropic's own error envelope, never read as "" and
-                // projected onto some format downstream.
+                // A present non-string `media_type` is the caller's error, not read as "".
                 let media_type = match src_obj.get(super::MEDIA_TYPE) {
                     None => String::new(),
                     Some(v) => v.as_str().ok_or_else(ir_parse_error)?.to_string(),
@@ -183,36 +170,22 @@ pub(super) fn read_block(
                 Err(ir_parse_error())
             }
         }
-        // A native `document` block — the PDF/CSV/text attachment the model reads. Until
-        // `IrBlock::Media` existed this fell into `read_block`'s degrade-to-empty-Text arm and the
-        // ORIGINAL block was parked under `ANTHROPIC_UNMODELED_BLOCKS_SENTINEL` — which only ever
-        // came back on an Anthropic→Anthropic hop, because the seam clears `extra`. So on all five
-        // cross-protocol egresses the caller's document was destroyed and replaced with an empty text
-        // block, even though Gemini and Bedrock both have a native slot for it. Now it is modelled,
-        // which ALSO takes it out of the sentinel (see `is_modeled_anthropic_block_type`).
-        //
-        // Anthropic's `document.source` has four shapes; the two with a neutral form map onto the
-        // neutral IR sources, and the two that are Anthropic-hosted/Anthropic-shaped
-        // (`{"type":"file","file_id":…}`, `{"type":"content","content":[…]}`) ride the opaque
-        // `Vendor` escape so this protocol re-emits them verbatim and no other protocol can emit a
+        // A native `document` block, modelled as `IrBlock::Media` so it crosses to Gemini and
+        // Bedrock (see `is_modeled_anthropic_block_type`). `document.source` has four shapes: the
+        // two with a neutral form map onto neutral IR sources, and the Anthropic-hosted ones
+        // (`file_id`, `content`) ride the opaque `Vendor` escape, so no other protocol emits a
         // handle its backend cannot resolve.
         BLOCK_TYPE_DOCUMENT => {
-            // A `document` with NO `source` carries no payload at all. It must NOT be a 400: a
-            // reader that hard-errors on a degenerate-but-parseable block turns forward-compatible
-            // conversation history into a rejected request. Degrade to the empty-Text placeholder
-            // (holding the block's POSITION in the turn) with a warn naming it, which is what every
-            // other unmodeled Anthropic block does.
-            // [`read_blocks`] never hands this arm a document with no `source` (it carries no
-            // payload, so it is not read at all); a direct call with one is malformed.
+            // A `document` with no `source` carries no payload and must not be a 400, which would
+            // reject forward-compatible history. [`read_blocks`] never hands it to this arm; a
+            // direct call with one is malformed.
             let Some(source) = obj.get(keys::SOURCE) else {
                 return Err(ir_parse_error());
             };
             let cache_control = read_cache_control(obj.get(super::CACHE_CONTROL))?;
-            // `document.context` (a free-text hint) and `document.citations` (an `{enabled}` toggle)
-            // ride the IR-12 `Media.context` / `Media.citations` slots, so they cross to Bedrock
-            // (the other dialect with the same two members). Same-protocol they are still kept
-            // byte-exact: `stash_unmodeled_blocks` parks the raw document verbatim when either is
-            // present, and `write_message` splices it back on an Anthropic→Anthropic hop.
+            // `document.context` and `document.citations` ride `Media.context` / `Media.citations`,
+            // crossing to Bedrock (which has both). Same-protocol they stay byte-exact via
+            // `stash_unmodeled_blocks` and the splice in `write_message`.
             let doc_citations = obj
                 .get(keys::CITATIONS)
                 .and_then(|c| c.get(keys::ENABLED))
@@ -238,11 +211,9 @@ pub(super) fn read_block(
                         .unwrap_or("")
                         .to_string(),
                 ),
-                // A `text` source carries the document as RAW text (`data` is the text itself, not
-                // base64). The neutral `Base64` source is BASE64 by contract — every foreign writer
-                // emits `data` as base64 (`data:text/plain;base64,…`, Bedrock `bytes`) — so storing
-                // the raw text there corrupted the document on every cross-protocol hop (ANT-01).
-                // Encode it on the way in; the Anthropic writer decodes it back into a `text` source.
+                // A `text` source carries raw text, but the neutral `Base64` source is base64 by
+                // contract (foreign writers emit it as such), so encode it on the way in; the
+                // Anthropic writer decodes it back into a `text` source.
                 keys::TEXT => crate::codec::ir::IrImageSource::Base64 {
                     media_type: source
                         .get(super::MEDIA_TYPE)
@@ -276,8 +247,7 @@ pub(super) fn read_block(
                 },
             };
             Ok(crate::codec::ir::IrBlock::Media {
-                // A `document` is a document whatever its mime says — Anthropic has no audio/video
-                // content block, so there is no other kind this can be.
+                // A `document` is a document whatever its mime says: there is no audio/video block.
                 kind: crate::codec::ir::IrMediaKind::Document,
                 source: ir_source,
                 name,
@@ -286,32 +256,20 @@ pub(super) fn read_block(
                 context: doc_context,
             })
         }
-        // A native `search_result` block — the RAG grounding payload a caller supplies so the model
-        // can answer from (and cite) retrieved documents. Shape:
-        // `{"type":"search_result","source":"<uri>","title":"…","content":[{"type":"text","text":"…"}],
+        // A native `search_result` block, the RAG grounding payload a caller supplies:
+        // `{"type":"search_result","source":"<uri>","title":"…","content":[{"type":"text",…}],
         //   "citations":{"enabled":true}}`.
         //
-        // It used to fall into the `other =>` degrade-to-empty-Text arm below, so on every
-        // cross-protocol egress the retrieved passages the caller paid to fetch were replaced with an
-        // empty block and the model answered from its own memory instead — the classic "grounding
-        // silently gone" failure, differing from a plain drop only in that the turn kept its slot.
+        // The payload is entirely text, so every protocol can express it as text; the provenance
+        // rides an `IrCitation` so targets that model citations still show the source.
         //
-        // The payload is ENTIRELY TEXT (`content[]` is a text-block array by Anthropic's own schema),
-        // so unlike a `document` there is no attachment to place: every protocol in the matrix can
-        // express it as text. Project it that way, and carry the provenance as an `IrCitation` on the
-        // block so a target that models citations (OpenAI annotations, Gemini `citationSources`,
-        // Cohere `citations`) still shows the caller's source rather than an unattributed paragraph.
-        //
-        // Deliberately NOT added to `is_modeled_anthropic_block_type`: the raw block stays parked in
-        // the unmodeled sentinel, so an Anthropic→Anthropic hop still splices the ORIGINAL bytes back
-        // (`citations.enabled`, the block's `content[]` structure and any field Anthropic adds later
-        // survive byte-exact). This arm is what the CROSS-protocol egresses read, which is the only
-        // path where the sentinel is cleared.
+        // Deliberately not in `is_modeled_anthropic_block_type`: the raw block stays parked, so an
+        // Anthropic-to-Anthropic hop splices the original bytes back. This arm is what the
+        // cross-protocol egresses read, where the sentinel is cleared.
         BLOCK_TYPE_SEARCH_RESULT => {
             let source = obj.get(keys::SOURCE).and_then(|v| v.as_str()).unwrap_or("");
             let title = obj.get(keys::TITLE).and_then(|v| v.as_str()).unwrap_or("");
-            // Concatenate the text parts in wire order. A non-text part is not possible per the
-            // documented schema; if one ever appears it contributes nothing rather than a sentinel.
+            // Concatenate the text parts in wire order; a non-text part contributes nothing.
             let body: String = obj
                 .get(keys::CONTENT)
                 .and_then(|v| v.as_array())
@@ -323,11 +281,10 @@ pub(super) fn read_block(
                         .join("\n")
                 })
                 .unwrap_or_default();
-            // THE SEARCH-RESULT SLOT (`IrBlock::search_result`, shared with Converse `searchResult`):
-            // a `title — source` header line so a model reading a foreign protocol's plain text can
-            // tell one passage from the next, the provenance as a `search_result_location` citation
-            // with no location indices, and the block's `citations` switch verbatim in that
-            // citation's `raw`. The Anthropic and Bedrock writers re-emit the native block from it.
+            // Search-result slot (`IrBlock::search_result`, shared with Converse `searchResult`): a
+            // `title — source` header line, the provenance as a `search_result_location` citation
+            // with no indices, and the `citations` switch verbatim in its `raw`. The Anthropic and
+            // Bedrock writers re-emit the native block from it.
             let cache_control = read_cache_control(obj.get(super::CACHE_CONTROL))?;
             Ok(crate::codec::ir::IrBlock::search_result(
                 source,
@@ -337,15 +294,10 @@ pub(super) fn read_block(
                 cache_control,
             ))
         }
-        // A native `redacted_thinking` block carries opaque `data` bytes (Anthropic's encrypted
-        // reasoning). Map it onto the same typed IR carrier Bedrock's `redactedContent` uses: a
-        // `Thinking { redacted: true }` with the opaque bytes in `text` and no signature. The
-        // Anthropic WRITER matches `Thinking { redacted: true, .. }` and re-emits a native
-        // `redacted_thinking` block, so a `read_response` -> `write_response` (Anthropic->Anthropic)
-        // round-trip preserves the block. Forgery is structurally impossible: a client-supplied
-        // `thinking` block on the REQUEST path can only set `text`/`signature` (it reads as
-        // `redacted: false`), never the typed `redacted: true` flag — so no anti-forgery scrub is
-        // needed (the old String-sentinel approach that required one is gone).
+        // A `redacted_thinking` block (opaque encrypted reasoning in `data`) maps onto the carrier
+        // Bedrock's `redactedContent` uses: `Thinking { redacted: true }` with the bytes in `text`
+        // and no signature, which the writer re-emits natively. A client-supplied `thinking` block
+        // only ever reads as `redacted: false`, so it cannot forge one.
         BLOCK_TYPE_REDACTED_THINKING => {
             let data = block_val
                 .get(keys::DATA)
@@ -362,23 +314,18 @@ pub(super) fn read_block(
                 signature_origin: None,
             })
         }
-        // A provider-run web search's results: the
-        // IR's hosted-tool record. A `web_search_tool_result_error` content carries its error code
-        // as the record's status and no results.
+        // A provider-run web search's results: the IR's hosted-tool record. A
+        // `web_search_tool_result_error` content carries its error code as the status, no results.
         WEB_SEARCH_TOOL_RESULT => Ok(read_web_search_tool_result(obj)),
-        // A block kind the IR does not model never reaches here: [`read_blocks`] leaves it out of
-        // the IR (nothing is put in its place, design F3 "Drops"). A direct call with one is
-        // malformed.
+        // A kind the IR does not model never reaches here: [`read_blocks`] leaves it out.
         _ => Err(ir_parse_error()),
     }
 }
 
-/// Whether [`read_block`] reads `block_val` into the IR: a block of a kind the reader models
-/// ([`BLOCK_KINDS`]) that carries a payload. A block of another kind (a type Anthropic added after
-/// this build, a server-tool result) and a `document` with no `source` are not read: nothing
-/// stands in for them in the IR. A same-dialect write splices the raw block back at its position
-/// ([`ANTHROPIC_UNMODELED_BLOCKS_SENTINEL`]); a translate attempt drops it, named. A non-object is
-/// read (and refused by [`read_block`] in the dialect's own error envelope).
+/// Whether [`read_block`] reads `block_val` into the IR: a kind in [`BLOCK_KINDS`] that carries a
+/// payload. Another kind and a `document` with no `source` are not read, and nothing stands in for
+/// them. A same-dialect write splices the raw block back ([`ANTHROPIC_UNMODELED_BLOCKS_SENTINEL`]);
+/// a translate attempt drops it, named. A non-object is read (and refused by [`read_block`]).
 pub(super) fn is_read_into_ir(block_val: &serde_json::Value) -> bool {
     let Some(obj) = block_val.as_object() else {
         return true;
@@ -388,8 +335,8 @@ pub(super) fn is_read_into_ir(block_val: &serde_json::Value) -> bool {
 }
 
 /// Read a content-block array into the IR: every block [`is_read_into_ir`] keeps, in order. A
-/// `document` with no `source` is dropped through the one drop path (its kind is modelled, so the
-/// block grammar does not name it); an unmodelled kind is named by the grammar walk at the seam.
+/// `document` with no `source` goes through the one drop path; an unmodelled kind is named by the
+/// grammar walk at the seam.
 pub(super) fn read_blocks(
     arr: &[serde_json::Value],
 ) -> Result<Vec<crate::codec::ir::IrBlock>, IrError> {
@@ -423,10 +370,8 @@ pub(super) fn read_message(
     };
 
     let content_val = obj.get(keys::CONTENT).unwrap_or(&serde_json::Value::Null);
-    // EDGE-VALIDATE the per-message `content` TYPE. Anthropic `content` is legally a string or an
-    // array of content blocks (absent/`null` is tolerated as an empty turn). A present number/bool/
-    // object is a genuine TYPE violation the lenient `as_str().unwrap_or("")` fallback below would
-    // silently swallow into an empty Text block — reject it with a 400 instead.
+    // `content` is legally a string or an array (absent/`null` is an empty turn). Any other present
+    // type is a violation the lenient fallback below would swallow into an empty Text block: 400.
     if !content_val.is_null() && !content_val.is_string() && !content_val.is_array() {
         return Err(ir_parse_error());
     }
@@ -457,14 +402,12 @@ pub(super) fn read_tool(tool_val: &serde_json::Value) -> Result<crate::codec::ir
         .cloned()
         .unwrap_or(serde_json::Value::Null);
     let cache_control = read_cache_control(obj.get(super::CACHE_CONTROL))?;
-    // Anthropic's GA per-tool `strict: true` (schema-guaranteed tool arguments) is the same contract
-    // as OpenAI's `function.strict`; read it so it carries (ANT-04). A non-boolean is not a flag.
+    // Per-tool `strict: true` is the same contract as OpenAI's `function.strict`; a non-boolean is
+    // not a flag.
     let strict = obj.get(keys::STRICT).and_then(|v| v.as_bool());
-    // An Anthropic-defined tool (`{"type":"web_search_20250305","name":"web_search",…}`, `bash_*`,
-    // `text_editor_*`, `code_execution_*`, `mcp_toolset`, …) is NOT a function tool: it has no
-    // caller schema, and reading it as one produced a function `web_search` with a null schema that
-    // reached foreign backends (ANT-13). Mark it HOSTED with its raw definition — the cross-protocol
-    // seam drops hosted tools, and this protocol's writer re-emits the raw definition verbatim.
+    // An Anthropic-defined tool (`web_search_*`, `bash_*`, `text_editor_*`, `code_execution_*`,
+    // `mcp_toolset`, …) is not a function tool and has no caller schema. Mark it hosted with its raw
+    // definition: the cross-protocol seam drops hosted tools, and this writer re-emits it verbatim.
     let hosted = obj
         .get(keys::TYPE)
         .and_then(|v| v.as_str())
