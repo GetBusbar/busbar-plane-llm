@@ -271,7 +271,7 @@ fn decode_wire_frames(is_eventstream: bool, bytes: &[u8]) -> Vec<(String, serde_
                 continue;
             }
             if let Ok(data) = serde_json::from_str::<serde_json::Value>(&data_str) {
-                frames.push((event_type, data));
+                frames.push((event_type.to_string(), data));
             }
         }
         frames
@@ -5080,17 +5080,70 @@ fn same_proto_anthropic_skips_decode_for_non_usage_frames() {
         "only message_start and message_delta should reach the DOM parse; \
          content_block_start/delta/stop must be skipped entirely"
     );
-    assert_eq!(
-        t.parse_calls.get(),
-        2,
-        "the skip must fire BEFORE parse_sse_frame pays its per-frame allocations (event-type \
-         String, data-line Vec, joined-payload String) — a cheap event-type probe decides, so a \
-         content_block frame never reaches the allocating parse at all"
-    );
     // Usage from both usage-bearing frames must still have been captured despite the skip.
     let usage = t.usage().expect("terminal usage must still be captured");
     assert_eq!(usage.input_tokens, 10);
     assert_eq!(usage.output_tokens, 5);
+}
+
+/// Every same-proto SSE dialect reads only the frames that can carry its usage or terminal
+/// failure: content frames relay verbatim without a DOM parse, the usage still bills, and a piece
+/// of whole frames that needs no edit comes back BORROWED (no copy of the relayed bytes).
+#[test]
+fn same_proto_reads_only_usage_and_failure_frames() {
+    let cases: [(&str, &str, usize); 4] = [
+        (
+            "openai",
+            concat!(
+                "data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}],\"usage\":null}\n\n",
+                "data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"usage\"},\"finish_reason\":null}],\"usage\":null}\n\n",
+                "data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":null}\n\n",
+                "data: {\"id\":\"c\",\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3,\"total_tokens\":10}}\n\n",
+                "data: [DONE]\n\n",
+            ),
+            2,
+        ),
+        (
+            "gemini",
+            concat!(
+                "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"a\"}]}}],\"usageMetadata\":{\"promptTokenCount\":7,\"candidatesTokenCount\":1}}\n\n",
+                "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"b\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":7,\"candidatesTokenCount\":3,\"totalTokenCount\":10}}\n\n",
+            ),
+            1,
+        ),
+        (
+            "cohere",
+            concat!(
+                "event: message-start\ndata: {\"type\":\"message-start\",\"id\":\"m\"}\n\n",
+                "event: content-delta\ndata: {\"type\":\"content-delta\",\"index\":0,\"delta\":{\"message\":{\"content\":{\"text\":\"message-end\"}}}}\n\n",
+                "event: message-end\ndata: {\"type\":\"message-end\",\"delta\":{\"finish_reason\":\"COMPLETE\",\"usage\":{\"tokens\":{\"input_tokens\":7,\"output_tokens\":3}}}}\n\n",
+            ),
+            1,
+        ),
+        (
+            "responses",
+            concat!(
+                "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\n",
+                "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"a\"}\n\n",
+                "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"status\":\"completed\",\"usage\":{\"input_tokens\":7,\"output_tokens\":3,\"total_tokens\":10}}}\n\n",
+            ),
+            1,
+        ),
+    ];
+    for (dialect, frames, reads) in cases {
+        let mut t = StreamTranslate::new_same_proto(dialect).expect("translator");
+        t.set_client_include_usage(true);
+        let out = t.feed_borrowed(crate::codec::test_host::HOST, frames.as_bytes());
+        assert!(
+            matches!(out, std::borrow::Cow::Borrowed(b) if b == frames.as_bytes()),
+            "{dialect}: whole frames needing no edit relay borrowed and verbatim"
+        );
+        assert_eq!(t.decode_calls.get(), reads, "{dialect}: frames parsed");
+        let usage = t.usage().expect("the stream's usage is still read");
+        assert_eq!(usage.input_tokens, 7, "{dialect}");
+        assert_eq!(usage.output_tokens, 3, "{dialect}");
+        assert!(t.terminal_error().is_none(), "{dialect}");
+    }
 }
 
 /// THE TERMINAL-USAGE FOLD CARRIES THE SUB-BUCKETS, end to end through the translator. The

@@ -1491,6 +1491,21 @@ impl ProtocolReader for BedrockReader {
         })
     }
 
+    /// The frame's `:event-type` header is the `type` the reader dispatches on: usage rides only
+    /// `metadata`, and a failure only the five modeled stream exceptions (the buffered stop reason
+    /// of `messageStop` reaches no usage).
+    fn same_proto_reads(&self, event_type: &str, _payload: &[u8]) -> bool {
+        matches!(
+            event_type,
+            ET_METADATA
+                | super::INTERNAL_SERVER_EXCEPTION
+                | super::MODEL_STREAM_ERROR_EXCEPTION
+                | super::THROTTLING_EXCEPTION
+                | super::VALIDATION_EXCEPTION
+                | super::SERVICE_UNAVAILABLE_EXCEPTION
+        )
+    }
+
     fn clone_box(&self) -> Box<dyn ProtocolReader> {
         Box::new(self.clone())
     }

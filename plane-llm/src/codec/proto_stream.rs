@@ -1,20 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! Cross-protocol response-stream translation — the concrete `StreamTranslate` + its factory,
-//! RELOCATED from busbar-core (G6 A4b). It names the concrete stream IR (`IrStreamEvent`/`IrUsage`/
-//! `StreamDecodeState`/…), so it lives in the plugin; busbar-core keeps only the neutral
-//! `StreamTranslator` byte-in/byte-out seam (`busbar_kernel::proto`) and reaches this factory
-//! through an installed fn-ptr in production, or directly via the `#[path]` net in its test build.
-//! Addresses core by its crate name; the concrete IR is `crate::codec::ir::*` (this crate's own).
+//! Response-stream translation — the concrete `StreamTranslate` + its factory, driven by the
+//! relay (`exchange::reply::relay`). It names the concrete stream IR (`IrStreamEvent`/`IrUsage`/
+//! `StreamDecodeState`/…); the concrete IR is `crate::codec::ir::*` (this crate's own).
 
 use crate::codec::dialect::{parse_sse_frame, write_sse_frame, SSE_DONE_FRAME, SSE_DONE_SENTINEL};
-use busbar_contract::protocol::{
-    find_frame_terminator, IrError, StreamTranslator, STREAM_ABORT_DETAIL,
-};
+use busbar_contract::protocol::{find_frame_terminator, IrError, STREAM_ABORT_DETAIL};
 // G6 A4b: the wire-codec surface relocated to this plugin's `proto_codec`; reach it RELATIVELY so it
 // resolves both standalone (crate::codec::proto_codec) and netted into core (core::proto::proto_codec).
-use super::proto_codec::{protocol_for, Protocol, StreamFraming, ToolIdRemap};
+use super::proto_codec::{protocol_for, Protocol, SameProtoEdit, StreamFraming, ToolIdRemap};
+use std::borrow::Cow;
 
 /// pure cross-protocol response-stream translator. Feed EGRESS-protocol SSE bytes,
 /// get the equivalent INGRESS-protocol SSE bytes — composing `egress.reader().read_response_events`
@@ -146,16 +142,11 @@ pub struct StreamTranslate {
     /// its OWN projection and no wire shape is named here.
     open_blocks: std::collections::BTreeSet<usize>,
     /// Test-only instrumentation: counts frames that reached the `crate::codec::json::parse_str` DOM parse
-    /// in the SSE loop. Proves the same-proto Anthropic event-type gate actually elides the parse
-    /// for non-usage-bearing frames, rather than asserting a tautology about the diff. Compiled out
+    /// in the SSE loop. Proves the same-proto read probe actually elides the parse for frames that
+    /// carry no usage or failure, rather than asserting a tautology about the diff. Compiled out
     /// entirely in non-test builds — zero production cost.
     #[cfg(test)]
     pub decode_calls: std::cell::Cell<usize>,
-    /// TEST ONLY: how many frames reached [`parse_sse_frame`] — the ALLOCATING frame parse
-    /// (event-type `String`, `data:`-line `Vec`, joined payload `String`). The same-proto skip's
-    /// whole point is that a skipped frame never pays it, so the gate counts entries.
-    #[cfg(test)]
-    pub parse_calls: std::cell::Cell<usize>,
 }
 
 impl StreamTranslate {
@@ -231,8 +222,6 @@ impl StreamTranslate {
             open_blocks: std::collections::BTreeSet::new(),
             #[cfg(test)]
             decode_calls: std::cell::Cell::new(0),
-            #[cfg(test)]
-            parse_calls: std::cell::Cell::new(0),
         })
     }
 
@@ -819,8 +808,20 @@ impl StreamTranslate {
     /// reassembly buffer exceeds [`Self::MAX_BUF`] with no complete frame the stream is abandoned
     /// and all further input is ignored.
     pub fn feed(&mut self, host: &dyn busbar_contract::codec::CodecHost, chunk: &[u8]) -> Vec<u8> {
+        self.feed_borrowed(host, chunk).into_owned()
+    }
+
+    /// [`Self::feed`], BORROWING where it can. A same-protocol SSE piece that arrives on a frame
+    /// boundary (nothing buffered from the previous piece) and needs no edit is answered as its own
+    /// complete frames, `chunk[..consumed]`, with no copy; only an unterminated tail is copied into
+    /// the reassembly buffer.
+    pub fn feed_borrowed<'a>(
+        &mut self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        chunk: &'a [u8],
+    ) -> Cow<'a, [u8]> {
         if self.aborted {
-            return Vec::new();
+            return Cow::Borrowed(&[]);
         }
         // Stamp the stream's start on the first byte fed, on the host's monotonic clock, so a
         // Bedrock-INGRESS `metadata` frame can report a real `metrics.latencyMs` (elapsed since the
@@ -828,225 +829,192 @@ impl StreamTranslate {
         if self.started_at.is_none() && self.ingress_eventstream {
             self.started_at = host.monotonic_ns();
         }
-        self.buf.extend_from_slice(chunk);
-        let mut out: Vec<u8> = Vec::new();
-
         if self.egress_eventstream {
-            // egress is binary AWS event-stream framing (Bedrock ConverseStream). The event
-            // name lives in the frame's `:event-type` header, not the JSON payload; the Bedrock
-            // reader keys off a `type` field, so fold the header into the payload.
-            //
-            // Use `drain_frames_checked` (not the discarding `drain_frames` wrapper) so a MALFORMED
-            // EGRESS PRELUDE — an out-of-range `total_len` / oversized `headers_len` from a corrupt or
-            // adversarial Bedrock stream — surfaces as the EXPLICIT `DrainStatus::MalformedPrelude`
-            // abort signal rather than being silently swallowed (the decoder clears the buffer and
-            // stops, which a length-only check could not tell apart from a clean full drain, so the
-            // stream would otherwise continue as if healthy and close with NO terminal exception).
-            // SAME-PROTOCOL bedrock→bedrock: re-emit the ORIGINAL binary
-            // frame bytes verbatim — NEVER re-encode. `encode_frame` would recompute the
-            // length-prefix and CRC32, and any divergence (key ordering, float formatting,
-            // whitespace) from the upstream's exact bytes is an undecodable frame for a native AWS
-            // SDK. `drain_frames_checked` collects the verbatim bytes of each COMPLETE valid frame
-            // DIRECTLY into `out` via the `consumed_sink` (in frame order) as it drains them — so the
-            // re-emit costs only the consumed bytes, NOT a per-chunk clone of the whole reassembly
-            // buffer (which was O(buf) every feed → a memory-pressure DoS for a large frame split into
-            // many small chunks). The sink never receives a cleared malformed-prelude remainder (the
-            // malformed branch breaks before the push), so the client never gets undecodable garbage
-            // ahead of the synthesized exception frame. On the cross-proto path the sink is `None`
-            // (the bytes are re-encoded by `translate_event`).
-            let (frames, status, _valid_consumed) = crate::codec::eventstream::drain_frames_checked(
-                &mut self.buf,
-                if self.same_proto {
-                    Some(&mut out)
-                } else {
-                    None
-                },
-            );
-            for (event_type, payload) in frames {
-                let Ok(mut data) = serde_json::from_slice::<serde_json::Value>(&payload) else {
-                    continue; // non-JSON payload — skip the frame
-                };
-                if let Some(obj) = data.as_object_mut() {
-                    obj.insert(
-                        "type".to_string(),
-                        serde_json::Value::String(event_type.clone()),
-                    );
-                }
-                if self.same_proto {
-                    // Same-proto: run ONLY the reader + usage accumulation (`extract_usage_only`) —
-                    // the writer/reframe half would be discarded, so skip it. The verbatim original
-                    // bytes were already written to `out` by the drain's `consumed_sink` above.
-                    self.extract_usage_only(host, &event_type, &data);
-                } else {
-                    self.translate_event(host, &event_type, &data, &mut out);
-                }
-            }
-            // A malformed prelude is unrecoverable: abandon the stream exactly like the MAX_BUF
-            // overflow path so the terminal exception frame is emitted by `finish()` (the `aborted`
-            // flag drives that branch). Without this the stream would silently truncate.
-            if status == crate::codec::eventstream::DrainStatus::MalformedPrelude
-                || self.buf.len() > Self::MAX_BUF
-            {
-                self.abort();
-            }
-            return out;
+            return Cow::Owned(self.feed_eventstream(host, chunk));
         }
-
-        // Drain every complete blank-line-delimited SSE frame currently buffered. Both the LF-LF
-        // (`\n\n`) and the spec-legal CRLF (`\r\n\r\n`) terminators are recognized — some gateways /
-        // CDNs in front of model APIs emit CRLF SSE, which contains no `\n\n` adjacency, so an
-        // LF-only scanner would buffer the whole stream until MAX_BUF and silently abort it.
-        //
-        // `consumed` is a FRONT cursor: each complete frame advances it instead of physically
-        // `drain(..end)`-ing the front, which shifted the entire remaining tail down once PER frame
-        // (O(n^2) when one buffer holds many small frames). We parse each frame as a slice and only
-        // reclaim the consumed prefix ONCE, after the loop.
-        //
-        // `scanned`/`consumed` are absolute offsets into `buf`. The next frame begins exactly at
-        // `consumed`, so the search floor is `consumed` — NEVER below it (a sub-`consumed` start would
-        // re-find the terminator we just consumed → an empty frame and an infinite loop). The 3-byte
-        // backup (to catch a CRLF terminator straddling the previous chunk boundary) and the `scanned`
-        // skip (avoid rescanning the already-searched prefix of a frame split across many feeds) apply
-        // only ABOVE that floor, so `feed()` stays linear without looping.
-        let mut consumed = 0usize;
-        // SAME-PROTOCOL verbatim re-emit cursor: the start of the not-yet-flushed verbatim
-        // region. It splits on a SUPPRESSED frame (the OpenAI opted-out trailing usage chunk) and
-        // also on a STRIPPED frame — and for an opted-out OpenAI same-proto stream the strip fires
-        // on EVERY content frame carrying `usage` (a real OpenAI upstream stamps `"usage":null` on
-        // all of them once busbar forces `include_usage` upstream to bill), not only on the one
-        // suppressed trailing chunk. So `[0..consumed]` in a single bulk copy at the end is the
-        // Anthropic/Gemini/Cohere same-proto case; the dominant OpenAI same-proto case splits on
-        // most frames.
-        let mut emit_from = 0usize;
-        loop {
-            let search_from = self
-                .scanned
-                .saturating_sub(3)
-                .max(consumed)
-                .min(self.buf.len());
-            match find_frame_terminator(&self.buf[search_from..]) {
-                Some((rel, term_len)) => {
-                    let end = search_from + rel + term_len;
-                    let frame_start = consumed;
-                    let frame = &self.buf[frame_start..end];
-                    consumed = end;
-                    self.scanned = end;
-
-                    if self.same_proto
-                        && self.egress.name_static() == "anthropic"
-                        && !matches!(
-                            crate::codec::dialect::sse_event_type(frame),
-                            "message_start" | "message_delta" | "error"
-                        )
-                    {
-                        // The Anthropic reader's decode state (`open_tools`, which tracks the
-                        // server-tool blocks it suppresses cross-protocol) only shapes the IR events
-                        // a FOREIGN writer re-emits; a same-proto stream relays the bytes and reads
-                        // only usage and errors, so skipping the rest cannot desync it. And
-                        // Anthropic's same-proto framing seams (`suppress_same_proto_frame` /
-                        // `strip_same_proto_usage`) are the constant-`false` defaults, so nothing
-                        // downstream of this egress needs a decoded `data` for any event except the
-                        // two that carry usage plus the terminal error. Decided on the BORROWING
-                        // `sse_event_type` probe BEFORE `parse_sse_frame` runs, so the ~99% of
-                        // frames that are `content_block_*` skip the frame parse's own three
-                        // allocations (event-type String, data-line Vec, joined-payload String) as
-                        // well as the DOM parse and the IR event Vec — the first cut of this skip
-                        // sat AFTER the frame parse and silently kept paying the join per token.
-                        // The bytes still reach the client verbatim via the `[emit_from..]` bulk
-                        // copy below, which never touches `data`. (A no-`data:` or keepalive frame
-                        // reads as event "" here and is skipped too — the same `continue` the
-                        // parse-based arms below take for it.)
-                        continue;
-                    }
-                    #[cfg(test)]
-                    self.parse_calls.set(self.parse_calls.get() + 1);
-                    let parsed = parse_sse_frame(frame);
-                    let Some((event_type, data_str)) = parsed else {
-                        continue; // no data: line, or non-utf8 — skip
-                    };
-                    if data_str.is_empty() || data_str == SSE_DONE_SENTINEL {
-                        // egress terminator/keepalive — ingress terminator is finish()'s. Carries no
-                        // usage on any current protocol; a future protocol that embeds usage in a
-                        // terminator/keepalive frame MUST extract it here (the A-tap is skipped for
-                        // this frame, but its bytes are still re-emitted verbatim in same_proto mode).
-                        continue;
-                    }
-                    #[cfg(test)]
-                    self.decode_calls.set(self.decode_calls.get() + 1);
-                    let Ok(data) = crate::codec::json::parse_str::<serde_json::Value>(&data_str)
-                    else {
-                        continue; // malformed data JSON — skip the frame rather than abort
-                    };
-                    if self.same_proto {
-                        // Same-proto (gemini json-array & openai bare
-                        // `data:`): run ONLY the reader + `last_usage` accumulation
-                        // (`extract_usage_only`) — the verbatim original frame bytes are emitted from
-                        // the consumed prefix below, so every frame (incl. comments, keepalives,
-                        // `[DONE]`, and the exact `event:`/`data:` line shape and terminator) reaches
-                        // the client byte-for-byte unchanged, and the writer/reframe work is skipped.
-                        self.extract_usage_only(host, &event_type, &data);
-                        // On the verbatim path `on_egress_chunk` never runs, so an opted-out
-                        // OpenAI client would still receive the unsolicited trailing usage chunk busbar
-                        // forced upstream. The framing decides per-frame whether to DROP it - flush the
-                        // verbatim run up to this frame's start, then skip the frame (its usage was
-                        // already A-tapped above for billing). Inert for every non-suppressing frame.
-                        if self.framing.suppress_same_proto_frame(&data) {
-                            if frame_start > emit_from {
-                                out.extend_from_slice(&self.buf[emit_from..frame_start]);
-                            }
-                            emit_from = end;
-                        } else if self.framing.strip_same_proto_usage(&data) {
-                            // Indistinguishability fix: busbar forces `include_usage` UPSTREAM to bill,
-                            // so an OpenAI upstream stamps `"usage":null` on EVERY intermediate content
-                            // chunk. A native opted-out OpenAI stream omits `usage` on those chunks, so
-                            // re-emitting the frame verbatim is a wire-shape tell. Strip the top-level
-                            // `usage` member from THIS frame's bytes before re-emitting it - flushing the
-                            // verbatim run up to it, emitting the rewritten frame, and resuming the run
-                            // AFTER it. Billing already A-tapped this frame's usage above. The strip is a
-                            // targeted byte-level edit of the frame bytes on the common path; if that edit
-                            // cannot be done safely for a given frame shape, fall back to
-                            // parse-modify-reserialize for THAT frame only (`rewrite_frame_strip_usage`
-                            // returns the original bytes when even the fallback declines, so nothing is
-                            // ever corrupted).
-                            if frame_start > emit_from {
-                                out.extend_from_slice(&self.buf[emit_from..frame_start]);
-                            }
-                            out.extend_from_slice(&rewrite_frame_strip_usage(
-                                &self.buf[frame_start..end],
-                                &data_str,
-                            ));
-                            emit_from = end;
-                        }
-                    } else {
-                        self.translate_event(host, &event_type, &data, &mut out);
-                    }
-                }
-                None => {
-                    // No complete frame: everything currently buffered has been scanned.
-                    self.scanned = self.buf.len();
-                    break;
-                }
-            }
+        // The reassembly buffer is taken out for the drain, so the frames it borrows can be read
+        // while the readers' state advances.
+        let mut buf = std::mem::take(&mut self.buf);
+        let fresh = buf.is_empty();
+        let (consumed, edited) = if fresh {
+            self.drain_sse(host, chunk)
+        } else {
+            buf.extend_from_slice(chunk);
+            self.drain_sse(host, &buf)
+        };
+        let out = match edited {
+            Some(out) => Cow::Owned(out),
+            None if fresh => Cow::Borrowed(&chunk[..consumed]),
+            None => Cow::Owned(buf[..consumed].to_vec()),
+        };
+        // Keep only the unterminated tail: the consumed prefix is reclaimed in one shift (linear).
+        if fresh {
+            buf.extend_from_slice(&chunk[consumed..]);
+        } else {
+            buf.drain(..consumed);
         }
-        // SAME-PROTOCOL verbatim re-emit: append the remaining un-flushed verbatim region (every
-        // complete frame the loop consumed and did NOT suppress/strip, including the keepalive/
-        // `[DONE]`/non-`data:` frames the cross-proto path drops), BEFORE the consumed prefix is
-        // reclaimed below - so the client sees the upstream SSE stream byte-for-byte, with the IR
-        // pipeline acting purely as the usage side-channel above. `emit_from == 0` (the single bulk
-        // copy of `[0..consumed]`) holds for Anthropic/Gemini/Cohere same-proto streams; a same-proto
-        // OpenAI stream with an opted-out client instead splits repeatedly, once per stripped frame.
-        if self.same_proto && consumed > emit_from {
-            out.extend_from_slice(&self.buf[emit_from..consumed]);
-        }
-        // Reclaim the consumed prefix in a single shift (linear), then rebase the cursors.
-        if consumed > 0 {
-            self.buf.drain(..consumed);
-            self.scanned = self.buf.len();
-        }
+        self.scanned = buf.len();
+        self.buf = buf;
         if self.buf.len() > Self::MAX_BUF {
             self.abort();
         }
         out
+    }
+
+    /// Egress is binary AWS event-stream framing (Bedrock ConverseStream). The event name lives in
+    /// the frame's `:event-type` header, not the JSON payload; the Bedrock reader keys off a `type`
+    /// field, so the header is folded into the payload.
+    fn feed_eventstream(
+        &mut self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        chunk: &[u8],
+    ) -> Vec<u8> {
+        self.buf.extend_from_slice(chunk);
+        let mut out: Vec<u8> = Vec::new();
+        // `drain_frames_checked` (not the discarding `drain_frames` wrapper), so a MALFORMED EGRESS
+        // PRELUDE — an out-of-range `total_len` / oversized `headers_len` from a corrupt or
+        // adversarial Bedrock stream — surfaces as the EXPLICIT `DrainStatus::MalformedPrelude` abort
+        // signal rather than being silently swallowed (the decoder clears the buffer and stops, which
+        // a length-only check could not tell apart from a clean full drain).
+        //
+        // SAME-PROTOCOL bedrock→bedrock re-emits the ORIGINAL binary frame bytes verbatim — NEVER
+        // re-encoded: `encode_frame` would recompute the length-prefix and CRC32, and any divergence
+        // (key ordering, float formatting, whitespace) from the upstream's exact bytes is an
+        // undecodable frame for a native AWS SDK. The drain collects the verbatim bytes of each
+        // COMPLETE valid frame DIRECTLY into `out` via the `consumed_sink` (in frame order), so the
+        // re-emit costs only the consumed bytes, never a per-chunk clone of the whole buffer; the
+        // sink never receives a cleared malformed-prelude remainder, so the client never gets
+        // undecodable garbage ahead of the synthesized exception frame. Cross-protocol the sink is
+        // `None` (the bytes are re-encoded by `translate_event`).
+        let (frames, status, _valid_consumed) = crate::codec::eventstream::drain_frames_checked(
+            &mut self.buf,
+            if self.same_proto {
+                Some(&mut out)
+            } else {
+                None
+            },
+        );
+        for (event_type, payload) in frames {
+            // Same-proto: the frame's bytes are already out; its payload is read only when its
+            // event type can carry the stream's usage or failure.
+            if self.same_proto && !self.egress.reader().same_proto_reads(&event_type, &payload) {
+                continue;
+            }
+            let Ok(mut data) = serde_json::from_slice::<serde_json::Value>(&payload) else {
+                continue; // non-JSON payload — skip the frame
+            };
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert(
+                    "type".to_string(),
+                    serde_json::Value::String(event_type.clone()),
+                );
+            }
+            if self.same_proto {
+                // Same-proto: run ONLY the reader + usage accumulation (`extract_usage_only`) — the
+                // writer/reframe half would be discarded, so skip it.
+                self.extract_usage_only(host, &event_type, &data);
+            } else {
+                self.translate_event(host, &event_type, &data, &mut out);
+            }
+        }
+        // A malformed prelude is unrecoverable: abandon the stream exactly like the MAX_BUF
+        // overflow path so the terminal exception frame is emitted by `finish()` (the `aborted`
+        // flag drives that branch). Without this the stream would silently truncate.
+        if status == crate::codec::eventstream::DrainStatus::MalformedPrelude
+            || self.buf.len() > Self::MAX_BUF
+        {
+            self.abort();
+        }
+        out
+    }
+
+    /// Drain every complete blank-line-delimited SSE frame of `src` (the reassembly buffer, or a
+    /// piece that arrived on a frame boundary). Cross-protocol each frame is translated; same-protocol
+    /// each is read only for the usage side-channel ([`super::proto_codec::ProtocolReader::same_proto_reads`] skips the
+    /// rest unparsed) and re-emitted VERBATIM — the client sees the upstream SSE stream byte-for-byte
+    /// (comments, keepalives, `[DONE]`, the exact `event:`/`data:` line shape and terminator),
+    /// except a frame the ingress framing edits ([`StreamFraming::same_proto_edit`]). Answers how many
+    /// bytes of `src` were complete frames, and the bytes the caller reads: `None` when those are
+    /// exactly `src[..consumed]` (a same-protocol run nothing edited).
+    ///
+    /// Both the LF-LF and the spec-legal CRLF (and bare-CR) terminators are recognized — some
+    /// gateways / CDNs in front of model APIs emit CRLF SSE, which an LF-only scanner would buffer
+    /// until MAX_BUF and silently abort. `consumed` is a FRONT cursor: each complete frame advances
+    /// it (the caller reclaims the prefix ONCE). The search floor is `consumed` — NEVER below it (a
+    /// sub-`consumed` start would re-find the terminator just consumed: an empty frame and an
+    /// infinite loop); the 3-byte backup (a CRLF terminator straddling the previous chunk boundary)
+    /// and the `scanned` skip (no rescan of a frame split across many feeds) apply only above it.
+    fn drain_sse(
+        &mut self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        src: &[u8],
+    ) -> (usize, Option<Vec<u8>>) {
+        let mut consumed = 0usize;
+        let mut out: Vec<u8> = Vec::new();
+        // Same-protocol: the start of the not-yet-flushed verbatim run, split only by an edited frame.
+        let mut emit_from = 0usize;
+        let mut edited = !self.same_proto;
+        loop {
+            let search_from = self.scanned.saturating_sub(3).max(consumed).min(src.len());
+            let Some((rel, term_len)) = find_frame_terminator(&src[search_from..]) else {
+                break;
+            };
+            let end = search_from + rel + term_len;
+            let frame_start = consumed;
+            let frame = &src[frame_start..end];
+            consumed = end;
+            self.scanned = end;
+            let Some((event_type, data)) = parse_sse_frame(frame) else {
+                continue; // no data: line, or non-utf8 — skip
+            };
+            if data.is_empty() || data == SSE_DONE_SENTINEL {
+                // egress terminator/keepalive — ingress terminator is finish()'s. Carries no usage on
+                // any current protocol (its bytes still re-emit verbatim same-protocol).
+                continue;
+            }
+            if !self.same_proto {
+                #[cfg(test)]
+                self.decode_calls.set(self.decode_calls.get() + 1);
+                let Ok(value) = crate::codec::json::parse_str::<serde_json::Value>(&data) else {
+                    continue; // malformed data JSON — skip the frame rather than abort
+                };
+                self.translate_event(host, event_type, &value, &mut out);
+                continue;
+            }
+            let reads = self
+                .egress
+                .reader()
+                .same_proto_reads(event_type, data.as_bytes());
+            if reads {
+                #[cfg(test)]
+                self.decode_calls.set(self.decode_calls.get() + 1);
+                let Ok(value) = crate::codec::json::parse_str::<serde_json::Value>(&data) else {
+                    continue; // malformed data JSON — relayed as it came, unread
+                };
+                self.extract_usage_only(host, event_type, &value);
+            }
+            // The framing's edit (an opted-out OpenAI client: the unsolicited trailing usage chunk
+            // dropped, the forced `"usage":null` stripped) applies only to a payload that parses;
+            // one that does not is relayed as it came. Flush the verbatim run up to this frame,
+            // emit its edit, and resume the run after it.
+            let edit = self.framing.same_proto_edit(data.as_bytes());
+            if edit == SameProtoEdit::Keep
+                || (!reads
+                    && crate::codec::json::parse_str::<serde::de::IgnoredAny>(&data).is_err())
+            {
+                continue;
+            }
+            edited = true;
+            out.extend_from_slice(&src[emit_from..frame_start]);
+            if edit == SameProtoEdit::StripUsage {
+                rewrite_frame_strip_usage(&mut out, frame, &data);
+            }
+            emit_from = end;
+        }
+        if self.same_proto && edited {
+            out.extend_from_slice(&src[emit_from..consumed]);
+        }
+        (consumed, edited.then_some(out))
     }
 
     /// True once this translator abandoned its stream — the reassembly buffer grew past
@@ -1235,44 +1203,6 @@ impl StreamTranslate {
     }
 }
 
-impl StreamTranslator for StreamTranslate {
-    // Each method forwards to the same-named INHERENT method — Rust's method resolution prefers an
-    // inherent method over a trait method, so `self.feed(..)` here calls the concrete `StreamTranslate`
-    // impl, never this trait method (no recursion). Behavior is byte-identical to the pre-trait direct
-    // calls; only `usage` projects the concrete `&IrUsage` to the neutral OWNED billing total.
-    fn feed(&mut self, host: &dyn busbar_contract::codec::CodecHost, chunk: &[u8]) -> Vec<u8> {
-        self.feed(host, chunk)
-    }
-    fn finish(&mut self, host: &dyn busbar_contract::codec::CodecHost) -> Vec<u8> {
-        self.finish(host)
-    }
-    fn usage(&self) -> Option<busbar_contract::billing::TokenUsage> {
-        self.usage().map(|u| u.to_token_usage())
-    }
-    fn terminal_error(&self) -> Option<&str> {
-        self.terminal_error()
-    }
-    fn aborted(&self) -> bool {
-        self.aborted()
-    }
-    fn set_client_include_usage(&mut self, include: bool) {
-        self.set_client_include_usage(include)
-    }
-    fn set_request_echo(&mut self, ingress_request_body: &serde_json::Value) {
-        self.set_request_echo(ingress_request_body)
-    }
-    fn dropped(&self) -> Vec<String> {
-        StreamTranslate::dropped(self).to_vec()
-    }
-    fn terminal_error_frame(
-        &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
-        err: &IrError,
-    ) -> Option<(String, serde_json::Value)> {
-        self.terminal_error_frame(host, err)
-    }
-}
-
 /// Fan a whole (buffered) response out into the IR event sequence a live stream of the same
 /// completion carries: one `MessageStart`, then per content block a `BlockStart`, its delta(s) and a
 /// `BlockStop`, then the terminal `MessageDelta` (stop reason + usage) and `MessageStop`. Mirrors
@@ -1444,7 +1374,7 @@ pub fn new_stream_translator_on(
     egress: &str,
     is_sse: bool,
     translate_cap: usize,
-) -> Option<Box<dyn StreamTranslator>> {
+) -> Option<StreamTranslate> {
     if !is_sse {
         // A buffered (non-stream) body. Cross-protocol never reaches here (the forward path buffers
         // and translates it before building a stream wrapper); same-protocol is a verbatim relay:
@@ -1456,81 +1386,62 @@ pub fn new_stream_translator_on(
     } else {
         StreamTranslate::new(ingress, egress)
     }?;
-    Some(Box::new(st.with_translate_cap(translate_cap)))
+    Some(st.with_translate_cap(translate_cap))
 }
 
-/// Rewrite a same-protocol OpenAI SSE frame's bytes with its top-level `usage` member removed,
+/// Write a same-protocol OpenAI SSE frame to `out` with its top-level `usage` member removed,
 /// preserving every other byte (the `data:` prefix, the exact terminator, and the rest of the JSON).
 /// `frame` is the ORIGINAL complete frame bytes (including the `data:` line and terminator);
-/// `data_str` is the JSON payload `parse_sse_frame` already extracted from it.
+/// `data_str` is the JSON payload `parse_sse_frame` read from it.
 ///
-/// Fast path: byte-level strip. `strip_top_level_usage_member` removes the `usage` member from the
-/// JSON string without a DOM round-trip, and because for an OpenAI bare-`data:` chunk the JSON is a
-/// single line that appears verbatim as a substring of the frame, the stripped JSON is spliced back
-/// in place of the original JSON substring, leaving the frame's framing bytes untouched.
+/// Fast path: byte-level splice. [`crate::codec::dialect::top_level_usage_cut`] locates the `usage`
+/// member (and one adjacent comma) without a DOM round-trip, and because for an OpenAI bare-`data:`
+/// chunk the JSON is a single line that appears verbatim as a substring of the frame, the frame is
+/// written around that range, leaving its framing bytes untouched.
 ///
-/// Fallback (rare shapes only): if the byte-level strip declines (`None`), or the JSON is not a clean
-/// single-substring of the frame (e.g. a multi-`data:`-line frame), the frame is reframed as a bare
-/// `data:` frame. This is correctness-over-speed for the uncommon shape and only ever runs for THAT
-/// frame. Crucially the fallback must NOT itself introduce a wire-shape tell: it PRESERVES the JSON
-/// key ORDER and the ORIGINAL line TERMINATOR (CRLF vs LF) exactly, differing from a direct stream
-/// only by the removed `usage` key. It first retries the order-preserving byte strip on the extracted
-/// payload (which keeps key order); only if that also declines does it parse-reserialize via a DOM,
-/// and even then it uses a preserve-order map so keys are not reordered. If the JSON will not parse at
-/// all, the ORIGINAL frame bytes are returned unchanged (never a corrupt splice) - the strip is
-/// best-effort but the stream is never damaged.
-fn rewrite_frame_strip_usage(frame: &[u8], data_str: &str) -> Vec<u8> {
-    // Fast path: byte-level strip spliced back into the frame in place of the JSON substring.
-    if let Some(stripped) = crate::codec::dialect::strip_top_level_usage_member(data_str) {
-        // Locate the exact JSON substring within the frame. For an OpenAI bare `data: {json}\n\n`
-        // frame the JSON is present verbatim and unique, so a single-substring find is exact.
-        if let Ok(frame_str) = std::str::from_utf8(frame) {
-            if let Some(pos) = frame_str.find(data_str) {
-                // Confirm the JSON appears exactly once so the splice is unambiguous. (A second
-                // occurrence would mean the payload text also lives elsewhere in the frame - refuse
-                // the byte splice and fall through to reserialize.)
-                if frame_str[pos + data_str.len()..].find(data_str).is_none() {
-                    let mut out =
-                        Vec::with_capacity(frame.len() - (data_str.len() - stripped.len()));
-                    out.extend_from_slice(&frame[..pos]);
-                    out.extend_from_slice(stripped.as_bytes());
-                    out.extend_from_slice(&frame[pos + data_str.len()..]);
-                    return out;
-                }
+/// Fallback (rare shapes only): if the JSON is not a clean single substring of the frame (e.g. a
+/// multi-`data:`-line frame), the frame is reframed as a bare `data:` frame carrying the stripped
+/// payload. It must NOT itself introduce a wire-shape tell: it PRESERVES the JSON key ORDER and the
+/// ORIGINAL line TERMINATOR (CRLF vs LF) exactly, differing from a direct stream only by the removed
+/// `usage` key. If the scanner cannot classify the payload (a non-object, or a shape it does not
+/// fully understand), the ORIGINAL frame bytes are written unchanged: a DOM reserialize is
+/// deliberately NOT used — `serde_json` is built WITHOUT `preserve_order`, so a round-trip would
+/// REORDER keys, reintroducing exactly the tell this strip exists to remove. Best-effort, but the
+/// stream is never damaged.
+fn rewrite_frame_strip_usage(out: &mut Vec<u8>, frame: &[u8], data_str: &str) {
+    let Some((cut_start, cut_end)) = crate::codec::dialect::top_level_usage_cut(data_str) else {
+        out.extend_from_slice(frame);
+        return;
+    };
+    // For an OpenAI bare `data: {json}\n\n` frame the JSON is present verbatim and unique, so a
+    // single-substring find is exact. A second occurrence would mean the payload text also lives
+    // elsewhere in the frame: refuse the splice and reframe.
+    if let Ok(frame_str) = std::str::from_utf8(frame) {
+        if let Some(pos) = frame_str.find(data_str) {
+            if !frame_str[pos + data_str.len()..].contains(data_str) {
+                out.extend_from_slice(&frame[..pos + cut_start]);
+                out.extend_from_slice(&frame[pos + cut_end..]);
+                return;
             }
         }
     }
-    // Fallback. Determine the ORIGINAL terminator so the reframed frame matches the wire shape a direct
-    // stream would send (CRLF must stay CRLF; a native OpenAI stream never silently downgrades CRLF to
-    // LF, and doing so here would be the very indistinguishability tell the strip exists to remove).
-    let terminator: &str = if frame.ends_with(b"\r\n\r\n") {
-        "\r\n\r\n"
+    // The ORIGINAL terminator, so the reframed frame matches the wire shape a direct stream would
+    // send (a native OpenAI stream never silently downgrades CRLF to LF).
+    let terminator: &[u8] = if frame.ends_with(b"\r\n\r\n") {
+        b"\r\n\r\n"
     } else if frame.ends_with(b"\n\n") {
-        "\n\n"
+        b"\n\n"
     } else if frame.ends_with(b"\r\n") {
-        "\r\n"
+        b"\r\n"
     } else if frame.ends_with(b"\n") {
-        "\n"
+        b"\n"
     } else {
-        "\n\n"
+        b"\n\n"
     };
-
-    // Use the order-preserving byte strip on the extracted payload: it keeps the original key order and
-    // only removes the `usage` member. This handles the "JSON not a clean single substring of the
-    // frame" case (multi-`data:`-line frames) without reordering keys, reframed with the original
-    // terminator so no wire-shape tell is introduced.
-    if let Some(stripped) = crate::codec::dialect::strip_top_level_usage_member(data_str) {
-        return format!("data: {stripped}{terminator}").into_bytes();
-    }
-
-    // Last resort: the byte scanner could not classify this payload (a non-object, or a shape it does
-    // not fully understand). A DOM reserialize is deliberately NOT used here: `serde_json` is built
-    // WITHOUT the `preserve_order` feature, so `serde_json::Value` / `Map` is a sorted `BTreeMap` and a
-    // round-trip would REORDER keys - reintroducing exactly the indistinguishability tell this strip
-    // exists to remove. Since the payload also carries no reliably strippable top-level `usage` (the
-    // scanner declined), re-emit the ORIGINAL frame bytes verbatim. The strip is documented best-effort;
-    // never a reordered or corrupt frame.
-    frame.to_vec()
+    out.extend_from_slice(b"data: ");
+    out.extend_from_slice(&data_str.as_bytes()[..cut_start]);
+    out.extend_from_slice(&data_str.as_bytes()[cut_end..]);
+    out.extend_from_slice(terminator);
 }
 
 #[cfg(test)]

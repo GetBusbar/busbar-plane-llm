@@ -10,9 +10,9 @@
 //! (`busbar_contract::protocol`: the error-`type` bank, the SSE frame-boundary scan and line walkers).
 
 use busbar_contract::protocol::{
-    sse_line_spans, sse_lines, ERR_TYPE_API_ERROR, ERR_TYPE_AUTHENTICATION,
-    ERR_TYPE_INSUFFICIENT_QUOTA, ERR_TYPE_INVALID_REQUEST, ERR_TYPE_NOT_FOUND, ERR_TYPE_PERMISSION,
-    ERR_TYPE_RATE_LIMIT, ERR_TYPE_SERVER_ERROR,
+    sse_line_spans, ERR_TYPE_API_ERROR, ERR_TYPE_AUTHENTICATION, ERR_TYPE_INSUFFICIENT_QUOTA,
+    ERR_TYPE_INVALID_REQUEST, ERR_TYPE_NOT_FOUND, ERR_TYPE_PERMISSION, ERR_TYPE_RATE_LIMIT,
+    ERR_TYPE_SERVER_ERROR,
 };
 
 /// Machine-readable `code` field emitted in a bad-key 401 OpenAI-family error envelope.
@@ -312,7 +312,7 @@ pub fn rewrite_text_pairs(messages: &[serde_json::Value]) -> Option<Vec<(String,
 /// Returns `""` when the frame carries no `event:` line (OpenAI style) or the name is not UTF-8, and
 /// the LAST `event:` line wins when a frame illegally carries several.
 ///
-/// Walks the SAME line grammar as [`sse_lines`] / [`busbar_contract::protocol::find_frame_terminator`] — CRLF, a lone LF, **or**
+/// Walks the SAME line grammar as [`parse_sse_frame`] / [`busbar_contract::protocol::find_frame_terminator`] — CRLF, a lone LF, **or**
 /// a lone CR each end a line — rather than splitting on LF alone. Splitting on LF alone made a
 /// bare-CR frame read as ONE line, so the whole frame body came back as the event name
 /// (`message_start\rdata: …`); the Anthropic same-protocol fast path matches that name against its
@@ -342,28 +342,35 @@ pub fn tool_arguments_to_string(input: &serde_json::Value) -> String {
     }
 }
 
-/// Parse one SSE frame into `(event_type, data_payload)`. `event_type` is "" when the frame has
-/// no `event:` line (OpenAI style). Multiple `data:` lines in a single frame are concatenated with
-/// `\n` per the SSE spec. Returns `None` if the frame carries no `data:` line (including a
-/// frame with only an `event:` line) or is invalid UTF-8.
-pub fn parse_sse_frame(frame: &[u8]) -> Option<(String, String)> {
+/// Parse one SSE frame into `(event_type, data_payload)`, both BORROWED from the frame: the payload
+/// is joined (and so owned) only when the frame carries several `data:` lines, concatenated with
+/// `\n` per the SSE spec. `event_type` is "" when the frame has no `event:` line (OpenAI style).
+/// Returns `None` if the frame carries no `data:` line (including a frame with only an `event:`
+/// line) or is invalid UTF-8.
+pub fn parse_sse_frame(frame: &[u8]) -> Option<(&str, std::borrow::Cow<'_, str>)> {
     let text = std::str::from_utf8(frame).ok()?;
-    let mut event_type = String::new();
-    let mut data_lines: Vec<&str> = Vec::new();
-    for line in sse_lines(text) {
+    let mut event_type = "";
+    let mut data: Option<std::borrow::Cow<'_, str>> = None;
+    for (start, end) in sse_line_spans(frame) {
+        let line = &text[start..end];
         if let Some(rest) = line.strip_prefix("event:") {
-            event_type = rest.trim().to_string();
+            event_type = rest.trim();
         } else if let Some(rest) = line.strip_prefix("data:") {
             // Per the SSE spec a single leading space after the colon is stripped; the rest of the
             // value is preserved verbatim so multi-line JSON payloads survive intact.
-            data_lines.push(rest.strip_prefix(' ').unwrap_or(rest));
+            let rest = rest.strip_prefix(' ').unwrap_or(rest);
+            data = Some(match data {
+                None => std::borrow::Cow::Borrowed(rest),
+                Some(mut joined) => {
+                    let joined_mut = joined.to_mut();
+                    joined_mut.push('\n');
+                    joined_mut.push_str(rest);
+                    joined
+                }
+            });
         }
     }
-    if data_lines.is_empty() {
-        // No `data:` line at all (e.g. an `event:`-only frame) — nothing to translate.
-        return None;
-    }
-    Some((event_type, data_lines.join("\n")))
+    Some((event_type, data?))
 }
 
 /// Append an IR-derived `(event_type, data)` to `out` as INGRESS SSE bytes. A non-empty
@@ -407,6 +414,13 @@ pub fn write_sse_frame(out: &mut Vec<u8>, event_type: &str, data: &serde_json::V
 /// complete quoted string `"usage"` immediately followed (modulo whitespace) by a `:`. Anything the
 /// scanner cannot classify with certainty yields `None` (fall back), never a blind splice.
 pub fn strip_top_level_usage_member(json: &str) -> Option<String> {
+    let (start, end) = top_level_usage_cut(json)?;
+    Some([&json[..start], &json[end..]].concat())
+}
+
+/// The byte range [`strip_top_level_usage_member`] removes from `json` (the member and exactly one
+/// adjacent comma), so a writer can splice around it without building the stripped string.
+pub(crate) fn top_level_usage_cut(json: &str) -> Option<(usize, usize)> {
     let bytes = json.as_bytes();
     let n = bytes.len();
     // Skip leading whitespace; the body must be a JSON object.
@@ -535,11 +549,7 @@ pub fn strip_top_level_usage_member(json: &str) -> Option<String> {
         // If there is NO trailing comma either, `usage` was the sole member - removing just the member
         // leaves `{}` (with whatever interior whitespace remained), which is still valid.
     }
-
-    let mut out = String::with_capacity(n - (cut_end - cut_start));
-    out.push_str(&json[..cut_start]);
-    out.push_str(&json[cut_end..]);
-    Some(out)
+    Some((cut_start, cut_end))
 }
 
 /// Given `bytes` and the index of an opening `"`, return the index ONE PAST the matching closing
