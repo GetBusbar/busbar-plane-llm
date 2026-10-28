@@ -811,12 +811,6 @@ const RESPONSE_ID_ALPHABET: &[u8; 62] = crate::codec::dialect::BASE62_ALPHABET;
 /// fingerprint it as non-native.
 const RESPONSE_ID_TOKEN_LEN: usize = 16;
 
-/// Rejection-sampling threshold for the base62 reduction in `synth_response_id`: the largest multiple
-/// of 62 that fits in a `u8` is `4 * 62 = 248`. Any random byte `>= 248` is in the partial final
-/// block (`248..=255` → residues `0..=7`) that would otherwise be over-represented by a bare
-/// `byte % 62`, so we reject and resample those to keep the symbol distribution uniform.
-const RESPONSE_ID_REJECT_THRESHOLD: u8 = crate::codec::dialect::BASE62_REJECT_THRESHOLD;
-
 /// Mint a Gemini-shaped `responseId` for the cross-protocol path where the backend supplied none.
 ///
 /// A native Gemini `responseId` is an opaque, mixed-case alphanumeric base64url-style token with NO
@@ -831,43 +825,11 @@ const RESPONSE_ID_REJECT_THRESHOLD: u8 = crate::codec::dialect::BASE62_REJECT_TH
 /// 16-char base62 token is ~95 bits of entropy, collision-free in practice for a per-process id
 /// stream, so no counter backstop is needed and every position stays fully random like a native id.
 /// No embedded clock, no separator, no new dependency. Never panics on the request path: on entropy
-/// failure the buffer stays the base62 zero char.
-///
-/// The byte→base62 reduction uses REJECTION SAMPLING, not a bare `byte % 62`. `256 % 62 != 0`, so a
-/// plain modulo over a uniform `u8` is biased: residues `0..=7` (reachable by the 8 extra byte values
-/// `248..=255`) occur slightly more often than `8..=61`. We instead reject any byte `>=
-/// RESPONSE_ID_REJECT_THRESHOLD` (the largest multiple of 62 that fits in a `u8`, i.e. `4*62 = 248`)
-/// and resample, so every surviving byte maps uniformly across the 62 symbols. Rejected bytes are
-/// simply skipped and more random bytes are drawn as needed.
+/// failure the buffer stays the base62 zero char. The token is drawn by `dialect::fill_base62`
+/// (rejection sampling, bounded rounds).
 fn synth_response_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
     let mut token = [b'0'; RESPONSE_ID_TOKEN_LEN];
-    let mut filled = 0usize;
-    // Bound the number of refill rounds so a stuck/zero entropy source can never spin forever on the
-    // request path; ~4/256 of bytes are rejected, so a handful of rounds covers the token with margin
-    // and the `'0'`-prefilled buffer is the panic-free fallback if entropy never arrives.
-    let mut rounds = 0u32;
-    const MAX_ROUNDS: u32 = 8;
-    while filled < RESPONSE_ID_TOKEN_LEN && rounds < MAX_ROUNDS {
-        rounds += 1;
-        // Draw a generous batch so a single entropy draw typically fills the whole token even after
-        // rejections (RESPONSE_ID_TOKEN_LEN*2 bytes leave ample headroom for the ~1.6% reject rate).
-        let mut batch = [0u8; RESPONSE_ID_TOKEN_LEN * 2];
-        if !host.fill_entropy(&mut batch) {
-            break;
-        }
-        for &byte in batch.iter() {
-            if filled >= RESPONSE_ID_TOKEN_LEN {
-                break;
-            }
-            if byte >= RESPONSE_ID_REJECT_THRESHOLD {
-                // Biased residue region — reject and resample rather than fold it in.
-                continue;
-            }
-            token[filled] = RESPONSE_ID_ALPHABET[(byte % 62) as usize];
-            filled += 1;
-        }
-    }
-
+    crate::codec::dialect::fill_base62(host, &mut token, RESPONSE_ID_ALPHABET);
     // `token` is ASCII base62 by construction, hence always valid UTF-8; the fallback only guards an
     // impossible non-ASCII byte and keeps the path panic-free (no unwrap/expect on the request path).
     String::from_utf8(token.to_vec()).unwrap_or_else(|_| "0".repeat(RESPONSE_ID_TOKEN_LEN))

@@ -200,8 +200,9 @@ pub const BASE62_REJECT_THRESHOLD: u8 = 248;
 /// Fill `out` (at most 64 characters) with uniformly-distributed characters of `alphabet` drawn
 /// from the host's entropy, by rejection sampling: a bare `byte % 62` over-represents the residues
 /// 0..7 by ~25%, a statistical tell against a native (uniform) id, so a byte at or above
-/// [`BASE62_REJECT_THRESHOLD`] is discarded. Each round draws `out.len()` bytes. Returns `false` on
-/// an entropy failure, leaving the unfilled tail of `out` as it was (the callers' `'0'` fill).
+/// [`BASE62_REJECT_THRESHOLD`] is discarded. Each round draws `out.len()` bytes, at most 8 rounds,
+/// so a stuck entropy source cannot spin on the request path. Returns `false` on an entropy failure
+/// (or no fill in 8 rounds), leaving the unfilled tail of `out` as it was (the callers' `'0'` fill).
 pub(crate) fn fill_base62(
     host: &dyn busbar_contract::codec::CodecHost,
     out: &mut [u8],
@@ -210,7 +211,10 @@ pub(crate) fn fill_base62(
     debug_assert!(out.len() <= 64, "fill_base62 draws at most 64 chars");
     let len = out.len();
     let mut filled = 0usize;
-    'outer: while filled < len {
+    'outer: for _ in 0..8 {
+        if filled == len {
+            break;
+        }
         let mut batch = [0u8; 64];
         let batch = &mut batch[..len];
         if !host.fill_entropy(batch) {
@@ -227,7 +231,7 @@ pub(crate) fn fill_base62(
             }
         }
     }
-    true
+    filled == len
 }
 
 /// Project each message's `(role, content)` into a `(String, String)` pair when BOTH are plain
