@@ -4,7 +4,8 @@
 //! Tests for `crates/busbar/src/ir/audio.rs`.
 
 use super::*;
-use busbar_contract::media::{MediaBlob, MediaPayload};
+use crate::codec::framework::MediaBlob;
+use crate::codec::framework::MediaPayload;
 
 #[test]
 fn transcription_translation_folds_via_target_language() {
@@ -68,8 +69,8 @@ use crate::codec::test_host::screened;
 #[test]
 fn transcription_projects_prompt_as_text_and_audio_as_opaque() {
     let req = TranscriptionReq {
-        audio: Some(busbar_contract::media::MediaBlob {
-            payload: busbar_contract::media::MediaPayload::B64("AAAA".into()),
+        audio: Some(crate::codec::framework::MediaBlob {
+            payload: crate::codec::framework::MediaPayload::B64("AAAA".into()),
             mime_type: "audio/mp3".into(),
             pcm: None,
         }),

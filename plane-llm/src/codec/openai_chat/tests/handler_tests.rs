@@ -151,10 +151,10 @@ fn egress_multipart_sanitizes_mime_from_any_ingress() {
     // bytes carry no injected header.
     let ir = crate::codec::ir::audio::TranscriptionReq {
         model: "whisper-1".into(),
-        audio: Some(busbar_contract::media::MediaBlob {
-            payload: busbar_contract::media::MediaPayload::Bytes(busbar_contract::SlabBytes::from(
-                &b"x"[..],
-            )),
+        audio: Some(crate::codec::framework::MediaBlob {
+            payload: crate::codec::framework::MediaPayload::Bytes(
+                busbar_contract::SlabBytes::from(&b"x"[..]),
+            ),
             mime_type: "audio/mp3\r\nX-Injected: evil".into(),
             pcm: None,
         }),
@@ -803,10 +803,10 @@ fn transcription_temperature_round_trips_openai_multipart() {
     let ir = crate::codec::ir::audio::TranscriptionReq {
         model: "whisper-1".into(),
         temperature: Some(0.5),
-        audio: Some(busbar_contract::media::MediaBlob {
-            payload: busbar_contract::media::MediaPayload::Bytes(busbar_contract::SlabBytes::from(
-                &b"x"[..],
-            )),
+        audio: Some(crate::codec::framework::MediaBlob {
+            payload: crate::codec::framework::MediaPayload::Bytes(
+                busbar_contract::SlabBytes::from(&b"x"[..]),
+            ),
             mime_type: "audio/mpeg".into(),
             pcm: None,
         }),

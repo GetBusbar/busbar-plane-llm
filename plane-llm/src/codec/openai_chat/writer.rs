@@ -1013,7 +1013,7 @@ impl ProtocolWriter for OpenAiWriter {
             | "timeout"
             | "network"
             | "5xx" => ERR_TYPE_SERVER_ERROR,
-            busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH => ERR_TYPE_INVALID_REQUEST,
+            crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH => ERR_TYPE_INVALID_REQUEST,
             // Empty kind: derive a valid OpenAI type from the HTTP status bucket rather than emitting
             // an empty `type`, so the SDK still sees a real error type.
             "" => {
