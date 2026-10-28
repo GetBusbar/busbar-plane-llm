@@ -883,7 +883,7 @@ fn no_dialect_drops_a_path_it_carries() {
                 let Some(c) = carried else { continue };
                 // A re-rooted list is checked as the stream spells each of its paths.
                 let mut listed: Vec<String> = c.drops.iter().map(|d| d.to_string()).collect();
-                for r in c.reroot {
+                if let Some(r) = c.reroot {
                     for (from, to) in r.at {
                         for d in c.drops.iter().chain(r.answer_drops) {
                             if let Some(rest) = d.strip_prefix(to) {
