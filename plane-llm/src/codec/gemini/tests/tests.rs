@@ -6803,3 +6803,37 @@ fn writer_streamed_citations_do_not_rewalk_the_block() {
         "walked {walked} characters for {frames} frames: the block was walked per offset"
     );
 }
+
+/// Convert a Gemini `startIndex`/`endIndex` BYTE offset (Google's `CitationSource` is documented
+/// measured in bytes) into a CHARACTER offset — the IR's `IrCitation::start_index`/`end_index`
+/// contract (`ir/mod.rs`). `byte_idx` is clamped to `text.len()` so an
+/// out-of-range upstream value degrades to "end of text" rather than panicking on a non-boundary
+/// slice.
+///
+/// The straightforward per-offset conversion, kept as the REFERENCE the `GeminiCharIndex`
+/// equivalence test measures against. Production reads go through the index, which answers the same
+/// question for a whole candidate in one pass over the text.
+fn gemini_byte_offset_to_char(text: &str, byte_idx: i64) -> i64 {
+    let clamped = byte_idx.max(0) as usize;
+    let boundary = clamped.min(text.len());
+    // A byte index that lands mid-codepoint (a malformed/adversarial upstream value) has no valid
+    // char count at that exact point; fall back to the nearest earlier boundary rather than panic.
+    let safe_boundary = (0..=boundary)
+        .rev()
+        .find(|&b| text.is_char_boundary(b))
+        .unwrap_or(0);
+    text[..safe_boundary].chars().count() as i64
+}
+
+/// The inverse of `gemini_byte_offset_to_char`: a CHARACTER offset (the IR contract) back to the
+/// BYTE offset Gemini's wire format expects. `char_idx` is clamped to the text's char count.
+///
+/// Kept as the REFERENCE `GeminiCharIndex::byte_offset` is measured against; production writes go
+/// through the index, so a text with many citations is not walked once per offset.
+fn gemini_char_offset_to_byte(text: &str, char_idx: i64) -> i64 {
+    let clamped = char_idx.max(0) as usize;
+    match text.char_indices().nth(clamped) {
+        Some((byte_idx, _)) => byte_idx as i64,
+        None => text.len() as i64,
+    }
+}
