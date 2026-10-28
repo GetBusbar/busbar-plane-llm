@@ -932,9 +932,10 @@ class Judge:
             self.checkers[spec] = Checker(doc)
         with open(os.path.join(transcribed_dir, "google-rpc-status.json")) as f:
             self.rpc_status = json.load(f)
-        # The plane's declared refusals beyond an operation's spec error list (plane-declared-errors.json).
-        with open(os.path.join(HERE, "plane-declared-errors.json")) as f:
-            self.plane_declared = json.load(f)
+        # The Bedrock dialect's DECLARED refusals beyond the Converse error list: the plane's own table,
+        # the one its runtime answers from (plane-llm/src/codec/bedrock/refusals.json).
+        with open(os.path.join(REPO, "plane-llm", "src", "codec", "bedrock", "refusals.json")) as f:
+            self.bedrock_refusals = json.load(f)["refusals"]
         self.rpc_checker = Checker(self.rpc_status)
 
     def checker(self, dialect):
@@ -1170,11 +1171,12 @@ class Judge:
             out.append(Violation("/", "error.type", f"{et!r} is not an exception shape of bedrock-runtime"))
             return et
         declared = {e["shape"] for op in ("Converse", "ConverseStream") for e in doc["operations"][op].get("errors", [])}
-        # The plane's own declared refusal for this outcome (plane-declared-errors.json): the exception is
-        # still a spec exception shape (checked above), sent with its spec status and schema (below).
+        # The plane's own declared refusal for this outcome (its refusals.json, the table its runtime
+        # answers from): still a spec exception shape (checked above), sent with its spec HTTP status
+        # and judged against its schema (below).
         declared |= {
             row["exception"]
-            for row in self.plane_declared.get("bedrock", [])
+            for row in self.bedrock_refusals
             if outcome in row.get("outcomes", []) and row.get("status") == status
         }
         if et not in declared:
