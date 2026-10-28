@@ -10,18 +10,19 @@
 //! |---|---|---|---|
 //! | unauthenticated | bedrock | 403 | `AccessDeniedException` |
 //! | unauthenticated | gemini | 400 | `API_KEY_INVALID` |
+//! | over budget | bedrock | 400 | `ServiceQuotaExceededException` |
 //! | scheme not declared | every dialect | 400 | none: this plane's status before the one classification |
 //! | challenge exhausted | every dialect | 503 | none: this plane's status before the one classification |
 //! | cursor budget | every dialect | 503 | none: this plane's status before the one classification |
 //! | credential budget | every dialect | 503 | none: this plane's status before the one classification |
 //!
-//! The first two are proved against recorded cells.
+//! The first three are proved against recorded cells.
 //!
-//! Over budget is NOT stated: it answers the class default, 429, on every dialect. 1.5.5 answered
-//! 400 `ServiceQuotaExceededException` on bedrock, an exception Converse does not declare; the
-//! bedrock refusal is now 429 `ThrottlingException`, a declared one (OWNER rule 22, 2026-10-14,
-//! named conformance gaps are zero; accepted difference "C-22 bedrock budget refusal is a declared
-//! Converse error").
+//! Over budget answers the class default, 429, on every dialect but bedrock. On bedrock it is 1.5.5's
+//! 400 `ServiceQuotaExceededException` (OWNER 2026-10-27): the plane DECLARES that refusal in its
+//! own table (`codec/bedrock/refusals.json`), which the runtime's exception and the llm conformance
+//! rig both read, and its status here is that table's (`tests/refusal_statuses.rs` holds the two
+//! equal).
 //!
 //! The kernel's default is a status per refusal CLASS (`busbar_contract::abi::plane::RefusalClass`,
 //! the one classification; the P-item "refusal-reason collapse"). Four rows this plane used to state
@@ -98,9 +99,10 @@ const fn row(dialect: u32, reason: u32, status: u32) -> RefusalStatus {
 }
 
 /// The plane's refusal statuses, in its statement's order.
-pub const REFUSAL_STATUSES: [RefusalStatus; 6] = [
+pub const REFUSAL_STATUSES: [RefusalStatus; 7] = [
     row(dialect_index("bedrock"), reason::UNAUTHENTICATED, 403),
     row(dialect_index("gemini"), reason::UNAUTHENTICATED, 400),
+    row(dialect_index("bedrock"), reason::OVER_BUDGET, 400),
     row(REFUSAL_ANY_DIALECT, reason::SCHEME_NOT_DECLARED, 400),
     row(REFUSAL_ANY_DIALECT, reason::CHALLENGE_EXHAUSTED, 503),
     row(REFUSAL_ANY_DIALECT, reason::CURSOR_BUDGET, 503),
