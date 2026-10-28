@@ -8,8 +8,8 @@ use crate::codec::keys;
 use busbar_contract::http::{HeaderName, HeaderValue, StatusCode};
 use busbar_contract::protocol::*;
 use busbar_contract::protocol::{
-    ERR_TYPE_AUTHENTICATION, ERR_TYPE_INSUFFICIENT_QUOTA, ERR_TYPE_INVALID_REQUEST,
-    ERR_TYPE_NOT_FOUND, ERR_TYPE_PERMISSION, ERR_TYPE_RATE_LIMIT,
+    ERR_TYPE_AUTHENTICATION, ERR_TYPE_INVALID_REQUEST, ERR_TYPE_NOT_FOUND, ERR_TYPE_PERMISSION,
+    ERR_TYPE_RATE_LIMIT,
 };
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
@@ -309,6 +309,40 @@ const APPLICATION_VND_AMAZON_EVENTSTREAM: &str = "application/vnd.amazon.eventst
 /// bare literal.
 const ERR_TYPE_OVERLOADED: &str = busbar_contract::protocol::ERR_TYPE_OVERLOADED;
 
+/// THE DIALECT'S DECLARED REFUSALS (`refusals.json`, shipped with the plane): each row names the
+/// busbar refusal kinds it answers, the exception and its HTTP status. The runtime answers a listed
+/// kind with exactly the row's exception ([`error_kind_to_bedrock_type`]), and the llm conformance
+/// rig reads the same table as this dialect's declared errors beyond the Converse list, so the plane
+/// emits only what it declares.
+pub const REFUSALS_JSON: &str = include_str!("refusals.json");
+
+/// The exception [`REFUSALS_JSON`] declares for `kind`, or `None` when no row lists it.
+fn declared_refusal(kind: &str) -> Option<&'static str> {
+    type Rows = Vec<(Vec<String>, &'static str)>;
+    static ROWS: std::sync::OnceLock<Rows> = std::sync::OnceLock::new();
+    ROWS.get_or_init(|| {
+        let doc: serde_json::Value = serde_json::from_str(REFUSALS_JSON).unwrap_or_default();
+        doc["refusals"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|row| {
+                let exception: &'static str =
+                    Box::leak(row["exception"].as_str()?.to_owned().into_boxed_str());
+                let kinds = row["kinds"]
+                    .as_array()?
+                    .iter()
+                    .filter_map(|k| k.as_str().map(str::to_owned))
+                    .collect();
+                Some((kinds, exception))
+            })
+            .collect()
+    })
+    .iter()
+    .find(|(kinds, _)| kinds.iter().any(|k| k == kind))
+    .map(|(_, exception)| *exception)
+}
+
 /// Map busbar's generic error `kind` vocabulary to the AWS Bedrock Converse exception name carried
 /// in `__type`. AWS's Converse error model is a fixed, closed set of exception shapes
 /// (`AccessDeniedException`, `InternalServerException`, `ModelErrorException`,
@@ -323,6 +357,9 @@ const ERR_TYPE_OVERLOADED: &str = busbar_contract::protocol::ERR_TYPE_OVERLOADED
 /// AWS exception name. This is the inverse of the `__type` token `extract_error` reads back, so a
 /// same-protocol error round-trips its structured type.
 pub fn error_kind_to_bedrock_type(kind: &str) -> &'static str {
+    if let Some(exception) = declared_refusal(kind) {
+        return exception;
+    }
     match kind {
         ERR_TYPE_INVALID_REQUEST | "invalid_request" | "validation" | "bad_request" => {
             EXC_VALIDATION
@@ -339,9 +376,6 @@ pub fn error_kind_to_bedrock_type(kind: &str) -> &'static str {
         | ERR_TYPE_OVERLOADED
         | "service_unavailable"
         | "unavailable" => EXC_SERVICE_UNAVAILABLE,
-        "quota_exceeded" | "service_quota_exceeded" | ERR_TYPE_INSUFFICIENT_QUOTA => {
-            "ServiceQuotaExceededException"
-        }
         busbar_contract::protocol::KIND_API_ERROR
         | "internal_error"
         | busbar_contract::protocol::KIND_SERVER_ERROR => EXC_INTERNAL_SERVER,
