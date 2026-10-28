@@ -1795,7 +1795,7 @@ fn test_stream_failed_invalid_api_key_classifies_as_auth() {
         StatusClass::RateLimit
     );
     assert_eq!(
-        class_for_response_failed(busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH),
+        class_for_response_failed(crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH),
         StatusClass::ContextLength
     );
     assert_eq!(
@@ -1829,7 +1829,7 @@ fn test_read_response_failed_body_classifies_by_signal() {
             .read_response(crate::codec::test_host::HOST, &serde_json::json!({
                 "status": STATUS_FAILED,
                 "output": [],
-                "error": {"code": busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH, "type": ERR_TYPE_INVALID_REQUEST}
+                "error": {"code": crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH, "type": ERR_TYPE_INVALID_REQUEST}
             }))
             .expect_err("failed body must surface an IrError");
     assert_eq!(
@@ -3276,7 +3276,7 @@ fn test_response_failed_code_is_enum_even_for_human_provider_signal() {
             crate::codec::test_host::HOST,
             &IrStreamEvent::Error(IrError {
                 class: StatusClass::ServerError,
-                provider_signal: Some(busbar_contract::protocol::STREAM_ABORT_DETAIL.to_string()),
+                provider_signal: Some(crate::codec::framework::STREAM_ABORT_DETAIL.to_string()),
                 retry_after: None,
             }),
         )
@@ -3293,7 +3293,7 @@ fn test_response_failed_code_is_enum_even_for_human_provider_signal() {
     );
     assert_eq!(
         error.get("message").and_then(|m| m.as_str()),
-        Some(busbar_contract::protocol::STREAM_ABORT_DETAIL),
+        Some(crate::codec::framework::STREAM_ABORT_DETAIL),
         "the human text stays in `message`"
     );
 
@@ -4699,7 +4699,7 @@ fn test_write_error_maps_forward_transient_kinds() {
         assert!(v["error"]["code"].is_null(), "server_error code is null");
     }
     for kind in [
-        busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH,
+        crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH,
         "bad_request",
     ] {
         let v = writer.write_error(crate::codec::test_host::HOST, 400, kind, "bad request");

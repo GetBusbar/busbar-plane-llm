@@ -145,7 +145,8 @@ fn claims(
     h: busbar_contract::protocol::HeadFields<'_>,
     path: &str,
 ) -> Option<busbar_contract::protocol::ClaimStrength> {
-    use busbar_contract::protocol::{head_field, ClaimStrength};
+    use crate::codec::framework::head_field;
+    use busbar_contract::protocol::ClaimStrength;
     if head_field(h, "authorization")
         .is_some_and(|a| a.is_ascii() && a.starts_with(b"AWS4-HMAC-SHA256"))
     {
@@ -307,7 +308,7 @@ const APPLICATION_VND_AMAZON_EVENTSTREAM: &str = "application/vnd.amazon.eventst
 /// internal kind vocabulary. Both map to `ServiceUnavailableException` via
 /// `error_kind_to_bedrock_type`; named here so the match arm is a const pattern rather than a
 /// bare literal.
-const ERR_TYPE_OVERLOADED: &str = busbar_contract::protocol::ERR_TYPE_OVERLOADED;
+const ERR_TYPE_OVERLOADED: &str = crate::codec::framework::ERR_TYPE_OVERLOADED;
 
 /// THE DIALECT'S DECLARED REFUSALS (`refusals.json`, shipped with the plane): each row names the
 /// busbar refusal kinds it answers, the exception and its HTTP status. The runtime answers a listed
@@ -371,14 +372,14 @@ pub fn error_kind_to_bedrock_type(kind: &str) -> &'static str {
         | "forbidden"
         | "unauthorized" => "AccessDeniedException",
         "not_found" | ERR_TYPE_NOT_FOUND | "model_not_found" => "ResourceNotFoundException",
-        busbar_contract::protocol::KIND_TIMEOUT | "model_timeout" => "ModelTimeoutException",
+        crate::codec::framework::KIND_TIMEOUT | "model_timeout" => "ModelTimeoutException",
         busbar_contract::protocol::KIND_OVERLOADED
         | ERR_TYPE_OVERLOADED
         | "service_unavailable"
         | "unavailable" => EXC_SERVICE_UNAVAILABLE,
         busbar_contract::protocol::KIND_API_ERROR
         | "internal_error"
-        | busbar_contract::protocol::KIND_SERVER_ERROR => EXC_INTERNAL_SERVER,
+        | crate::codec::framework::KIND_SERVER_ERROR => EXC_INTERNAL_SERVER,
         // No native Bedrock counterpart: fall back to the generic client-error exception so the
         // wire `__type` is still a real AWS exception name a native SDK can decode.
         _ => EXC_VALIDATION,

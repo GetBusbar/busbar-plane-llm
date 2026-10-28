@@ -160,9 +160,11 @@ fn every_bedrock_error_kind_is_a_converse_declared_exception() {
         "ThrottlingException",
         "ValidationException",
     ];
+    use crate::codec::framework::KIND_SERVER_ERROR;
+    use crate::codec::framework::KIND_TIMEOUT;
     use busbar_contract::protocol::{
         KIND_API_ERROR, KIND_INSUFFICIENT_QUOTA, KIND_INVALID_REQUEST, KIND_OVERLOADED,
-        KIND_PERMISSION, KIND_RATE_LIMIT, KIND_SERVER_ERROR, KIND_TIMEOUT,
+        KIND_PERMISSION, KIND_RATE_LIMIT,
     };
     let kinds = [
         KIND_INVALID_REQUEST,

@@ -156,7 +156,7 @@ pub(crate) fn cohere(status: StatusCode, body: &[u8]) -> CanonicalSignal {
         return CanonicalSignal {
             class: StatusClass::ContextLength,
             provider_signal: Some(
-                busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH.to_string(),
+                crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH.to_string(),
             ),
             retry_after: None,
         };
@@ -189,7 +189,7 @@ pub(crate) fn gemini(status: StatusCode, body: &[u8]) -> CanonicalSignal {
         return CanonicalSignal {
             class: StatusClass::ContextLength,
             provider_signal: Some(
-                busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH.to_string(),
+                crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH.to_string(),
             ),
             retry_after: None,
         };
@@ -260,7 +260,7 @@ pub(crate) fn bedrock(status: StatusCode, body: &[u8]) -> CanonicalSignal {
         return CanonicalSignal {
             class: StatusClass::ContextLength,
             provider_signal: Some(
-                busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH.to_string(),
+                crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH.to_string(),
             ),
             retry_after: None,
         };
@@ -327,7 +327,7 @@ pub(crate) fn bearer(status: u16, body: &[u8]) -> CanonicalSignal {
                 .map(|s| s.to_string())
         })
         .as_deref()
-        == Some(busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH);
+        == Some(crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH);
     // Mirror production `extract_error`: the prose message scan is GATED to the HTTP statuses an
     // oversized request actually uses (400 invalid_request_error; 413 payload-too-large). Without the
     // gate a 401/429/5xx whose prose happens to contain "maximum context length" would reclassify as

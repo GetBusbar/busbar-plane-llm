@@ -94,7 +94,7 @@ impl ProtocolReader for CohereReader {
             || status == StatusCode::PAYLOAD_TOO_LARGE)
             && Self::body_signals_context_length(body)
         {
-            Some(busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
+            Some(crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
         } else {
             provider_code
         };
