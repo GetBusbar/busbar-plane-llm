@@ -1823,6 +1823,15 @@ impl ProtocolReader for ResponsesReader {
         Some(crate::codec::ir::IrSignatureOrigin::OpenAi)
     }
 
+    /// Usage and the terminal failure ride only the three terminal events; the reader reads the
+    /// event name, never the payload's `type`.
+    fn same_proto_reads(&self, event_type: &str, _payload: &[u8]) -> bool {
+        matches!(
+            event_type,
+            EVT_RESPONSE_COMPLETED | EVT_RESPONSE_FAILED | EVT_RESPONSE_INCOMPLETE
+        )
+    }
+
     fn clone_box(&self) -> Box<dyn ProtocolReader> {
         Box::new(self.clone())
     }

@@ -1614,6 +1614,23 @@ impl ProtocolReader for GeminiReader {
         Some(crate::codec::ir::IrSignatureOrigin::Gemini)
     }
 
+    /// A chunk bills or fails only through a top-level `error` OBJECT, a `promptFeedback` (the
+    /// prompt-blocked envelope), or a `finishReason` STRING on `candidates[0]`: the stream's usage
+    /// is read off those chunks alone, however many content chunks carry `usageMetadata` before.
+    fn same_proto_reads(&self, _event_type: &str, payload: &[u8]) -> bool {
+        use crate::codec::json_splice::{any_member, first_element};
+        any_member(payload, |m, v| {
+            (m.is(keys::ERROR_WORD) && v.starts_with(b"{"))
+                || m.is(FIELD_PROMPT_FEEDBACK)
+                || (m.is(FIELD_CANDIDATES)
+                    && first_element(v).is_some_and(|candidate| {
+                        any_member(candidate, |m, v| {
+                            m.is(FIELD_FINISH_REASON) && v.starts_with(b"\"")
+                        })
+                    }))
+        })
+    }
+
     fn clone_box(&self) -> Box<dyn ProtocolReader> {
         Box::new(self.clone())
     }

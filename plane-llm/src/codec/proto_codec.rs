@@ -155,6 +155,17 @@ pub trait ProtocolReader: Send + Sync {
         state: &mut crate::codec::ir::StreamDecodeState,
     ) -> Vec<IrStreamEvent>;
 
+    /// THE SAME-DIALECT READ PROBE. A same-dialect stream relays the far end's bytes and reads each
+    /// frame only for what the far end REPORTED (the usage it bills) and for its terminal error.
+    /// Whether this frame, by its event name (an SSE `event:` line, or a binary event-stream's
+    /// `:event-type` header) and its raw payload, can carry either, decided without parsing it:
+    /// `false` skips the frame's parse and [`Self::read_response_events`] entirely (neither a
+    /// usage nor an error of the stream depends on what such a frame leaves in the decode state).
+    /// Default `true`: every frame is read.
+    fn same_proto_reads(&self, _event_type: &str, _payload: &[u8]) -> bool {
+        true
+    }
+
     /// Read a whole (non-streaming) response from wire JSON.
     fn read_response(
         &self,
@@ -642,7 +653,7 @@ pub trait ProtocolWriter: Send + Sync {
     /// held for the life of a stream can latch it via interior mutability, matching how
     /// `ResponsesWriter` already carries `response.id`/`created_at`/`model` forward across events.
     /// Called on the BUFFERED path (via `IrResponse::request_echo`, read directly by
-    /// `write_response`) AND the STREAMING path (via [`StreamTranslator::set_request_echo`] on the
+    /// `write_response`) AND the STREAMING path (via [`crate::codec::proto_stream::StreamTranslate::set_request_echo`] on the
     /// held ingress writer). Default no-op: every writer without such a requirement ignores it.
     fn set_request_echo(&self, _ingress_request_body: &serde_json::Value) {}
 
@@ -787,43 +798,40 @@ pub trait StreamFraming: Send {
     /// for protocols without the `include_usage` convention.
     fn set_client_include_usage(&mut self, _include: bool) {}
 
-    /// SAME-PROTOCOL VERBATIM-STRIP seam (OpenAI ingress). On the
-    /// same-protocol universal-translate path the translator re-emits each upstream frame BYTE-FOR-BYTE
-    /// and NEVER routes it through [`on_egress_chunk`], so the `include_usage` strip that protects an
-    /// opted-out client from the unsolicited trailing usage chunk never fires. Busbar forces
-    /// `stream_options.include_usage` on the UPSTREAM request (to bill), so an OpenAI upstream emits a
-    /// NATIVE trailing usage-only chunk (`{... "choices":[], "usage":{...}}`) even when the CLIENT did
-    /// not opt in - which a strict SDK `choices[0]`-IndexErrors on. Returning `true` for that exact
-    /// frame tells the same-proto feed loop to DROP it from the client-facing bytes (billing is
-    /// unaffected: the A-tap already read the usage from the parsed frame). Every other frame - and the
-    /// opted-in case - returns `false` and is re-emitted verbatim.
+    /// SAME-PROTOCOL EDIT seam (OpenAI ingress). On the same-protocol path the translator re-emits
+    /// each upstream frame BYTE-FOR-BYTE and NEVER routes it through [`on_egress_chunk`]. Busbar forces
+    /// `stream_options.include_usage` on the UPSTREAM request (to bill), so for a client that did NOT
+    /// opt in, two of an OpenAI upstream's frames are tells a direct stream never carries:
     ///
-    /// Default ([`PassthroughFraming`] and every non-OpenAI ingress): `false` - no frame is suppressed
-    /// on the verbatim path (those protocols carry no unsolicited-usage-chunk convention).
-    fn suppress_same_proto_frame(&self, _data: &serde_json::Value) -> bool {
-        false
+    /// - the NATIVE trailing usage-only chunk (`{... "choices":[], "usage":{...}}`, a usage OBJECT
+    ///   beside an EMPTY `choices`), which a strict SDK `choices[0]`-IndexErrors on:
+    ///   [`SameProtoEdit::Drop`] removes it from the client-facing bytes;
+    /// - the `"usage":null` stamped on EVERY content/finish chunk (a top-level `usage` key beside a
+    ///   NON-EMPTY `choices`), a key a direct opted-out stream omits: [`SameProtoEdit::StripUsage`]
+    ///   removes that one member from the frame's bytes (a targeted byte-level edit, not a DOM
+    ///   re-serialize).
+    ///
+    /// Decided on the frame's raw JSON `payload`, read as its parse would (the last of a repeated
+    /// member, escaped keys unescaped); the caller applies an edit only to a payload that parses.
+    /// Billing is unaffected: the usage side-channel reads the frame before any edit. The opted-in
+    /// client, and every other frame, is [`SameProtoEdit::Keep`].
+    ///
+    /// Default ([`PassthroughFraming`] and every non-OpenAI ingress): [`SameProtoEdit::Keep`].
+    fn same_proto_edit(&self, _payload: &[u8]) -> SameProtoEdit {
+        SameProtoEdit::Keep
     }
+}
 
-    /// SAME-PROTOCOL INTERMEDIATE-USAGE STRIP seam (OpenAI ingress). On the same-protocol verbatim path
-    /// busbar re-emits each upstream frame BYTE-FOR-BYTE. Because busbar forces
-    /// `stream_options.include_usage` on the UPSTREAM request (to bill), an OpenAI upstream stamps
-    /// `"usage":null` on EVERY intermediate `chat.completion.chunk` (and the finish chunk). A native
-    /// OpenAI stream for a client that did NOT request `include_usage` OMITS the `usage` key entirely on
-    /// those content chunks, so re-emitting `"usage":null` on every chunk is a wire-shape TELL that
-    /// distinguishes a busbar-proxied stream from a direct one. Returning `true` for a content/finish
-    /// chunk that carries a `usage` field tells the same-proto feed loop to STRIP the top-level `usage`
-    /// member from that frame's bytes before re-emitting it (a targeted byte-level edit, NOT a full DOM
-    /// re-serialize of the fast path). Billing is unaffected - the A-tap read the frame's usage before
-    /// the strip. The trailing usage-ONLY chunk (empty `choices`) is handled by
-    /// [`suppress_same_proto_frame`] (dropped whole), not here; the opted-IN client sees every frame
-    /// verbatim. Distinct from `suppress_same_proto_frame` (which drops a whole frame) - this one KEEPS
-    /// the frame and only removes its `usage` member.
-    ///
-    /// Default ([`PassthroughFraming`] and every non-OpenAI ingress): `false` - no frame is rewritten
-    /// on the verbatim path.
-    fn strip_same_proto_usage(&self, _data: &serde_json::Value) -> bool {
-        false
-    }
+/// What a same-protocol relay does to one upstream frame on its way to the client
+/// ([`StreamFraming::same_proto_edit`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SameProtoEdit {
+    /// Re-emit the frame verbatim.
+    Keep,
+    /// Drop the whole frame.
+    Drop,
+    /// Re-emit the frame with its top-level `usage` member removed.
+    StripUsage,
 }
 
 /// Inert default [`StreamFraming`]: every method takes the trait's no-op default. Used by every

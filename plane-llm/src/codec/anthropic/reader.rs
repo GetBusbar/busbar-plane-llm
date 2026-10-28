@@ -207,6 +207,17 @@ impl ProtocolReader for AnthropicReader {
         }
     }
 
+    /// Usage rides only `message_start` and `message_delta`, and the terminal failure is `error`.
+    /// The reader's one piece of stream state (the suppressed-block indices in `open_tools`) shapes
+    /// only the events a FOREIGN writer re-emits, so skipping every other event cannot desync it.
+    /// A frame with no `event:` line reads as `""` and is skipped.
+    fn same_proto_reads(&self, event_type: &str, _payload: &[u8]) -> bool {
+        matches!(
+            event_type,
+            EVT_MESSAGE_START | EVT_MESSAGE_DELTA | keys::ERROR_WORD
+        )
+    }
+
     fn clone_box(&self) -> Box<dyn ProtocolReader> {
         Box::new(self.clone())
     }

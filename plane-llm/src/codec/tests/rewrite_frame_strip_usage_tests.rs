@@ -20,7 +20,8 @@ fn fallback_preserves_key_order_and_crlf() {
     // verbatim (mirroring a multi-`data:`-line frame whose extracted join differs from the raw
     // bytes), with a CRLF terminator. The fast splice's verbatim-find fails, so the fallback runs.
     let raw_frame = b"data: <multiline-join-not-verbatim>\r\n\r\n";
-    let out = rewrite_frame_strip_usage(raw_frame, payload);
+    let mut out = Vec::new();
+    rewrite_frame_strip_usage(&mut out, raw_frame, payload);
     let out_str = std::str::from_utf8(&out).unwrap();
 
     // CRLF terminator preserved.
@@ -49,7 +50,8 @@ fn fallback_preserves_key_order_and_crlf() {
 fn fallback_preserves_lf_terminator() {
     let payload = r#"{"id":"x","object":"chat.completion.chunk","usage":null,"choices":[]}"#;
     let raw_frame = b"data: <not-verbatim>\n\n";
-    let out = rewrite_frame_strip_usage(raw_frame, payload);
+    let mut out = Vec::new();
+    rewrite_frame_strip_usage(&mut out, raw_frame, payload);
     let out_str = std::str::from_utf8(&out).unwrap();
     assert!(
         out_str.ends_with("\n\n"),

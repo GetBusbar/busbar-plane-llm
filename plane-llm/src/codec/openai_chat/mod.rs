@@ -1272,69 +1272,45 @@ impl StreamFraming for OpenAiStreamFraming {
         self.client_include_usage = include;
     }
 
-    /// SAME-PROTOCOL verbatim strip. On OpenAI->OpenAI the translator re-emits upstream
-    /// frames byte-for-byte and never calls `on_egress_chunk`, so the opted-out `include_usage` strip
-    /// above cannot fire. Busbar forces `include_usage` UPSTREAM (to bill), so the OpenAI upstream
-    /// emits a NATIVE trailing usage-only chunk - a real top-level `usage` OBJECT and an EMPTY
-    /// `choices` array. When the CLIENT did not opt in, suppress exactly that frame from the verbatim
-    /// client bytes so a strict SDK never `choices[0]`-IndexErrors; the A-tap already captured its
-    /// usage for billing. A normal content/finish chunk (non-empty `choices`) is never suppressed, and
-    /// the opted-in case re-emits it verbatim.
+    /// SAME-PROTOCOL edit. On OpenAI->OpenAI the translator re-emits upstream frames byte-for-byte
+    /// and never calls `on_egress_chunk`, so the opted-out `include_usage` strip above cannot fire.
+    /// Busbar forces `include_usage` UPSTREAM (to bill), so for a client that did not opt in:
     ///
-    /// Like its `strip_same_proto_usage` sibling, the predicate deliberately does NOT require
-    /// `object == "chat.completion.chunk"`. An OpenAI-COMPATIBLE upstream may omit the `object` field
-    /// (or use a variant) while still emitting the forced-`include_usage` trailer; requiring the exact
-    /// `object` value would let that unsolicited frame leak to an opted-out client. A usage OBJECT
-    /// alongside an EMPTY `choices` array is that trailer regardless of `object`.
-    fn suppress_same_proto_frame(&self, data: &serde_json::Value) -> bool {
-        if self.client_include_usage {
-            return false;
-        }
-        let Some(obj) = data.as_object() else {
-            return false;
-        };
-        let has_usage_obj = obj.get(keys::USAGE).is_some_and(|u| u.is_object());
-        let choices_empty = obj
-            .get(CHOICES)
-            .and_then(|c| c.as_array())
-            .is_some_and(|arr| arr.is_empty());
-        has_usage_obj && choices_empty
-    }
-
-    /// SAME-PROTOCOL intermediate `usage:null` strip (indistinguishability fix). On OpenAI->OpenAI the
-    /// translator re-emits frames byte-for-byte, so the opted-out `strip_folded_usage` in
-    /// `on_egress_chunk` never runs. Busbar forces `include_usage` UPSTREAM (to bill), so the OpenAI
-    /// upstream stamps `"usage":null` on EVERY intermediate content chunk (and the finish chunk) - a key
-    /// a native opted-out OpenAI stream never carries, hence a wire-shape tell. When the CLIENT did not
-    /// opt in, request a byte-level strip of the top-level `usage` member from any content/finish chunk
-    /// that carries a `usage` FIELD alongside a NON-EMPTY `choices` array.
+    /// - the NATIVE trailing usage-only chunk (a top-level `usage` OBJECT beside an EMPTY `choices`
+    ///   array) is DROPPED, so a strict SDK never `choices[0]`-IndexErrors;
+    /// - every content/finish chunk (a NON-EMPTY `choices` array) carrying a top-level `usage` key
+    ///   (the `"usage":null` tell) has that member STRIPPED.
     ///
-    /// The predicate deliberately does NOT require `object == "chat.completion.chunk"`. An
-    /// OpenAI-COMPATIBLE upstream may omit the `object` field (or use a variant) on its content chunks
-    /// while still stamping the forced-`include_usage` `"usage":null` tell; requiring the exact `object`
-    /// value would let that tell leak to an opted-out client. A frame with a NON-EMPTY `choices` array
-    /// and a top-level `usage` key is a content/finish chunk regardless of `object`, so that pairing is
-    /// sufficient. The trailing usage-ONLY chunk (EMPTY `choices`, a usage OBJECT) is dropped whole by
-    /// `suppress_same_proto_frame` instead, so it is deliberately NOT matched here (the non-empty
-    /// `choices` gate excludes it). The opted-in case returns `false` (the client asked for usage;
-    /// re-emit verbatim), so a usage the client legitimately requested is never stripped. The A-tap
-    /// already captured usage for billing before this seam.
-    fn strip_same_proto_usage(&self, data: &serde_json::Value) -> bool {
+    /// The usage side-channel already read the frame for billing. The opted-in client re-emits every
+    /// frame verbatim. Neither shape requires `object == "chat.completion.chunk"`: an
+    /// OpenAI-COMPATIBLE upstream may omit the `object` field (or use a variant) while still emitting
+    /// the forced-`include_usage` frames, and the `choices` shape alone tells a content/finish chunk
+    /// from the usage-only trailer.
+    fn same_proto_edit(&self, payload: &[u8]) -> SameProtoEdit {
         if self.client_include_usage {
-            return false;
+            return SameProtoEdit::Keep;
         }
-        let Some(obj) = data.as_object() else {
-            return false;
+        // The value of the LAST `usage` / `choices` member, as the frame's parse reads it.
+        let (mut usage, mut choices): (Option<&[u8]>, Option<&[u8]>) = (None, None);
+        let read = crate::codec::json_splice::scan_object(payload, 0, |m| {
+            let value = &payload[m.value_start..m.value_end];
+            if m.is(keys::USAGE) {
+                usage = Some(value);
+            } else if m.is(CHOICES) {
+                choices = Some(value);
+            }
+        });
+        let (Some(_), Some(usage), Some(choices)) = (read, usage, choices) else {
+            return SameProtoEdit::Keep;
         };
-        // A content/finish chunk carries a NON-EMPTY `choices` array. This gate (not `object`) is what
-        // distinguishes a content/finish chunk from the empty-choices usage-only trailer, and it works
-        // for compatible upstreams that omit or vary `object`.
-        let choices_non_empty = obj
-            .get(CHOICES)
-            .and_then(|c| c.as_array())
-            .is_some_and(|arr| !arr.is_empty());
-        // Only act when a top-level `usage` key is actually present (the forced-include_usage tell).
-        obj.contains_key(keys::USAGE) && choices_non_empty
+        if !choices.starts_with(b"[") {
+            return SameProtoEdit::Keep;
+        }
+        match crate::codec::json_splice::first_element(choices) {
+            Some(_) => SameProtoEdit::StripUsage,
+            None if usage.starts_with(b"{") => SameProtoEdit::Drop,
+            None => SameProtoEdit::Keep,
+        }
     }
 }
 
