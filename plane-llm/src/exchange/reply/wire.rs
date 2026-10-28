@@ -12,9 +12,8 @@ use std::collections::BTreeMap;
 
 use busbar_contract::billing::{Billing, TokenUsage};
 use busbar_contract::protocol::{
-    HeadFields, ProtocolDecl, StreamTranslator, KIND_API_ERROR, KIND_AUTHENTICATION,
-    KIND_INVALID_REQUEST, KIND_OVERLOADED, KIND_PERMISSION, KIND_RATE_LIMIT, KIND_TIMEOUT,
-    PROVIDER_CODE_CONTEXT_LENGTH,
+    HeadFields, ProtocolDecl, KIND_API_ERROR, KIND_AUTHENTICATION, KIND_INVALID_REQUEST,
+    KIND_OVERLOADED, KIND_PERMISSION, KIND_RATE_LIMIT, KIND_TIMEOUT, PROVIDER_CODE_CONTEXT_LENGTH,
 };
 use busbar_contract::upstream::{CanonicalSignal, StatusClass};
 use serde_json::Value;
@@ -210,7 +209,7 @@ pub fn mid_stream_error_bytes(
     ingress: &str,
     ingress_eventstream: bool,
     message: &str,
-    translate: Option<&mut (dyn StreamTranslator + 'static)>,
+    translate: Option<&mut crate::codec::proto_stream::StreamTranslate>,
 ) -> Vec<u8> {
     let err = CanonicalSignal {
         class: StatusClass::ServerError,

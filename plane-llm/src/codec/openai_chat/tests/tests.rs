@@ -4013,12 +4013,18 @@ fn test_framing_gates_usage_on_client_include_usage() {
     );
 }
 
+/// A frame's payload bytes, as the same-proto edit seam reads them.
+fn bytes(payload: &serde_json::Value) -> Vec<u8> {
+    serde_json::to_vec(payload).expect("serializes")
+}
+
 /// Usage-strip object gate: an OpenAI-COMPATIBLE upstream may omit the `object` field on its
 /// content chunks while still stamping the forced-`include_usage` `"usage":null` tell. The same-proto
 /// strip predicate must fire on a content chunk (non-empty `choices` + a top-level `usage` key)
 /// REGARDLESS of `object`, and must never strip a usage the client legitimately requested.
 #[test]
 fn strip_same_proto_usage_fires_without_object_field() {
+    use super::super::proto_codec::StreamFraming;
     // Opted-out framing (default).
     let framing = OpenAiStreamFraming::default();
 
@@ -4029,7 +4035,7 @@ fn strip_same_proto_usage_fires_without_object_field() {
         "usage": serde_json::Value::Null
     });
     assert!(
-        framing.strip_same_proto_usage(&no_object_content),
+        framing.same_proto_edit(&bytes(&no_object_content)) == SameProtoEdit::StripUsage,
         "an opted-out client must have the usage:null tell stripped even when the chunk omits `object`"
     );
 
@@ -4040,7 +4046,7 @@ fn strip_same_proto_usage_fires_without_object_field() {
         "usage": serde_json::Value::Null
     });
     assert!(
-        framing.strip_same_proto_usage(&variant_object),
+        framing.same_proto_edit(&bytes(&variant_object)) == SameProtoEdit::StripUsage,
         "a compatible upstream using an `object` variant must still have the usage tell stripped"
     );
 
@@ -4051,16 +4057,15 @@ fn strip_same_proto_usage_fires_without_object_field() {
         "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}
     });
     assert!(
-        !framing.strip_same_proto_usage(&usage_only_trailer),
+        framing.same_proto_edit(&bytes(&usage_only_trailer)) != SameProtoEdit::StripUsage,
         "the empty-choices usage-only trailer must not be strip-matched here"
     );
 
     // Guard: a client that legitimately opted in must NEVER have usage stripped.
     let mut opted_in = OpenAiStreamFraming::default();
-    use super::super::proto_codec::StreamFraming;
     opted_in.set_client_include_usage(true);
     assert!(
-        !opted_in.strip_same_proto_usage(&no_object_content),
+        opted_in.same_proto_edit(&bytes(&no_object_content)) == SameProtoEdit::Keep,
         "an opted-in client's requested usage must never be stripped"
     );
 }
@@ -4082,7 +4087,7 @@ fn suppress_same_proto_frame_fires_without_object_field() {
         "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}
     });
     assert!(
-        framing.suppress_same_proto_frame(&no_object_trailer),
+        framing.same_proto_edit(&bytes(&no_object_trailer)) == SameProtoEdit::Drop,
         "an opted-out client must not receive the usage-only trailer even when it omits `object`"
     );
 
@@ -4093,7 +4098,7 @@ fn suppress_same_proto_frame_fires_without_object_field() {
         "usage": {"total_tokens": 10}
     });
     assert!(
-        framing.suppress_same_proto_frame(&variant_object),
+        framing.same_proto_edit(&bytes(&variant_object)) == SameProtoEdit::Drop,
         "a compatible upstream using an `object` variant must still have its trailer suppressed"
     );
 
@@ -4103,7 +4108,7 @@ fn suppress_same_proto_frame_fires_without_object_field() {
         "usage": {"total_tokens": 10}
     });
     assert!(
-        !framing.suppress_same_proto_frame(&content),
+        framing.same_proto_edit(&bytes(&content)) != SameProtoEdit::Drop,
         "a content chunk carries the client's tokens and must never be dropped"
     );
 
@@ -4111,7 +4116,7 @@ fn suppress_same_proto_frame_fires_without_object_field() {
     let mut opted_in = OpenAiStreamFraming::default();
     opted_in.set_client_include_usage(true);
     assert!(
-        !opted_in.suppress_same_proto_frame(&no_object_trailer),
+        opted_in.same_proto_edit(&bytes(&no_object_trailer)) == SameProtoEdit::Keep,
         "an opted-in client's requested usage trailer must never be suppressed"
     );
 }

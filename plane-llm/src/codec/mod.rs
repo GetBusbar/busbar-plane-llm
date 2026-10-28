@@ -187,8 +187,7 @@ pub mod leaf_codec;
 /// `protocol_for`/`DialectRef`/`ToolIdRemap`).
 pub mod proto_codec;
 
-/// The concrete streaming byte-translator (`StreamTranslate`) behind the neutral
-/// `busbar_contract::protocol::StreamTranslator`.
+/// The concrete streaming byte-translator (`StreamTranslate`) the relay drives.
 pub mod proto_stream;
 
 /// The two body-shaping helpers a caller needs on either side of a translate, kept here because

@@ -14,10 +14,11 @@ use std::collections::BTreeMap;
 
 use busbar_contract::billing::{Billing, TokenUsage};
 use busbar_contract::codec::{OperationHandler, UsageTapFault};
-use busbar_contract::protocol::{ArrayStreamFramer, ProtocolDecl, StreamTranslator};
+use busbar_contract::protocol::{ArrayStreamFramer, ProtocolDecl};
 use serde_json::Value;
 
 use super::wire;
+use crate::codec::proto_stream::StreamTranslate;
 use crate::codec::usage_tail::StopKeyScanner;
 use crate::codec::DECLS;
 
@@ -119,7 +120,7 @@ pub struct Relay {
     handler: &'static dyn OperationHandler,
     meter: bool,
     translate_cap: usize,
-    translate: Option<Box<dyn StreamTranslator>>,
+    translate: Option<StreamTranslate>,
     json_array: Option<Box<dyn ArrayStreamFramer>>,
     nonstream_buf: Vec<u8>,
     nonstream_buf_truncated: bool,
@@ -167,10 +168,7 @@ pub struct RelayCtx<'a> {
 }
 
 /// A relay's translator and JSON-array framer, before the relay is opened over them.
-pub type Parts = (
-    Option<Box<dyn StreamTranslator>>,
-    Option<Box<dyn ArrayStreamFramer>>,
-);
+pub type Parts = (Option<StreamTranslate>, Option<Box<dyn ArrayStreamFramer>>);
 
 /// The translator the pair of dialects names for a far end's answer (a stream reframed across
 /// dialects, or re-emitted byte-exact within one),
@@ -228,7 +226,7 @@ impl Relay {
         handler: &'static dyn OperationHandler,
         meter: bool,
         translate_cap: usize,
-        translate: Option<Box<dyn StreamTranslator>>,
+        translate: Option<StreamTranslate>,
         json_array: Option<Box<dyn ArrayStreamFramer>>,
     ) -> Self {
         let ingress_decl = decl(ingress);
@@ -276,12 +274,12 @@ impl Relay {
         self.first_byte = true;
         self.upstream_bytes = self.upstream_bytes.saturating_add(chunk.len());
         if let Some(t) = self.translate.as_mut() {
-            let out = t.feed(host, chunk);
+            let out = t.feed_borrowed(host, chunk);
             if let Some(framer) = self.json_array.as_mut() {
                 let framed = framer.feed(&out);
                 return (bytes_or_nothing(framed), false);
             }
-            return (bytes_or_nothing(out), false);
+            return (cow_or_nothing(out), false);
         }
         if let Some(scan) = self.stop_scan.as_mut() {
             scan.feed(chunk);
@@ -356,14 +354,13 @@ impl Relay {
         let usage = if !self.meter {
             None
         } else if let Some(t) = self.translate.as_ref() {
-            open_billing = t.open_billing();
             if t.terminal_error() == Some(busbar_contract::protocol::SIGNAL_IR_PARSE) {
                 fault_unreadable(self.ingress, self.upstream_bytes);
                 Some(wire::estimate_usage_from_truncated_tail(
                     self.upstream_bytes,
                 ))
             } else {
-                t.usage()
+                t.usage().map(|u| u.to_token_usage())
             }
         } else if !self.far_is_stream && !self.nonstream_buf.is_empty() {
             let buf = std::mem::take(&mut self.nonstream_buf);
@@ -420,7 +417,7 @@ impl Relay {
             dropped: self
                 .translate
                 .as_ref()
-                .map(|t| t.dropped())
+                .map(|t| t.dropped().to_vec())
                 .unwrap_or_default(),
             tap_fault,
         }
@@ -431,7 +428,7 @@ impl Relay {
     pub fn cut(&mut self, host: &dyn busbar_contract::codec::CodecHost, transport: bool) -> Cut {
         let had_first = self.first_byte;
         if had_first && self.far_is_stream {
-            let usage = self.translate.as_ref().and_then(|t| t.usage());
+            let usage = self.streamed_usage();
             let bytes = match self.json_array.as_mut() {
                 Some(framer) => framer.finish_with_server_error(wire::MID_STREAM_GENERIC_DETAIL),
                 None => wire::mid_stream_error_bytes(
@@ -439,7 +436,7 @@ impl Relay {
                     self.ingress,
                     self.ingress_eventstream,
                     wire::MID_STREAM_GENERIC_DETAIL,
-                    self.translate.as_deref_mut(),
+                    self.translate.as_mut(),
                 ),
             };
             return Cut {
@@ -497,7 +494,9 @@ impl Relay {
     /// relay that reads its usage only at the end.
     #[must_use]
     pub fn streamed_usage(&self) -> Option<TokenUsage> {
-        self.translate.as_ref().and_then(|t| t.usage())
+        self.translate
+            .as_ref()
+            .and_then(|t| t.usage().map(|u| u.to_token_usage()))
     }
 
     /// The usage an answer that ended early had incurred: what a stream's readers accumulated;
@@ -509,7 +508,7 @@ impl Relay {
     #[must_use]
     pub fn incurred_usage(&self) -> Option<TokenUsage> {
         match self.translate.as_ref() {
-            Some(t) => t.usage(),
+            Some(t) => t.usage().map(|u| u.to_token_usage()),
             None if self.upstream_failed
                 && !self.far_is_stream
                 && !self.nonstream_buf.is_empty()
@@ -546,10 +545,14 @@ fn cut_short(buf: &[u8]) -> bool {
 }
 
 fn bytes_or_nothing<'a>(out: Vec<u8>) -> Fed<'a> {
+    cow_or_nothing(Cow::Owned(out))
+}
+
+fn cow_or_nothing(out: Cow<'_, [u8]>) -> Fed<'_> {
     if out.is_empty() {
         Fed::Nothing
     } else {
-        Fed::Bytes(Cow::Owned(out))
+        Fed::Bytes(out)
     }
 }
 

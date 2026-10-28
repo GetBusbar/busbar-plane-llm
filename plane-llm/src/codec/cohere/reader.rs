@@ -1214,6 +1214,16 @@ impl ProtocolReader for CohereReader {
         out
     }
 
+    /// Only `message-end` bills or fails a stream; an escaped `type` is read whole.
+    fn same_proto_reads(&self, _event_type: &str, payload: &[u8]) -> bool {
+        crate::codec::json_splice::any_member(payload, |m, v| {
+            m.is(keys::TYPE)
+                && (v.strip_prefix(b"\"").and_then(|w| w.strip_suffix(b"\""))
+                    == Some(ET_MESSAGE_END.as_bytes())
+                    || v.contains(&b'\\'))
+        })
+    }
+
     fn clone_box(&self) -> Box<dyn ProtocolReader> {
         Box::new(self.clone())
     }
