@@ -202,6 +202,9 @@ pub fn decl_of(name: &str) -> Option<&'static busbar_contract::protocol::Protoco
 #[cfg(test)]
 #[path = "tests/codec_host_tests.rs"]
 mod codec_host_tests;
+#[cfg(test)]
+#[path = "tests/dialect_classify.rs"]
+pub(crate) mod dialect_classify;
 /// THIS CRATE'S TEST HOST (#83a SD-3: the test host and the classifier are dev-only): the codec
 /// host a shipped binary's host hands the codec, provided for this crate's test binary by the test
 /// itself, so the codec's tests prove the codec's own seam and never reach the host crate.

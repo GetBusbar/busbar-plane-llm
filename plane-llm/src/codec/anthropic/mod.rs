@@ -688,8 +688,6 @@ const EPHEMERAL_5M_INPUT_TOKENS: &str = "ephemeral_5m_input_tokens";
 const EXPLANATION: &str = "explanation";
 /// Wire word `is_error`.
 const IS_ERROR: &str = "is_error";
-/// Wire word `max`.
-const W_MAX: &str = "max";
 /// Wire word `max_uses`.
 const MAX_USES: &str = "max_uses";
 /// Wire word `media_type`.
@@ -1317,13 +1315,9 @@ fn write_block(block: &crate::codec::ir::IrBlock) -> serde_json::Value {
 /// IR effort word → Anthropic `output_config.effort`. Anthropic has no `minimal`; its lowest level is
 /// `low`, the nearest the ask can be honoured.
 fn anthropic_effort_word(effort: crate::codec::ir::IrReasoningEffort) -> &'static str {
-    use crate::codec::ir::IrReasoningEffort as E;
     match effort {
-        E::Minimal | E::Low => keys::LOW,
-        E::Medium => keys::MEDIUM,
-        E::High => keys::HIGH,
-        E::XHigh => keys::XHIGH,
-        E::Max => W_MAX,
+        crate::codec::ir::IrReasoningEffort::Minimal => keys::LOW,
+        other => other.as_str(),
     }
 }
 
@@ -1332,15 +1326,8 @@ fn anthropic_effort_word(effort: crate::codec::ir::IrReasoningEffort) -> &'stati
 /// budget table's top entry); `anthropic_effort_word` writes them back verbatim. Anthropic has no
 /// `minimal`, so that word is not read.
 fn read_anthropic_effort_word(word: &str) -> Option<crate::codec::ir::IrReasoningEffort> {
-    use crate::codec::ir::IrReasoningEffort as E;
-    match word {
-        keys::LOW => Some(E::Low),
-        keys::MEDIUM => Some(E::Medium),
-        keys::HIGH => Some(E::High),
-        keys::XHIGH => Some(E::XHigh),
-        W_MAX => Some(E::Max),
-        _ => None,
-    }
+    crate::codec::ir::IrReasoningEffort::parse_extended(word)
+        .filter(|e| *e != crate::codec::ir::IrReasoningEffort::Minimal)
 }
 
 /// Anthropic `output_config.format` (or the deprecated `output_format`) → the typed IR directive.
@@ -1356,13 +1343,7 @@ fn read_anthropic_output_format(
         return None;
     }
     let schema = v.get(keys::SCHEMA).filter(|s| s.is_object())?.clone();
-    Some(crate::codec::ir::IrResponseFormat {
-        json: true,
-        schema: Some(schema),
-        name: None,
-        strict: None,
-        description: None,
-    })
+    Some(crate::codec::ir::IrResponseFormat::bare(true, Some(schema)))
 }
 
 /// Close every object schema in a structured-output schema (`additionalProperties: false`), in
