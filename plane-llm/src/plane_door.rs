@@ -98,6 +98,13 @@ use crate::exchange::webhook::{self, Webhooks};
 use crate::exchange::{handler_of, probe, project, refuse};
 use crate::meta::PROVIDER_KEYS;
 
+/// THE PROTOCOL AXIS of the door's linked row: the plane's own six dialect declarations, in the
+/// order an operator sees, as contract data (`busbar_contract::protocol::ProtocolDecl`). A
+/// composition root that links this door seeds the kernel's protocol registry from them, so the
+/// kernel names no dialect (ARCHITECT 2026-10-16 ruling 3). Not dead: busbar's distribution names
+/// it in its linked table (`[package.metadata.busbar.linked]`); nothing in this crate reads it.
+pub use crate::codec::DECLS as PROTOCOLS;
+
 // ── the Statement ────────────────────────────────────────────────────────────────────────────────
 
 /// The version the Statement names: the crate's (a test pins the two equal).
