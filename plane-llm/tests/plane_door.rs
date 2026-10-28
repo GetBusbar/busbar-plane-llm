@@ -18,6 +18,20 @@ use busbar_plane_llm::plane_door::{
     OPEN_CLASSES, STATEMENT, TAIL, VERSION,
 };
 
+/// THE LINKED ROW'S PROTOCOL AXIS IS PUBLIC AT `plane_door::PROTOCOLS`: busbar's distribution
+/// names it by that path in its linked table, so a build that drops or moves it stops busbar's
+/// composition root compiling. It is the plane's own declarations, one per dialect, in order.
+#[test]
+fn the_linked_rows_protocols_are_the_planes_declarations_at_their_public_path() {
+    let protocols: &[&busbar_contract::protocol::ProtocolDecl] =
+        busbar_plane_llm::plane_door::PROTOCOLS;
+    assert!(!protocols.is_empty(), "the door declares its protocols");
+    assert_eq!(protocols.len(), busbar_plane_llm::codec::DECLS.len());
+    for (linked, own) in protocols.iter().zip(busbar_plane_llm::codec::DECLS.iter()) {
+        assert_eq!(linked.name, own.name);
+    }
+}
+
 #[test]
 fn the_statement_names_the_crate_version() {
     assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
