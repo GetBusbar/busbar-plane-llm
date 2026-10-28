@@ -114,10 +114,7 @@ fn an_unread_member_has_no_wire_path() {
 #[test]
 fn every_request_code_name_is_in_the_wire_lock() {
     let root =
-        std::path::PathBuf::from(std::env::var_os("BUSBAR_CHECKOUT").expect(
-            "BUSBAR_CHECKOUT is unset: busbar's tree at .busbar-ref (plugin CI exports it)",
-        ))
-        .join("testing/llm-conformance/wire");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../testing/llm-conformance/wire");
     for (dialect, stem) in DIALECTS {
         let text = std::fs::read_to_string(root.join(format!("{stem}.wire.json"))).expect("lock");
         let lock: serde_json::Value = serde_json::from_str(&text).expect("lock json");

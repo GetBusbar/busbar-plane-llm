@@ -618,11 +618,8 @@ const GEMINI_COUNT_CLASSES: &[(&str, (i64, i64, i64))] = &[
 /// (a usage-table row removed), mis-classes one, or the lock gains a count nobody classed.
 #[test]
 fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {
-    let lock_path =
-        std::path::PathBuf::from(std::env::var_os("BUSBAR_CHECKOUT").expect(
-            "BUSBAR_CHECKOUT is unset: busbar's tree at .busbar-ref (plugin CI exports it)",
-        ))
-        .join("testing/llm-conformance/wire/gemini.wire.json");
+    let lock_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../testing/llm-conformance/wire/gemini.wire.json");
     let lock: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(&lock_path).expect("the pinned gemini wire lock"),
     )
