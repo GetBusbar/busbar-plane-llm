@@ -5,7 +5,7 @@
 # zero cost to the per-push CI. It builds where the `fuzz-smoke` check in `qa/pipeline-checks.json`
 # declares it (the `dev` -> `qa` and `qa` -> `main` moves, every `[[bin]]` below for 60 s), or under
 # `cargo fuzz` by hand. The harnesses depend on the target crates
-# by path with their sanctioned `test-support` feature and DO NOT modify any crate source.
+# by path and DO NOT modify any crate source.
 [package]
 name = "busbar-fuzz"
 version = "0.0.0"
@@ -19,10 +19,10 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 
 # The LLM plane's folded-in `codec` module (no `busbar-*-codec` crate, `BUSBAR-1.6.0.md` THE DESIGN, §9/#39) exposes
-# the concrete per-dialect readers. `embeddings_read_request` dispatches straight into the
-# production `read_embeddings_request` reader for each dialect — so fuzzing this entry point fuzzes
-# the real JSON/wire decode of an untrusted request body.
-busbar-plane-llm = { path = "../plane-llm", features = ["test-support"] }
+# the concrete per-dialect readers. The harness calls each dialect's production
+# `read_embeddings_request` through its registration row, so it fuzzes the real JSON/wire decode of
+# an untrusted request body.
+busbar-plane-llm = { path = "../plane-llm" }
 
 # Fuzz harnesses are not doctested/benchmarked and must not be picked up as workspace tests.
 [[bin]]

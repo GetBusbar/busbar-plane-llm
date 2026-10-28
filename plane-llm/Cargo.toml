@@ -20,11 +20,6 @@ workspace = true
 name = "busbar_plane_llm"
 path = "src/lib.rs"
 
-# `test-support` is empty: it only names the codec's test-only constructors (and the readers
-# `fuzz` drives) as a known cfg. Nothing the plane's door reads is behind a feature.
-[features]
-test-support = []
-
 [dependencies]
 busbar-contract = { workspace = true }
 serde = { workspace = true }
