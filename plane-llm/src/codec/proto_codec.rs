@@ -834,6 +834,32 @@ pub enum SameProtoEdit {
     StripUsage,
 }
 
+/// A stream writer's per-stream state behind ONE lock. The writers are `&self` and `Sync` (the
+/// [`ProtocolWriter`] trait), so what a stream carries from event to event lives here. A clone
+/// carries the state: a mid-stream `Protocol::clone` is still the SAME stream. A poisoned lock is
+/// read through, since the state holds no invariant a panicking holder breaks.
+pub struct StreamCell<T>(std::sync::Mutex<T>);
+
+impl<T> StreamCell<T> {
+    /// The cell over `state` (a `const` writer instance builds its fresh state here).
+    pub const fn new(state: T) -> Self {
+        StreamCell(std::sync::Mutex::new(state))
+    }
+
+    /// The state, locked.
+    pub fn lock(&self) -> std::sync::MutexGuard<'_, T> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl<T: Clone> Clone for StreamCell<T> {
+    fn clone(&self) -> Self {
+        StreamCell::new(self.lock().clone())
+    }
+}
+
 /// Inert default [`StreamFraming`]: every method takes the trait's no-op default. Used by every
 /// protocol whose INGRESS stream carries no per-stream framing quirk (Anthropic/Gemini/Cohere/
 /// Responses). Holds no state.

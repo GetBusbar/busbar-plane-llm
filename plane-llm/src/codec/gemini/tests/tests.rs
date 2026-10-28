@@ -801,8 +801,13 @@ fn test_writer_tool_call_args_capped_at_max_len() {
 
     // Inspect the accumulator directly (before BlockStop consumes it) to prove the byte cap held.
     {
-        let guard = writer.open_tools.lock().unwrap();
-        let args = &guard.iter().find(|t| t.index == 1).expect("open").args;
+        let stream = writer.stream.lock();
+        let args = &stream
+            .open_tools
+            .iter()
+            .find(|t| t.index == 1)
+            .expect("open")
+            .args;
         assert!(
             args.len() <= cap,
             "accumulated args buffer must never exceed translate_body_max_bytes() ({}), got {}",
@@ -6524,7 +6529,7 @@ fn test_writer_open_tools_capped_in_entry_count() {
             },
         );
     }
-    let held = writer.open_tools.lock().unwrap().len();
+    let held = writer.stream.lock().open_tools.len();
     assert_eq!(
         held, MAX_GEMINI_TOOL_FRAMES,
         "open_tools must admit exactly the cap and refuse past it, got {held}"
@@ -6748,7 +6753,7 @@ fn writer_stream_text_copy_is_bounded_by_the_translate_cap() {
             },
         );
     }
-    let kept = writer.stream_text.lock().expect("lock").text.len();
+    let kept = writer.stream.lock().stream_text.text.len();
     assert!(kept <= 1024, "kept {kept} bytes past the 1024-byte cap");
 }
 

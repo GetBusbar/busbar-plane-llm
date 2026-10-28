@@ -3987,11 +3987,7 @@ fn test_writer_open_tool_indices_capped() {
     for i in 0..MAX_OPEN_TOOLS {
         writer.mark_tool_open(i);
     }
-    let len = writer
-        .open_tool_indices
-        .lock()
-        .map(|s| s.len())
-        .expect("lock held only by this test");
+    let len = writer.stream().open_tool_indices.len();
     assert!(
         len <= MAX_OPEN_TOOLS,
         "open_tool_indices must be capped at MAX_OPEN_TOOLS, got {len}"
@@ -7809,28 +7805,28 @@ fn writer_accumulators_are_bounded_in_entry_count() {
     }
 
     assert!(
-        writer.tool_calls.lock().unwrap().len() <= MAX_OPEN_TOOLS,
+        writer.stream().tool_calls.len() <= MAX_OPEN_TOOLS,
         "tool_calls grew past the cap: {}",
-        writer.tool_calls.lock().unwrap().len()
+        writer.stream().tool_calls.len()
     );
     assert!(
-        writer.text_accum.lock().unwrap().len() <= MAX_OPEN_TOOLS,
+        writer.stream().text_accum.len() <= MAX_OPEN_TOOLS,
         "text_accum grew past the cap: {}",
-        writer.text_accum.lock().unwrap().len()
+        writer.stream().text_accum.len()
     );
     assert!(
-        writer.citation_accum.lock().unwrap().len() <= MAX_OPEN_TOOLS,
+        writer.stream().citation_accum.len() <= MAX_OPEN_TOOLS,
         "citation_accum grew past the cap: {}",
-        writer.citation_accum.lock().unwrap().len()
+        writer.stream().citation_accum.len()
     );
     assert!(
-        writer.reasoning_accum.lock().unwrap().len() <= MAX_OPEN_TOOLS,
+        writer.stream().reasoning_accum.len() <= MAX_OPEN_TOOLS,
         "reasoning_accum grew past the cap: {}",
-        writer.reasoning_accum.lock().unwrap().len()
+        writer.stream().reasoning_accum.len()
     );
     // The cap must not be so eager that it starves an ordinary stream: everything up to it is kept.
     assert_eq!(
-        writer.text_accum.lock().unwrap().len(),
+        writer.stream().text_accum.len(),
         MAX_OPEN_TOOLS,
         "the cap admits exactly MAX_OPEN_TOOLS distinct items"
     );
@@ -7852,7 +7848,8 @@ fn writer_tool_arguments_stop_growing_at_the_translate_cap() {
         writer.append_tool_arguments(0, &fragment);
     }
     {
-        let map = writer.tool_calls.lock().unwrap();
+        let stream = writer.stream();
+        let map = &stream.tool_calls;
         let args = &map.get(&0).expect("the open tool accumulates").arguments;
         assert!(
             args.len() <= cap,
@@ -7905,7 +7902,7 @@ fn writer_logprob_accumulator_is_bounded_in_entries_and_bytes() {
         writer.append_logprobs(index, &[lp("a".to_string())]);
     }
     assert_eq!(
-        writer.logprob_accum.lock().unwrap().len(),
+        writer.stream().logprob_accum.len(),
         MAX_OPEN_TOOLS,
         "logprob_accum admits exactly MAX_OPEN_TOOLS distinct items"
     );
@@ -7917,7 +7914,8 @@ fn writer_logprob_accumulator_is_bounded_in_entries_and_bytes() {
     for _ in 0..((cap / weight) + 8) {
         writer.append_logprobs(0, &batch);
     }
-    let map = writer.logprob_accum.lock().unwrap();
+    let stream = writer.stream();
+    let map = &stream.logprob_accum;
     let held: usize = map
         .get(&0)
         .expect("the item accumulates")
@@ -7974,7 +7972,8 @@ fn writer_citation_accumulator_keeps_its_held_weight() {
     for _ in 0..((cap / weight) + 8) {
         writer.append_citations(0, &batch);
     }
-    let map = writer.citation_accum.lock().unwrap();
+    let stream = writer.stream();
+    let map = &stream.citation_accum;
     let entry = map.get(&0).expect("the item accumulates");
     let summed: usize = entry.items.iter().map(citation_bytes).sum();
     assert_eq!(
@@ -7995,7 +7994,7 @@ fn writer_citation_accumulator_keeps_its_held_weight() {
         0,
         "a batch is kept whole or dropped whole"
     );
-    drop(map);
+    drop(stream);
     assert_eq!(
         writer.take_citation_accum(0).len(),
         summed / one,

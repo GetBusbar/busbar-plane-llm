@@ -1484,7 +1484,14 @@ fn strip_folded_usage(chunk: &mut serde_json::Value) {
 }
 
 /// OpenAI writer implementation.
+#[derive(Clone)]
 pub struct OpenAiWriter {
+    stream: StreamCell<OpenAiStream>,
+}
+
+/// An OpenAI chat stream's per-stream state (see [`OpenAiWriter`]).
+#[derive(Clone)]
+struct OpenAiStream {
     /// THIS STREAM'S chunk `id`, minted ONCE and replayed on every later opening chunk.
     ///
     /// A stream is not guaranteed to carry exactly one `MessageStart`: five of the six readers gate
@@ -1498,11 +1505,11 @@ pub struct OpenAiWriter {
     /// `Mutex` (not `Cell`) so the writer stays `Sync` as the `ProtocolWriter` trait requires; a
     /// stream is single-threaded at any instant so contention is nil, and a poisoned lock degrades
     /// to minting fresh rather than panicking on the request path.
-    chunk_id: std::sync::Mutex<Option<String>>,
+    chunk_id: Option<String>,
     /// The IR indices of THIS STREAM'S text blocks that opened as a refusal
     /// (`BlockStart{refusal: true}`, IR-02). Their text deltas are written as `delta.refusal`, not
     /// `delta.content` — the wire has no block frame to carry the flag, so the writer remembers it.
-    refusal_blocks: std::sync::Mutex<std::collections::BTreeSet<usize>>,
+    refusal_blocks: std::collections::BTreeSet<usize>,
 }
 
 /// Value-namespace constructor for [`OpenAiWriter`], mirroring the identically-shaped consts on the
@@ -1519,8 +1526,10 @@ pub struct OpenAiWriter {
 #[allow(non_upper_case_globals)]
 #[allow(clippy::declare_interior_mutable_const)]
 pub const OpenAiWriter: OpenAiWriter = OpenAiWriter {
-    chunk_id: std::sync::Mutex::new(None),
-    refusal_blocks: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+    stream: StreamCell::new(OpenAiStream {
+        chunk_id: None,
+        refusal_blocks: std::collections::BTreeSet::new(),
+    }),
 };
 
 /// A FRESH writer as a VALUE, for the one-shot `write_request` / `write_response` calls the test
@@ -1534,49 +1543,23 @@ pub(crate) fn openai_writer() -> OpenAiWriter {
     OpenAiWriter
 }
 
-impl Clone for OpenAiWriter {
-    fn clone(&self) -> Self {
-        // A mid-stream `Protocol::clone` is still the SAME completion, so the id it already
-        // announced comes with it; a poisoned lock degrades to an empty cell rather than panicking.
-        OpenAiWriter {
-            chunk_id: std::sync::Mutex::new(
-                self.chunk_id.lock().map(|id| id.clone()).unwrap_or(None),
-            ),
-            refusal_blocks: std::sync::Mutex::new(
-                self.refusal_blocks
-                    .lock()
-                    .map(|s| s.clone())
-                    .unwrap_or_default(),
-            ),
-        }
-    }
-}
-
 impl OpenAiWriter {
     /// THE STREAM'S chunk `id`: the first one wins. Returns the id already captured for this stream
     /// if there is one, otherwise captures and returns `mint()`, so a duplicate opening chunk
     /// re-states the identity the client already latched. Lock poisoning degrades to the freshly
     /// minted id rather than panicking on the request path.
     fn carried_chunk_id(&self, mint: impl FnOnce() -> String) -> String {
-        match self.chunk_id.lock() {
-            Ok(mut slot) => slot.get_or_insert_with(mint).clone(),
-            Err(_) => mint(),
-        }
+        self.stream.lock().chunk_id.get_or_insert_with(mint).clone()
     }
 
     /// Remember that the text block at `index` is a refusal (IR-02).
     fn mark_refusal_block(&self, index: usize) {
-        if let Ok(mut set) = self.refusal_blocks.lock() {
-            set.insert(index);
-        }
+        self.stream.lock().refusal_blocks.insert(index);
     }
 
     /// Is the text block at `index` a refusal? A poisoned lock reads as "no" (ordinary content).
     fn is_refusal_block(&self, index: usize) -> bool {
-        self.refusal_blocks
-            .lock()
-            .map(|set| set.contains(&index))
-            .unwrap_or(false)
+        self.stream.lock().refusal_blocks.contains(&index)
     }
 }
 
