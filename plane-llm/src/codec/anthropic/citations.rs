@@ -112,34 +112,18 @@ pub(super) fn write_citation(c: &crate::codec::ir::IrCitation) -> serde_json::Va
         obj.insert(super::CITED_TEXT.to_string(), serde_json::json!(t));
     }
     match kind {
-        CITATION_TYPE_PAGE => {
-            if let Some(di) = c.document_index {
-                obj.insert(super::DOCUMENT_INDEX.to_string(), serde_json::json!(di));
-            }
-            if let Some(t) = &c.title {
-                obj.insert(super::DOCUMENT_TITLE.to_string(), serde_json::json!(t));
-            }
-            if let Some(s) = c.start_index {
-                obj.insert(super::START_PAGE_NUMBER.to_string(), serde_json::json!(s));
-            }
-            if let Some(e) = c.end_index {
-                obj.insert(super::END_PAGE_NUMBER.to_string(), serde_json::json!(e));
-            }
-        }
-        CITATION_TYPE_CONTENT_BLOCK => {
-            if let Some(di) = c.document_index {
-                obj.insert(super::DOCUMENT_INDEX.to_string(), serde_json::json!(di));
-            }
-            if let Some(t) = &c.title {
-                obj.insert(super::DOCUMENT_TITLE.to_string(), serde_json::json!(t));
-            }
-            if let Some(s) = c.start_index {
-                obj.insert(super::START_BLOCK_INDEX.to_string(), serde_json::json!(s));
-            }
-            if let Some(e) = c.end_index {
-                obj.insert(super::END_BLOCK_INDEX.to_string(), serde_json::json!(e));
-            }
-        }
+        CITATION_TYPE_PAGE => document_location(
+            c,
+            &mut obj,
+            super::START_PAGE_NUMBER,
+            super::END_PAGE_NUMBER,
+        ),
+        CITATION_TYPE_CONTENT_BLOCK => document_location(
+            c,
+            &mut obj,
+            super::START_BLOCK_INDEX,
+            super::END_BLOCK_INDEX,
+        ),
         // A search-result citation names its passage by `source` + `search_result_index` and its
         // span by content-BLOCK indices; building it with char-location names (the old fall-through)
         // produced an object no Anthropic SDK reads as a search-result citation (ANT-18).
@@ -175,20 +159,29 @@ pub(super) fn write_citation(c: &crate::codec::ir::IrCitation) -> serde_json::Va
             }
         }
         // "char_location" and any unknown/None kind default to the char-location field names.
-        _ => {
-            if let Some(di) = c.document_index {
-                obj.insert(super::DOCUMENT_INDEX.to_string(), serde_json::json!(di));
-            }
-            if let Some(t) = &c.title {
-                obj.insert(super::DOCUMENT_TITLE.to_string(), serde_json::json!(t));
-            }
-            if let Some(s) = c.start_index {
-                obj.insert(super::START_CHAR_INDEX.to_string(), serde_json::json!(s));
-            }
-            if let Some(e) = c.end_index {
-                obj.insert(super::END_CHAR_INDEX.to_string(), serde_json::json!(e));
-            }
-        }
+        _ => document_location(c, &mut obj, super::START_CHAR_INDEX, super::END_CHAR_INDEX),
     }
     serde_json::Value::Object(obj)
+}
+
+/// The members every Anthropic document-location variant shares — `document_index`,
+/// `document_title` — then its span under the variant's own start/end names (char, page or block).
+fn document_location(
+    c: &crate::codec::ir::IrCitation,
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    start_key: &str,
+    end_key: &str,
+) {
+    if let Some(di) = c.document_index {
+        obj.insert(super::DOCUMENT_INDEX.to_string(), serde_json::json!(di));
+    }
+    if let Some(t) = &c.title {
+        obj.insert(super::DOCUMENT_TITLE.to_string(), serde_json::json!(t));
+    }
+    if let Some(s) = c.start_index {
+        obj.insert(start_key.to_string(), serde_json::json!(s));
+    }
+    if let Some(e) = c.end_index {
+        obj.insert(end_key.to_string(), serde_json::json!(e));
+    }
 }
