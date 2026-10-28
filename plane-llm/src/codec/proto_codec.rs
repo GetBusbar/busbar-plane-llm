@@ -45,19 +45,10 @@ use busbar_contract::upstream::CanonicalSignal;
 /// as a bare name through their `use super::proto_codec::*` (which resolves in both compile shapes).
 pub const LLM_CHAT_HEAD_KEYS: &[&str] = &["model", "stream", "stream_options", "system"];
 
-// The dialect reader/writer structs the `Protocol::<dialect>()` test-fixture shims below construct.
-// Reached via `super::` so the path resolves in BOTH compile shapes (busbar-llm root standalone,
-// `core::proto` when netted). These `use`s carried over from `proto/mod.rs` with the fixtures.
-#[cfg(any(test, feature = "test-support"))]
-use super::bedrock::{BedrockReader, BedrockWriter};
-#[cfg(any(test, feature = "test-support"))]
-use super::cohere::{CohereReader, CohereWriter};
-#[cfg(any(test, feature = "test-support"))]
-use super::gemini::{GeminiReader, GeminiWriter};
-#[cfg(any(test, feature = "test-support"))]
-use super::openai_chat::{OpenAiReader, OpenAiWriter};
-#[cfg(any(test, feature = "test-support"))]
-use super::openai_responses::{ResponsesReader, ResponsesWriter};
+// The `Protocol::<dialect>()` fixture constructors the tests name.
+#[cfg(test)]
+#[path = "tests/protocol_fixtures.rs"]
+mod protocol_fixtures;
 
 /// ProtocolReader extracts signals from wire responses (Stage 1a + 1b).
 /// Methods are provider-specific normalizers that feed the breaker's Stage 2 classifier.
@@ -939,65 +930,6 @@ impl Protocol {
     pub fn writer(&self) -> &dyn ProtocolWriter {
         self.writer.as_ref()
     }
-
-    /// Construct an Anthropic protocol instance — TEST FIXTURE SHIM. The dialect is an extracted
-    /// module of the LLM plugin crate (`busbar-llm`); production resolves it through the registry after the
-    /// composition root installs its declaration, and core has no production path that could name
-    /// it. The pre-extraction fixture surface calls this constructor by name in hundreds of tests,
-    /// so it survives for the builds that compile the dialect back in (see the `mod anthropic`
-    /// decl) rather than rewriting every fixture to a registry lookup in the extraction commit.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn anthropic() -> Self {
-        Self::new(
-            PROTO_ANTHROPIC,
-            super::anthropic::AnthropicReader,
-            super::anthropic::AnthropicWriter,
-        )
-    }
-
-    /// Construct an OpenAI protocol instance — TEST FIXTURE SHIM, same rationale as
-    /// [`Protocol::anthropic`]: the dialect is a module of the LLM plugin crate (`busbar-llm`);
-    /// production resolves it through the registry after the composition root installs its
-    /// declaration.
-    // `test-support`, not bare `cfg(test)`: a SIBLING dialect crate's own test build reaches this
-    // fixture shim (busbar-llm's gemini logprobs carry tests translate gemini ↔ openai), and that
-    // build sees core through the `test-support` feature, not through core's `cfg(test)`.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn openai() -> Self {
-        Self::new(PROTO_OPENAI, OpenAiReader, OpenAiWriter)
-    }
-
-    /// Construct a Gemini protocol instance — TEST FIXTURE SHIM, same rationale as
-    /// [`Protocol::anthropic`]: the dialect is a module of the LLM plugin crate (`busbar-llm`);
-    /// production resolves it through the registry after the composition root installs its
-    /// declaration.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn gemini() -> Self {
-        Self::new(PROTO_GEMINI, GeminiReader, GeminiWriter)
-    }
-
-    /// Construct an OpenAI Responses protocol instance — TEST FIXTURE SHIM, same rationale as
-    /// [`Protocol::anthropic`]: the dialect is a module of the LLM plugin crate (`busbar-llm`);
-    /// production resolves it through the registry after the composition root installs its
-    /// declaration.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn responses() -> Self {
-        Self::new(PROTO_RESPONSES, ResponsesReader, ResponsesWriter)
-    }
-
-    /// Construct a Bedrock protocol instance — TEST FIXTURE SHIM, same rationale as
-    /// [`Protocol::anthropic`]: the dialect is a module of the LLM plugin crate (`busbar-llm`).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn bedrock() -> Self {
-        Self::new(PROTO_BEDROCK, BedrockReader, BedrockWriter)
-    }
-
-    /// Construct a Cohere (v2 chat) protocol instance — TEST FIXTURE SHIM, same rationale as
-    /// [`Protocol::anthropic`]: the dialect is a module of the LLM plugin crate (`busbar-llm`).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn cohere() -> Self {
-        Self::new(PROTO_COHERE, CohereReader, CohereWriter)
-    }
 }
 
 /// BUILD this protocol's wire CODEC, by name — a `Protocol` INSTANCE, for the paths that translate.
@@ -1284,12 +1216,6 @@ pub struct ToolIdRemap {
 pub const TOOL_ID_REMAP_MAX_MEMO: usize = crate::codec::dialect::MAX_OPEN_TOOL_CALLS;
 
 impl ToolIdRemap {
-    /// Number of memoized pairs currently retained — the retention the cap bounds.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn memo_len(&self) -> usize {
-        self.map.len()
-    }
-
     /// Reshape one egress tool id into the ingress protocol's native form. Deterministic + memoized.
     /// A `None` ingress prefix (Gemini, Cohere) returns the id unchanged — Gemini drops tool ids
     /// outright, and Cohere ids are free-form (no canonical prefix to make the reshape reversible
