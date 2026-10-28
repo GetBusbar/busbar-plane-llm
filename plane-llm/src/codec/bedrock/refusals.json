@@ -1,0 +1,12 @@
+{
+  "_doc": "THE BEDROCK DIALECT'S DECLARED REFUSALS beyond the Converse/ConverseStream error list: the runtime answers each listed busbar refusal kind with exactly this exception and HTTP status (error_kind_to_bedrock_type reads this table), and the llm conformance rig reads the same table, so the plane emits only what it declares. Each row cites the owner's ruling.",
+  "refusals": [
+    {
+      "kinds": ["insufficient_quota", "quota_exceeded", "service_quota_exceeded"],
+      "outcomes": ["over_budget", "over_budget_total"],
+      "exception": "ServiceQuotaExceededException",
+      "status": 400,
+      "ruling": "OWNER 2026-10-27: a spent budget is refused with 1.5.5's non-retryable 400 ServiceQuotaExceededException (InvokeModel's), not the Converse-declared ThrottlingException every AWS SDK retries."
+    }
+  ]
+}
