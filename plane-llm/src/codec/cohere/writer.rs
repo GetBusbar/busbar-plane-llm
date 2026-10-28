@@ -513,7 +513,7 @@ impl ProtocolWriter for CohereWriter {
             }
         }
         // Egress: Cohere v2 `/v2/chat` models no parallelism control. `is_some()` gates
-        // this to requests that actually carried the flag (owner decision 4: no per-request noise).
+        // this to requests that actually carried the flag (no per-request noise).
         if req.parallel_tool_calls.is_some() {
             crate::codec::drops::writer_drop!(
                 crate::codec::drops::PARALLEL_TOOL_CALLS,
@@ -860,8 +860,7 @@ impl ProtocolWriter for CohereWriter {
                         (keys::OUTPUT_TOKENS): usage.output_tokens
                     }
                 });
-                // A reported cache read of zero is no cache hit: 1.5.5 wrote no `cached_tokens`, and
-                // neither does this.
+                // A reported cache read of zero is no cache hit: no `cached_tokens` is written for it.
                 if let (Some(cached), Some(uo)) = (
                     usage.cache_read_input_tokens.filter(|n| *n > 0),
                     usage_obj.as_object_mut(),
@@ -1163,7 +1162,7 @@ impl ProtocolWriter for CohereWriter {
         // The prompt-cache hit, in Cohere's native `usage.cached_tokens` slot (beside `tokens`, the
         // same member this dialect's reader reads it from). Emitted only when the source reported a
         // cache read, so an uncached response does not acquire a fabricated `cached_tokens: 0`. A
-        // reported read of zero is no hit either (1.5.5 wrote none): only a real hit is carried.
+        // reported read of zero is no hit either: only a real hit is carried.
         if let Some(cached) = resp.usage.cache_read_input_tokens.filter(|n| *n > 0) {
             usage_map.insert(keys::CACHED_TOKENS.to_string(), serde_json::json!(cached));
         }

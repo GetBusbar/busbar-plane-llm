@@ -1,12 +1,11 @@
 //! `arrive`, sans I/O: which dialect an arrival speaks, which operation it asks for, which model it
-//! names, and the bytes a unit forwards; or the refusal the previous release answered instead.
+//! names, and the bytes a unit forwards; or the refusal answered instead.
 //!
-//! This is the reading the previous release did in four places, in its order, and nothing else:
-//! the router's detection fold and its one operation check (`protocol_dispatch`), the two
+//! This is the reading, in its order, and nothing else: the router's detection fold and its one operation check (`protocol_dispatch`), the two
 //! convenience surfaces that name a model in the path (`/{name}/v1/messages` and
 //! `/{provider}/{model}/v1/messages`), the path-model dialects' own URL parses, and the body-model
 //! arrival and decode steps. Every refusal carries the envelope dialect, the kind, the status and the
-//! message the previous release rendered; the plane renders it through the dialect's own error
+//! message; the plane renders it through the dialect's own error
 //! writer when the kernel asks (`refusal`, keyed by the unit).
 //!
 //! The caller's credential is not read here: the kernel's authenticate step owns it.
@@ -61,7 +60,7 @@ impl Decline {
     /// The arrival names an action its dialect has that this plane does not serve: a resolved
     /// operation with no handler, or a path-model URL naming no model and action this plane
     /// serves (`REFUSED_UNSUPPORTED_ACTION`, which the root counts as a refusal of a read request,
-    /// as 1.5.5's ingress counted its unsupported-action and malformed-path answers). A path no
+    /// as an unsupported-action and a malformed-path answer). A path no
     /// dialect claims, or a verb a dialect path does not take, is none.
     #[must_use]
     pub const fn unsupported_action(self) -> bool {
@@ -69,7 +68,7 @@ impl Decline {
     }
 }
 
-/// A refused arrival: what the previous release answered, in the dialect envelope it answered in.
+/// A refused arrival: what is answered, in the dialect envelope it is answered in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Declined {
     /// Why.
@@ -85,8 +84,8 @@ pub struct Declined {
     /// THE ENTRY THIS REFUSAL CONCERNS, when it is about one (abi/plane "A refused arrival", rule
     /// 6): the ad-hoc route's model whose provider the path misnames. The door names it on the
     /// refused `arrive`, so the kernel judges the caller's identity and grant over it first and
-    /// renders this refusal before admission, as 1.5.5's ad-hoc route ran its governance guard
-    /// before it answered the mismatch.
+    /// renders this refusal before admission, the ad-hoc route's governance guard running before the
+    /// mismatch is answered.
     pub entry: Option<String>,
 }
 
@@ -267,7 +266,7 @@ fn convenience(path: &str) -> Option<Convenience> {
 ///
 /// # Errors
 ///
-/// The refusal the previous release answered, with its envelope, kind, status and message.
+/// The refusal answered, with its envelope, kind, status and message.
 pub fn arrive(
     method: &str,
     target: &str,

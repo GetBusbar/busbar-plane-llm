@@ -69,11 +69,11 @@ pub enum Slot {
     Structure,
 }
 
-/// THE CONTROL ORDER: every request control a dialect may have no form for, in the order a
+/// The control order: every request control a dialect may have no form for, in the order a
 /// dialect's dropped controls are warned and audited. Each dialect's dropped set is DERIVED from
 /// its mapping: a control is dropped when the request carries it and the dialect has no row for it
 /// (or its row's word table has no word for the value), unless the dialect's `[controls]` names it
-/// silent (a 1.5.5 waiver) or carried by its own code.
+/// silent (a waiver) or carried by its own code.
 pub const CONTROL_ORDER: &[Slot] = &[
     Slot::TopK,
     Slot::Stop,
@@ -94,8 +94,7 @@ pub const CONTROL_ORDER: &[Slot] = &[
 /// How a dialect handles a control slot beyond its rows (`[controls]` in the mapping file).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Handled {
-    /// No form, and no text of the dialect's own (`silent = true`): 1.5.5 dropped it with neither a
-    /// warn nor an audit entry. A drop is never silent (spec Part 2 #76, design F3 "Drops"), so it
+    /// No form, and no text of the dialect's own (`silent = true`). A drop is never silent, so it
     /// is dropped like a control with no row: the dialect's `drop_warn` and the seam's audit.
     Silent,
     /// Carried, warned or reported by the named dialect code (`code = "<name>"`).

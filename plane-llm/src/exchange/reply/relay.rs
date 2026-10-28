@@ -2,7 +2,7 @@
 //! stream), or a same-dialect whole body relayed verbatim. Each far-end piece becomes the caller's
 //! bytes as soon as it completes a frame; the far end's usage is read as the bytes go by.
 //!
-//! The previous release's streamed-answer steps, in their order: the translator the pair of
+//! The streamed-answer steps, in their order: the translator the pair of
 //! dialects names reframes (and, within one dialect, re-emits byte-exact while it reads usage),
 //! the JSON-array framer wraps the frames for a caller that asked for an array, a same-dialect
 //! whole body relays untouched while a bounded tail-anchored copy is kept for its usage and its
@@ -36,7 +36,7 @@ pub enum ContentType {
 
 /// Whether the far end's success answer is taken whole rather than relayed: a non-stream answer
 /// that crosses dialects. Within one dialect the answer is relayed as the far end sent it, a
-/// stream-asked, body-answered reply included (DIALECT FIDELITY, owner 2026-10-02).
+/// stream-asked, body-answered reply included (dialect fidelity).
 #[must_use]
 pub fn takes_whole(ingress: &str, egress: &str, far_is_stream: bool) -> bool {
     !far_is_stream && ingress != egress
@@ -91,7 +91,7 @@ pub struct End {
     /// the host records one audit row per path.
     pub dropped: Vec<String>,
     /// Why the usage tap could not read a same-dialect whole body (only when metering): returned
-    /// as data for the kernel to count, never reported from here (row 155).
+    /// as data for the kernel to count, never reported from here.
     pub tap_fault: Option<UsageTapFault>,
 }
 
@@ -362,9 +362,9 @@ impl Relay {
         } else if !self.far_is_stream && !self.nonstream_buf.is_empty() {
             let buf = std::mem::take(&mut self.nonstream_buf);
             if self.nonstream_buf_truncated {
-                // A body past the usage tap's cap bills no tokens, as 1.5.5 billed none: it kept
-                // only the body's first `cap` bytes, whose reading found no usage, and warned that
-                // the request was undercounted (v1.5.5 proxy/response_body.rs:230-262).
+                // A body past the usage tap's cap bills no tokens: only the body's first `cap`
+                // bytes are kept, whose reading found no usage, and a warning says the request
+                // was undercounted.
                 None
             } else {
                 let tapped = self.handler.extract_usage(host, self.ingress, &buf);
@@ -377,15 +377,13 @@ impl Relay {
                         }
                         // A JSON body that stops short of its end is one the far end CUT (its
                         // transfer failed before its last byte): it bills only the usage the far
-                        // end reported in the bytes in hand, never the floor (OWNER RULING Q31,
-                        // oracle cell `route.failover|fo|primary-cut-body`).
+                        // end reported in the bytes in hand, never the floor
+                        // (oracle cell `route.failover|fo|primary-cut-body`).
                         Err(_) if cut_short(&buf) => wire::reported_usage(self.ingress, &buf),
-                        // A body whose dialect reads it as a failure the FAR END REPORTED (a
-                        // Responses `status: "failed"`) bills no tokens, as 1.5.5 billed none: its
-                        // usage tap read nothing from a body its reader refused (v1.5.5
-                        // handlers/chat.rs:60-98, `read_response` failed -> 0 tokens), and its
-                        // streamed twin bills none either (row-159 L3#4). ARCHITECT ruling
-                        // 2026-10-15; owner answer Q37 is unsigned and does not override 1.5.5.
+                        // A body whose dialect reads it as a failure the far end reported (a
+                        // Responses `status: "failed"`) bills no tokens: its usage tap reads
+                        // nothing from a body its reader refused (`read_response` failed -> 0
+                        // tokens), and its streamed twin bills none either.
                         Err(_) if far_reported_failure(host, self.ingress, &buf) => None,
                         Err(_) => {
                             fault_unreadable(self.ingress, buf.len());
@@ -456,9 +454,9 @@ impl Relay {
         }
     }
 
-    /// THE CALLER HAD A USABLE PART: a byte of the answer was relayed and nothing failed it (no
+    /// The caller had a usable part: a byte of the answer was relayed and nothing failed it (no
     /// reader's terminal error, no translate abort), so a caller that leaves now leaves a partial
-    /// answer whose incurred units bill (v1.5.5 `FirstByteBody`'s drop arm).
+    /// answer whose incurred units bill.
     #[must_use]
     pub fn partial(&self) -> bool {
         self.first_byte
@@ -468,13 +466,11 @@ impl Relay {
                 .is_some_and(|t| t.aborted() || t.terminal_error().is_some())
     }
 
-    /// THE STREAM'S TERMINAL ERROR IS ITS FAR END'S FAILED GENERATION: the far dialect's own stop
-    /// token that reads as a failed generation (a Gemini `MALFORMED_FUNCTION_CALL`, a Cohere
-    /// `ERROR`), which its reader surfaces as an error beside the usage it reports (owner ruling
-    /// Q31). 1.5.5's readers raised no error for those stops, so 1.5.5 billed the usage the stream
-    /// reported (v1.5.5 `proxy/response_body.rs:550-575`: only a reader-emitted terminal error
-    /// skipped the token fee) — and Q31 keeps that charge. Every other terminal error is one 1.5.5
-    /// raised too, and bills no tokens. `far` is the far end's dialect.
+    /// Whether the stream's terminal error is its far end's failed generation: the far dialect's
+    /// own stop token that reads as a failed generation (a Gemini `MALFORMED_FUNCTION_CALL`, a
+    /// Cohere `ERROR`), which its reader surfaces as an error beside the usage it reports. The
+    /// usage the stream reported is billed. Every other terminal error bills no tokens. `far` is
+    /// the far end's dialect.
     #[must_use]
     pub fn failed_generation(&self, far: &str) -> bool {
         self.translate
@@ -498,10 +494,9 @@ impl Relay {
 
     /// The usage an answer that ended early had incurred: what a stream's readers accumulated;
     /// for a same-dialect whole body the FAR END cut, only the usage the bytes in hand report
-    /// (OWNER RULING Q31, never a floor). A same-dialect whole body that ended early any other way
-    /// (its caller left mid-body) incurred none: 1.5.5 billed no tokens on a mid-buffer drop
-    /// (v1.5.5 proxy/response_body.rs:620-625), and no floor is added for it (#77(2); ARCHITECT
-    /// ruling 2026-10-15 retired item 367's relayed floor, Q33 (a), which was told, never signed).
+    /// (never a floor). A same-dialect whole body that ended early any other way (its caller left
+    /// mid-body) incurred none: no tokens are billed on a mid-buffer drop, and no floor is added
+    /// for it.
     #[must_use]
     pub fn incurred_usage(&self) -> Option<TokenUsage> {
         match self.translate.as_ref() {
@@ -518,9 +513,9 @@ impl Relay {
     }
 }
 
-/// THE FAR END REPORTED THE FAILURE ITSELF: the whole body reads, in its dialect's own reader, as a
+/// The far end reported the failure itself: the whole body reads, in its dialect's own reader, as a
 /// failure the far end stated (a Responses `status: "failed"`), not as a body the reader could not
-/// read (`ir_parse`: bad JSON, a shape it does not know, or a usage count it refuses, #42).
+/// read (`ir_parse`: bad JSON, a shape it does not know, or a usage count it refuses).
 fn far_reported_failure(
     host: &dyn busbar_contract::codec::CodecHost,
     protocol: &str,
