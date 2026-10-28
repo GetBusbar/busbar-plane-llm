@@ -24,13 +24,8 @@ pub(super) fn read_gemini_response_format(
     if mime.is_none() && schema.is_none() {
         return None;
     }
-    Some(crate::codec::ir::IrResponseFormat {
-        json: schema.is_some() || mime == Some(MIME_APPLICATION_JSON),
-        schema,
-        name: None,
-        strict: None,
-        description: None,
-    })
+    let json = schema.is_some() || mime == Some(MIME_APPLICATION_JSON);
+    Some(crate::codec::ir::IrResponseFormat::bare(json, schema))
 }
 
 /// Project the agnostic [`crate::codec::ir::IrResponseFormat`] into a Gemini `generationConfig` map. The ONLY
