@@ -883,10 +883,11 @@ fn op_class_of(operation: busbar_contract::operation::OpVerb) -> u32 {
         .unwrap_or(0)
 }
 
-fn owned(fields: &[(String, Vec<u8>)]) -> Vec<(Vec<u8>, Vec<u8>)> {
+/// Head fields in the answer's form, moved (a name's bytes are its `String`'s own).
+fn owned(fields: Vec<(String, Vec<u8>)>) -> Vec<(Vec<u8>, Vec<u8>)> {
     fields
-        .iter()
-        .map(|(n, v)| (n.as_bytes().to_vec(), v.clone()))
+        .into_iter()
+        .map(|(n, v)| (n.into_bytes(), v))
         .collect()
 }
 
@@ -1045,7 +1046,7 @@ fn to_caller(piece: Piece<'_>) -> Answer {
     let fault = breaker_fault(piece.fault.as_ref());
     let (status, fields) = piece
         .head
-        .map_or((0, Vec::new()), |h| (u32::from(h.status), owned(&h.fields)));
+        .map_or((0, Vec::new()), |h| (u32::from(h.status), owned(h.fields)));
     Answer {
         status,
         fields,
@@ -1076,7 +1077,7 @@ fn far_answer(piece: Piece<'_>, status: u16) -> Answer {
 fn answered(r: refuse::Rendered) -> Answer {
     Answer {
         status: u32::from(r.status),
-        fields: owned(&r.fields),
+        fields: owned(r.fields),
         bytes: r.body,
         done: true,
         ..Answer::default()
@@ -1129,7 +1130,7 @@ fn attempt(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
         Err(None)
     };
     match built {
-        Ok(request) => {
+        Ok(mut request) => {
             // A control the far end's dialect cannot carry, one degraded row each (`<control> on
             // <dialect>`, the row 1.5.5 wrote as it translated the request).
             let egress = unit.shaping.lane(&unit.member).map_or("", |l| l.dialect);
@@ -1139,7 +1140,7 @@ fn attempt(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
                     request.verb.as_bytes().to_vec(),
                     request.target.as_bytes().to_vec(),
                 )),
-                fields: owned(&request.fields),
+                fields: owned(std::mem::take(&mut request.fields)),
                 audits: request
                     .dropped_controls
                     .iter()
@@ -1285,14 +1286,14 @@ fn answer(host: &DoorHost, unit: &mut UnitState, from: u32, piece: &PieceIn<'_>)
                 ..Answer::default()
             })
         }
-        // The kernel re-pushes the caller's body on every attempt; what goes to the far end is the
-        // body the attempt wrote for this member.
+        // The kernel re-pushes the caller's body on every attempt, once, after its ATTEMPT piece;
+        // what goes to the far end is the body the attempt wrote for this member, moved.
         FROM_CALLER => Answer {
             to_far_end: true,
             bytes: unit
                 .request
-                .as_ref()
-                .map(|r| r.body.clone())
+                .as_mut()
+                .map(|r| std::mem::take(&mut r.body))
                 .unwrap_or_default(),
             ..Answer::default()
         },

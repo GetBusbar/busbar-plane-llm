@@ -22,6 +22,7 @@ use busbar_contract::protocol::{
 use serde_json::Value;
 
 use super::arrive::Arrived;
+use super::decl;
 use super::invoke::HeadField;
 use super::shaping::{FarShape, Lane, Shaping};
 use crate::codec::json_splice::{self, Edit};
@@ -94,10 +95,6 @@ pub const DETAIL_MODEL_UNSUPPORTED_OPERATION: &str = "This model does not suppor
 /// The message an operation the caller's dialect does not serve is answered with.
 pub const DETAIL_ENDPOINT_UNSUPPORTED_OPERATION: &str =
     "This endpoint does not support that operation.";
-
-fn decl(name: &str) -> Option<&'static ProtocolDecl> {
-    DECLS.iter().copied().find(|d| d.name == name)
-}
 
 fn answer(
     envelope: &'static str,
@@ -307,7 +304,7 @@ pub fn translate_request<'a>(
     default_max_tokens: u32,
     reasoning_budgets: [u32; 4],
     reasoning_allowed: bool,
-    body: Option<Value>,
+    body: Option<&Value>,
     content_type: &str,
     hop_bytes: &'a [u8],
 ) -> Translation<'a> {
@@ -345,7 +342,7 @@ fn translate_into<'a>(
     default_max_tokens: u32,
     reasoning_budgets: [u32; 4],
     reasoning_allowed: bool,
-    body: Option<Value>,
+    body: Option<&Value>,
     content_type: &str,
     hop_bytes: &'a [u8],
 ) -> Result<Translated<'a>, Answer> {
@@ -420,7 +417,7 @@ fn translate_into<'a>(
             DETAIL_INTERNAL_ERROR,
         ));
     };
-    let _ = ingress_dialect.requested_candidate_count(&body);
+    let _ = ingress_dialect.requested_candidate_count(body);
     let Some(ingress_handler) = handler_of(ingress) else {
         return Err(answer(
             envelope,
@@ -432,7 +429,7 @@ fn translate_into<'a>(
     let translated = ingress_handler
         .translate_request(
             host,
-            TranslateReqInput::Json(&body),
+            TranslateReqInput::Json(body),
             handler_of(egress).map(|_| egress),
             &prep,
             lane.wire_model,
@@ -825,11 +822,7 @@ pub fn build(
     let body_is_json = arrived.parsed.is_some();
     let intent = stream_intent(handler, arrived.parsed.as_ref());
     let relay = ingress == lane.dialect;
-    let hop_v = if relay || !body_is_json {
-        None
-    } else {
-        arrived.parsed.clone()
-    };
+    let hop_v = if relay { None } else { arrived.parsed.as_ref() };
     let reasoning = shaping.reasoning(pool, member).unwrap_or(lane.reasoning);
     let t = translate_request(
         host,
