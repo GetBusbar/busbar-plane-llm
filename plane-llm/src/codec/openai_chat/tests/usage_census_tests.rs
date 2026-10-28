@@ -78,11 +78,8 @@ const OPENAI_COUNT_CLASSES: &[(&str, Class)] = &[
 /// The integer members the pinned wire lock declares under `usage` on `section` (`response` or
 /// `stream`), by their path below `usage`.
 fn lock_usage_counts(section: &str) -> Vec<String> {
-    let path =
-        std::path::PathBuf::from(std::env::var_os("BUSBAR_CHECKOUT").expect(
-            "BUSBAR_CHECKOUT is unset: busbar's tree at .busbar-ref (plugin CI exports it)",
-        ))
-        .join("testing/llm-conformance/wire/openai.wire.json");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../testing/llm-conformance/wire/openai.wire.json");
     let lock: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("the pinned openai wire lock"))
             .expect("wire lock json");

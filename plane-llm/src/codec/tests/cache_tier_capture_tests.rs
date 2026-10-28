@@ -108,8 +108,8 @@ fn oracle_cell_body(cell: &str) -> Value {
 /// came off the wire, before any normalization. This is the strongest evidence in the tree: it is
 /// the upstream's own response, not busbar's rendering of it.
 fn conformance_raw_body(recording: &str, cell: &str) -> String {
-    let path = workspace_root()
-        .join("testing/llm-conformance/fixtures")
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../testing/llm-conformance/fixtures")
         .join(recording)
         .join("raw")
         .join(cell)
