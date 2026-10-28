@@ -273,7 +273,8 @@ fn a_verbatim_relay_carries_the_native_head_fields() {
 }
 
 /// BUSBAR IS INVISIBLE ON A SAME-DIALECT ANSWER: every far head field reaches the caller in order,
-/// except what busbar governs (the far end's echo of the operator's tenant); nothing is invented.
+/// except what busbar governs (the far end's echo of the operator's tenant, and the operator's
+/// account-wide rate-limit state); nothing is invented.
 #[test]
 fn a_verbatim_relay_carries_every_far_field_but_the_governed_ones() {
     let head: &[(&[u8], &[u8])] = &[
@@ -282,6 +283,8 @@ fn a_verbatim_relay_carries_every_far_field_but_the_governed_ones() {
         (b"Retry-After", b"3"),
         (b"openai-organization", b"org-operator"),
         (b"openai-project", b"proj-operator"),
+        (b"Set-Cookie", b"__cf_bm=operator-connection; path=/"),
+        (b"anthropic-ratelimit-tokens-remaining", b"5"),
     ];
     let far = FarError {
         status: 429,
@@ -290,14 +293,7 @@ fn a_verbatim_relay_carries_every_far_field_but_the_governed_ones() {
     };
     let openai = relay_verbatim("openai", &far);
     let names: Vec<&str> = openai.fields.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(
-        names,
-        [
-            "content-type",
-            "x-ratelimit-remaining-tokens",
-            "retry-after"
-        ]
-    );
+    assert_eq!(names, ["content-type", "retry-after"]);
     let anthropic = relay_verbatim("anthropic", &far);
     assert!(
         !anthropic.fields.iter().any(|(n, _)| n == "request-id"),
@@ -308,6 +304,23 @@ fn a_verbatim_relay_carries_every_far_field_but_the_governed_ones() {
         .fields
         .iter()
         .any(|(n, _)| n == "openai-organization"));
+    for dialect in [
+        "openai",
+        "anthropic",
+        "cohere",
+        "gemini",
+        "bedrock",
+        "responses",
+    ] {
+        let relayed = relay_verbatim(dialect, &far);
+        for (name, _) in &relayed.fields {
+            assert!(
+                !name.eq_ignore_ascii_case("set-cookie") && !name.contains("ratelimit"),
+                "{dialect} relays the operator's account state `{name}`: {:?}",
+                relayed.fields
+            );
+        }
+    }
 }
 
 // ── a whole answer ──────────────────────────────────────────────────────────────────────────────
@@ -1172,6 +1185,7 @@ mod rehomed_answers {
             tap_fault: piece.tap_fault,
             done: piece.done,
             dropped: piece.dropped,
+            synthesized: piece.synthesized,
         }
     }
 
@@ -1436,11 +1450,11 @@ mod rehomed_answers {
         (b"openai-project", b"proj-operator"),
     ];
 
-    /// REHOMES `crates/busbar-llm/src/engine/tests/client_header_forwarding_tests.rs::a_same_dialect_answer_relays_the_upstream_head`
-    /// 1.5.5 (DIALECT-FIDELITY F2): a same-dialect 2xx answer carries every far head
-    /// field (`x-ratelimit-remaining-tokens: 99`, `openai-processing-ms: 12`) but the far end's echo
-    /// of the operator's tenant (`openai-organization`, `openai-project`).
-    /// RED: a success relay that drops the far head, or one that leaks the operator's tenant.
+    /// DIALECT-FIDELITY F2: a same-dialect 2xx answer carries the far head
+    /// (`openai-processing-ms: 12`) but the far end's echo of the operator's tenant
+    /// (`openai-organization`, `openai-project`) and the operator's account-wide rate-limit state
+    /// (`x-ratelimit-remaining-tokens`): one tenant never reads the operator's quota.
+    /// RED: a success relay that drops the far head, or one that leaks the operator's tenant or quota.
     #[test]
     fn a_same_dialect_answer_relays_the_upstream_head() {
         let (arrived, lane) = ask("openai", "openai", false);
@@ -1450,19 +1464,21 @@ mod rehomed_answers {
         assert_eq!(read.status, 200);
         assert_eq!(read.end().verdict, Verdict::Ok);
         assert_eq!(
-            read.value("x-ratelimit-remaining-tokens").as_deref(),
-            Some("99")
+            read.count("x-ratelimit-remaining-tokens"),
+            0,
+            "{:?}",
+            read.fields
         );
         assert_eq!(read.value("openai-processing-ms").as_deref(), Some("12"));
         assert_eq!(read.count("openai-organization"), 0, "{:?}", read.fields);
         assert_eq!(read.count("openai-project"), 0, "{:?}", read.fields);
     }
 
-    /// REHOMES `crates/busbar-llm/src/engine/tests/client_header_forwarding_tests.rs::a_same_dialect_error_relays_the_upstream_head`
-    /// 1.5.5: a same-dialect 400 `invalid_request_error` reaches the caller with the
-    /// far head's values (`x-ratelimit-remaining-tokens: 99`, `retry-after: 7`) and without
-    /// `openai-organization`.
-    /// RED: a client-fault relay that keeps only the names, rewrites a value, or leaks the tenant.
+    /// A same-dialect 400 `invalid_request_error` reaches the caller with the far head's values
+    /// (`retry-after: 7`) and without `openai-organization` or the operator's
+    /// `x-ratelimit-remaining-tokens`.
+    /// RED: a client-fault relay that keeps only the names, rewrites a value, or leaks the tenant or
+    /// the operator's quota.
     #[test]
     fn a_same_dialect_error_relays_the_upstream_head() {
         let (arrived, lane) = ask("openai", "openai", false);
@@ -1474,8 +1490,10 @@ mod rehomed_answers {
         assert_eq!(read.status, 400);
         assert_eq!(read.end().verdict, Verdict::Hard);
         assert_eq!(
-            read.value("x-ratelimit-remaining-tokens").as_deref(),
-            Some("99")
+            read.count("x-ratelimit-remaining-tokens"),
+            0,
+            "{:?}",
+            read.fields
         );
         assert_eq!(read.value("retry-after").as_deref(), Some("7"));
         assert_eq!(read.count("openai-organization"), 0, "{:?}", read.fields);
@@ -1501,6 +1519,42 @@ mod rehomed_answers {
         ] {
             assert_eq!(read.count(name), 0, "{name}: {:?}", read.fields);
         }
+    }
+
+    /// OWNER 2026-10-27 (busbar answers in the caller's dialect AND mode): a caller that asked for a
+    /// stream, served by a far end that answered one whole body, reads a stream synthesised from
+    /// that body, marked `synthesized` (the door writes its `egress.stream_synthesized` audit row),
+    /// and billed the body's own reported usage (7 in, 3 out).
+    /// RED: a synthesised stream left unmarked, or billed anything but the far end's report.
+    #[test]
+    fn a_stream_synthesised_from_a_whole_answer_is_marked_and_billed_from_the_body() {
+        let body = chat_completion("hi");
+        let (arrived, lane) = ask("anthropic", "openai", true);
+        let ctx = reply_ctx(&arrived, &lane, false);
+        let read = answer(&ctx, 200, JSON_HEAD, &[&body], false);
+        assert_eq!(read.status, 200);
+        assert_eq!(
+            read.value("content-type").as_deref(),
+            Some("text/event-stream"),
+            "{:?}",
+            read.fields
+        );
+        let end = read.end();
+        assert!(end.synthesized, "the synthesised stream is marked");
+        assert_eq!(
+            (end.units.tokens_in, end.units.tokens_out),
+            (7, 3),
+            "billed from the far end's whole body"
+        );
+        // a caller that asked for no stream reads the whole answer, unmarked, billed the same
+        let (arrived, lane) = ask("anthropic", "openai", false);
+        let ctx = reply_ctx(&arrived, &lane, false);
+        let read = answer(&ctx, 200, JSON_HEAD, &[&body], false);
+        assert!(!read.end().synthesized);
+        assert_eq!(
+            (read.end().units.tokens_in, read.end().units.tokens_out),
+            (7, 3)
+        );
     }
 
     // ── the relayed stream (forward_pool_integration_tests.rs) ─────────────────────────────────
@@ -3438,6 +3492,7 @@ mod rehomed_metering {
             tap_fault: piece.tap_fault,
             done: piece.done,
             dropped: piece.dropped,
+            synthesized: piece.synthesized,
         }
     }
 

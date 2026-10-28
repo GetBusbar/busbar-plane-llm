@@ -60,14 +60,16 @@ pub fn ingress_stream_content_type(ingress: &str) -> Option<&'static str> {
 }
 
 /// Whether busbar governs the answer head field `name` (compared without case) for a caller of
-/// `dialect`: the far end's echo of busbar's own credential or tenant, never relayed.
+/// `dialect`: the far end's echo of busbar's own credential or tenant, or the operator's own
+/// account state (its cookies, its rate-limit headers), never relayed.
 #[must_use]
 pub fn governed_response(dialect: &str, name: &str) -> bool {
-    crate::dialect::dialect(dialect).is_some_and(|d| {
-        d.governed_response_headers
-            .iter()
-            .any(|g| name.eq_ignore_ascii_case(g))
-    })
+    crate::dialect::account_scoped_response(name)
+        || crate::dialect::dialect(dialect).is_some_and(|d| {
+            d.governed_response_headers
+                .iter()
+                .any(|g| name.eq_ignore_ascii_case(g))
+        })
 }
 
 /// Relay the far end's head onto a same-dialect answer (busbar is invisible to the caller too): each

@@ -68,6 +68,9 @@ pub struct Whole {
     /// host records one audit row per path (`egress.control_unrepresentable`,
     /// `<path> from <dialect>`, degraded). Empty on a relay and on every end that delivers nothing.
     pub dropped: Vec<String>,
+    /// The caller asked for a stream and reads one synthesised from this one whole body (OWNER
+    /// 2026-10-27: busbar answers in the caller's dialect AND mode). `usage` is this body's own.
+    pub synthesized: bool,
 }
 
 /// The far end's dialect refusing a whole body.
@@ -143,6 +146,7 @@ fn whole(end: WholeEnd, usage: Option<Billing>, answer: Rendered) -> Whole {
         answer,
         refused: None,
         dropped: Vec::new(),
+        synthesized: false,
     }
 }
 
@@ -306,11 +310,14 @@ fn json(
     let mut w = match answered {
         TranslatedResponse::StreamFrames(frames) => {
             let ct = wire::ingress_stream_content_type(ctx.ingress).unwrap_or(TEXT_EVENT_STREAM);
-            whole(
-                WholeEnd::Delivered,
-                usage,
-                delivered(host, ctx, status, ct.as_bytes(), frames),
-            )
+            Whole {
+                synthesized: true,
+                ..whole(
+                    WholeEnd::Delivered,
+                    usage,
+                    delivered(host, ctx, status, ct.as_bytes(), frames),
+                )
+            }
         }
         TranslatedResponse::IngressUnsupported => whole(
             WholeEnd::IngressUnsupported,
