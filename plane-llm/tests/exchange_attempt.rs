@@ -444,8 +444,8 @@ fn a_history_with_a_custom_tool_call_relays_byte_identical() {
     assert_eq!(String::from_utf8_lossy(&r.body), body);
 }
 
-/// TENANT SELECTORS COME FROM BUSBAR'S CONFIG: a provider's `organization` / `project` ride every
-/// far request under the headers its dialect declares, and a caller's own never do.
+/// TENANT SELECTORS COME FROM BUSBAR'S CONFIG: a provider's `OpenAI-Organization` /
+/// `OpenAI-Project` options (forced) ride every far request, and a caller's own never do.
 #[test]
 fn the_providers_tenant_goes_out_and_the_callers_does_not() {
     let shaping = Shaping::from_settings(&json!({
@@ -453,8 +453,8 @@ fn the_providers_tenant_goes_out_and_the_callers_does_not() {
             "oai": {
                 "protocol": "openai",
                 "base_url": "https://api.example",
-                "organization": "org-cfg",
-                "project": "proj-cfg"
+                "OpenAI-Organization": "org-cfg",
+                "openai-project": "proj-cfg"
             }
         },
         "models": { "gpt": { "provider": "oai" } },
@@ -611,7 +611,7 @@ const DIALECTS: [&str; 6] = [
 ];
 
 /// One provider of `dialect` serving one model `member` (sent as `wire` when given), in pool `p`;
-/// `provider_extra` are further provider settings (`path`, `path_base`, `organization`, ...).
+/// `provider_extra` are further provider settings (`path`, `path_base`, `OpenAI-Organization`, ...).
 fn one_lane(
     dialect: &str,
     member: &str,
@@ -758,7 +758,10 @@ fn the_tenant_comes_from_config_on_every_route_and_never_from_the_caller() {
             ("openai-project", "proj-caller"),
         ])
     };
-    let tenant = [("organization", "org-cfg"), ("project", "proj-cfg")];
+    let tenant = [
+        ("OpenAI-Organization", "org-cfg"),
+        ("OpenAI-Project", "proj-cfg"),
+    ];
     let seen = |r: &FarRequest| {
         (
             field(r, "openai-organization")
@@ -789,13 +792,19 @@ fn the_tenant_comes_from_config_on_every_route_and_never_from_the_caller() {
     let r = build(HOST, &a, &h, &s, "p", "test-model").expect("built");
     assert_eq!(seen(&r), (None, None), "openai lane, no tenant configured");
 
-    let s = one_lane("anthropic", "test-model", None, &tenant);
-    let a = arrived("/v1/messages", &h, anthropic_body);
-    let r = build(HOST, &a, &h, &s, "p", "test-model").expect("built");
-    assert_eq!(
-        seen(&r),
-        (None, None),
-        "anthropic lane declares no selector"
+    // An anthropic provider has no such option: naming one fails the load.
+    let refused = Shaping::from_settings(&json!({
+        "providers": { "far": {
+            "protocol": "anthropic",
+            "OpenAI-Organization": "org-cfg"
+        } },
+        "models": { "test-model": { "provider": "far" } },
+        "pools": { "p": { "members": ["test-model"] } }
+    }))
+    .expect_err("an anthropic provider takes no OpenAI selector");
+    assert!(
+        refused.contains("unknown key `OpenAI-Organization`"),
+        "{refused}"
     );
 }
 
@@ -1439,8 +1448,7 @@ fn every_dialect_operation_shape_and_stream_intent_reads_the_released_far_path()
                 dialect,
                 path: path.map(str::to_string),
                 path_base: base.map(str::to_string),
-                organization: None,
-                project: None,
+                options: Vec::new(),
                 upstream_model: None,
                 default_max_tokens: None,
                 context_max: None,

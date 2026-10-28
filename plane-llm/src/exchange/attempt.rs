@@ -22,11 +22,13 @@ use busbar_contract::protocol::{
 use serde_json::Value;
 
 use super::arrive::Arrived;
+use super::invoke::HeadField;
 use super::shaping::{FarShape, Lane, Shaping};
 use crate::codec::json_splice::{self, Edit};
 use crate::codec::translate::{TranslateCodec as _, TranslateReqInput, TranslateReqReject};
 use crate::codec::DECLS;
 use crate::dialect::DIALECTS;
+use crate::options::{Place, Precedence, SetOption};
 
 /// A refusal the attempt answers the caller with instead of reaching the far end.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -589,27 +591,76 @@ pub fn with_caller_query(dialect: &str, target: &str, caller_query: &str) -> Opt
     Some(format!("{target}{sep}{}", added.join("&")))
 }
 
-/// The tenant head fields busbar sets for a far end of `dialect` from the provider's config: each
-/// selector the dialect declares whose config key (`organization`, `project`) has a value.
+/// The provider's static head-field options for `lane` ([`crate::options`]), as `(name, value)`,
+/// split by precedence: the operator's defaults, which a same-dialect caller's own value of the
+/// name replaces, and the forced ones, which go out whatever the caller sent (the dialect governs
+/// them, so a caller's never passes).
 #[must_use]
-pub fn tenant_fields<'a>(
-    dialect: &str,
-    organization: Option<&'a str>,
-    project: Option<&'a str>,
-) -> Vec<(&'static str, &'a str)> {
-    crate::dialect::dialect(dialect)
-        .map(|d| d.tenant_headers)
-        .unwrap_or_default()
+pub fn option_fields(lane: &Lane) -> (Vec<HeadField>, Vec<HeadField>) {
+    let (forced, defaults): (Vec<_>, Vec<_>) = lane
+        .options
         .iter()
-        .filter_map(|(key, header)| {
-            let value = match *key {
-                "organization" => organization,
-                "project" => project,
-                _ => None,
-            };
-            value.map(|v| (*header, v))
-        })
-        .collect()
+        .filter(|o| o.place == Place::Header)
+        .partition(|o| o.precedence == Precedence::Forced);
+    let pairs = |v: Vec<&SetOption>| -> Vec<HeadField> {
+        v.into_iter()
+            .map(|o| (o.wire.clone(), o.value.as_bytes().to_vec()))
+            .collect()
+    };
+    (pairs(defaults), pairs(forced))
+}
+
+/// The target with the provider's static query options for `lane` ([`crate::options`]): an
+/// operator's default is added unless the target already carries the name (a same-dialect caller's
+/// own value, or busbar's own choice of stream framing); a forced one replaces any value the
+/// target carries. A far end that checks a request signature takes none, as it takes no caller
+/// query ([`with_caller_query`]).
+#[must_use]
+pub fn with_option_query(lane: &Lane, target: &str) -> String {
+    let opts: Vec<&SetOption> = lane
+        .options
+        .iter()
+        .filter(|o| o.place == Place::Query)
+        .collect();
+    if opts.is_empty()
+        || crate::dialect::dialect(lane.dialect).is_some_and(|d| d.egress_scheme == SIGNED_SCHEME)
+    {
+        return target.to_string();
+    }
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let key = |pair: &str| pair.split_once('=').map_or(pair, |(k, _)| k).to_string();
+    let mut pairs: Vec<String> = query
+        .split('&')
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .collect();
+    for o in opts {
+        let present = pairs.iter().any(|p| key(p) == o.wire);
+        match o.precedence {
+            Precedence::CallerWins if present => continue,
+            Precedence::CallerWins => {}
+            Precedence::Forced => pairs.retain(|p| key(p) != o.wire),
+        }
+        pairs.push(format!("{}={}", o.wire, query_encode(&o.value)));
+    }
+    if pairs.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}?{}", pairs.join("&"))
+    }
+}
+
+/// RFC 3986 percent-encoding of a query value: every byte outside the unreserved set is `%XX`.
+fn query_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for b in value.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 /// A value a head field can carry as text: visible ASCII and the tab.
@@ -671,27 +722,36 @@ fn head_fields(
             .to_vec(),
     );
     let content_type = ("content-type".to_string(), content_type.into_bytes());
-    // The provider's tenant selectors, from busbar's config (the caller's are governed).
-    let tenant = tenant_fields(
-        egress,
-        lane.organization.as_deref(),
-        lane.project.as_deref(),
-    )
-    .into_iter()
-    .map(|(n, v)| (n.to_string(), v.as_bytes().to_vec()));
+    // The provider's static options: its defaults, which a same-dialect caller's own value
+    // replaces below, and its forced ones (tenant and billing selectors), which go out last on
+    // every route, the caller's being governed.
+    let (defaults, forced) = option_fields(lane);
     // A native client's user-agent, never a UA-less request (1.5.5's bytes); a same-dialect
     // caller's own replaces it below.
     let user_agent = ("user-agent".to_string(), user_agent.as_bytes().to_vec());
     // The dialect's declared static fields first, as the previous release's credential map led
     // with them (SD-3 (1)); a same-dialect caller's own value replaces one below.
+    // An operator's default of a static field's name (`anthropic-version`) replaces the declared
+    // value in place.
     let mut fields: Vec<(String, Vec<u8>)> = lane
         .statics
         .iter()
-        .map(|(n, v)| ((*n).to_string(), v.as_bytes().to_vec()))
+        .map(|(n, v)| {
+            let value = defaults
+                .iter()
+                .find(|(d, _)| n.eq_ignore_ascii_case(d))
+                .map_or_else(|| v.as_bytes().to_vec(), |(_, d)| d.clone());
+            ((*n).to_string(), value)
+        })
         .collect();
     fields.extend([content_type, user_agent, accept]);
+    fields.extend(
+        defaults
+            .into_iter()
+            .filter(|(d, _)| !lane.statics.iter().any(|(n, _)| n.eq_ignore_ascii_case(d))),
+    );
     if arrived.dialect != egress {
-        fields.extend(tenant);
+        fields.extend(forced);
         return Ok(fields);
     }
     // The caller's fields, in the order the caller sent them; a repeated name keeps every value.
@@ -703,7 +763,7 @@ fn head_fields(
         })
         .collect();
     fields = forward_over(fields, forwarded);
-    fields.extend(tenant);
+    fields.extend(forced);
     Ok(fields)
 }
 
@@ -804,6 +864,7 @@ pub fn build(
             target = t;
         }
     }
+    let target = with_option_query(lane, &target);
     let fields = head_fields(
         lane,
         handler,

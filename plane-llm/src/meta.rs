@@ -74,7 +74,9 @@ pub const CLI_HELP_TEXT: &str = concat!(
 /// Each form's keys are in the order of the previous release's frozen grammar for that form (the
 /// catalog definition, the operator deployment, the whole resolved entry), with the kernel's own keys
 /// left out; each says whether it must be written, and each form whether it refuses a key it does not
-/// name. A test holds every form to the frozen grammar, key by key. Read by nothing yet: the kernel
+/// name. No form refuses one here: a key that is not busbar's is a provider option, judged by the
+/// plane against the list of the provider's dialect ([`crate::options`]), which refuses one on no
+/// list in its own words. Read by nothing yet: the kernel
 /// keeps it at its door fold.
 pub const PROVIDER_KEYS: &str = r#"{
   "catalog": {
@@ -82,8 +84,6 @@ pub const PROVIDER_KEYS: &str = r#"{
     "keys": [
       {"name": "protocol", "shape": "str", "required": true},
       {"name": "error_map", "shape": "str-map", "required": false},
-      {"name": "organization", "shape": "str", "required": false},
-      {"name": "project", "shape": "str", "required": false},
       {"name": "max_output_key", "shape": {"one-of": ["max_tokens", "max_completion_tokens"]}, "required": false},
       {"name": "anthropic_adaptive_thinking", "shape": "bool", "required": false},
       {"name": "native_structured_output", "shape": "bool", "required": false},
@@ -101,12 +101,10 @@ pub const PROVIDER_KEYS: &str = r#"{
     ]
   },
   "deployment": {
-    "deny_unknown": true,
+    "deny_unknown": false,
     "keys": [
       {"name": "protocol", "shape": "str", "required": false},
       {"name": "error_map", "shape": "str-map", "required": false},
-      {"name": "organization", "shape": "str", "required": false},
-      {"name": "project", "shape": "str", "required": false},
       {"name": "max_output_key", "shape": {"one-of": ["max_tokens", "max_completion_tokens"]}, "required": false},
       {"name": "anthropic_adaptive_thinking", "shape": "bool", "required": false},
       {"name": "native_structured_output", "shape": "bool", "required": false},
@@ -124,12 +122,10 @@ pub const PROVIDER_KEYS: &str = r#"{
     ]
   },
   "entry": {
-    "deny_unknown": true,
+    "deny_unknown": false,
     "keys": [
       {"name": "protocol", "shape": "str", "required": false},
       {"name": "error_map", "shape": "str-map", "required": true},
-      {"name": "organization", "shape": "str", "required": false},
-      {"name": "project", "shape": "str", "required": false},
       {"name": "max_output_key", "shape": {"one-of": ["max_tokens", "max_completion_tokens"]}, "required": false},
       {"name": "anthropic_adaptive_thinking", "shape": "bool", "required": false},
       {"name": "native_structured_output", "shape": "bool", "required": false},
