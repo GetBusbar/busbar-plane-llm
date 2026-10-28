@@ -1556,3 +1556,108 @@ fn a_hook_rewrite_splices_only_the_members_it_changes() {
     assert_eq!(v["messages"][0]["content"], "compressed");
     assert_eq!(arrived.body, bytes, "the arrival's body is the spliced one");
 }
+
+/// A hook's rewrite, as it crosses `project`.
+const HOOK_REWRITE: &[u8] = br#"{"messages":[{"role":"user","content":"compressed"}],"tools":[]}"#;
+
+/// The mark `project` states for `arrived` after `rewrite` was (or was not) applied to it.
+fn rewrite_mark(arrived: &mut Arrived, rewrite: &[u8]) -> u32 {
+    use busbar_plane_llm::exchange::project::{apply_rewrite, rewrite_flags};
+    let applied = !rewrite.is_empty() && apply_rewrite(arrived, rewrite).is_some();
+    rewrite_flags(arrived, rewrite, applied)
+}
+
+/// A RERANK AND AN EMBEDDING STATE THAT A REWRITE DOES NOT APPLY TO THEM (ruling (A) on busbar
+/// #1709): their content is projected for the gates to screen, but neither has a conversation a
+/// hook's messages could be framed into, so the rewrite is not applied and `project` states
+/// `PROJECT_REWRITE_NOT_APPLICABLE`, which the kernel forwards unmodified and audits. Their bodies
+/// are left exactly as the caller sent them. With no rewrite carried, nothing is stated.
+///
+/// RED before: no mark, and the kernel read the READY answer with no rewritten body as a failed
+/// splice and refused the rerank (500 "request rewrite could not be applied").
+#[test]
+fn a_rerank_and_an_embedding_state_that_a_rewrite_does_not_apply() {
+    use busbar_contract::abi::plane::PROJECT_REWRITE_NOT_APPLICABLE;
+    for (target, body, operation) in [
+        (
+            "/v2/rerank",
+            &br#"{"model":"p","query":"which is fastest","documents":["a","b","c"]}"#[..],
+            OpVerb::RERANK,
+        ),
+        (
+            "/v1/embeddings",
+            &br#"{"model":"text-embedding-3-small","input":["alpha","beta"]}"#[..],
+            OpVerb::EMBEDDINGS,
+        ),
+    ] {
+        let mut arrived = ok(target, &json(), body);
+        assert_eq!(arrived.operation, operation, "{target}");
+        assert_eq!(
+            rewrite_mark(&mut arrived, HOOK_REWRITE),
+            PROJECT_REWRITE_NOT_APPLICABLE,
+            "{target}: the rewrite does not apply, and the plane says so"
+        );
+        assert_eq!(
+            arrived.body, body,
+            "{target}: the body stands as the caller sent it"
+        );
+        assert_eq!(
+            rewrite_mark(&mut arrived, b""),
+            0,
+            "{target}: no rewrite carried, nothing stated"
+        );
+    }
+}
+
+/// A CHAT NEVER STATES THAT A REWRITE DOES NOT APPLY: a chat's rewrite is spliced into its
+/// conversation, and a chat whose rewrite could not be applied (a body with no messages container
+/// to splice it into, a rewrite that does not read) is the kernel's to REFUSE, never to forward
+/// un-rewritten, so the mark stays clear whatever kept the rewrite from applying.
+///
+/// RED: the mark stated for a chat whose rewrite failed to apply, which the kernel would forward
+/// with the caller's un-rewritten body.
+#[test]
+fn a_chat_never_states_that_a_rewrite_does_not_apply() {
+    use busbar_plane_llm::exchange::project::{apply_rewrite, rewrite_flags};
+    // The plain chat: the rewrite is spliced in.
+    let mut chat = ok(
+        "/v1/chat/completions",
+        &json(),
+        br#"{"model":"m0","messages":[{"role":"user","content":"x"}]}"#,
+    );
+    assert_eq!(chat.operation, OpVerb::CHAT);
+    assert!(
+        apply_rewrite(&mut chat, HOOK_REWRITE).is_some(),
+        "a chat's rewrite applies"
+    );
+    assert_eq!(rewrite_flags(&chat, HOOK_REWRITE, true), 0, "applied");
+
+    // A chat whose rewrite failed to apply: the body has no messages container to splice it into.
+    let mut failed = ok(
+        "/v1/chat/completions",
+        &json(),
+        br#"{"model":"m0","prompt":"x"}"#,
+    );
+    assert_eq!(failed.operation, OpVerb::CHAT);
+    assert!(
+        apply_rewrite(&mut failed, HOOK_REWRITE).is_none(),
+        "no container: the splice cannot place the rewrite"
+    );
+    assert_eq!(
+        rewrite_flags(&failed, HOOK_REWRITE, false),
+        0,
+        "a chat whose rewrite failed to apply states no mark"
+    );
+
+    // A chat whose rewrite does not read.
+    let mut unread = ok(
+        "/v1/chat/completions",
+        &json(),
+        br#"{"model":"m0","messages":[{"role":"user","content":"x"}]}"#,
+    );
+    assert_eq!(
+        rewrite_mark(&mut unread, b"{not json"),
+        0,
+        "a chat whose rewrite does not read states no mark"
+    );
+}
