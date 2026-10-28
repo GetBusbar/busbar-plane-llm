@@ -323,6 +323,22 @@ fn an_open_count_is_reported_in_its_declared_class_and_never_dropped() {
     );
 }
 
+/// THE PROTOCOL AXIS a composition root links (`busbar_plane_llm::plane_door::PROTOCOLS`, named by
+/// busbar's `build.rs` in every linked roster): the plane's six dialects, each once. RED: the diet
+/// that deleted the re-export broke every busbar build that links this door.
+#[test]
+fn the_door_states_its_six_protocols_for_the_root_to_link() {
+    let names: Vec<&str> = busbar_plane_llm::plane_door::PROTOCOLS
+        .iter()
+        .map(|d| d.name)
+        .collect();
+    assert_eq!(names.len(), 6, "{names:?}");
+    let mut unique = names.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), 6, "each dialect once: {names:?}");
+}
+
 /// RED for the keep mode: every need relays the far end's whole head but the governed fields, and
 /// the deny list is exactly every dialect's governed response fields and the operator's connection
 /// cookies, each once.
