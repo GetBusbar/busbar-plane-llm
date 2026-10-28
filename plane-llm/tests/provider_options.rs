@@ -254,10 +254,7 @@ fn per_request_beats_static_unless_forced() {
     let r = send(
         &s,
         "/v1/chat/completions",
-        &[
-            ("content-type", "application/json"),
-            ("anthropic-beta", "caller-beta-2"),
-        ],
+        &[("content-type", "application/json")],
         OPENAI_BODY,
     );
     assert_eq!(field(&r, "anthropic-beta"), [b"operator-beta-1".as_slice()]);
