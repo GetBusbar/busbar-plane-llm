@@ -850,7 +850,8 @@ impl Carried {
             return true;
         }
         let (spelled, answer) = self.spelled(&arm);
-        self.listed(&spelled, answer).next().is_some()
+        let listed = self.listed(&spelled, answer).next().is_some();
+        listed
     }
 
     /// Whether the walk names the member at `path` (or the member above it that holds it) when an
