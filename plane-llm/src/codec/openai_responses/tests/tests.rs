@@ -7994,7 +7994,7 @@ fn writer_citation_accumulator_keeps_its_held_weight() {
         0,
         "a batch is kept whole or dropped whole"
     );
-    drop(map);
+    drop(stream);
     assert_eq!(
         writer.take_citation_accum(0).len(),
         summed / one,
