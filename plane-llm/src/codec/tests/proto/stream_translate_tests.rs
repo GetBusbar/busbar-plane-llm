@@ -4299,16 +4299,13 @@ fn test_tool_id_remap_is_a_stable_reversible_bijection() {
     // bare empty-prefix `bb1<hex>` must NOT be decoded when the ingress is not that foreign
     // protocol. `call_bb1<hex>` looks busbar-shaped under the OpenAI prefix, but for an Anthropic
     // ingress the only valid prefix is `toolu_`, so it stays verbatim (no silent corruption).
-    let foreign_shaped = format!(
-        "call_{TOOL_ID_REMAP_MARKER}{}",
-        crate::codec::hex::encode("x")
-    );
+    let foreign_shaped = format!("call_{TOOL_ID_REMAP_MARKER}{}", ::hex::encode("x"));
     assert_eq!(
         decode_native_tool_id("anthropic", &foreign_shaped),
         None,
         "a foreign-prefix busbar-shaped id must not be decoded on a non-matching ingress"
     );
-    let bare_shaped = format!("{TOOL_ID_REMAP_MARKER}{}", crate::codec::hex::encode("y"));
+    let bare_shaped = format!("{TOOL_ID_REMAP_MARKER}{}", ::hex::encode("y"));
     assert_eq!(
         decode_native_tool_id("anthropic", &bare_shaped),
         None,

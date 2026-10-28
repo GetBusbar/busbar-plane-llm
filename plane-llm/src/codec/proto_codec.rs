@@ -1227,10 +1227,7 @@ impl ToolIdRemap {
         if let Some(existing) = self.map.get(egress_id) {
             return existing.clone();
         }
-        let native = format!(
-            "{prefix}{TOOL_ID_REMAP_MARKER}{}",
-            crate::codec::hex::encode(egress_id)
-        );
+        let native = format!("{prefix}{TOOL_ID_REMAP_MARKER}{}", ::hex::encode(egress_id));
         // Bounded retention. The encode above is a pure, deterministic function of
         // (ingress prefix, egress id), so the map is a memo, NOT a correctness crutch: past the cap
         // the SAME native id is returned, just not remembered, and `decode_native_tool_id` still
@@ -1323,7 +1320,7 @@ pub fn decode_native_tool_id(ingress_protocol: &str, id: &str) -> Option<String>
         return None;
     }
     // A valid busbar id has an even-length lowercase-hex tail; reject anything else so a genuine
-    // client id that merely happens to start with `<prefix>bb1` is not mangled. `crate::codec::hex::decode` itself
+    // client id that merely happens to start with `<prefix>bb1` is not mangled. `hex::decode` itself
     // accepts UPPERCASE hex, but `native_for` only ever emits lowercase, so an uppercase (or mixed)
     // tail can only come from a client-authored id — guard it out BEFORE decoding, else a client id
     // of shape `<prefix>bb1<even-UPPERCASE-hex>` that happens to decode to valid UTF-8 would be
@@ -1334,7 +1331,7 @@ pub fn decode_native_tool_id(ingress_protocol: &str, id: &str) -> Option<String>
     {
         return None;
     }
-    let bytes = crate::codec::hex::decode(hexpart)?;
+    let bytes = ::hex::decode(hexpart).ok()?;
     String::from_utf8(bytes).ok()
 }
 

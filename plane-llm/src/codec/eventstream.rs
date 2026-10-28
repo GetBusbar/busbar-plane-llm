@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE LLM PLANE'S OWN COPY of the AWS event-stream framing codec (#83a SD-3: dialect machinery —
-//! only the Bedrock dialect and its stream translator speak it). The CRC32 it frames with is this
-//! plane's own table implementation ([`crate::codec::crc32`]), with the standard check vectors pinned; the
+//! only the Bedrock dialect and its stream translator speak it). The CRC32 it frames with is
+//! `crc32fast` (CRC-32/ISO-HDLC); the
 //! drift test beside this module holds every encoded frame byte-identical to the frames the host's
 //! copy wrote (the host's copy is deleted: no host code frames event streams).
 //!
@@ -576,14 +576,14 @@ fn frame_close(mut frame: Vec<u8>, payload: &[u8]) -> Vec<u8> {
     frame[4..8].copy_from_slice(&(headers_len as u32).to_be_bytes());
 
     // prelude_crc = CRC32 of the first 8 bytes (the two length fields).
-    let prelude_crc = crate::codec::crc32::hash(&frame[..8]);
+    let prelude_crc = crc32fast::hash(&frame[..8]);
     frame[8..12].copy_from_slice(&prelude_crc.to_be_bytes());
 
     frame.extend_from_slice(payload);
 
     // message_crc = CRC32 of everything from byte 0 through the end of the payload (i.e. the whole
     // frame written so far, which is prelude + prelude_crc + headers + payload).
-    let message_crc = crate::codec::crc32::hash(&frame);
+    let message_crc = crc32fast::hash(&frame);
     frame.extend_from_slice(&message_crc.to_be_bytes());
 
     frame
