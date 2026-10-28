@@ -2640,7 +2640,7 @@ mod rehomed_answers {
     /// RED: SSE text over a binary stream, a bad CRC, or the detail lost from the payload.
     #[test]
     fn test_bedrock_ingress_mid_stream_error_is_binary_exception_frame() {
-        let crc = busbar_plane_llm::codec::crc32::hash;
+        let crc = crc32fast::hash;
         let bytes =
             wire::mid_stream_error_bytes(HOST, "bedrock", true, "connection reset by peer", None);
         assert!(!bytes.starts_with(b"event:") && !bytes.starts_with(b"data:"));
