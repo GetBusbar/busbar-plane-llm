@@ -140,69 +140,7 @@ impl ProtocolReader for BedrockReader {
 
     #[cfg(test)]
     fn classify(&self, status: StatusCode, body: &[u8]) -> CanonicalSignal {
-        let text = String::from_utf8_lossy(body);
-        let lower = text.to_lowercase();
-
-        // Keep this set of context-length phrasings in LOCKSTEP with the production
-        // `extract_error` above (the third `exceeds the maximum` pattern was once added there but
-        // not here, drifting the two). All three must match identically so the test-only classifier
-        // mirrors what the breaker actually sees. The `status == 400` gate is ALSO part of that
-        // lockstep: `extract_error` only runs the body-scan override on a 400
-        // ValidationException, so a 5xx body that happens to echo context-length phrasing must NOT
-        // be reclassified as ContextLength here either — it falls through to the ServerError arm
-        // below.
-        if status == StatusCode::BAD_REQUEST
-            && (lower.contains("input is longer than the maximum number of tokens")
-                || (lower.contains(keys::MAXIMUM_TOKENS) && lower.contains(keys::REQUESTED))
-                || (lower.contains("exceeds the maximum")
-                    && (lower.contains(keys::TOKEN) || lower.contains(keys::CONTEXT))))
-        {
-            return CanonicalSignal {
-                class: StatusClass::ContextLength,
-                provider_signal: Some(
-                    busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH.to_string(),
-                ),
-                retry_after: None,
-            };
-        }
-
-        if status == StatusCode::TOO_MANY_REQUESTS {
-            return CanonicalSignal {
-                class: StatusClass::RateLimit,
-                provider_signal: Some("429".to_string()),
-                retry_after: None,
-            };
-        }
-
-        if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-            return CanonicalSignal {
-                class: StatusClass::Auth,
-                provider_signal: Some(keys::AUTH_WORD.to_string()),
-                retry_after: None,
-            };
-        }
-
-        if status.is_server_error() {
-            return CanonicalSignal {
-                class: StatusClass::ServerError,
-                provider_signal: Some("5xx".to_string()),
-                retry_after: None,
-            };
-        }
-
-        if status.is_client_error() {
-            return CanonicalSignal {
-                class: StatusClass::ClientError,
-                provider_signal: Some(format!("{}", status.as_u16())),
-                retry_after: None,
-            };
-        }
-
-        CanonicalSignal {
-            class: StatusClass::ClientError,
-            provider_signal: None,
-            retry_after: None,
-        }
+        crate::codec::dialect_classify::bedrock(status, body)
     }
 
     fn read_request(
