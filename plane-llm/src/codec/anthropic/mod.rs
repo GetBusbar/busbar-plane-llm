@@ -1691,12 +1691,16 @@ fn write_tool(tool: &crate::codec::ir::IrTool) -> Option<serde_json::Value> {
 /// that block projects to NO frame at all, exactly as every sibling writer already does. The
 /// `BlockStop` arm carries only the integer index and no block kind, so without this set it cannot
 /// tell a suppressed index from an opened one and would close a block the client never saw opened.
-/// Mirrors `BedrockWriter`'s identically-shaped guard, down to the `Mutex` (which keeps the writer
-/// `Sync` as `ProtocolWriter` requires; a stream is single-threaded at any instant, so contention
-/// never happens in practice) and the poisoning degradation to a no-op / `false` rather than a panic
-/// on the request path.
+/// Mirrors `BedrockWriter`'s identically-shaped guard.
+#[derive(Clone)]
 pub struct AnthropicWriter {
-    open_block_indices: std::sync::Mutex<std::collections::BTreeSet<usize>>,
+    stream: StreamCell<AnthropicStream>,
+}
+
+/// An Anthropic stream's per-stream state (see [`AnthropicWriter`]).
+#[derive(Clone)]
+struct AnthropicStream {
+    open_block_indices: std::collections::BTreeSet<usize>,
     /// THIS STREAM'S `message.id`, minted ONCE and replayed on every later `message_start`.
     ///
     /// A stream is not guaranteed to carry exactly one `MessageStart`: five of the six readers gate
@@ -1705,7 +1709,7 @@ pub struct AnthropicWriter {
     /// `msg_` id, so one message announced itself twice under two different identities and an SDK
     /// that latched the first was left holding an id nothing else in the stream ever mentions. A
     /// native stream's id is fixed for the life of the message, so the first one wins.
-    message_id: std::sync::Mutex<Option<String>>,
+    message_id: Option<String>,
 }
 
 /// Value-namespace constructor for [`AnthropicWriter`], mirroring `BedrockWriter`'s and
@@ -1717,8 +1721,10 @@ pub struct AnthropicWriter {
 #[allow(non_upper_case_globals)]
 #[allow(clippy::declare_interior_mutable_const)]
 pub const AnthropicWriter: AnthropicWriter = AnthropicWriter {
-    open_block_indices: std::sync::Mutex::new(std::collections::BTreeSet::new()),
-    message_id: std::sync::Mutex::new(None),
+    stream: StreamCell::new(AnthropicStream {
+        open_block_indices: std::collections::BTreeSet::new(),
+        message_id: None,
+    }),
 };
 
 /// A FRESH writer as a VALUE, for the one-shot `write_request` / `write_response` calls the test
@@ -1733,26 +1739,6 @@ pub(crate) fn anthropic_writer() -> AnthropicWriter {
     AnthropicWriter
 }
 
-impl Clone for AnthropicWriter {
-    fn clone(&self) -> Self {
-        // Carry the open-index set across a clone so a mid-stream `Protocol::clone` keeps the
-        // open/close correlation; a poisoned lock degrades to an empty set rather than panicking.
-        AnthropicWriter {
-            open_block_indices: std::sync::Mutex::new(
-                self.open_block_indices
-                    .lock()
-                    .map(|set| set.clone())
-                    .unwrap_or_default(),
-            ),
-            // A mid-stream clone is still the SAME message, so the id it already announced comes
-            // with it — otherwise the clone would mint a new one on the next `message_start`.
-            message_id: std::sync::Mutex::new(
-                self.message_id.lock().map(|id| id.clone()).unwrap_or(None),
-            ),
-        }
-    }
-}
-
 impl AnthropicWriter {
     /// THE STREAM'S `message.id`: the first one wins.
     ///
@@ -1761,10 +1747,11 @@ impl AnthropicWriter {
     /// already has instead of announcing a second one. Lock poisoning degrades to the freshly
     /// minted id rather than panicking on the request path.
     fn carried_message_id(&self, mint: impl FnOnce() -> String) -> String {
-        match self.message_id.lock() {
-            Ok(mut slot) => slot.get_or_insert_with(mint).clone(),
-            Err(_) => mint(),
-        }
+        self.stream
+            .lock()
+            .message_id
+            .get_or_insert_with(mint)
+            .clone()
     }
 
     /// Record that a `content_block_start` was WRITTEN for IR block `index`, so it owes a closing
@@ -1773,20 +1760,14 @@ impl AnthropicWriter {
     /// is what keeps a second delta from writing a duplicate start for a block already open on the
     /// wire. Lock poisoning degrades to `false` rather than panicking.
     fn mark_block_open(&self, index: usize) -> bool {
-        self.open_block_indices
-            .lock()
-            .map(|mut set| set.insert(index))
-            .unwrap_or(false)
+        self.stream.lock().open_block_indices.insert(index)
     }
 
     /// Consume the open record for `index`, returning whether this writer opened it (and so owes
     /// the closing frame). An untracked index is a block whose start had no Anthropic projection.
     /// Lock poisoning degrades to `false` — closing nothing — rather than panicking.
     fn take_block_open(&self, index: usize) -> bool {
-        self.open_block_indices
-            .lock()
-            .map(|mut set| set.remove(&index))
-            .unwrap_or(false)
+        self.stream.lock().open_block_indices.remove(&index)
     }
 }
 
