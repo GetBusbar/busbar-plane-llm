@@ -2119,12 +2119,10 @@ impl super::proto_codec::StreamFraming for BedrockStreamFraming {
 /// integer index, no block kind, so without this it cannot tell an untracked index (Image, whose
 /// start was suppressed) from a tracked one, and previously closed EVERY index unconditionally —
 /// emitting an orphan `contentBlockStop` for a block a real ConverseStream client never saw opened.
-/// `Mutex` keeps the writer `Sync` as `ProtocolWriter` requires; a stream is single-threaded at any
-/// instant, so lock contention never happens in practice. Lock poisoning degrades to a no-op /
-/// `false` rather than panicking on the request path — mirrors `CohereWriter`'s identical guard
-/// (`cohere/mod.rs`).
+/// Mirrors `CohereWriter`'s identical guard (`cohere/mod.rs`).
+#[derive(Clone)]
 pub struct BedrockWriter {
-    open_block_indices: std::sync::Mutex<std::collections::BTreeSet<usize>>,
+    open_block_indices: StreamCell<std::collections::BTreeSet<usize>>,
 }
 
 /// Value-namespace constructor for [`BedrockWriter`], mirroring `CohereWriter`'s identically-shaped
@@ -2136,33 +2134,15 @@ pub struct BedrockWriter {
 #[allow(non_upper_case_globals)]
 #[allow(clippy::declare_interior_mutable_const)]
 pub const BedrockWriter: BedrockWriter = BedrockWriter {
-    open_block_indices: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+    open_block_indices: StreamCell::new(std::collections::BTreeSet::new()),
 };
-
-impl Clone for BedrockWriter {
-    fn clone(&self) -> Self {
-        // Carry the open-index set across a clone so a mid-stream `Protocol::clone` keeps the
-        // in-flight open/close correlation; a poisoned lock degrades to an empty set rather than
-        // panicking on the request path.
-        BedrockWriter {
-            open_block_indices: std::sync::Mutex::new(
-                self.open_block_indices
-                    .lock()
-                    .map(|set| set.clone())
-                    .unwrap_or_default(),
-            ),
-        }
-    }
-}
 
 impl BedrockWriter {
     /// Record that IR block `index` was OPENED and so owes a closing `contentBlockStop` (whether or
     /// not a `contentBlockStart` was actually emitted — Text/Thinking open implicitly, ToolUse emits
     /// a start). Lock poisoning degrades to a no-op rather than panicking on the request path.
     fn mark_block_open(&self, index: usize) {
-        if let Ok(mut set) = self.open_block_indices.lock() {
-            set.insert(index);
-        }
+        self.open_block_indices.lock().insert(index);
     }
 
     /// Return true and forget `index` if the block was opened (so its `BlockStop` must emit a
@@ -2171,10 +2151,7 @@ impl BedrockWriter {
     /// emit nothing. Lock poisoning degrades to `false` (suppress) rather than panicking on the
     /// request path.
     fn take_block_open(&self, index: usize) -> bool {
-        self.open_block_indices
-            .lock()
-            .map(|mut set| set.remove(&index))
-            .unwrap_or(false)
+        self.open_block_indices.lock().remove(&index)
     }
 }
 

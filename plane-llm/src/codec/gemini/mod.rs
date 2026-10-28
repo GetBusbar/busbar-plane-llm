@@ -1700,7 +1700,14 @@ struct GeminiOpenTool {
     args: String,
 }
 
+#[derive(Clone)]
 pub struct GeminiWriter {
+    stream: StreamCell<GeminiStream>,
+}
+
+/// A Gemini stream's per-stream state (see [`GeminiWriter`]).
+#[derive(Clone)]
+struct GeminiStream {
     /// The currently open streaming tool calls, one [`GeminiOpenTool`] per OPEN tool block:
     /// - `index` is the IR block index from the opening `BlockStart`, used to match subsequent
     ///   `BlockDelta`/`BlockStop` events to THE RIGHT tool block (parallel tool calls share no slot).
@@ -1712,11 +1719,7 @@ pub struct GeminiWriter {
     /// A `Vec` (not a map) keeps the dependency surface nil and the common case (0–2 open tools)
     /// trivially cheap; lookups are a linear scan over the open set, which is bounded by the upstream
     /// reader's own tool-frame cap.
-    ///
-    /// `Mutex` (not `Cell`) so the writer stays `Sync` as the `ProtocolWriter` trait requires; a
-    /// stream is single-threaded at any instant so contention is nil, and a poisoned lock degrades
-    /// to the stateless behavior rather than panicking on the request path.
-    open_tools: std::sync::Mutex<Vec<GeminiOpenTool>>,
+    open_tools: Vec<GeminiOpenTool>,
     /// THIS STREAM'S `responseId`, minted ONCE and replayed on every later identity frame.
     ///
     /// A stream is not guaranteed to carry exactly one `MessageStart`: the Anthropic reader emits
@@ -1724,21 +1727,19 @@ pub struct GeminiWriter {
     /// Anthropic ingress can see two. Without this cell the second synthesized a FRESH
     /// `responseId`, so one response announced itself twice under two different ids and the
     /// `google-genai` SDK's `chunk.response_id` changed mid-stream. A native Gemini stream's
-    /// `responseId` is fixed for the response, so the first one wins. Same `Mutex` /
-    /// poison-degrades discipline as `open_tools`.
-    response_id: std::sync::Mutex<Option<String>>,
+    /// `responseId` is fixed for the response, so the first one wins.
+    response_id: Option<String>,
     /// THIS STREAM'S answer text so far, and the byte offset each text block started at — what a
     /// streamed citation's CHARACTER offsets (the IR contract, relative to their own text block) are
     /// converted against to become the candidate-wide BYTE offsets Gemini's `citationSources` carry
-    /// (IR audit GEM-16), exactly as the buffered writer converts them. Same `Mutex` /
-    /// poison-degrades discipline as `open_tools`; a poisoned lock passes offsets through unconverted.
-    stream_text: std::sync::Mutex<GeminiStreamText>,
+    /// (IR audit GEM-16), exactly as the buffered writer converts them.
+    stream_text: GeminiStreamText,
     /// THIS STREAM'S TRANSLATION CAP: the byte ceiling one open tool's streamed `args` may reach
     /// (see the `InputJsonDelta` arm of `write_response_event`). The plane hands it from its own
     /// settings when it opens the stream
     /// ([`crate::codec::proto_codec::ProtocolWriter::set_translate_cap`]); until then,
     /// [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`].
-    translate_cap: std::sync::atomic::AtomicUsize,
+    translate_cap: usize,
 }
 
 /// The streamed answer text [`GeminiWriter::stream_text`] accumulates: the concatenated `text` and
@@ -1769,48 +1770,18 @@ struct GeminiStreamText {
 #[allow(non_upper_case_globals)]
 #[allow(clippy::declare_interior_mutable_const)]
 pub const GeminiWriter: GeminiWriter = GeminiWriter {
-    open_tools: std::sync::Mutex::new(Vec::new()),
-    response_id: std::sync::Mutex::new(None),
-    stream_text: std::sync::Mutex::new(GeminiStreamText {
-        text: String::new(),
-        block_starts: Vec::new(),
-        chars: 0,
-        marks: Vec::new(),
+    stream: StreamCell::new(GeminiStream {
+        open_tools: Vec::new(),
+        response_id: None,
+        stream_text: GeminiStreamText {
+            text: String::new(),
+            block_starts: Vec::new(),
+            chars: 0,
+            marks: Vec::new(),
+        },
+        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     }),
-    translate_cap: std::sync::atomic::AtomicUsize::new(
-        busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
-    ),
 };
-
-impl Clone for GeminiWriter {
-    fn clone(&self) -> Self {
-        // Preserve the in-flight open tool calls across a mid-stream `Protocol::clone` so the
-        // functionCall name/args correlation survives; a poisoned lock degrades to an empty buffer
-        // (stateless behavior) rather than panicking on the request path.
-        GeminiWriter {
-            open_tools: std::sync::Mutex::new(
-                self.open_tools
-                    .lock()
-                    .map(|t| t.clone())
-                    .unwrap_or_default(),
-            ),
-            // A mid-stream clone is still the SAME response, so it keeps the id already announced.
-            response_id: std::sync::Mutex::new(
-                self.response_id.lock().map(|id| id.clone()).unwrap_or(None),
-            ),
-            stream_text: std::sync::Mutex::new(
-                self.stream_text
-                    .lock()
-                    .map(|t| t.clone())
-                    .unwrap_or_default(),
-            ),
-            translate_cap: std::sync::atomic::AtomicUsize::new(
-                self.translate_cap
-                    .load(std::sync::atomic::Ordering::Relaxed),
-            ),
-        }
-    }
-}
 
 impl GeminiWriter {
     /// THE STREAM'S `responseId`: the first one wins. Returns the id already captured for this
@@ -1818,10 +1789,11 @@ impl GeminiWriter {
     /// frame re-states the id the client already has. Lock poisoning degrades to the freshly minted
     /// id rather than panicking on the request path.
     fn carried_response_id(&self, mint: impl FnOnce() -> String) -> String {
-        match self.response_id.lock() {
-            Ok(mut slot) => slot.get_or_insert_with(mint).clone(),
-            Err(_) => mint(),
-        }
+        self.stream
+            .lock()
+            .response_id
+            .get_or_insert_with(mint)
+            .clone()
     }
 }
 

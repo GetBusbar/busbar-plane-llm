@@ -16,8 +16,7 @@ fn model_part_frame(part: serde_json::Value) -> (String, serde_json::Value) {
 impl ProtocolWriter for GeminiWriter {
     /// Latch the stream's translation cap, the one its plane's settings carry.
     fn set_translate_cap(&self, cap: usize) {
-        self.translate_cap
-            .store(cap, std::sync::atomic::Ordering::Relaxed);
+        self.stream.lock().translate_cap = cap;
     }
 
     /// No image-fidelity slot: an image's `detail` is dropped, with the seam's warn.
@@ -947,7 +946,8 @@ impl ProtocolWriter for GeminiWriter {
                 refusal: _,
             } => match block {
                 crate::codec::ir::IrBlockMeta::ToolUse { id, name } => {
-                    if let Ok(mut guard) = self.open_tools.lock() {
+                    {
+                        let guard = &mut self.stream.lock().open_tools;
                         let open_count = guard.len();
                         match guard.iter_mut().find(|t| t.index == *index) {
                             Some(entry) => {
@@ -992,16 +992,15 @@ impl ProtocolWriter for GeminiWriter {
                     // The copy is bounded by this stream's `translate_cap` (the same live limit the
                     // tool-argument buffer holds): a fragment that would cross it is not recorded, so
                     // a citation past that point anchors against the text held, clamping to its end.
-                    if let Ok(mut st) = self.stream_text.lock() {
-                        let cap = self
-                            .translate_cap
-                            .load(std::sync::atomic::Ordering::Relaxed);
+                    {
+                        let mut stream = self.stream.lock();
+                        let cap = stream.translate_cap;
+                        let st = &mut stream.stream_text;
                         if st.text.len().saturating_add(text.len()) <= cap {
                             let start = st.text.len();
                             if !st.block_starts.iter().any(|(i, _)| i == index) {
                                 st.block_starts.push((*index, start));
                             }
-                            let st = &mut *st;
                             extend_char_marks(&mut st.marks, &mut st.chars, start, text);
                             st.text.push_str(text);
                         }
@@ -1047,13 +1046,12 @@ impl ProtocolWriter for GeminiWriter {
                 // unparseable accumulation, cap-truncated or not) — the call is never lost and its name
                 // always survives, so this introduces no new failure mode.
                 crate::codec::ir::IrDelta::InputJsonDelta(json_str) => {
-                    if let Ok(mut guard) = self.open_tools.lock() {
+                    {
+                        let mut stream = self.stream.lock();
+                        let cap = stream.translate_cap;
                         if let Some(GeminiOpenTool { args, .. }) =
-                            guard.iter_mut().find(|t| t.index == *index)
+                            stream.open_tools.iter_mut().find(|t| t.index == *index)
                         {
-                            let cap = self
-                                .translate_cap
-                                .load(std::sync::atomic::Ordering::Relaxed);
                             if args.len().saturating_add(json_str.len()) <= cap {
                                 args.push_str(json_str);
                             }
@@ -1111,8 +1109,10 @@ impl ProtocolWriter for GeminiWriter {
                         // before; the `raw` short-circuit keeps a Gemini-sourced source byte-exact.
                         // The stream's text is indexed as it grew, so each offset converts in at
                         // most one index stride of work rather than a walk of the block.
-                        let sources: Vec<serde_json::Value> = match self.stream_text.lock() {
-                            Ok(st) => {
+                        let sources: Vec<serde_json::Value> = {
+                            let stream = self.stream.lock();
+                            let st = &stream.stream_text;
+                            {
                                 let start = st
                                     .block_starts
                                     .iter()
@@ -1140,10 +1140,6 @@ impl ProtocolWriter for GeminiWriter {
                                         .collect(),
                                 }
                             }
-                            Err(_) => citations
-                                .iter()
-                                .map(|c| write_gemini_citation(c, None))
-                                .collect(),
                         };
                         Some((
                             "".to_string(),
@@ -1183,12 +1179,12 @@ impl ProtocolWriter for GeminiWriter {
             // matched entry is REMOVED so parallel tool blocks each flush exactly once. A poisoned
             // lock degrades to no frame rather than panicking on the request path.
             IrStreamEvent::BlockStop { index } => {
-                let flushed = match self.open_tools.lock() {
-                    Ok(mut guard) => guard.iter().position(|t| t.index == *index).map(|pos| {
+                let flushed = {
+                    let guard = &mut self.stream.lock().open_tools;
+                    guard.iter().position(|t| t.index == *index).map(|pos| {
                         let t = guard.remove(pos);
                         (t.id, t.name, t.args)
-                    }),
-                    Err(_) => None,
+                    })
                 };
                 flushed.map(|(id, name, args_str)| {
                     // Parse the fully reassembled arg string. An empty buffer (zero-arg call) or an
