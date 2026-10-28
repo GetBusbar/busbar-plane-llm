@@ -27,6 +27,9 @@ serde_json = { workspace = true }
 # The codecs' serializer: byte identity depends on one serializer for escaping and numbers.
 sonic-rs = { workspace = true }
 bytes = { workspace = true }
+# The event-stream frame checksum (CRC-32/ISO-HDLC) and the synthesized-id hex codec.
+crc32fast = { workspace = true }
+hex = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

@@ -109,7 +109,7 @@ fn test_encode_crcs_are_real() {
 
     // prelude_crc lives at bytes [8..12] and covers bytes [0..8].
     let prelude_crc = u32::from_be_bytes([frame[8], frame[9], frame[10], frame[11]]);
-    let expected_prelude = crate::codec::crc32::hash(&frame[..8]);
+    let expected_prelude = crc32fast::hash(&frame[..8]);
     assert_eq!(
         prelude_crc, expected_prelude,
         "prelude CRC is the real CRC32"
@@ -125,7 +125,7 @@ fn test_encode_crcs_are_real() {
         frame[len - 2],
         frame[len - 1],
     ]);
-    let expected_message = crate::codec::crc32::hash(&frame[..len - 4]);
+    let expected_message = crc32fast::hash(&frame[..len - 4]);
     assert_eq!(
         message_crc, expected_message,
         "message CRC is the real CRC32"
@@ -381,7 +381,7 @@ fn test_encode_exception_frame_is_valid() {
     assert_eq!(total_len, frame.len(), "total_len matches frame bytes");
     // prelude CRC over [0..8] is real.
     let prelude_crc = u32::from_be_bytes([frame[8], frame[9], frame[10], frame[11]]);
-    assert_eq!(prelude_crc, crate::codec::crc32::hash(&frame[..8]));
+    assert_eq!(prelude_crc, crc32fast::hash(&frame[..8]));
     // message CRC over [0..len-4] is real.
     let len = frame.len();
     let msg_crc = u32::from_be_bytes([
@@ -390,10 +390,7 @@ fn test_encode_exception_frame_is_valid() {
         frame[len - CRC_BYTES + 2],
         frame[len - CRC_BYTES + 3],
     ]);
-    assert_eq!(
-        msg_crc,
-        crate::codec::crc32::hash(&frame[..len - CRC_BYTES])
-    );
+    assert_eq!(msg_crc, crc32fast::hash(&frame[..len - CRC_BYTES]));
     // Header block carries the exception markers.
     let headers_len = u32::from_be_bytes([frame[4], frame[5], frame[6], frame[7]]) as usize;
     let headers = String::from_utf8_lossy(&frame[PRELUDE_LEN..PRELUDE_LEN + headers_len]);
@@ -533,10 +530,10 @@ fn test_drain_frames_minimum_valid_frame() {
     let mut frame = Vec::with_capacity(16); // golden wire-contract literal (kept bare on purpose)
     frame.extend_from_slice(&16u32.to_be_bytes()); // golden wire-contract literal (kept bare on purpose): total_len = 16 (the minimum valid value)
     frame.extend_from_slice(&0u32.to_be_bytes()); // headers_len = 0
-    let prelude_crc = crate::codec::crc32::hash(&frame[..8]);
+    let prelude_crc = crc32fast::hash(&frame[..8]);
     frame.extend_from_slice(&prelude_crc.to_be_bytes()); // prelude CRC over [0..8]
                                                          // No headers, no payload. message_crc over everything written so far ([0..12]).
-    let message_crc = crate::codec::crc32::hash(&frame);
+    let message_crc = crc32fast::hash(&frame);
     frame.extend_from_slice(&message_crc.to_be_bytes());
     assert_eq!(
         frame.len(),
@@ -583,11 +580,11 @@ fn test_encode_frame_byte_for_byte_matches_reference() {
     let mut want = Vec::new();
     want.extend_from_slice(&(total_len as u32).to_be_bytes()); // total_len
     want.extend_from_slice(&(headers_len as u32).to_be_bytes()); // headers_len
-    let prelude_crc = crate::codec::crc32::hash(&want[..8]); // prelude CRC over the two length fields
+    let prelude_crc = crc32fast::hash(&want[..8]); // prelude CRC over the two length fields
     want.extend_from_slice(&prelude_crc.to_be_bytes());
     want.extend_from_slice(&headers);
     want.extend_from_slice(payload);
-    let message_crc = crate::codec::crc32::hash(&want); // message CRC over everything written so far
+    let message_crc = crc32fast::hash(&want); // message CRC over everything written so far
     want.extend_from_slice(&message_crc.to_be_bytes());
 
     assert_eq!(
@@ -765,10 +762,10 @@ fn test_drain_frames_two_byte_payload_no_headers() {
     let mut frame = Vec::with_capacity(total_len as usize);
     frame.extend_from_slice(&total_len.to_be_bytes());
     frame.extend_from_slice(&0u32.to_be_bytes()); // headers_len = 0
-    let prelude_crc = crate::codec::crc32::hash(&frame[..8]);
+    let prelude_crc = crc32fast::hash(&frame[..8]);
     frame.extend_from_slice(&prelude_crc.to_be_bytes());
     frame.extend_from_slice(payload);
-    let message_crc = crate::codec::crc32::hash(&frame);
+    let message_crc = crc32fast::hash(&frame);
     frame.extend_from_slice(&message_crc.to_be_bytes());
     assert_eq!(frame.len(), 18); // golden wire-contract literal (kept bare on purpose)
 

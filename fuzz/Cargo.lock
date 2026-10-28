@@ -91,6 +91,8 @@ version = "1.6.0"
 dependencies = [
  "busbar-contract",
  "bytes",
+ "crc32fast",
+ "hex",
  "serde",
  "serde_json",
  "sonic-rs",
@@ -128,6 +130,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "crc32fast"
+version = "1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
+dependencies = [
+ "cfg-if",
 ]
 
 [[package]]

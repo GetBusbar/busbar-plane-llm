@@ -834,7 +834,7 @@ fn cohere_prompt_tokens(usage: &crate::codec::ir::IrUsage) -> u64 {
 /// a native one. The caller is responsible for having already stamped the version/variant bits.
 fn format_uuid_layout(bytes: &[u8; 16]) -> String {
     // One allocation for the 32-char lowercase hex string (no per-byte `format!`).
-    let s = crate::codec::hex::encode(bytes);
+    let s = ::hex::encode(bytes);
     format!(
         "{}-{}-{}-{}-{}",
         &s[0..8],

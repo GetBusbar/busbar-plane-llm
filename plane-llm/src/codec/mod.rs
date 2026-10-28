@@ -129,9 +129,6 @@ pub mod carry;
 /// The wire words two or more dialects spell alike, one const each.
 pub mod keys;
 
-/// The plane's own CRC-32 (the event-stream framing checksum).
-pub mod crc32;
-
 /// The dialects' shared wire helpers: the OpenAI-family error helpers, the SSE `[DONE]` terminator
 /// and frame probe/parse/write, the base62 id alphabet, the `usage` stripper.
 pub mod dialect;
@@ -145,9 +142,6 @@ pub mod drops;
 
 /// The AWS event-stream framing codec the signing dialect streams in.
 pub mod eventstream;
-
-/// The plane's own hex codec for synthesized wire ids.
-pub mod hex;
 
 /// The plane's own depth-guarded JSON seam.
 pub mod json;
