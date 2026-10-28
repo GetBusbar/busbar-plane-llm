@@ -14,9 +14,10 @@
 use std::borrow::Cow;
 
 use busbar_contract::operation::OpVerb;
-use busbar_contract::protocol::{HeadFields, ProtocolDecl, KIND_INVALID_REQUEST, KIND_NOT_FOUND};
+use busbar_contract::protocol::{HeadFields, KIND_INVALID_REQUEST, KIND_NOT_FOUND};
 use serde_json::Value;
 
+use super::decl;
 use crate::codec::gemini::STREAM_QUERY;
 use crate::codec::proto_codec::{PROTO_BEDROCK, PROTO_GEMINI};
 use crate::codec::DECLS;
@@ -135,10 +136,6 @@ impl Catalogue for () {
     fn provider_of(&self, _model: &str) -> Option<&str> {
         None
     }
-}
-
-fn decl(name: &str) -> Option<&'static ProtocolDecl> {
-    DECLS.iter().copied().find(|d| d.name == name)
 }
 
 /// THE DETECTION FOLD: every dialect's claim on `(fields, path)`, the tightest winning, a tie going

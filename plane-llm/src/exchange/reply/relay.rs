@@ -14,17 +14,14 @@ use std::collections::BTreeMap;
 
 use busbar_contract::billing::{Billing, TokenUsage};
 use busbar_contract::codec::{OperationHandler, UsageTapFault};
-use busbar_contract::protocol::{ArrayStreamFramer, ProtocolDecl};
+use busbar_contract::protocol::ArrayStreamFramer;
 use serde_json::Value;
 
 use super::wire;
 use crate::codec::proto_stream::StreamTranslate;
 use crate::codec::usage_tail::StopKeyScanner;
 use crate::codec::DECLS;
-
-fn decl(name: &str) -> Option<&'static ProtocolDecl> {
-    DECLS.iter().copied().find(|d| d.name == name)
-}
+use crate::exchange::decl;
 
 /// Where a relayed answer's content type comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
