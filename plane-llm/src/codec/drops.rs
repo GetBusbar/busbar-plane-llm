@@ -673,15 +673,27 @@ pub struct Carried {
     /// Paths INSIDE a carried subtree that the dialect's code does not carry (a member of a block
     /// the dialect models, a vendor detail under a member it reads): named like any other drop.
     /// Sorted ascending: the walk asks it of every member of every stream frame, so it is searched,
-    /// never scanned (Responses lists 763 stream paths; test
-    /// `every_drop_list_is_sorted_for_the_walks_search`).
+    /// never scanned (test `every_drop_list_is_sorted_for_the_walks_search`). A path under a
+    /// `reroot` prefix is listed as its re-rooted spelling.
     pub drops: &'static [&'static str],
+    /// Stream frames whose member restates an answer's (a Responses `output_item` frame's `item`
+    /// is an `output[]` element): such paths are read in the answer's list, which is stated once.
+    pub reroot: Option<Reroot>,
     /// The request defaults the far end ECHOES in its answer, each a member's key and its default
     /// as JSON text (`("tool_choice", "\"auto\"")`). A member equal to its default carries nothing
     /// the caller set, so its drop is no unrepresentable control and the walk does not name it;
     /// any other value of it is named like every drop (a dropped value
     /// equal to the protocol default, or an echoed default, writes no audit row).
     pub defaults: &'static [(&'static str, &'static str)],
+}
+
+/// Where a stream's paths re-root onto its answer's: each `(from, to)` spells a path at or under
+/// `from` as the same path under `to`, looked up in the stream's `drops` and in `answer_drops`.
+/// The walk names the path as the wire spells it (the warn and the audit row are unchanged).
+#[derive(Clone, Copy, Debug)]
+pub struct Reroot {
+    pub at: &'static [(&'static str, &'static str)],
+    pub answer_drops: &'static [&'static str],
 }
 
 /// What a TRANSLATE attempt walks for one dialect, declared as data: its request field table (its
@@ -761,15 +773,50 @@ impl Carried {
         self.map.iter().chain(self.code.iter())
     }
 
+    /// `path` as the drop lists spell it, and the answer's list it is read in too when it lies
+    /// under a `reroot` prefix.
+    fn spelled<'p>(&self, path: &'p str) -> (Cow<'p, str>, &'static [&'static str]) {
+        let Some(r) = self.reroot else {
+            return (Cow::Borrowed(path), &[]);
+        };
+        match r
+            .at
+            .iter()
+            .find(|(from, _)| path == *from || under(path, from))
+        {
+            Some((from, to)) => (
+                Cow::Owned(format!("{to}{}", &path[from.len()..])),
+                r.answer_drops,
+            ),
+            None => (Cow::Borrowed(path), &[]),
+        }
+    }
+
+    /// The listed drops that start with `prefix` (already spelled): one contiguous run of each
+    /// sorted list.
+    fn listed<'a>(
+        &'a self,
+        prefix: &'a str,
+        answer: &'static [&'static str],
+    ) -> impl Iterator<Item = &'a &'static str> {
+        prefixed(self.drops, prefix).chain(prefixed(answer, prefix))
+    }
+
+    /// A `reroot` prefix lies under `path`: drops are held below it.
+    fn reroots_below(&self, path: &str) -> bool {
+        self.reroot
+            .is_some_and(|r| r.at.iter().any(|(from, _)| under(from, path)))
+    }
+
     fn cover(&self, path: &str) -> Cover {
-        // ONE search of the drop list: the run of drops that start with `path` begins with `path`
-        // itself when it is listed (the list is sorted, and `path` sorts before every longer path
-        // it begins), so the exact test and the held-drop test read the same run.
-        let mut run = prefixed(self.drops, path).peekable();
-        if run.next_if(|d| **d == path).is_some() {
+        let (spelled, answer) = self.spelled(path);
+        let spelled = &*spelled;
+        let exact = |list: &[&str]| list.binary_search_by(|d| (*d).cmp(spelled)).is_ok();
+        if exact(self.drops) || exact(answer) {
             return Cover::Unmapped;
         }
-        let holds_drop = run.any(|d| under(d, path));
+        let holds_drop =
+            self.reroots_below(path) || self.listed(spelled, answer).any(|d| under(d, spelled));
         let carried = self.rows().any(|q| path == *q || under(path, q));
         if carried {
             return if holds_drop {
@@ -795,7 +842,15 @@ impl Carried {
     /// The objects at `path` are a union keyed by their `type` member (notation A `type=<arm>`).
     fn uses_arms(&self, path: &str) -> bool {
         let arm = join(path, "type=");
-        self.rows().any(|q| q.starts_with(&arm)) || prefixed(self.drops, &arm).next().is_some()
+        if self.rows().any(|q| q.starts_with(&arm))
+            || self
+                .reroot
+                .is_some_and(|r| r.at.iter().any(|(from, _)| from.starts_with(&arm)))
+        {
+            return true;
+        }
+        let (spelled, answer) = self.spelled(&arm);
+        self.listed(&spelled, answer).next().is_some()
     }
 
     /// Whether the walk names the member at `path` (or the member above it that holds it) when an
