@@ -24,7 +24,7 @@ pub const CODE_INVALID_API_KEY: &str = "invalid_api_key";
 /// Busbar-internal `provider_signal` label for a context-length result (the LANE label, not the
 /// OpenAI wire code). Distinct from `proxy::PROVIDER_CODE_CONTEXT_LENGTH` ("context_length_exceeded"),
 /// which is the provider-facing code extracted from the request body. Its referent is the
-/// bearer-envelope classifier test mirror ([`bearer_error_classify`]) below.
+/// bearer-envelope classifier test mirror (`dialect_classify::bearer`).
 #[cfg(test)]
 pub const PROVIDER_SIGNAL_CONTEXT_LENGTH: &str = "context_length";
 
@@ -165,96 +165,6 @@ pub fn bearer_error_code(error_type: &str) -> serde_json::Value {
             let _ = other;
             serde_json::Value::Null
         }
-    }
-}
-
-/// Canonical bearer-envelope error classification, shared verbatim by `OpenAiReader::classify` and
-/// `ResponsesReader::classify` (the two were word-for-word identical). Both surfaces emit the same
-/// OpenAI error envelope, so the mapping — context-length-exceeded (fail over without penalty) first,
-/// then 429→RateLimit, 401/403→Auth, 5xx→ServerError, other 4xx→ClientError — is single-sourced here,
-/// beside [`bearer_error_code`], so neither dialect imports the other (design F3 SELF-CONTAINED).
-///
-/// `status` is the HTTP status code. It is test-only (the production
-/// classification path is `OpenAiReader::extract_error` / `ResponsesReader::extract_error`, which this
-/// mirrors for the confinement/parity test suite), so it stays `#[cfg(test)]` here exactly as it was
-/// `#[cfg(any(test, feature = "test-support"))]` in the substrate — no other crate named it.
-#[cfg(test)]
-pub(crate) fn bearer_error_classify(
-    status: u16,
-    body: &[u8],
-) -> busbar_contract::upstream::CanonicalSignal {
-    use crate::codec::keys;
-    use busbar_contract::upstream::{CanonicalSignal, StatusClass};
-    // context-length-exceeded — the lane is healthy; this must fail over (to a larger-context
-    // model), not penalize the breaker. Detect by OpenAI code/message first.
-    let code_is_context = crate::codec::json::parse::<serde_json::Value>(body)
-        .ok()
-        .and_then(|j| {
-            j.get(keys::ERROR_WORD)
-                .and_then(|e| e.get(keys::CODE))
-                .and_then(|c| c.as_str())
-                .map(|s| s.to_string())
-        })
-        .as_deref()
-        == Some(busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH);
-    // Mirror production `extract_error`: the prose message scan is GATED to the HTTP statuses an
-    // oversized request actually uses (400 invalid_request_error; 413 payload-too-large). Without the
-    // gate a 401/429/5xx whose prose happens to contain "maximum context length" would reclassify as
-    // ContextLength — letting a genuine auth/rate-limit/server failure escape fault attribution. The
-    // structured `code: "context_length_exceeded"` path is NOT gated (it is unambiguous).
-    //
-    // The scan itself is the shared one and not a clause of its own: production runs all four
-    // phrasings through `context_length_prose_scan`, and a copy here that carried only the
-    // first was a mirror that showed a different picture. Every test proving oversized-request
-    // failover through this function was then proving behaviour production does not have, for three
-    // of the four phrasings the providers actually send.
-    let oversized = status == 400 || status == 413;
-    let prose_is_context =
-        oversized && context_length_prose_scan(&String::from_utf8_lossy(body).to_lowercase());
-    if code_is_context || prose_is_context {
-        return CanonicalSignal {
-            class: StatusClass::ContextLength,
-            provider_signal: Some(PROVIDER_SIGNAL_CONTEXT_LENGTH.to_string()),
-            retry_after: None,
-        };
-    }
-
-    if status == 429 {
-        return CanonicalSignal {
-            class: StatusClass::RateLimit,
-            provider_signal: Some("429".to_string()),
-            retry_after: None,
-        };
-    }
-
-    if status == 401 || status == 403 {
-        return CanonicalSignal {
-            class: StatusClass::Auth,
-            provider_signal: Some(keys::AUTH_WORD.to_string()),
-            retry_after: None,
-        };
-    }
-
-    if (500..600).contains(&status) {
-        return CanonicalSignal {
-            class: StatusClass::ServerError,
-            provider_signal: Some("5xx".to_string()),
-            retry_after: None,
-        };
-    }
-
-    if (400..500).contains(&status) {
-        return CanonicalSignal {
-            class: StatusClass::ClientError,
-            provider_signal: Some(format!("{status}")),
-            retry_after: None,
-        };
-    }
-
-    CanonicalSignal {
-        class: StatusClass::ClientError,
-        provider_signal: None,
-        retry_after: None,
     }
 }
 

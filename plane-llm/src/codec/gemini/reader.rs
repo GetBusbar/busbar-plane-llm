@@ -233,63 +233,7 @@ impl ProtocolReader for GeminiReader {
 
     #[cfg(test)]
     fn classify(&self, status: StatusCode, body: &[u8]) -> CanonicalSignal {
-        let text = String::from_utf8_lossy(body);
-        let lower = text.to_lowercase();
-
-        // context-length-exceeded via message pattern
-        if lower.contains("input is longer than the maximum number of tokens")
-            || (lower.contains(keys::MAXIMUM_TOKENS) && lower.contains(keys::REQUESTED))
-        {
-            return CanonicalSignal {
-                class: StatusClass::ContextLength,
-                provider_signal: Some(
-                    busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH.to_string(),
-                ),
-                retry_after: None,
-            };
-        }
-
-        // 429 → RateLimit
-        if status == StatusCode::TOO_MANY_REQUESTS {
-            return CanonicalSignal {
-                class: StatusClass::RateLimit,
-                provider_signal: Some("429".to_string()),
-                retry_after: None,
-            };
-        }
-
-        // 401/403 → Auth
-        if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-            return CanonicalSignal {
-                class: StatusClass::Auth,
-                provider_signal: Some(keys::AUTH_WORD.to_string()),
-                retry_after: None,
-            };
-        }
-
-        // 5xx → ServerError
-        if status.is_server_error() {
-            return CanonicalSignal {
-                class: StatusClass::ServerError,
-                provider_signal: Some("5xx".to_string()),
-                retry_after: None,
-            };
-        }
-
-        // 4xx (other) → ClientError
-        if status.is_client_error() {
-            return CanonicalSignal {
-                class: StatusClass::ClientError,
-                provider_signal: Some(format!("{}", status.as_u16())),
-                retry_after: None,
-            };
-        }
-
-        CanonicalSignal {
-            class: StatusClass::ClientError,
-            provider_signal: None,
-            retry_after: None,
-        }
+        crate::codec::dialect_classify::gemini(status, body)
     }
 
     fn read_request(
