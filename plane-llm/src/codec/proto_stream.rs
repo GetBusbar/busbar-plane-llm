@@ -6,7 +6,8 @@
 //! `StreamDecodeState`/…); the concrete IR is `crate::codec::ir::*` (this crate's own).
 
 use crate::codec::dialect::{parse_sse_frame, write_sse_frame, SSE_DONE_FRAME, SSE_DONE_SENTINEL};
-use busbar_contract::protocol::{find_frame_terminator, IrError, STREAM_ABORT_DETAIL};
+use crate::codec::framework::STREAM_ABORT_DETAIL;
+use busbar_contract::protocol::{find_frame_terminator, IrError};
 // G6 A4b: the wire-codec surface relocated to this plugin's `proto_codec`; reach it RELATIVELY so it
 // resolves both standalone (crate::codec::proto_codec) and netted into core (core::proto::proto_codec).
 use super::proto_codec::{protocol_for, Protocol, SameProtoEdit, StreamFraming, ToolIdRemap};
@@ -1378,7 +1379,7 @@ pub fn new_stream_translator_on(
     if !is_sse {
         // A buffered (non-stream) body. Cross-protocol never reaches here (the forward path buffers
         // and translates it before building a stream wrapper); same-protocol is a verbatim relay:
-        // the far end's bytes, untouched (DIALECT FIDELITY, owner 2026-10-02).
+        // the far end's bytes, untouched (dialect fidelity).
         return None;
     }
     let st = if ingress == egress {
@@ -1504,7 +1505,7 @@ fn merge_trailing_usage(acc: &mut crate::codec::ir::IrUsage, trailing: &crate::c
     // counters states them cumulatively (Gemini restates every counter on each usage-bearing
     // chunk), so its note, Some or None, is the check of the counts the fold now holds: a stale
     // gap from an earlier frame that a following frame reconciled is no unit (its remainder is the
-    // billed open class `unitemized_tokens`, LEDGER-100, so a kept stale note would bill tokens
+    // billed open class `unitemized_tokens`, so a kept stale note would bill tokens
     // the provider's final total does not state). A counter-less frame (Gemini's early chunks)
     // checked nothing and leaves the note as it was.
     let counted = trailing.input_tokens > 0
@@ -1575,14 +1576,14 @@ fn merge_trailing_usage_detail(
         acc.web_search_requests = *web_search_requests;
     }
     // The server-side fetch count rides the same frames as the search count (Anthropic's
-    // `message_delta`), and is the billed open class `web_fetch_requests` (LEDGER-100).
+    // `message_delta`), and is the billed open class `web_fetch_requests`.
     if web_fetch_requests.is_some() {
         acc.web_fetch_requests = *web_fetch_requests;
     }
     if service_tier.is_some() {
         acc.service_tier = service_tier.clone();
     }
-    // The by-modality split (presentation only, DF-MAP item 4) rides the same Some-wins rule.
+    // The by-modality split (presentation only) rides the same Some-wins rule.
     if by_modality.is_some() {
         acc.by_modality = by_modality.clone();
     }
@@ -1627,7 +1628,7 @@ fn merge_trailing_usage_detail(
         acc.billed_classifications = *billed_classifications;
     }
     // The open-class counts a reader carried (Bedrock's guardrail policy units, billed under their
-    // own classes, LEDGER-100) ride the frame that reported them: they arrive on the stream's
+    // own classes) ride the frame that reported them: they arrive on the stream's
     // `metadata` frame only, and a fold that dropped them would bill the streamed turn less than
     // its buffered twin.
     if !open_units.is_empty() {
@@ -1641,12 +1642,12 @@ fn merge_trailing_usage_detail(
     // A streamed Gemini egress reports `usageMetadata.trafficType` only on the trailing
     // usage-bearing chunk (same shape as `tool_use_prompt_tokens` above), so folding only the four
     // totals would drop the billing-lane attribution on every streamed Gemini/Vertex turn while the
-    // buffered twin kept it (OWNER RULING Q1, docs/design/1.6.0-QUESTIONS.md Q36).
+    // buffered twin kept it.
     if traffic_type.is_some() {
         acc.traffic_type = traffic_type.clone();
     }
     // Same shape as `traffic_type` immediately above: a streamed Gemini/Vertex turn's top-level
-    // `createTime` rides the trailing usage-bearing chunk too (OWNER RULING Q1).
+    // `createTime` rides the trailing usage-bearing chunk too.
     if create_time.is_some() {
         acc.create_time = create_time.clone();
     }

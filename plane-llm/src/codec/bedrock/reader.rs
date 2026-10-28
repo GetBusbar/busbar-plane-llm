@@ -13,12 +13,14 @@ static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
         code: super::RESPONSE_CODE,
         drops: super::RESPONSE_DROPS,
         defaults: &[],
+        reroot: None,
     }),
     stream_carried: Some(crate::codec::drops::Carried {
         map: super::map::STREAM_PATHS,
         code: super::STREAM_CODE,
         drops: super::STREAM_DROPS,
         defaults: &[],
+        reroot: None,
     }),
     stream_keyed_by_event: true,
     block_kinds: super::IR_BLOCK_KINDS,
@@ -46,8 +48,7 @@ impl ProtocolReader for BedrockReader {
                     // body still carries, so a body too large to buffer whole reports the same
                     // breakdown a small one does.
                     let mut usage = read_bedrock_usage(Some(&v)).ok()?;
-                    // THE GUARDRAIL POLICY UNITS the buffered and streamed reads bill (LEDGER-100,
-                    // #42): the answer's `trace` follows the turn's `usage` on the wire, so it is
+                    // The guardrail policy units the buffered and streamed reads bill: the answer's `trace` follows the turn's `usage` on the wire, so it is
                     // in the tail too, and an oversized answer that ran a guardrail ledgers the
                     // same units a small one does. Only a `trace` after the turn's `usage` is the
                     // answer's own; one before it lies inside the output.
@@ -122,7 +123,7 @@ impl ProtocolReader for BedrockReader {
                 || (lower.contains("exceeds the maximum")
                     && (lower.contains(keys::TOKEN) || lower.contains(keys::CONTEXT)))
             {
-                Some(busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
+                Some(crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
             } else {
                 provider_code
             }
@@ -728,9 +729,8 @@ impl ProtocolReader for BedrockReader {
 
         // The reasoning asks that ride `additionalModelRequestFields` (Anthropic-on-Bedrock
         // `thinking` and `output_config.effort`, Nova `reasoningConfig`) are NOT promoted to the
-        // IR, exactly as 1.5.5 read none (v1.5.5 `crates/busbar/src/proto/bedrock/reader.rs:678`,
-        // `reasoning: None`): carrying them switched on billed thinking on a foreign lane for a
-        // request 1.5.5 billed without it. The raw object stays in
+        // IR (`reasoning: None`): carrying them would switch on billed thinking on a foreign
+        // lane for a request billed without it. The raw object stays in
         // `extra` for the same-protocol passthrough; the one registered crossing, Converse's
         // top-level `outputConfig.effort` (CHANGELOG 1.6.0), is the map file's row.
         let reasoning = None;
@@ -1166,8 +1166,8 @@ impl ProtocolReader for BedrockReader {
                     }
                 };
                 // The guardrail policy units ride the same frame's `trace`, as they do buffered,
-                // and travel on the usage under their open classes (LEDGER-100). An unreadable one
-                // REFUSES, as an unreadable token count does above.
+                // and travel on the usage under their open classes. An unreadable one
+                // refuses, as an unreadable token count does above.
                 usage.detail.open_units = match guardrail_units(data) {
                     Ok(units) => units,
                     Err(refusal) => {
@@ -1393,7 +1393,7 @@ impl ProtocolReader for BedrockReader {
             usage.detail.service_tier = Some(tier);
         }
         // The guardrail policy units AWS bills beside the tokens ride `trace`, not `usage`; they
-        // travel on the usage under their open classes (LEDGER-100). An unreadable one REFUSES.
+        // travel on the usage under their open classes. An unreadable one refuses.
         usage.detail.open_units = guardrail_units(body)?;
 
         Ok(crate::codec::ir::IrResponse {

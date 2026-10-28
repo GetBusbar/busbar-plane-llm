@@ -2,8 +2,7 @@
 //! plane answers an ATTEMPT piece with. The kernel joins the target onto the member's base URL,
 //! adds the credential fields (its one auth call) and sends it.
 //!
-//! This is the previous release's request assembly for one hop, in its order and nothing else:
-//! the stream intent read off the caller's body, the pristine short-circuit (a same-dialect body
+//! This is the request assembly for one hop, in its order and nothing else: the stream intent read off the caller's body, the pristine short-circuit (a same-dialect body
 //! the far end would receive unchanged goes out as the caller's own bytes), the cross-dialect
 //! translation and the per-far-end rewrites, the usage opt-in for a streamed request whose far
 //! end reports usage only when asked, the far end's path, and the head fields a native client of
@@ -208,9 +207,9 @@ fn needs_no_splice(lane: FarShape<'_>, hop_bytes: &[u8]) -> bool {
     scanned.is_none() || (!router_key && model_is_wire)
 }
 
-/// THE RELAY of one same-dialect body: the caller's bytes with the governed splices only, each a
-/// byte-level member edit (`json_splice`), never a re-serialization (DIALECT FIDELITY, owner
-/// 2026-10-02; DIALECT-FIDELITY-DESIGN F2). The governed members: busbar's own router keys (never a
+/// The relay of one same-dialect body: the caller's bytes with the governed splices only, each a
+/// byte-level member edit (`json_splice`), never a re-serialization (dialect fidelity). The
+/// governed members: busbar's own router keys (never a
 /// far end's); for a path-model far end the `model` and `stream` the arrival spliced in (both ride
 /// the URL); for a body-model far end the mapped `model`, and a `path_base` far end's reshape.
 /// A body that is not a JSON object goes out as the caller sent it.
@@ -666,10 +665,9 @@ fn legal_field_value(v: &[u8]) -> bool {
 }
 
 /// The `accept` field: busbar's own, the answer framing it reads the far end's reply in (the
-/// operation's single answer or its dialect's stream framing), written on every far request exactly
-/// as 1.5.5 wrote it (its reqwest client sent its own `accept` and never fell back to a transport
-/// default), and never replaced by a same-dialect caller's value (1.5.5's bytes: the oracle's
-/// same-dialect cells carry busbar's `application/json`, not the caller's `*/*`).
+/// operation's single answer or its dialect's stream framing), written on every far request and
+/// never replaced by a same-dialect caller's value (the oracle's same-dialect cells carry busbar's
+/// `application/json`, not the caller's `*/*`).
 const ACCEPT: &str = "accept";
 
 /// The head fields a native client of `lane`'s dialect sends,
@@ -681,7 +679,7 @@ const ACCEPT: &str = "accept";
 ///
 /// `user-agent`: a translated route writes the far dialect's declared
 /// `egress_user_agent`. A same-dialect route carries the caller's own unchanged, and a caller that
-/// sent none gets the far dialect's declared fingerprint, as 1.5.5 sent.
+/// sent none gets the far dialect's declared fingerprint.
 fn head_fields(
     lane: &Lane,
     handler: &dyn OperationHandler,
@@ -723,11 +721,10 @@ fn head_fields(
     // replaces below, and its forced ones (tenant and billing selectors), which go out last on
     // every route, the caller's being governed.
     let (defaults, forced) = option_fields(lane);
-    // A native client's user-agent, never a UA-less request (1.5.5's bytes); a same-dialect
+    // A native client's user-agent, never a UA-less request; a same-dialect
     // caller's own replaces it below.
     let user_agent = ("user-agent".to_string(), user_agent.as_bytes().to_vec());
-    // The dialect's declared static fields first, as the previous release's credential map led
-    // with them (SD-3 (1)); a same-dialect caller's own value replaces one below.
+    // The dialect's declared static fields first; a same-dialect caller's own value replaces one below.
     // An operator's default of a static field's name (`anthropic-version`) replaces the declared
     // value in place.
     let mut fields: Vec<(String, Vec<u8>)> = lane
@@ -764,8 +761,7 @@ fn head_fields(
     Ok(fields)
 }
 
-/// The caller's forwarded fields laid over busbar's own as the previous release's header map laid
-/// them (an `http::HeaderMap`, which keeps one position per name, the position the name was first
+/// The caller's forwarded fields laid over busbar's own as an `http::HeaderMap` lays them (which keeps one position per name, the position the name was first
 /// inserted at): a name busbar already writes keeps busbar's position and takes the caller's values;
 /// a name it does not is appended, in the caller's order; every value of a repeated name is kept,
 /// together at its name's position.

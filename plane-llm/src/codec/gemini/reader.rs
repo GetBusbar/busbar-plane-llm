@@ -13,12 +13,14 @@ static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
         code: super::RESPONSE_CODE,
         drops: super::RESPONSE_DROPS,
         defaults: &[],
+        reroot: None,
     }),
     stream_carried: Some(crate::codec::drops::Carried {
         map: super::map::RESPONSE_PATHS,
         code: super::RESPONSE_CODE,
         drops: super::RESPONSE_DROPS,
         defaults: &[],
+        reroot: None,
     }),
     stream_keyed_by_event: false,
     block_kinds: super::IR_BLOCK_KINDS,
@@ -49,9 +51,9 @@ impl ProtocolReader for GeminiReader {
         // The same table the complete response reads (`USAGE`): thinking tokens fold into the
         // output and the tool-use prompt term into the input, so a truncated response counts the same
         // as a complete one. An unreadable count is refused on its own and bills nothing; the
-        // readable counts recover (#42; ARCHITECT ruling 2026-10-15).
+        // readable counts recover.
         // The stated-total check rides too, so a recovered turn ledgers the same `unitemized_tokens`
-        // remainder its complete twin does (owner LEDGER-100).
+        // remainder its complete twin does.
         let mut usage = crate::codec::usage_count::read_usage(COUNT_LABEL, Some(&v), USAGE).ok()?;
         usage.detail.usage_identity_note = super::gemini_usage_identity_note(Some(&v));
         Some(usage.to_token_usage())
@@ -130,7 +132,7 @@ impl ProtocolReader for GeminiReader {
                     || (lower.contains("exceeds the maximum")
                         && (lower.contains(keys::TOKEN) || lower.contains("context")))
                 {
-                    Some(busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
+                    Some(crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
                 } else {
                     provider_code
                 }
@@ -545,14 +547,12 @@ impl ProtocolReader for GeminiReader {
             .filter(|b| !b.is_null())
         {
             // A budget that is not an int32 Gemini accepts is the caller's error, answered in
-            // Gemini's own error envelope (spec Part 2 #76), never silently left out.
+            // Gemini's own error envelope, never silently left out.
             Some(budget) => match read_gemini_thinking_budget(budget).ok_or_else(ir_parse_error)? {
                 -1 => Some(crate::codec::ir::IrReasoningAsk::Dynamic),
-                // 0 = thinking switched off. It carries no ask across the seam, exactly as 1.5.5
-                // read it (v1.5.5 `crates/busbar/src/proto/gemini/reader.rs:554-558`, `_ => None`):
-                // promoting it to `Off` switched thinking off on a foreign reasoning-by-default
-                // lane, changing the thinking tokens that request is billed, and no owner ruling
-                // signs that (BUSBAR-1.6.0.md:4774, "Billing never moves"). Dropped on the one drop
+                // 0 = thinking switched off. It carries no ask across the seam (`_ => None`):
+                // promoting it to `Off` would switch thinking off on a foreign reasoning-by-default
+                // lane, changing the thinking tokens that request is billed. Dropped on the one drop
                 // path; the raw member still rides `extra` on the same dialect.
                 0 => {
                     crate::codec::drops::writer_drop!(
@@ -726,7 +726,7 @@ impl ProtocolReader for GeminiReader {
                 // the IR stream stays balanced; without this the open BlockStart events never get a
                 // matching BlockStop, producing an unbalanced stream downstream.
                 close_open_blocks(state, &mut out);
-                // BILLED COUNTS: an unreadable one REFUSES (#42) — the stream ends in an error.
+                // Billed counts: an unreadable one refuses — the stream ends in an error.
                 let usage = match read_gemini_usage(data) {
                     Ok(usage) => usage,
                     Err(refusal) => {
@@ -973,10 +973,8 @@ impl ProtocolReader for GeminiReader {
                                     // index space. Recorded in `open_tools` so the finishReason
                                     // handler emits a matching BlockStop for every tool block.
                                     // A text part anywhere before this call counts as position 0,
-                                    // open or already closed, exactly as 1.5.5 counted it (v1.5.5
-                                    // `crates/busbar/src/proto/gemini/reader.rs:895`,
-                                    // `state.text_index.is_some()`) and as the buffered reader counts
-                                    // it, so a streamed and a buffered answer name a call alike.
+                                    // open or already closed (`state.text_index.is_some()`), as the
+                                    // buffered reader counts it, so a streamed and a buffered answer name a call alike.
                                     let text_base = usize::from(state.text_index.is_some());
                                     let ir_idx = state.claim_ir_index();
                                     state.open_tools.insert(ir_idx);
@@ -1220,7 +1218,7 @@ impl ProtocolReader for GeminiReader {
                 close_open_blocks(state, &mut out);
 
                 // Parse usageMetadata if present. BILLED COUNTS: absent is zero, an unreadable one
-                // REFUSES (#42) — the stream ends in an error instead of ledgering zero tokens.
+                // refuses — the stream ends in an error instead of ledgering zero tokens.
                 let usage = match read_gemini_usage(data) {
                     Ok(usage) => usage,
                     Err(refusal) => {
@@ -1229,14 +1227,14 @@ impl ProtocolReader for GeminiReader {
                     }
                 };
 
-                // A FAILED GENERATION ENDS AS AN ERROR (owner ruling Q31). `MALFORMED_FUNCTION_CALL`
+                // A failed generation ends as an error. `MALFORMED_FUNCTION_CALL`
                 // maps to `IrStopReason::Error`, and no cross-protocol writer has a native error
                 // token for that reason, so on its own the terminal MessageDelta renders as a SUCCESS
                 // terminator (`stop` / `end_turn`), `terminal_error()` stays None and the breaker
                 // records no fault. Push the Error event as well — the shape Cohere's generic `ERROR`
                 // already has — so the failure reaches the breaker and a cross-protocol client gets a
                 // real error frame. The MessageDelta/MessageStop below still ride along: the stream
-                // stays properly terminated and its usage is still folded and charged (#62 — the
+                // stays properly terminated and its usage is still folded and charged (the
                 // charge is keyed off usage, never off this event).
                 if stop_reason == crate::codec::ir::IrStopReason::Error {
                     out.push(IrStreamEvent::Error(IrError {
@@ -1342,7 +1340,7 @@ impl ProtocolReader for GeminiReader {
         // Hard-failing here turned a legitimate filtered response into a spurious 500.
         let mut content: Vec<crate::codec::ir::IrBlock> = Vec::new();
         // A Google-Search-grounded answer: the IR's hosted web-search record, ahead of the text
-        // (DF-MAP item 2; its spans keep riding the text blocks' citations).
+        // (its spans keep riding the text blocks' citations).
         content.extend(super::citations::read_grounding_record(candidate));
         // Per-response tool-call index feeding `synth_tool_call_id` (Gemini carries no tool id).
         let mut tool_call_index: usize = 0;
@@ -1515,7 +1513,7 @@ impl ProtocolReader for GeminiReader {
         // would be a fabricated field a native client never sees). `system_fingerprint`/
         // `stop_sequence` have no Gemini analogue and remain `None`. A Vertex body DOES carry its
         // own top-level timestamp, `createTime` (RFC3339, not a Unix epoch) — read into
-        // `usage.detail.create_time` by `read_gemini_usage` below (OWNER RULING Q1; see that
+        // `usage.detail.create_time` by `read_gemini_usage` below (see that
         // field's doc comment for why it rides the usage-detail bag rather than this struct).
         let id = obj
             .get(FIELD_RESPONSE_ID)

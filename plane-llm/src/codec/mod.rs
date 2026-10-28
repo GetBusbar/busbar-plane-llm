@@ -20,7 +20,7 @@
 //! `RequestHandler` and operation cells (`handler.rs`), its own wire constant bank, and its tests.
 //! A seventh dialect is a seventh module here — not a seventh crate and not a seventh feature flag.
 //!
-//! WHAT THE DIALECTS SHARE, AND WHERE IT LIVES (#83a SD-3). Two kinds of shared name, two homes.
+//! What the dialects share, and where it lives. Two kinds of shared name, two homes.
 //! The vocabulary BOTH sides of the plane seam must spell alike — the declaration a dialect fills,
 //! the codec-cell traits, the IR shapes, the error-`type` bank, the billing and wire carriers — is
 //! the contract's (`busbar_contract::…`), and the crate names it there. The machinery only this
@@ -111,7 +111,7 @@ macro_rules! dialect_identity {
             &self,
             op: busbar_contract::operation::OpVerb,
         ) -> Option<&dyn busbar_contract::codec::OperationHandler> {
-            busbar_contract::codec::cell_of(CELLS, op)
+            crate::codec::framework::cell_of(CELLS, op)
         }
     };
 }
@@ -128,6 +128,10 @@ pub mod carry;
 
 /// The wire words two or more dialects spell alike, one const each.
 pub mod keys;
+
+/// The dialect framework's plane-only items: codec-row lookups, media carriers, the duration
+/// rendering, and the shared error kinds, signals and head reader.
+pub mod framework;
 
 /// The dialects' shared wire helpers: the OpenAI-family error helpers, the SSE `[DONE]` terminator
 /// and frame probe/parse/write, the base62 id alphabet, the `usage` stripper.
@@ -192,7 +196,7 @@ pub mod wire_shim;
 /// THIS PLANE'S OWN DECLARATION OF `name`, read off [`DECLS`]. Every fact the codecs look up about a
 /// dialect by name — the path-model shape, the array-stream shim key, the native tool-id prefix, the
 /// provider-metadata reporter — is a fact about one of THESE six dialects, so the lookup reads this
-/// plane's own table (Law 5), never the host's registry. `None` for a name this plane does not
+/// plane's own table, never the host's registry. `None` for a name this plane does not
 /// declare.
 #[must_use]
 pub fn decl_of(name: &str) -> Option<&'static busbar_contract::protocol::ProtocolDecl> {
@@ -205,7 +209,7 @@ mod codec_host_tests;
 #[cfg(test)]
 #[path = "tests/dialect_classify.rs"]
 pub(crate) mod dialect_classify;
-/// THIS CRATE'S TEST HOST (#83a SD-3: the test host and the classifier are dev-only): the codec
+/// This crate's test host (the test host and the classifier are dev-only): the codec
 /// host a shipped binary's host hands the codec, provided for this crate's test binary by the test
 /// itself, so the codec's tests prove the codec's own seam and never reach the host crate.
 #[cfg(test)]
@@ -215,26 +219,18 @@ pub(crate) mod test_host;
 #[path = "tests/usage_census.rs"]
 pub(crate) mod usage_census;
 
-/// EVERY DIALECT THIS PLUGIN DECLARES, in the order an operator sees.
+/// Every dialect this plugin declares, in the order an operator sees.
 ///
-/// THE ORDER IS LOAD-BEARING AND IT IS NOT ALPHABETICAL. The composition root hands this slice to
-/// the registry's `install_protocols`, which folds it AHEAD of whatever built-in declarations core
+/// The order is load-bearing and it is not alphabetical. The composition root hands this slice to
+/// the registry's `install_protocols`, which folds it ahead of whatever built-in declarations core
 /// still carries; the resulting sequence is what `known_protocols()` reports (the "must be one of:"
 /// tail an operator reads on a bad `protocol:`) and what `telemetry` banks its per-protocol metric
-/// families against — it finds a family again by POSITION in that list. So this order reproduces,
-/// exactly, the operator-visible list the PUBLISHED 1.5.5 binary prints:
-/// `anthropic, openai, gemini, bedrock, responses, cohere`. A dialect appended here rather than
-/// inserted keeps every existing family's index; inserting one silently renumbers all of them.
+/// families against — it finds a family again by position in that list. So this order is
+/// `anthropic, openai, gemini, bedrock, responses, cohere` (pinned by shadow-oracle
+/// `boot.refusal|BOOT-020|validate`). A dialect appended here rather than inserted keeps every
+/// existing family's index; inserting one silently renumbers all of them.
 ///
-/// THE ORDER IS PINNED AGAINST THE RELEASED BINARY, NOT AGAINST A BELIEF ABOUT IT. `gemini` sat
-/// ahead of `openai` here for one release cycle of plugin work, on the stated ground that the
-/// pre-plugin shipped order was `anthropic, gemini, openai`. It was not: 1.5.5's
-/// `proto::KNOWN_PROTOCOLS` reads `anthropic, openai, gemini, bedrock, responses, cohere`, and the
-/// published 1.5.5 binary prints that tail on a bad `protocol:` (shadow-oracle
-/// `boot.refusal|BOOT-020|validate`). The swap was therefore an unannounced move of an
-/// operator-visible list and of every metric-family index behind it, and it is undone here.
-///
-/// ONE REGISTRATION LINE PER DIALECT (design F3 SELF-CONTAINED; spec Part 3 #5): each dialect
+/// One registration line per dialect: each dialect
 /// declares its own [`proto_codec::DialectEntry`] in its module, and this list is the only place the
 /// plane names it. [`DECLS`] is read off this list, in this order.
 pub(crate) const DIALECTS: &[&proto_codec::DialectEntry] = &[
@@ -273,7 +269,7 @@ mod decode_native_tool_id_tests;
 #[path = "tests/leaf_write_dispatch_tests.rs"]
 mod leaf_write_dispatch_tests;
 
-/// THE CACHE-TIER READ TESTS, anchored to the REAL recorded upstream bodies committed under
+/// The cache-tier read tests, anchored to the real recorded upstream bodies committed under
 /// `testing/shadow-oracle/golden/1.5.5/cells/` and `testing/llm-conformance/fixtures/`. Crate-level
 /// rather than per-dialect because the four providers share one loader for that recorded evidence,
 /// and the point of the suite is that the four are the SAME defect.
@@ -299,12 +295,12 @@ mod relocated_proto_tests;
 #[path = "tests/bedrock_eventstream_tests.rs"]
 mod bedrock_eventstream_tests;
 
-/// IR mapping Q57 — what the cross-protocol seam keeps and what it normalizes (IR-CORE).
+/// What the cross-protocol seam keeps and what it normalizes.
 #[cfg(test)]
 #[path = "tests/ir_seam_tests.rs"]
 mod ir_seam_tests;
 
-/// IR mapping Q57 — the typed slots through the shared stream machinery (IR-CORE).
+/// The typed slots through the shared stream machinery.
 #[cfg(test)]
 #[path = "tests/ir_slot_carry_tests.rs"]
 mod ir_slot_carry_tests;
@@ -318,7 +314,7 @@ mod parked_rows_cross_dialect_tests;
 #[path = "tests/carry_probe_tests.rs"]
 mod carry_probe_tests;
 
-/// The usage-tap count pin (#83a SD-3, R-USAGE): every same-protocol tap fault counts once on the
+/// The usage-tap count pin: every same-protocol tap fault counts once on the
 /// host's counter, under its reason, whichever cell or direct call raised it.
 #[cfg(test)]
 #[path = "tests/usage_tap_count_tests.rs"]

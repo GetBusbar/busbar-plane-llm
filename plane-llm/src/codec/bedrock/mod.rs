@@ -39,7 +39,7 @@ use self::citations::{
     read_bedrock_citation, read_bedrock_citations_content, write_bedrock_citation,
 };
 
-// One spelling per wire word (OWNER 2026-10-01): a word keyed in `crate::codec::keys` is spelled
+// One spelling per wire word: a word keyed in `crate::codec::keys` is spelled
 // there; the words below are this dialect's own, each defined once and used at every site.
 
 // Converse request/response member names (camelCase, as the wire spells them).
@@ -145,7 +145,8 @@ fn claims(
     h: busbar_contract::protocol::HeadFields<'_>,
     path: &str,
 ) -> Option<busbar_contract::protocol::ClaimStrength> {
-    use busbar_contract::protocol::{head_field, ClaimStrength};
+    use crate::codec::framework::head_field;
+    use busbar_contract::protocol::ClaimStrength;
     if head_field(h, "authorization")
         .is_some_and(|a| a.is_ascii() && a.starts_with(b"AWS4-HMAC-SHA256"))
     {
@@ -203,7 +204,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     native_tool_id_prefix: Some("tooluse_"),
     ingress_auth: IngressAuth::SigV4,
     // SIGV4 IS THIS DIALECT'S OWN EGRESS SCHEME AND IT TRAVELS WITH THE DIALECT — as DECLARED DATA
-    // (#83a S2-a, O7, #40(b)): the service it signs for, the region as a pure function of the
+    // The service it signs for, the region as a pure function of the
     // endpoint host (with the `us-east-1` fallback), and the content type the signature covers. The
     // kernel's egress-auth unit holds the lane credential (`ACCESS:SECRET[:SESSION]`) and signs
     // under a teller-minted grant, so the secret never passes through this plane. Never
@@ -229,7 +230,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     frame_after_message_start: None,
     reshapes_body_at_path_base: false,
     max_cache_control_breakpoints: None,
-    // 400 with `ServiceQuotaExceededException`, as 1.5.5 answered (OWNER 2026-10-27): a spent budget
+    // 400 with `ServiceQuotaExceededException`: a spent budget
     // is not transient, and AWS SDKs retry a 429 `ThrottlingException` with backoff before failing.
     quota_exceeded_status: busbar_contract::http::StatusCode::BAD_REQUEST.as_u16(),
     ingress_is_eventstream: true,
@@ -237,8 +238,8 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     max_citations_per_delta: Some(1),
     // AWS Bedrock is reached via boto3/botocore. RELEASE OBLIGATION: re-verify/bump per release;
     // `test_egress_ua_versions_are_pinned_and_present` guards drift.
-    // OWNER RULING Q10: the plane writes this on a translated route into this dialect, on a
-    // same-dialect route whose caller sent no user-agent (1.5.5's bytes), and on the
+    // The plane writes this on a translated route into this dialect, on a
+    // same-dialect route whose caller sent no user-agent, and on the
     // kernel-originated health probe; a same-dialect caller's own user-agent replaces it.
     egress_user_agent: "Boto3/1.35.0 md/Botocore#1.35.0",
     has_model_in_url: true,
@@ -307,7 +308,7 @@ const APPLICATION_VND_AMAZON_EVENTSTREAM: &str = "application/vnd.amazon.eventst
 /// internal kind vocabulary. Both map to `ServiceUnavailableException` via
 /// `error_kind_to_bedrock_type`; named here so the match arm is a const pattern rather than a
 /// bare literal.
-const ERR_TYPE_OVERLOADED: &str = busbar_contract::protocol::ERR_TYPE_OVERLOADED;
+const ERR_TYPE_OVERLOADED: &str = crate::codec::framework::ERR_TYPE_OVERLOADED;
 
 /// THE DIALECT'S DECLARED REFUSALS (`refusals.json`, shipped with the plane): each row names the
 /// busbar refusal kinds it answers, the exception and its HTTP status. The runtime answers a listed
@@ -350,7 +351,7 @@ fn declared_refusal(kind: &str) -> Option<&'static str> {
 /// `ServiceUnavailableException`, `ThrottlingException`, `ValidationException`: the `errors` of
 /// Converse and ConverseStream in botocore's bedrock-runtime model); a native SDK matches on
 /// exactly these, plus `ServiceQuotaExceededException` (InvokeModel's), which an exhausted quota or
-/// budget answers, as 1.5.5 did (OWNER 2026-10-27): it is not retryable, where every AWS SDK retries
+/// budget answers: it is not retryable, where every AWS SDK retries
 /// `ThrottlingException` with backoff, and a spent budget does not come back by retrying.
 /// Any kind without a Bedrock-native counterpart falls back to `ValidationException` (the generic
 /// client-error shape) — chosen deliberately over a catch-all so the wire `__type` is always a real
@@ -371,14 +372,14 @@ pub fn error_kind_to_bedrock_type(kind: &str) -> &'static str {
         | "forbidden"
         | "unauthorized" => "AccessDeniedException",
         "not_found" | ERR_TYPE_NOT_FOUND | "model_not_found" => "ResourceNotFoundException",
-        busbar_contract::protocol::KIND_TIMEOUT | "model_timeout" => "ModelTimeoutException",
+        crate::codec::framework::KIND_TIMEOUT | "model_timeout" => "ModelTimeoutException",
         busbar_contract::protocol::KIND_OVERLOADED
         | ERR_TYPE_OVERLOADED
         | "service_unavailable"
         | "unavailable" => EXC_SERVICE_UNAVAILABLE,
         busbar_contract::protocol::KIND_API_ERROR
         | "internal_error"
-        | busbar_contract::protocol::KIND_SERVER_ERROR => EXC_INTERNAL_SERVER,
+        | crate::codec::framework::KIND_SERVER_ERROR => EXC_INTERNAL_SERVER,
         // No native Bedrock counterpart: fall back to the generic client-error exception so the
         // wire `__type` is still a real AWS exception name a native SDK can decode.
         _ => EXC_VALIDATION,
@@ -691,7 +692,7 @@ const PARKED: &[crate::codec::drops::Parked] = &[
     crate::codec::drops::Parked {
         key: ADDITIONAL_MODEL_REQUEST_FIELDS,
         // The reasoning asks that ride here (`thinking`, `output_config`, Nova `reasoningConfig`)
-        // do not cross, as in 1.5.5: the drop walk names them.
+        // do not cross: the drop walk names them.
         holds: crate::codec::drops::Holds::Members(&[TOP_K, TOP_K_CAMEL]),
     },
     crate::codec::drops::Parked {
@@ -720,7 +721,7 @@ const STREAM_CODE: &[&str] = &[
 ];
 
 /// The answer paths INSIDE a subtree this dialect carries that its code does not carry, named by the
-/// drop walk (DF-MAP-IR-GAPS section E: its A, B and C paths that a coarse map row covers).
+/// drop walk (the paths that a coarse map row covers).
 const RESPONSE_DROPS: &[&str] = &[
     "output.message.content[].searchResult",
     "output.message.content[].toolAddition",
@@ -1609,10 +1610,8 @@ fn stop_reason_map(ward: &str) -> crate::codec::ir::IrStopReason {
         // context-window reason needs the IR-16 slot).
         STOP_MODEL_CONTEXT_WINDOW_EXCEEDED => S::MaxTokens,
         // The model produced output Bedrock could not parse (text or a tool call). It reads as
-        // `Other`, as in 1.5.5 (v1.5.5 `crates/busbar/src/proto/bedrock/mod.rs:705-716`,
-        // `_ => S::Other`): the answer is served and billed as 1.5.5 served and billed it. Reading
-        // it as `Error` turned a translated buffered answer into a billed 502 and a lane fault, a
-        // money and serving change no owner ruling signs.
+        // `Other` (`_ => S::Other`): the answer is served and billed. Reading it as `Error` would
+        // turn a translated buffered answer into a billed 502 and a lane fault.
         _ => S::Other,
     }
 }
@@ -1759,7 +1758,7 @@ fn stop_reason_reverse(canonical: crate::codec::ir::IrStopReason) -> &'static st
     }
 }
 
-/// BEDROCK'S USAGE COUNTS, AS DATA (#42). AWS names the cache write `cacheWriteInputTokens` (a
+/// Bedrock's usage counts, as data. AWS names the cache write `cacheWriteInputTokens` (a
 /// cache CREATION in Anthropic terms) and the read `cacheReadInputTokens`; both are OPTIONAL on the
 /// wire, so each maps to `None` when absent (distinct from `Some(0)`). `cacheDetails` is the per-TTL
 /// breakdown of the cache write — a list of `{ttl, inputTokens}` the service model sorts 1h before
@@ -1855,12 +1854,11 @@ const GUARDRAIL_INVOCATION_METRICS: &str = "invocationMetrics";
 /// `trace.guardrail.outputAssessments.<id>[].invocationMetrics.usage`: the policy units AWS bills
 /// for the guardrail SEPARATELY from the model's tokens, per policy type. They are not tokens, so
 /// each is its own open class ([`crate::codec::ir::open_class::GUARDRAIL_COUNT_CLASSES`]) and is
-/// never folded into a token class (owner LEDGER-100, 2026-10-03: every reported unit is a ledger
+/// never folded into a token class (every reported unit is a ledger
 /// line under its meter class, priced by the ratecard). Each count is summed over every guardrail
 /// and assessment on both sides; a zero sum is no hit on its class.
 ///
-/// A count that is PRESENT and not a count is REFUSED on its own (#42; ARCHITECT ruling 2026-10-15,
-/// the rule every billed count in this crate reads under): it cannot be ledgered, so it bills
+/// A count that is PRESENT and not a count is refused on its own (the rule every billed count in this crate reads under): it cannot be ledgered, so it bills
 /// nothing and is warned, never read as a zero; the readable counts beside it bill. `null` is
 /// absence.
 ///
@@ -1895,8 +1893,8 @@ fn guardrail_units(
         .filter_map(usage_of);
     for usage in input.chain(output) {
         for &(count, class) in crate::codec::ir::open_class::GUARDRAIL_COUNT_CLASSES {
-            // Each count is judged on its own (ARCHITECT ruling 2026-10-15): an unreadable one is
-            // REFUSED loudly and bills nothing; the readable ones bill as stated.
+            // Each count is judged on its own: an unreadable one is
+            // refused loudly and bills nothing; the readable ones bill as stated.
             match crate::codec::usage_count::billed_count(&usage, count) {
                 Ok(n) => crate::codec::ir::open_class::add(&mut units, class, n),
                 Err(unreadable) => tracing::warn!(
@@ -2505,7 +2503,7 @@ const DETECTED: &str = "detected";
 const ACTION: &str = "action";
 const ACTION_BLOCKED: &str = "BLOCKED";
 
-/// A guardrail trace's content-policy filters -> the IR's safety verdicts (DF-MAP item 1): one per
+/// A guardrail trace's content-policy filters -> the IR's safety verdicts: one per
 /// filter that `detected` or BLOCKED, its `type` the category. `confidence` and `filterStrength`
 /// are AWS's own scale and do not cross; the other policies (topics, words, PII, grounding) have
 /// no counterpart.
@@ -2544,7 +2542,7 @@ fn read_guardrail_verdicts(
         .collect()
 }
 
-/// The search-result slot: Converse `searchResult` <-> Anthropic `search_result` (DF-MAP-2).
+/// The search-result slot: Converse `searchResult` <-> Anthropic `search_result`.
 #[cfg(test)]
 #[path = "tests/search_result_slot_tests.rs"]
 mod search_result_slot_tests;

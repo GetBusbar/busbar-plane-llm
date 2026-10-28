@@ -4,6 +4,7 @@
 //! Gemini protocol reader/writer implementation.
 
 use crate::codec::dialect::*;
+use crate::codec::framework::ERR_TYPE_OVERLOADED;
 use crate::codec::ir::IrStreamEvent;
 use crate::codec::keys;
 use crate::codec::usage_count::read_count_u64;
@@ -81,7 +82,8 @@ fn claims(
     h: busbar_contract::protocol::HeadFields<'_>,
     path: &str,
 ) -> Option<busbar_contract::protocol::ClaimStrength> {
-    use busbar_contract::protocol::{head_field, ClaimStrength};
+    use crate::codec::framework::head_field;
+    use busbar_contract::protocol::ClaimStrength;
     if head_field(h, FIELD_X_GOOG_API_KEY).is_some() {
         return Some(ClaimStrength(3));
     }
@@ -156,7 +158,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     native_tool_id_prefix: None,
     ingress_auth: IngressAuth::Bearer,
     // Gemini's native credential is the raw key in a custom `x-goog-api-key` header (no Bearer) —
-    // DECLARED here as data (#83a S2-a, #40(b)): the kernel's egress-auth unit presents the lane
+    // Declared here as data: the kernel's egress-auth unit presents the lane
     // credential under it (lane-constant, so the boot path prebuilds it), and the key never passes
     // through this plane.
     egress_auth_headers: None,
@@ -182,8 +184,8 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     max_citations_per_delta: None,
     // Google GenAI SDK UA. RELEASE OBLIGATION: re-verify/bump per release;
     // `test_egress_ua_versions_are_pinned_and_present` guards drift.
-    // OWNER RULING Q10: the plane writes this on a translated route into this dialect, on a
-    // same-dialect route whose caller sent no user-agent (1.5.5's bytes), and on the
+    // The plane writes this on a translated route into this dialect, on a
+    // same-dialect route whose caller sent no user-agent, and on the
     // kernel-originated health probe; a same-dialect caller's own user-agent replaces it.
     egress_user_agent: "google-genai-sdk/0.8.0 gl-python/3.11",
     has_model_in_url: true,
@@ -362,7 +364,7 @@ const PARKED: &[crate::codec::drops::Parked] = &[
 const RESPONSE_CODE: &[&str] = &["usageMetadata.candidatesTokensDetails"];
 
 /// The answer paths INSIDE a subtree this dialect carries that its code does not carry, named by the
-/// drop walk (DF-MAP-IR-GAPS section E: its A, B and C paths that a coarse map row covers).
+/// drop walk (the paths that a coarse map row covers).
 const RESPONSE_DROPS: &[&str] = &[
     "candidates[].citationMetadata.citationSources[].license",
     "candidates[].content.parts[].audioTranscription",
@@ -471,7 +473,7 @@ const FIELD_TOOL_USE_PROMPT_TOKEN_COUNT: &str = "toolUsePromptTokenCount";
 /// JSON key for the billing-lane marker inside `usageMetadata` (`ON_DEMAND` / `PROVISIONED`).
 /// INFORMATIONAL, not billed — see [`crate::codec::ir::types::IrUsageDetail::traffic_type`]. Undeclared by
 /// the pinned generativelanguage discovery document (it describes the Gemini API surface; this is
-/// the Vertex one) — carried in the IR per OWNER RULING Q1, docs/design/1.6.0-QUESTIONS.md Q36,
+/// the Vertex one) — carried in the IR
 /// rather than left as a silent drop.
 const FIELD_TRAFFIC_TYPE: &str = "trafficType";
 
@@ -485,36 +487,29 @@ const FIELD_TRAFFIC_TYPE: &str = "trafficType";
 ///                  + toolUsePromptTokenCount
 /// ```
 ///
-/// THIS TABLE IS DATA, NOT DOCTRINE. It was derived from seven real Vertex AI `gemini-2.5-flash`
-/// turns recorded on 2026-09-07 and committed under
+/// This table is data, derived from seven real Vertex AI `gemini-2.5-flash` turns committed under
 /// `src/tests/proto/golden/vendor/` (see that directory's README for the per-recording numbers).
 /// `gemini_usage_identity_tests.rs` replays every one of them through the real decoder, so changing
 /// this list without a recording that supports the change turns the corpus red.
 ///
-/// WHY IT HAD TO BE MEASURED. Two of the four terms were genuinely ambiguous from the published
-/// spec, and the sum identity differs depending on the answer:
+/// It had to be measured. Two of the four terms were ambiguous from the published spec, and the
+/// sum identity differs depending on the answer:
 ///
-/// * `thoughtsTokenCount` — additive, CONFIRMED. Not a slice of `candidatesTokenCount`.
-/// * `toolUsePromptTokenCount` — additive, and this OVERTURNS what busbar believed. The grounding
-///   recording settles it with no interpretation required: `toolUsePromptTokenCount` is **32**
-///   while the whole `promptTokenCount` is **18**. A sub-bucket cannot exceed its bucket. The
-///   IR field's own doc-comment, `docs/design/BUSBAR-1.6.0.md` THE DESIGN, §7 and
-///   `docs/design/BUSBAR-1.6.0.md` THE DESIGN, §7 all called it `⊂ prompt`; the wire says otherwise.
+/// * `thoughtsTokenCount` — additive. Not a slice of `candidatesTokenCount`.
+/// * `toolUsePromptTokenCount` — additive. The grounding recording settles it with no
+///   interpretation required: `toolUsePromptTokenCount` is **32** while the whole
+///   `promptTokenCount` is **18**. A sub-bucket cannot exceed its bucket.
 ///
-/// THE MONEY CONSEQUENCE, APPLIED IN 1.6.0. busbar used to fold only prompt + candidates + thoughts
-/// into `IrUsage`, so a Gemini turn that used a server-side tool was under-counted by exactly
-/// `toolUsePromptTokenCount` (32 of 222 tokens — 14% — on the recording above). All four terms are
-/// now billed: `gemini_usage` adds the tool-use term to `input_tokens` (Google charges it at the
-/// input rate) and `GeminiReader::recover_truncated_usage` does the same for a response too large to
-/// reassemble. This is a REGISTERED money change — see the CHANGELOG line and
-/// `testing/shadow-oracle/accepted-differences.json`.
+/// All four terms are billed: `gemini_usage` adds the tool-use term to `input_tokens` (Google
+/// charges it at the input rate) and `GeminiReader::recover_truncated_usage` does the same for a
+/// response too large to reassemble; otherwise a Gemini turn that used a server-side tool would be
+/// under-counted by exactly `toolUsePromptTokenCount` (32 of 222 tokens on the recording above).
 ///
-/// THIS TABLE IS ALSO THE GUARD. [`gemini_usage_identity_note`] is a DISCREPANCY METRIC over
+/// This table is also the guard. [`gemini_usage_identity_note`] is a discrepancy metric over
 /// `totalTokenCount`: it fires when Google's stated total cannot be reached from this table, i.e.
 /// when Google is reporting a counter this dialect does not model yet. The gap is ledgered by the
-/// plane as the open class `unitemized_tokens` (owner LEDGER-100; LEDGER-SIMPLE 2026-10-03: "we
-/// bill 100% of what the plane ledgers", money = the plane's ledger lines x the rate card) and the
-/// WARN names it; no itemized class absorbs it, and a recurring gap is fixed by a new itemized term
+/// plane as the open class `unitemized_tokens` (money = the plane's ledger lines x the rate card)
+/// and the WARN names it; no itemized class absorbs it, and a recurring gap is fixed by a new itemized term
 /// backed by the wire lock.
 const GEMINI_USAGE_ADDITIVE_TERMS: &[&str] = &[
     FIELD_PROMPT_TOKEN_COUNT,
@@ -528,7 +523,7 @@ const GEMINI_USAGE_ADDITIVE_TERMS: &[&str] = &[
 const GEMINI_USAGE_IDENTITY: &str = "gemini.usageMetadata";
 
 /// The sum of [`GEMINI_USAGE_ADDITIVE_TERMS`] on one `usageMetadata` object (absent terms are zero).
-/// `None` only for an unreadable term, which the usage table has already refused (#42).
+/// `None` only for an unreadable term, which the usage table has already refused.
 fn additive_sum(u: &serde_json::Value) -> Option<u64> {
     GEMINI_USAGE_ADDITIVE_TERMS
         .iter()
@@ -554,9 +549,9 @@ fn additive_sum(u: &serde_json::Value) -> Option<u64> {
 /// counters entirely on the early SSE frames, which carry a `usageMetadata` object with nothing in
 /// it), or the billed figure already matches Google's total.
 ///
-/// NOTHING IS ZEROED, CLAMPED OR BACK-FILLED. The buckets stay exactly as Google itemized them; a
-/// total above their sum is the open class `unitemized_tokens` (`IrUsage::to_token_usage`, owner
-/// LEDGER-100: a reported unit is a ledger line, priced by the ratecard), and this note plus its
+/// Nothing is zeroed, clamped or back-filled. The buckets stay exactly as Google itemized them; a
+/// total above their sum is the open class `unitemized_tokens` (`IrUsage::to_token_usage`: a
+/// reported unit is a ledger line, priced by the ratecard), and this note plus its
 /// WARN say where the remainder came from.
 fn gemini_usage_identity_note(
     u: Option<&serde_json::Value>,
@@ -582,7 +577,7 @@ fn gemini_usage_identity_note(
     // reading this line should not have to guess which one they are looking at.
     //
     // Read through `billed_count`, the same seam the billed terms were read through: the caller has
-    // already refused an unreadable term (#42), so every term here is a count or absent (zero).
+    // already refused an unreadable term, so every term here is a count or absent (zero).
     let wire_sum = summed_total;
     let unmodelled_term = wire_sum != reported_total;
     tracing::warn!(
@@ -614,8 +609,8 @@ const FIELD_RESPONSE_ID: &str = "responseId";
 const FIELD_MODEL_VERSION: &str = "modelVersion";
 /// JSON key for the RFC3339 response-creation timestamp Vertex stamps at the top level of every
 /// `GenerateContentResponse`. Undeclared by the pinned generativelanguage discovery document for
-/// the same reason [`FIELD_TRAFFIC_TYPE`] is (Vertex-only surface) — carried in the IR per OWNER
-/// RULING Q1, docs/design/1.6.0-QUESTIONS.md Q36. See [`crate::codec::ir::types::IrResponse::create_time`].
+/// the same reason [`FIELD_TRAFFIC_TYPE`] is (Vertex-only surface) — carried in the IR.
+/// See [`crate::codec::ir::types::IrResponse::create_time`].
 const FIELD_CREATE_TIME: &str = "createTime";
 
 /// Read Gemini/Vertex's top-level `createTime` off a response body, verbatim (no reformatting — a
@@ -1243,7 +1238,7 @@ fn gemini_openapi_schema_to_json_schema(schema: &serde_json::Value) -> serde_jso
 }
 
 /// Convert Vertex's RFC 3339 `createTime` (`2025-06-01T12:34:56.123456Z`, or with a `±HH:MM`
-/// offset) into Unix epoch SECONDS — the IR's `created` (IR audit GEM-18). `None` for anything that
+/// offset) into Unix epoch SECONDS — the IR's `created`. `None` for anything that
 /// is not a well-formed RFC 3339 date-time, so a malformed value leaves `created` for the seam to
 /// stamp exactly as before. Fractional seconds are truncated (the IR's `created` is whole seconds).
 fn gemini_rfc3339_to_epoch(s: &str) -> Option<u64> {
@@ -1582,8 +1577,7 @@ fn write_gemini_stop_reason(reason: crate::codec::ir::IrStopReason) -> &'static 
         S::MaxTokens => GEMINI_FINISH_MAX_TOKENS,
         S::Safety => GEMINI_FINISH_SAFETY,
         // A refusal (the model declining) has no Gemini finishReason: it is written as the native
-        // unenumerated `OTHER`, exactly as 1.5.5 wrote it (v1.5.5
-        // `crates/busbar/src/proto/gemini/mod.rs:771`). `SAFETY` names a safety filter, which a
+        // unenumerated `OTHER`. `SAFETY` names a safety filter, which a
         // refusal is not, so writing it would substitute a value the source never stated.
         S::Refusal | S::Error | S::PauseTurn | S::Other => GEMINI_FINISH_OTHER,
     }
@@ -1841,7 +1835,7 @@ mod ir_round3_tests;
 #[path = "tests/df_map_audit_tests.rs"]
 mod df_map_audit_tests;
 
-/// The candidate's and the prompt's `safetyRatings[]` -> the IR's safety verdicts (DF-MAP item 1):
+/// The candidate's and the prompt's `safetyRatings[]` -> the IR's safety verdicts:
 /// the category, and `blocked` as both `flagged` and `blocked`. The probability is Google's own
 /// scale and does not cross.
 fn read_safety_ratings(

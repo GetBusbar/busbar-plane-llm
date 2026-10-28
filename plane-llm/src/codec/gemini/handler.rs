@@ -22,10 +22,12 @@ use crate::codec::keys;
 use crate::codec::leaf_codec::LeafCodec;
 use busbar_contract::codec::{CodecError, IngressReject, RequestHandler};
 // The leaf cells' trait, which the dialect's handler tests call through.
+use crate::codec::framework::MediaBlob;
+use crate::codec::framework::MediaPayload;
 #[cfg(test)]
 use busbar_contract::codec::OperationHandler;
 use busbar_contract::codec::{EgressCtx, WireBody};
-use busbar_contract::media::{base64_encode, MediaBlob, MediaPayload};
+use busbar_contract::media::base64_encode;
 use busbar_contract::operation::OpVerb;
 use busbar_contract::SlabBytes;
 use bytes::Bytes;
@@ -67,14 +69,12 @@ impl RequestHandler for GeminiRequestHandler {
         // override it via `path_base` (e.g. Vertex AI's `/v1/projects/{p}/locations/{l}/publishers/
         // google/models`). The `:verb` suffix and streaming selection are unchanged.
         let base = ctx.path_base.unwrap_or("/v1beta/models");
-        if let Some(action) = busbar_contract::codec::path_of(ACTIONS, ctx.operation) {
+        if let Some(action) = crate::codec::framework::path_of(ACTIONS, ctx.operation) {
             return format!("{base}/{m}:{action}");
         }
         // Chat + audio understanding/TTS ride generateContent, stream-aware. Every other verb with
         // no action above (moderation, rerank: no Gemini cell) answers `:generateContent` whatever
-        // `stream` says, exactly as 1.5.5 did (v1.5.5 `crates/busbar/src/handlers/gemini.rs:52-63`:
-        // only Chat | Transcription | Speech were stream-aware; Moderation and Rerank were
-        // `:generateContent`).
+        // `stream` says (only Chat | Transcription | Speech are stream-aware).
         let stream_aware =
             [OpVerb::CHAT, OpVerb::TRANSCRIPTION, OpVerb::SPEECH].contains(&ctx.operation);
         let action = if stream_aware && ctx.stream {
@@ -226,8 +226,7 @@ pub fn write_transcription_response(r: &crate::codec::ir::audio::TranscriptionRe
     });
     // Only a token-billed answer writes `usageMetadata`. A duration-billed answer (whisper-1's
     // `Billing::Duration`, an openai->gemini hop) has no member in Gemini's token-shaped
-    // `usageMetadata`: it is written without one, exactly as 1.5.5 wrote it (v1.5.5
-    // `crates/busbar/src/handlers/gemini.rs:259-265` wrote `usageMetadata` only for
+    // `usageMetadata`: it is written without one (`usageMetadata` is written only for
     // `Billing::Tokens`). The billed seconds are read off the EGRESS reader, never off these bytes,
     // so nothing billed is lost; an invented `audioDurationSeconds` member is not Gemini's wire.
     if let Some(busbar_contract::billing::Billing::Tokens(t)) = &r.usage {
@@ -344,8 +343,8 @@ leaf_op! {
     ImageReqHandle = read_image_request,
     ImageRespHandle = read_image_response;
     // Buffer the same-protocol non-stream 2xx body so the default `extract_usage` runs this op's
-    // reader: a token-reporting image model's `usageMetadata` is RECORDED (never billed, as in
-    // 1.5.5; see `ImageResp::billing`), and an Imagen `:predict` per-image answer bills its
+    // reader: a token-reporting image model's `usageMetadata` is recorded (never billed; see
+    // `ImageResp::billing`), and an Imagen `:predict` per-image answer bills its
     // `images` count.
     fn taps_usage(&self) -> bool {
         true
@@ -402,8 +401,7 @@ pub fn write_image_response(r: &crate::codec::ir::image::ImageResp) -> WireBody 
         })
         .collect();
     // Imagen's `:predict` response is `{predictions}` alone: its `PredictResponse` has no
-    // `usageMetadata` member, so none is written, exactly as 1.5.5 wrote it (v1.5.5
-    // `crates/busbar/src/handlers/gemini.rs:474-492`). A foreign answer's token usage has no Imagen
+    // `usageMetadata` member, so none is written. A foreign answer's token usage has no Imagen
     // member to map to.
     let body = json!({ (FIELD_PREDICTIONS): predictions });
     WireBody::json(SlabBytes::from(
@@ -412,11 +410,10 @@ pub fn write_image_response(r: &crate::codec::ir::image::ImageResp) -> WireBody 
 }
 
 /// Gemini embeddings (`models/{id}:embedContent`). Single content in, `embedding.values` out.
-// Gemini `:embedContent` embeds a SINGLE input. v1.5.4-restored: a cross-protocol request
-// carrying N > 1 inputs (e.g. an OpenAI-family embeddings batch) is NOT rejected — the egress
-// writer embeds the FIRST input, warns how many were dropped, and returns HTTP 200 with one
-// vector (the silent-degrade v1.5.4 shipped). Representability is the leaf handle's default
-// (`EmbeddingsReqHandle`), so no override is needed now the enum dissolved.
+// Gemini `:embedContent` embeds a single input. A cross-protocol request carrying N > 1 inputs
+// (e.g. an OpenAI-family embeddings batch) is not rejected: the egress writer embeds the first
+// input, warns how many were dropped, and returns HTTP 200 with one vector. Representability is
+// the leaf handle's default (`EmbeddingsReqHandle`), so no override is needed.
 struct GeminiEmbeddings;
 
 leaf_op! {
@@ -575,9 +572,9 @@ pub fn read_transcription_request(
 
 /// The `usageMetadata` counts a transcription answer reports beside the two it bills. The chat table
 /// (`gemini::usage::USAGE`) itemizes them into meter classes, but a transcription bills only the
-/// prompt and candidates counts, as v1.5.5 did, so these are RECORDED as residual units, keyed by
-/// Google's own count name and never billed (owner LEDGER-100: a reported unit is never left
-/// unledgered; MONEY LAW: the billed figures do not move).
+/// prompt and candidates counts, so these are recorded as residual units, keyed by
+/// Google's own count name and never billed (a reported unit is never left unledgered; the billed
+/// figures do not move).
 const TRANSCRIPTION_RESIDUAL_COUNTS: [&str; 3] = [
     FIELD_THOUGHTS_TOKEN_COUNT,
     FIELD_CACHED_CONTENT_TOKEN_COUNT,
@@ -609,13 +606,12 @@ pub fn read_transcription_response(
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
     let text = joined_text(&v, "/candidates/0/content/parts");
     let usage = v.get(FIELD_USAGE_METADATA).map(|u| {
-        // Only the token fields are BILLED, exactly as 1.5.5 billed them (v1.5.5
-        // `crates/busbar/src/handlers/gemini.rs:229-241`): an upstream cannot pick the duration
+        // Only the token fields are billed: an upstream cannot pick the duration
         // meter (`audio_ms`) by sending an `audioDurationSeconds` member Gemini's `UsageMetadata`
         // does not define. A real Gemini upstream sends only token counts.
-        // BILLED COUNTS, each judged on its own: absent is zero; an UNREADABLE one is refused
+        // Billed counts, each judged on its own: absent is zero; an unreadable one is refused
         // ([`refused_count`]): it bills nothing, and the transcript and the readable count are
-        // served and billed, v1.5.5's `.and_then(Value::as_u64).unwrap_or(0)` figure.
+        // served and billed.
         let billed = |field: &'static str| {
             crate::codec::usage_count::billed_count(u, field).unwrap_or_else(|unreadable| {
                 crate::codec::usage_count::refused_count(COUNT_LABEL, &unreadable);
@@ -713,7 +709,7 @@ pub fn read_speech_response(
             .to_string();
         let pcm = mime
             .contains("pcm")
-            .then_some(busbar_contract::media::PcmParams {
+            .then_some(crate::codec::framework::PcmParams {
                 sample_rate: 24000,
                 channels: 1,
                 bit_depth: 16,
@@ -804,12 +800,12 @@ pub fn read_image_request(
 pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::ImageResp, CodecError> {
     let v: Value =
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
-    let images: Vec<busbar_contract::media::ImageOutput> = v
+    let images: Vec<crate::codec::framework::ImageOutput> = v
         .get(FIELD_PREDICTIONS)
         .and_then(Value::as_array)
         .map(|arr| {
             arr.iter()
-                .map(|p| busbar_contract::media::ImageOutput {
+                .map(|p| crate::codec::framework::ImageOutput {
                     b64: p
                         .get(FIELD_BYTES_BASE64_ENCODED)
                         .and_then(Value::as_str)
@@ -825,12 +821,11 @@ pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::Image
         .unwrap_or_default();
     // Token-reporting image models (gemini `generateContent`-shaped) carry a `usageMetadata` token
     // object; Imagen `:predict` per-image responses carry none. The tokens are RECORDED, never
-    // billed (`ImageResp::billing`, 1.5.5 parity: v1.5.5
-    // `crates/busbar/src/handlers/gemini.rs:446-472` billed none).
+    // billed (`ImageResp::billing`).
     // A recorded count is still a ledger row, so it is read through the one count seam
     // (`usage_count::recorded_count`): absent is zero; a present count this build cannot read is
     // UNKNOWN, left out of the record and named on `warnings` and in the log. It is never a 0
-    // and never a refusal: 1.5.5 served the answer whatever its usage said.
+    // and never a refusal: the answer is served whatever its usage said.
     let mut warnings = Vec::new();
     let usage = v
         .get(FIELD_USAGE_METADATA)
@@ -924,10 +919,8 @@ pub fn read_embeddings_response(
             ),
         );
     }
-    // BILLED COUNT: absent or `null` is no usage (unchanged); an UNREADABLE one is refused on its
-    // own ([`refused_count`]): it bills nothing and the vectors are served. That is v1.5.5's figure
-    // for the body: `.and_then(Value::as_u64).map(..)` read no usage (v1.5.5
-    // `crates/busbar/src/handlers/gemini.rs:605-612`).
+    // Billed count: absent or `null` is no usage; an unreadable one is refused on its own
+    // ([`refused_count`]): it bills nothing and the vectors are served.
     let usage = crate::codec::usage_count::billed_count_opt(
         v.get(FIELD_USAGE_METADATA),
         FIELD_PROMPT_TOKEN_COUNT,

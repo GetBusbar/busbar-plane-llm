@@ -39,7 +39,7 @@ impl IrFacts for IrRequest {
             }
         }
         Shape {
-            // The wire turn count, as 1.5.5 counted it: an in-band system turn is a turn (`project`
+            // The wire turn count: an in-band system turn is a turn (`project`
             // puts it back at its wire position), so the count is the IR messages plus the folds.
             turn_count: self.messages.len() + self.system_turns_folded,
             has_tools: !self.tools.is_empty(),
@@ -97,8 +97,8 @@ pub fn project(req: &IrRequest) -> Vec<ContentItem<'_>> {
         }
         return out;
     }
-    // THE IN-BAND SYSTEM TURN IS A TURN (1.5.5, #85 / R8). A dialect that carries its system prompt
-    // inside the turn array showed it to a 1.5.5 hook as a turn, at its wire position and under the
+    // The in-band system turn is a turn. A dialect that carries its system prompt
+    // inside the turn array shows it to a hook as a turn, at its wire position and under the
     // role it was written in, and the system slot held only the dialect's own system FIELD. The
     // reader folded it into `system`; its `system_folds` record where it stood, so it goes back
     // there. Without this a `prompt: rw` hook's reply, which replaces the whole turn array, deletes
@@ -219,7 +219,7 @@ fn walk<'a>(
             // closed until it is decided on its own terms in its own diff — exactly the reasoning
             // the module header records for image provenance.
             IrBlock::Image { .. } | IrBlock::Media { .. } => {}
-            // A provider-run tool's record (DF-MAP item 2) is closed on the same terms: the search
+            // A provider-run tool's record is closed on the same terms: the search
             // results it carries are not the conversation's text, and opening them to content hooks
             // is a disclosure decision of its own.
             IrBlock::HostedToolRecord { .. } => {}

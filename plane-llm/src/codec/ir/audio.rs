@@ -7,13 +7,13 @@
 //!   (not a third op). Billing is model-dependent: `Duration` (whisper-1) | `Tokens` (gpt-4o-transcribe).
 //! - **Speech** (TTS): text IN → binary audio OUT. Billing: `Characters` (tts-1) | `Tokens` (gpt-4o-mini-tts).
 //!
-//! Both share the [`busbar_contract::media::MediaBlob`] payload (audio in / audio out). Split request/response
+//! Both share the [`crate::codec::framework::MediaBlob`] payload (audio in / audio out). Split request/response
 //! per. Because audio billing is polymorphic per model, the response stores `Option<Billing>`
 //! directly rather than a token struct.
 
+use crate::codec::framework::MediaBlob;
 use busbar_contract::billing::Billing;
 use busbar_contract::ir::SourceScopedExtra;
-use busbar_contract::media::MediaBlob;
 
 /// A word with start/end offsets (seconds).
 #[derive(Debug, Clone, PartialEq, Default)]
