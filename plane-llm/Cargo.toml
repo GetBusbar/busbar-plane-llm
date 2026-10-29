@@ -33,7 +33,7 @@ hex = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-# The contract's test-only `TestKernelSeal`.
-busbar-contract = { workspace = true, features = ["test-seal"] }
+# The log double (`warn_capture::WarnCapture`) the codec tests assert diagnostics with (busbar #1831).
+busbar-test-kit = { workspace = true }
 serde_json = { workspace = true }
 getrandom = { workspace = true }

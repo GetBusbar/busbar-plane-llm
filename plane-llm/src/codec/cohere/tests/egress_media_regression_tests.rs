@@ -7,7 +7,7 @@
 //! attachment (e.g. an Anthropic→Cohere hop) has no slot and is deliberately, observably dropped.
 
 use super::*;
-use busbar_contract::testkit::WarnCapture;
+use busbar_test_kit::warn_capture::WarnCapture;
 
 #[test]
 fn anthropic_to_cohere_document_media_warns_not_silent() {

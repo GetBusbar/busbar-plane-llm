@@ -10,7 +10,7 @@
 //! documented drop+warn+test, never silently and never waived.
 
 use super::*;
-use busbar_contract::testkit::WarnCapture;
+use busbar_test_kit::warn_capture::WarnCapture;
 
 // ─────────────────────────────────────── helpers ───────────────────────────────────────
 

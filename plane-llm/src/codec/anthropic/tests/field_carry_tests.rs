@@ -590,7 +590,7 @@ fn anthropic_stream_ping_same_proto_carry() {
 // a `dropped_egress_controls` entry — not silently as before (the writer never referenced them).
 #[test]
 fn anthropic_drops_penalties_seed_n_observably() {
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
 
     let ir = crate::codec::ir::IrRequest {
         frequency_penalty: Some(0.5),

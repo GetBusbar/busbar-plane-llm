@@ -6,7 +6,7 @@ use super::*;
 /// disappeared block. It must now degrade to an empty placeholder AND warn, naming the type.
 #[test]
 fn responses_input_file_degrades_with_warn_not_silent_drop() {
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
 
     let body = serde_json::json!({
         "input": [{
@@ -5949,7 +5949,7 @@ fn reasoning_input_item_round_trips_through_request() {
     // flake. Holding the capture fixture's reentrant gate for the duration of this read serialises
     // the two tests, so neither ordering can produce it.
     let ir = {
-        use busbar_contract::testkit::WarnCapture;
+        use busbar_test_kit::warn_capture::WarnCapture;
         let cap = WarnCapture::default();
         let subscriber = cap.clone();
         tracing::subscriber::with_default(subscriber, || {
@@ -7487,7 +7487,7 @@ fn cross_protocol_egress_into_responses_emits_content_part_bracket() {
 /// semantics. The BEFORE-any-turn case must NOT warn (that is the ordinary, non-surprising shape).
 #[test]
 fn mid_conversation_developer_item_is_flagged() {
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
 
     let body = serde_json::json!({
         "input": [
@@ -7525,7 +7525,7 @@ fn mid_conversation_developer_item_is_flagged() {
 /// the ordinary shape and must NOT warn.
 #[test]
 fn leading_developer_item_does_not_warn() {
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
 
     let body = serde_json::json!({
         "input": [

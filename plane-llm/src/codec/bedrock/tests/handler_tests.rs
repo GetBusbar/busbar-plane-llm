@@ -83,7 +83,7 @@ fn embeddings_read_request_captures_input_text() {
 #[test]
 fn embeddings_write_request_warns_on_dropped_non_text_input() {
     use crate::codec::ir::embeddings::EmbeddingsReq;
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
 
     let req = EmbeddingsReq {
         input: EmbInput::Tokens(vec![vec![1, 2, 3]]),
@@ -145,7 +145,7 @@ fn embeddings_write_read_roundtrip_preserves_input_text() {
 // request. Fails on the pre-fix writer, which put `width`/`height`/`quality: "hd"` on the wire.
 #[test]
 fn bedrock_titan_image_drops_size_and_quality_as_1_5_5_did() {
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
     let ir = crate::codec::ir::image::ImageReq {
         model: "amazon.titan-image-generator-v1".into(),
         prompt: Some("a cat".into()),
