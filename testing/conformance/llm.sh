@@ -34,13 +34,28 @@ sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1;
 stage_busbar() { rm -rf "$2"; mkdir -p "$2" && tar -C "$1" --exclude=./target -cf - . | tar -C "$2" -xf -; }
 
 # Swap THIS checkout's plane-llm into the staged busbar at $1 (written at run time, never committed).
+# The plane is a git pin of busbar's distribution workspace (dist/default/Cargo.toml's
+# [workspace.dependencies]); the swap patches that pin's source with this checkout's crate and moves the
+# lock's one busbar-plane-llm entry onto it (`cargo update -p`: nothing else in the lock moves), so the
+# subject builds --locked. It is refused unless the lock then names this checkout's crate alone.
 swap_plane() {
-  local SRC="$1" P="$1/crates/busbar-plane-llm" K; K="$(mktemp -d)"
-  # busbar's manifest for the crate (path dependencies, its examples) stays; the code is this repo's.
-  mv "$P/Cargo.toml" "$K/plane.Cargo.toml" && mv "$P/examples" "$K/plane.examples" \
-    && rm -rf "$P" && cp -R "$repo/plane-llm" "$P" \
-    && cp "$K/plane.Cargo.toml" "$P/Cargo.toml" && cp -R "$K/plane.examples" "$P/examples"
-  local rc=$?; rm -rf "$K"; return $rc
+  local M="$1/dist/default/Cargo.toml" L="$1/dist/default/Cargo.lock" url n
+  [ -f "$M" ] && [ -f "$L" ] || { echo "no dist/default/Cargo.toml + Cargo.lock in the busbar checkout"; return 1; }
+  url="$(sed -n 's/^busbar-plane-llm = { *git = "\([^"]*\)".*/\1/p' "$M")"
+  n="$(printf '%s' "$url" | grep -c .)"
+  [ "$n" = 1 ] || { echo "dist/default/Cargo.toml names $n git pin(s) of busbar-plane-llm, not one"; return 1; }
+  grep -q "^\[patch\.['\"]$url['\"]\]" "$M" && { echo "dist/default/Cargo.toml already patches $url"; return 1; }
+  printf '\n# conformance (llm.sh): this checkout'"'"'s plane-llm, swapped in at run time.\n[patch.'"'"'%s'"'"']\nbusbar-plane-llm = { path = "%s" }\n' \
+    "$url" "$repo/plane-llm" >> "$M"
+  cargo update --manifest-path "$M" -p busbar-plane-llm || { echo "cargo could not move the lock onto this checkout's plane-llm"; return 1; }
+  # The lock's busbar-plane-llm entries: exactly one, with no source (a path crate: this checkout's).
+  python3 -I - "$L" <<'PY' || return 1
+import re, sys
+pk = [b for b in open(sys.argv[1]).read().split("[[package]]") if re.search(r'^name = "busbar-plane-llm"$', b, re.M)]
+src = [(re.findall(r'^source = "([^"]*)"$', b, re.M) or ["path"])[0] for b in pk]
+if src != ["path"]:
+    sys.exit(f"after the swap the lock names busbar-plane-llm as {src}, not this checkout's crate alone")
+PY
 }
 
 # The swap's own proof, no build: busbar at the pin resolves this checkout's plane, and only it.
@@ -117,7 +132,7 @@ shared_run() {
   local build_rc=0 rec_rc=0 run_rc=0
   if [ -z "$fail" ]; then
     say "=== subject: build busbar with this plane"
-    ( cd "$SRC" && CARGO_TARGET_DIR="$TGT" cargo build --locked --release -p busbar --bin busbar ) >"$D/build.log" 2>&1 || build_rc=$?
+    ( cd "$SRC" && CARGO_TARGET_DIR="$TGT" cargo build --locked --release --manifest-path dist/default/Cargo.toml --bin busbar ) >"$D/build.log" 2>&1 || build_rc=$?
     if [ "$build_rc" -ne 0 ]; then tail -15 "$D/build.log" >&2; fail="busbar with this plane could not be built (exit $build_rc; see build.log)"; fi
   fi
   if [ -z "$fail" ]; then
