@@ -54,7 +54,7 @@ impl RequestHandler for CohereRequestHandler {
     fn upstream_path(&self, ctx: &EgressCtx) -> String {
         // Unreachable: `operation_handler` returns `None` for a verb absent from the table, so
         // egress path resolution is never reached for one. The fallback is the pre-1.6.0 answer.
-        busbar_contract::codec::path_of(PATHS, ctx.operation)
+        crate::codec::framework::path_of(PATHS, ctx.operation)
             .unwrap_or(PATH_EMBED)
             .into()
     }

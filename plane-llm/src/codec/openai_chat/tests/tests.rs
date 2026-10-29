@@ -1005,7 +1005,7 @@ fn write_error_maps_kind_vocabulary() {
         ("forbidden", ERR_TYPE_PERMISSION),
         ("invalid_request", ERR_TYPE_INVALID_REQUEST),
         (
-            busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH,
+            crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH,
             ERR_TYPE_INVALID_REQUEST,
         ),
     ] {
@@ -5816,7 +5816,7 @@ fn test_stream_inline_error_class_derivation() {
         (
             serde_json::json!({"error": {
                 "type": ERR_TYPE_INVALID_REQUEST,
-                "code": busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH,
+                "code": crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH,
                 "message": "too long"
             }}),
             StatusClass::ContextLength,

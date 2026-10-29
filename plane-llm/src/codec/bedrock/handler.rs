@@ -364,13 +364,13 @@ pub fn read_image_request(
 pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::ImageResp, CodecError> {
     let v: Value =
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
-    let images: Vec<busbar_contract::media::ImageOutput> = v
+    let images: Vec<crate::codec::framework::ImageOutput> = v
         .get(super::IMAGES)
         .and_then(Value::as_array)
         .map(|arr| {
             arr.iter()
                 .filter_map(|b| b.as_str())
-                .map(|b| busbar_contract::media::ImageOutput {
+                .map(|b| crate::codec::framework::ImageOutput {
                     b64: Some(b.to_string()),
                     ..Default::default()
                 })
