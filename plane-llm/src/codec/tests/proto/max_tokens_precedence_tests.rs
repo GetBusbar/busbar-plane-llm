@@ -91,7 +91,7 @@ fn per_model_then_global_then_4096() {
 #[test]
 fn cache_control_breakpoints_clamped_to_four_on_anthropic_egress() {
     use crate::codec::ir::{CacheControl, CacheKind, IrBlock, IrMessage, IrRole};
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
 
     let bp = || {
         Some(CacheControl {

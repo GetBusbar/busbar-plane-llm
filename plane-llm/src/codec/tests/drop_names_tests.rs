@@ -13,7 +13,7 @@ use crate::codec::proto_codec::protocol_for;
 use crate::codec::translate::{TranslateCodec as _, TranslateReqInput};
 use busbar_contract::ir::egress_prep::EgressPrep;
 use busbar_contract::operation::OpVerb;
-use busbar_contract::testkit::WarnCapture;
+use busbar_test_kit::warn_capture::WarnCapture;
 use serde_json::{json, Value};
 
 /// The seam's gates for the test: closed (`false`) gates drop the reasoning ask and the cache

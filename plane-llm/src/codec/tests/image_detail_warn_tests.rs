@@ -10,7 +10,7 @@
 use crate::codec::chat_handle::ChatReqHandle;
 use crate::codec::ir::{IrBlock, IrImageDetail, IrImageSource, IrMessage, IrRequest, IrRole};
 use busbar_contract::ir::handle::IrHandle;
-use busbar_contract::testkit::WarnCapture;
+use busbar_test_kit::warn_capture::WarnCapture;
 
 const LINE: &str = "dropping image_url.detail: no cross-protocol carrier exists for this \
                     cost/latency hint (not even on a same-protocol OpenAI round-trip)";

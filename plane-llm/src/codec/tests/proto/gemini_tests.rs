@@ -758,7 +758,7 @@ fn test_bedrock_ingress_ir_usage_carries_real_tokens() {
 /// must NOT warn (regression proof: `extra` is never cleared on that path).
 #[test]
 fn gemini_cached_content_warns_naming_truncation_and_billing() {
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
 
     let body = serde_json::json!({
         "contents": [{"role": "user", "parts": [{"text": "hi"}]}],

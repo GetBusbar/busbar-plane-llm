@@ -126,7 +126,7 @@ fn embeddings_write_request_preserves_multiple_encoding_types_in_order() {
 #[test]
 fn embeddings_write_request_warns_on_dropped_non_text_input() {
     use crate::codec::ir::embeddings::EmbeddingsReq;
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
 
     let ir = EmbeddingsReq {
         input: EmbInput::Images(vec!["data:image/png;base64,AA==".into()]),

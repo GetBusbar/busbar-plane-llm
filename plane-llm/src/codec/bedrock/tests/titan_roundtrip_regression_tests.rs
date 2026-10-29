@@ -16,7 +16,7 @@
 //! them, so nothing a caller sends is refused.
 
 use super::*;
-use busbar_contract::testkit::WarnCapture;
+use busbar_test_kit::warn_capture::WarnCapture;
 
 /// Run `write` under a warn capture: the wire it wrote, parsed, and the capture.
 fn written(write: impl FnOnce() -> Vec<u8>) -> (Value, WarnCapture) {

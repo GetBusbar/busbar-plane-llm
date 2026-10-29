@@ -481,7 +481,7 @@ fn embeddings_write_response_emits_the_float_vector() {
 
 #[test]
 fn embeddings_write_request_warns_on_dropped_non_text_input() {
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
 
     let ir = crate::codec::ir::embeddings::EmbeddingsReq {
         input: EmbInput::Images(vec!["data:image/png;base64,AA==".into()]),

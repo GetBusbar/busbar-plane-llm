@@ -4878,7 +4878,7 @@ fn test_bedrock_tool_choice_specific_tool() {
 /// least diagnosable.
 #[test]
 fn bedrock_specific_tool_choice_warns_it_is_claude_only() {
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
 
     let req = tool_choice_req(Some(crate::codec::ir::IrToolChoice::Tool {
         name: "get_weather".to_string(),
@@ -5254,7 +5254,7 @@ fn test_same_protocol_cache_point_no_double_emit() {
 #[test]
 fn test_malformed_media_type_warns_and_drops() {
     for mt in ["image/", "garbage", "image/bmp", "image/svg+xml"] {
-        let cap = busbar_contract::testkit::WarnCapture::default();
+        let cap = busbar_test_kit::warn_capture::WarnCapture::default();
         let block = tracing::subscriber::with_default(cap.clone(), || {
             bedrock_image_block(&crate::codec::ir::IrImageSource::Base64 {
                 media_type: mt.to_string(),

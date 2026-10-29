@@ -121,7 +121,7 @@ fn embeddings_base64_encoding_format_survives_to_openai_egress() {
 
 #[test]
 fn embeddings_write_request_warns_on_dropped_non_text_input() {
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
 
     let ir = crate::codec::ir::embeddings::EmbeddingsReq {
         input: crate::codec::ir::embeddings::EmbInput::Tokens(vec![vec![1, 2, 3]]),
