@@ -5,37 +5,23 @@
 
 use super::*;
 
-/// Mint a protocol-correct Anthropic message id for the cross-protocol path, where the backend
-/// supplied none. A native id is `msg_01` + a fixed-length mixed-case base62 token; an official
-/// Anthropic SDK only requires the `msg_` prefix and a non-empty unique suffix (it does not parse
-/// the body), but matching the native alphabet/version-prefix/length AND drawing the token from the
-/// OS CSPRNG removes the structural/entropy tell a client could use to spot a synthesized id.
+/// Mint a native-shaped `msg_01` id for the cross-protocol path, where the backend supplied none.
+/// Matching the native alphabet, prefix and length, with CSPRNG entropy, removes the tell.
 pub(super) fn synth_message_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
     synth_id_with_prefix(host, "msg_")
 }
 
-/// Mint a protocol-correct Anthropic request id (`req_01<token>`) for the top level of an error
-/// envelope, where busbar synthesizes the error itself and has no upstream request id to forward.
-/// Current Anthropic API error responses carry a top-level `request_id`; emitting one whose shape
-/// (version prefix, mixed-case base62 alphabet, fixed length) AND entropy match the native form
-/// keeps the envelope indistinguishable. Same CSPRNG construction as `synth_message_id`.
+/// Mint a native-shaped `req_01` id for the top level of a synthesized error envelope, which
+/// carries a `request_id` on the native API.
 pub(super) fn synth_request_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
     synth_id_with_prefix(host, "req_")
 }
 
-/// The same `req_01<24 base62>` id, built from entropy the CALLER supplies.
+/// The same `req_01<24 base62>` id built from entropy the caller supplies (a plane may read no
+/// random source; it is handed one). The same bytes give the same id.
 ///
-/// The shape and the width are the native ones — this is the same id, in the same alphabet, at the
-/// same length; only the source of the bytes moves. That matters because the envelope is the one
-/// place a refusal carries a minted value, and a plane may read no random source: it is handed one.
-/// The same bytes always produce the same id, so a caller that supplies a fixed input gets a fixed
-/// envelope, and a caller that supplies real entropy gets an envelope indistinguishable from the
-/// native form.
-///
-/// `entropy` is consumed with the SAME rejection sampling the drawn form uses (bytes at or above the
-/// largest multiple of 62 are discarded, so the character distribution stays uniform), and it is
-/// cycled if it is shorter than the draw needs — so a caller can pass as little as one byte and
-/// still get a well-formed id, at the entropy it actually supplied.
+/// `entropy` goes through the same rejection sampling as the drawn form and is cycled when shorter
+/// than the draw needs, so even one byte yields a well-formed id, at the entropy supplied.
 #[must_use]
 pub fn request_id_from_entropy(entropy: &[u8]) -> String {
     const BASE62_REJECT_FLOOR: u8 = crate::codec::dialect::BASE62_REJECT_THRESHOLD;
@@ -43,8 +29,8 @@ pub fn request_id_from_entropy(entropy: &[u8]) -> String {
     let mut token = [b'0'; SYNTH_ID_TOKEN_LEN];
     if !entropy.is_empty() {
         let mut filled = 0usize;
-        // Bounded by construction: every pass over `entropy` either fills at least one character or
-        // the input has no in-range byte at all, and the second case is caught by the round counter.
+        // Every pass fills a character or the input has no in-range byte, which the round counter
+        // catches.
         let mut rounds = 0usize;
         while filled < SYNTH_ID_TOKEN_LEN && rounds < SYNTH_ID_TOKEN_LEN + 1 {
             let mut progressed = false;
@@ -70,52 +56,30 @@ pub fn request_id_from_entropy(entropy: &[u8]) -> String {
     format!("req_01{token}")
 }
 
-/// Shared id construction for both `msg_` and `req_`. The suffix is the native `01` version marker
-/// followed by a fixed-width 24-char mixed-case base62 token drawn ENTIRELY from the OS CSPRNG
-/// (mirroring the sibling `synth_anthropic_request_id` and `openai_chat::synth_completion_id`). The
-/// earlier `(unix_second, counter)` encoding was a deterministic clock+counter fingerprint, and even
-/// a counter overlaid into a fixed region of an otherwise-random token leaves those characters
-/// predictable/low-entropy (the counter stays small, so its high base62 digits are constant '0') —
-/// a structural tell at WHATEVER position (leading or trailing) it occupies. We therefore overlay NO
-/// counter at all: a 24-char base62 token is ~142 bits of entropy with a ~2^71 birthday bound, so
-/// pure CSPRNG output is collision-free in practice and every position stays fully random, exactly
-/// like a native Anthropic id. Never panics on the request path.
+/// Shared construction for `msg_` and `req_`: the `01` marker plus a 24-char token drawn entirely
+/// from the OS CSPRNG, with no counter or clock (those leave predictable characters, a structural
+/// tell). Never panics on the request path.
 pub(super) fn synth_id_with_prefix(
     host: &dyn busbar_contract::codec::CodecHost,
     prefix: &str,
 ) -> String {
-    // On an entropy failure we leave the remaining '0' fill rather than panic; no counter. Same
-    // ordering-independent reduction cutoff as every other base62 synth (4 * 62 = 248); only this
-    // module's ALPHABET *ordering* (uppercase-first) is intentionally local.
+    // On an entropy failure the remaining '0' fill stands rather than panicking.
     let mut token = [b'0'; SYNTH_ID_TOKEN_LEN];
     crate::codec::dialect::fill_base62(host, &mut token, ANTHROPIC_NATIVE_ALPHABET);
 
-    // `token` is ASCII base62 by construction, hence always valid UTF-8; the fallback only guards
-    // against an impossible non-ASCII byte and keeps the path panic-free.
+    // `token` is ASCII base62, always valid UTF-8; the fallback keeps the path panic-free.
     let token = std::str::from_utf8(&token).unwrap_or("000000000000000000000000");
     format!("{prefix}01{token}")
 }
 
-/// Mint a protocol-correct Anthropic request id (`req_01<token>`) for the `request-id` RESPONSE HEADER
-/// a native Anthropic response always carries. The official SDK reads this header into
-/// `APIError.request_id` / `Message._request_id` (NOT the body), so a busbar anthropic response that
-/// omitted it left `request_id == None` — impossible against the real API and a deterministic proxy
-/// tell. Used by `proxy engine` on anthropic-ingress success/relay 2xx responses that have NO upstream
-/// `request-id` to forward (the error path mirrors the writer's own body `request_id` into the header
-/// instead; the same-protocol passthrough forwards the UPSTREAM `request-id` verbatim and never calls
-/// this). The shape mirrors a native id EXACTLY: the `req_` prefix, the `01` version marker, then a
-/// fixed-width 24-char mixed-case base62 token from the OS CSPRNG — `req_01` + 24 = 30 chars
-/// total, matching `synth_id_with_prefix("req_")` (used for the body `request_id`) so the
-/// response-header length is not a fingerprint tell (a 22-char value would be 8 chars short of
-/// native). Returns `None` (caller OMITS the header) only if entropy is unavailable — on the request
-/// path, must never panic. Uses the SHARED `crate::codec::dialect::BASE62_ALPHABET` (lowercase-first ordering)
-/// deliberately — NOT this module's local uppercase-first `ANTHROPIC_NATIVE_ALPHABET`. The alphabet
-/// ORDERING differs from the sibling synth, but a uniform draw over a permuted alphabet is uniform
-/// over the same character set, so that difference is irrelevant to the distribution.
+/// Mint a request id (`req_01` + 24 base62 chars, 30 in all, matching the body `request_id`) for
+/// the `request-id` response header a native response always carries; omitting it is a proxy tell.
+/// Used on anthropic-ingress 2xx responses with no upstream `request-id` to forward. `None` (the
+/// caller omits the header) only if entropy is unavailable. Uses the shared lowercase-first
+/// `BASE62_ALPHABET`; a uniform draw over a permuted alphabet is still uniform.
 pub fn synth_anthropic_request_id(host: &dyn busbar_contract::codec::CodecHost) -> Option<String> {
-    // 24 base62 chars via the SAME rejection-sampling fill `synth_id_with_prefix` uses — the
-    // `Option` contract (omit the header on entropy failure) differs from that sibling's
-    // '0'-fill-on-failure contract, so this stays a separate call rather than delegating to it.
+    // The `Option` contract (omit on entropy failure) differs from `synth_id_with_prefix`'s
+    // '0'-fill, so this stays a separate call.
     let mut token = [0u8; 24];
     if !crate::codec::dialect::fill_base62(host, &mut token, crate::codec::dialect::BASE62_ALPHABET)
     {

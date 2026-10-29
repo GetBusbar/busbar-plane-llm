@@ -45,9 +45,7 @@ impl ProtocolReader for AnthropicReader {
         status: StatusCode,
         body: &[u8],
     ) -> busbar_contract::upstream::RawUpstreamError {
-        // Parse the error body once and pull both fields from the single JSON tree, rather than
-        // re-parsing the same bytes per field (error paths are already degraded; avoid the extra
-        // parse+alloc on every non-2xx response).
+        // Parse the error body once and pull both fields from the one tree.
         let (provider_code, structured_type) =
             match crate::codec::json::parse::<serde_json::Value>(body) {
                 Ok(json) => {
@@ -65,18 +63,13 @@ impl ProtocolReader for AnthropicReader {
                 Err(_) => (None, None),
             };
 
-        // Anthropic signals context-length via the error MESSAGE (no distinct code).
-        // Surface the canonical code so the breaker pipeline (normalize_raw_error) → ContextLength.
+        // Anthropic signals context-length via the error message (no distinct code); surface the
+        // canonical code so the breaker pipeline maps it to ContextLength.
         //
-        // GATE the message-scan override on a request-SIZE status (400 Bad Request / 413 Payload Too
-        // Large) — the only statuses under which an oversized-prompt body is the authoritative signal.
-        // Cross-protocol sibling of the Cohere `body_signals_context_length` gate. Without
-        // the gate, ANY non-2xx whose body merely mentions a token/length phrase was reclassified to
-        // context_length: a 401/403 ("...invalid token...") or a 429 ("...rate limit on tokens...")
-        // would be turned into a non-penalizing ContextLength fail-over, so the breaker never recorded
-        // the auth/rate-limit fault and the lane stayed "healthy" while hard-down or throttled. By
-        // confining the override to 400/413, a 401/403/429 that happens to mention tokens keeps its
-        // auth/rate-limit disposition and is penalized by the breaker as it should be.
+        // The message scan is gated on 400/413, the only statuses where an oversized-prompt body is
+        // authoritative (as in the Cohere `body_signals_context_length` gate). Ungated, a 401/403
+        // ("invalid token") or 429 ("rate limit on tokens") would become a non-penalizing
+        // ContextLength fail-over and the breaker would never record the auth or rate-limit fault.
         let status_code = status.as_u16();
         let is_request_size_status = status_code == 400 || status_code == 413;
         let provider_code = provider_code.or_else(|| {
@@ -142,9 +135,8 @@ impl ProtocolReader for AnthropicReader {
 
         let mut extra = serde_json::Map::new();
         let mut system_blocks: Vec<crate::codec::ir::IrBlock> = Vec::new();
-        // Count of `role:"system"` entries folded out of `messages` below (a real Anthropic wire body
-        // never carries one, but a cross-protocol-shaped or malformed body legally can) — restores the
-        // 1.5.5 `message_count` semantics (the raw `messages` array length) onto `IrFacts::shape()`.
+        // Count of `role:"system"` entries folded out of `messages` below, so `IrFacts::shape()`
+        // reports the raw `messages` array length.
         let mut system_turns_folded: usize = 0;
         // Where each folded entry stood, for the hook view (`IrRequest::system_folds`).
         let mut system_folds: Vec<crate::codec::ir::IrSystemFold> = Vec::new();
@@ -164,26 +156,17 @@ impl ProtocolReader for AnthropicReader {
             }
         }
 
-        // Handle messages array. Anthropic's Messages API has NO `system` role inside `messages` —
-        // system instructions live in the top-level `system` field. A cross-protocol IR, however, can
-        // carry an `IrRole::System` message (e.g. translated from an OpenAI `system` message), and a
-        // wire body could nominally present a `role:"system"` message too. PROMOTE any such message
-        // into `system_blocks` here at the root rather than pushing it into `req.messages`, so the
-        // writer never sees an `IrRole::System` message and can never emit the INVALID Anthropic
-        // `role:"system"` (which upstream rejects with a 400). System blocks are appended in order,
-        // preserving their position relative to any top-level `system` field already read above.
+        // Messages. There is no `system` role inside `messages`, but a body can present one: promote
+        // it into `system_blocks` (appended in order after the top-level `system`) so the writer
+        // never emits `role:"system"`, which upstream rejects with a 400.
         let mut messages: Vec<crate::codec::ir::IrMessage> = Vec::new();
         // Positions (post system-filter, matching `write_request`'s indexing) of any raw content
-        // block the IR does not hold whole — parked here so an Anthropic-to-Anthropic hop that
-        // goes through the IR (not the byte-verbatim same-protocol relay) splices the ORIGINAL
-        // block back at its position. A block the IR does not read at all has nothing standing
-        // in for it (design F3 "Drops": never a substitution).
+        // block the IR does not hold whole, parked so an Anthropic-to-Anthropic hop through the IR
+        // splices the original back. A block the IR does not read at all has nothing standing in.
         let mut unmodeled_blocks: Vec<serde_json::Value> = Vec::new();
         if let Some(messages_val) = obj.get(keys::MESSAGES) {
-            // EDGE-VALIDATE the top-level `messages` TYPE: a PRESENT-but-wrong-typed `messages`
-            // (string/number/object where an array is required) is a genuine structural violation.
-            // Reject it with a 400 rather than silently coercing to an empty conversation (matching
-            // the strict openai_chat/cohere readers). An ABSENT `messages` stays lenient above.
+            // A present but wrong-typed `messages` is a structural violation: reject with a 400
+            // rather than coerce to an empty conversation. An absent `messages` stays lenient.
             let messages_arr = messages_val.as_array().ok_or_else(ir_parse_error)?;
             for msg_val in messages_arr {
                 let msg = read_message(msg_val)?;
@@ -213,13 +196,12 @@ impl ProtocolReader for AnthropicReader {
 
         // Handle tools array
         let mut tools: Vec<crate::codec::ir::IrTool> = Vec::new();
-        // IR-11 (ANT-13): an Anthropic server tool whose KIND the IR models (web search, web fetch,
-        // code execution) crosses the seam in the typed slot, NOT as a raw hosted `IrTool`.
+        // A server tool whose kind the IR models (web search, web fetch, code execution) crosses
+        // in the typed slot, not as a raw hosted `IrTool`.
         let mut hosted_tools: Vec<crate::codec::ir::IrHostedTool> = Vec::new();
         if let Some(tools_val) = obj.get(keys::TOOLS) {
-            // A PRESENT `tools` that is not an array is a malformed request — reject it (mirroring the
-            // `messages` type-check above) rather than coercing to empty, which would forward a
-            // tool-less request upstream at HTTP 200 and silently strip the caller's tools.
+            // A present `tools` that is not an array is malformed: reject rather than coerce to
+            // empty, which would silently strip the caller's tools.
             let tools_arr = tools_val.as_array().ok_or_else(ir_parse_error)?;
             for tool_val in tools_arr {
                 match read_hosted_tool(tool_val) {
@@ -230,51 +212,41 @@ impl ProtocolReader for AnthropicReader {
         }
 
         // Extract scalar fields and extra
-        // Checked `u32::try_from` rather than a raw `as u32`: a `max_tokens`/`top_k` larger than
-        // `u32::MAX` would silently TRUNCATE under `as` (e.g. 4294967297 → 1), forwarding a wildly
-        // wrong cap upstream. An out-of-range value drops to `None` here, matching the sibling
-        // readers; the upstream then applies its own default rather than receiving a corrupted limit.
+        // Checked `u32::try_from`: `as u32` would truncate a `max_tokens`/`top_k` above `u32::MAX`
+        // (4294967297 to 1). An out-of-range value drops to `None` and the upstream applies its default.
         let max_tokens = obj
             .get(keys::MAX_TOKENS)
             .and_then(|v| v.as_u64())
             .and_then(|v| u32::try_from(v).ok())
-            // Treat `max_tokens: 0` as absent (matches the OpenAI/Gemini/Bedrock/Cohere/Responses
-            // readers). A zero cap is meaningless (no output budget) and would force an invalid body
-            // on egress; dropping it to None lets the target apply its own default.
+            // `max_tokens: 0` is absent, as in every other reader: a zero cap would force an
+            // invalid body on egress.
             .filter(|&v| v > 0);
-        // temperature / top_p / top_k / stop_sequences are rows of the mapping file, read below.
-        // Anthropic `tool_choice` is an object: {type:"auto"|"any"|"tool"|"none", name?}. Normalize
-        // into the IR union so forced/targeted tool use survives the cross-protocol seam.
+        // temperature / top_p / top_k / stop_sequences are mapping-file rows, read below.
+        // `tool_choice` is normalized into the IR union so forced or targeted use survives.
         let tool_choice = read_anthropic_tool_choice(obj.get(keys::TOOL_CHOICE));
-        // `disable_parallel_tool_use` rides INSIDE Anthropic's tool_choice object; normalize it
-        // inverted ("parallel allowed?") so it carries to OpenAI's top-level `parallel_tool_calls`.
+        // `disable_parallel_tool_use` rides inside tool_choice; it is inverted ("parallel allowed?")
+        // to carry to OpenAI's `parallel_tool_calls`.
         let parallel_tool_calls = obj
             .get(keys::TOOL_CHOICE)
             .and_then(|tc| tc.get(super::DISABLE_PARALLEL_TOOL_USE))
             .and_then(|v| v.as_bool())
             .map(|disabled| !disabled);
-        // `metadata.user_id` is Anthropic's spelling of OpenAI's `user`; promote it so it carries
-        // across the seam. The `metadata` object itself still rides `extra` (unmodeled), keeping
-        // same-protocol fidelity byte-exact.
+        // `metadata.user_id` is Anthropic's spelling of OpenAI's `user`; promote it. The `metadata`
+        // object still rides `extra`, keeping same-protocol fidelity byte-exact.
         let user = obj
             .get(keys::METADATA)
             .and_then(|m| m.get(super::USER_ID))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        // The request-level `thinking` param (the ASK, not the response content blocks), plus the
-        // effort word Anthropic carries in `output_config.effort`:
-        //   * `{type:"enabled", budget_tokens:N}` → `Budget(N)` (a straight number to Gemini's
-        //     thinkingBudget, bucketed to a word for OpenAI's reasoning_effort);
-        //   * `{type:"adaptive"}` → `Effort(<output_config.effort>)` when an effort word is given,
-        //     else `Dynamic` — "the model decides", Gemini's `thinkingBudget:-1` (ANT-09);
-        //   * no `thinking` but an `output_config.effort` word → `Effort(word)`: the caller asked for
-        //     that reasoning depth, and the adaptive-by-default models honour it;
-        //   * `{type:"disabled"}` → `Off` (IR-09, ANT-09): the caller switched reasoning OFF, which a
-        //     reasoning-by-default foreign model must hear (Chat/Responses `"none"`, Gemini
-        //     `thinkingBudget:0`) rather than read as "never said";
-        //   * a malformed `thinking` → no ask.
-        // Everything stays in `extra` too except a promoted budget-form `thinking` (removed below),
-        // so a same-protocol hop through the IR still re-emits the caller's exact objects.
+        // The request-level `thinking` ask, plus `output_config.effort`:
+        //   * `{type:"enabled", budget_tokens:N}` is `Budget(N)`;
+        //   * `{type:"adaptive"}` is `Effort(word)` when an effort word is given, else `Dynamic`
+        //     ("the model decides", Gemini's `thinkingBudget:-1`);
+        //   * no `thinking` but an effort word is `Effort(word)`;
+        //   * `{type:"disabled"}` is `Off`, which a reasoning-by-default foreign model must hear
+        //     (Chat/Responses `"none"`, Gemini `thinkingBudget:0`) rather than read as "never said";
+        //   * a malformed `thinking` is no ask.
+        // Everything stays in `extra` too except a promoted budget-form `thinking` (removed below).
         let thinking_type = obj
             .get(keys::THINKING)
             .and_then(|t| t.get(keys::TYPE))
@@ -302,9 +274,8 @@ impl ProtocolReader for AnthropicReader {
         };
         let reasoning_is_budget =
             matches!(reasoning, Some(crate::codec::ir::IrReasoningAsk::Budget(_)));
-        // Native structured outputs: `output_config.format` (GA) or the deprecated top-level
-        // `output_format` of the same shape. Both used to ride `extra` and die at the seam, so an
-        // Anthropic caller's JSON schema never reached a foreign backend (ANT-06).
+        // Native structured outputs: `output_config.format` or the deprecated top-level
+        // `output_format` of the same shape.
         let output_format_legacy = obj.get(keys::OUTPUT_FORMAT);
         let response_format = obj
             .get(keys::OUTPUT_CONFIG)
@@ -316,24 +287,20 @@ impl ProtocolReader for AnthropicReader {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        // Collect unmodeled top-level keys into `extra`: the modelled keys are the mapping file's
-        // top-level rows.
+        // Unmodeled top-level keys go to `extra`; the modelled keys are the mapping file's rows.
         crate::codec::carry::keep_unmodelled(super::map::REQUEST, obj, &mut extra);
-        // A PROMOTED thinking ask must not also ride extra (the writer re-emits it from the typed
-        // field; a duplicate from extra would double-emit on a translated same-protocol hop).
+        // A promoted thinking ask must not also ride extra, or the writer double-emits it.
         if reasoning_is_budget {
             extra.remove(keys::THINKING);
         }
-        // The deprecated spelling is promoted to the typed field and re-emitted by the writer in its
-        // GA spelling; leaving it in `extra` too would put BOTH spellings on a same-protocol hop.
+        // The deprecated spelling is promoted and re-emitted in the GA spelling; leaving it in
+        // `extra` would put both on a same-protocol hop.
         if response_format.is_some() && output_format_legacy.is_some() {
             extra.remove(keys::OUTPUT_FORMAT);
         }
 
-        // (No ingress sentinel scrub needed anymore: a client cannot forge a redacted-reasoning block.
-        // `redacted` is a TYPED flag only the Anthropic/Bedrock readers set on a genuine
-        // `redacted_thinking`/`redactedContent` block — a client-supplied `signature` string can never
-        // mark a block redacted, so the old `__busbar` sentinel forgery vector is structurally closed.)
+        // No ingress sentinel scrub is needed: `redacted` is a typed flag only the Anthropic and
+        // Bedrock readers set on a genuine redacted block, so a client cannot forge one.
 
         let mut ir = crate::codec::ir::IrRequest {
             reasoning,
@@ -382,15 +349,12 @@ impl ProtocolReader for AnthropicReader {
                     Ok(usage) => usage,
                     Err(refusal) => return Some(IrStreamEvent::Error(refusal)),
                 };
-                // Capture the stream's native identity so an anthropic→anthropic passthrough
-                // re-emits the exact `message_start.message` an SDK expects (it reads
-                // `message.id`/`message.model` to populate the assembled `Message`). Anthropic's
-                // `message_start` has no `created` field, so `created` stays None on this path; the
-                // writer synthesizes one only when translating from a protocol that omitted it.
+                // Capture the stream's native `message.id`/`message.model` so a same-protocol hop
+                // re-emits the `message_start.message` an SDK expects. `message_start` has no
+                // `created`, so it stays None.
                 let id = msg.get(keys::ID).and_then(|i| i.as_str()).map(String::from);
-                // Empty `model` maps to `None`: the writer emits `model: ""` as the mandatory-field
-                // fallback when no source model exists, so reading it back as `None` keeps the
-                // stream-event round-trip idempotent (a real model id is never empty).
+                // Empty `model` maps to `None`: the writer emits `model: ""` as its fallback, so
+                // reading it back as `None` keeps the round-trip idempotent.
                 let model = msg
                     .get(keys::MODEL)
                     .and_then(|m| m.as_str())
@@ -465,12 +429,8 @@ impl ProtocolReader for AnthropicReader {
                             .map(String::from)?;
                         IrDelta::SignatureDelta(signature)
                     }
-                    // STREAMING citation: a native Anthropic `content_block_delta` whose
-                    // `delta.type == "citations_delta"` carries a single `citation` object (one of
-                    // the four citation variants). Reuse `read_citation` so the neutral fields AND
-                    // the byte-exact `raw` escape hatch are filled (same as the non-stream path),
-                    // then carry it as `IrDelta::CitationsDelta` (one citation per delta). Without
-                    // this arm a streamed grounding/web-search citation was silently dropped.
+                    // A `citations_delta` carries one `citation`; `read_citation` fills the neutral
+                    // fields and the byte-exact `raw`, carried as `IrDelta::CitationsDelta`.
                     DELTA_TYPE_CITATIONS => {
                         let citation_val = delta_val.get(keys::CITATION)?;
                         IrDelta::CitationsDelta(vec![read_citation(citation_val)])
@@ -489,31 +449,23 @@ impl ProtocolReader for AnthropicReader {
                     .get(super::STOP_REASON)
                     .and_then(|r| r.as_str())
                     .map(read_anthropic_stop_reason);
-                // `message_delta.delta.stop_sequence` — the matched stop string, present (as a
-                // string) only when a stop sequence actually triggered the stop, `null`/absent
-                // otherwise. Carry it through so the same-protocol writer can re-emit it.
+                // `delta.stop_sequence`: the matched stop string, present only when one fired.
                 let stop_sequence = delta
                     .get(keys::STOP_SEQUENCE)
                     .and_then(|s| s.as_str())
                     .map(String::from);
-                // `usage` is OPTIONAL on read here: do NOT `?` it. `message_delta` is the terminal
-                // event that carries `stop_reason`/`stop_sequence`, so propagating `None` out of this
-                // closure when `usage` is absent would silently DROP the whole event — the client then
-                // never sees the stop reason and cannot tell whether generation completed. A native
-                // Anthropic stream always includes `usage`, but an Anthropic-compatible backend that
-                // doesn't implement usage counting (or makes it conditional) may omit it; preserve the
-                // event regardless by zero-defaulting the counters when `usage` is missing. This mirrors
-                // the `message_start` reader above, which already maps a missing `usage` to defaults
-                // rather than bailing.
-                // An ABSENT count still zero-defaults (above); a present-but-UNREADABLE one refuses
-                // — the stream ends in an error rather than billing the count as zero.
+                // `usage` is optional here: do not `?` it. `message_delta` is the terminal event
+                // carrying `stop_reason`, and dropping it would hide whether generation completed. An
+                // Anthropic-compatible backend may omit `usage`, so counters zero-default as in the
+                // `message_start` reader. An absent count zero-defaults; a present but unreadable one
+                // refuses (the stream ends in an error) rather than bill zero.
                 let usage_val = data.get(keys::USAGE);
                 let usage = match read_anthropic_usage(usage_val) {
                     Ok(usage) => usage,
                     Err(refusal) => return Some(IrStreamEvent::Error(refusal)),
                 };
-                // IR-16 / IR-02: the context-window refinement of a length stop (ANT-11) and a
-                // refusal's `stop_details` category, carried beside the coarse reason.
+                // The context-window refinement of a length stop and a refusal's `stop_details`
+                // category, carried beside the coarse reason.
                 let stop_detail = read_anthropic_stop_detail(
                     delta.get(super::STOP_REASON).and_then(|r| r.as_str()),
                     delta.get(super::STOP_DETAILS),
@@ -528,20 +480,14 @@ impl ProtocolReader for AnthropicReader {
             EVT_MESSAGE_STOP => Some(IrStreamEvent::MessageStop),
             keys::ERROR_WORD => {
                 let err_val = data.get(keys::ERROR_WORD)?;
-                // Carry the upstream error `type` through as-is: `Some("rate_limit_error")` when
-                // present, `None` when the event omits it. Do NOT `unwrap_or_default()` into
-                // `Some("")` — an empty-string type would make the writer emit `"type": ""` where a
-                // native Anthropic error event carries either a real type or `null`. The writer
-                // (write_response_event) already renders `None` as JSON `null`, so the absence
-                // round-trips faithfully.
+                // Carry the upstream error `type` as-is, `None` when omitted. Do not default it to
+                // `Some("")`: the writer would emit `"type": ""` where native carries a real type
+                // or `null`.
                 let type_token = err_val.get(keys::TYPE).and_then(|t| t.as_str());
                 let provider_signal = type_token.map(String::from);
-                // Derive the breaker class from the upstream error `type`, mirroring the HTTP
-                // classifier intent (see `classify`/`write_error`'s Anthropic error vocabulary)
-                // instead of hardcoding ClientError. A mid-stream `overloaded_error`/
-                // `rate_limit_error`/`api_error` is a TRANSIENT upstream fault, not a client fault —
-                // hardcoding ClientError mapped every one of them to Disposition::ClientFault, so the
-                // breaker never recorded the transient/hard-down signal and took the wrong transition.
+                // Derive the breaker class from the error `type`, as the HTTP classifier does: a
+                // mid-stream `overloaded_error`/`rate_limit_error`/`api_error` is a transient
+                // upstream fault, and a fixed ClientError would hide it from the breaker.
                 let class = stream_error_class(type_token);
                 Some(IrStreamEvent::Error(IrError {
                     class,
@@ -560,14 +506,11 @@ impl ProtocolReader for AnthropicReader {
         data: &serde_json::Value,
         state: &mut crate::codec::ir::StreamDecodeState,
     ) -> Vec<IrStreamEvent> {
-        // SUPPRESSED BLOCKS (ANT-14). A content block whose type the IR does not model on a stream
-        // (`server_tool_use`, `web_search_tool_result`, `mcp_tool_use`, a future type) produces no
-        // `BlockStart` — but its `input_json_delta`s and its `content_block_stop` still arrived at
-        // the same index and were translated, so a foreign client received tool-argument deltas and
-        // a block stop for a block it was never shown opening. Remember every index whose start was
-        // suppressed and drop everything that arrives at it. The index set lives in the per-stream
-        // decode state (`open_tools`, which no other part of this reader uses): the Anthropic
-        // reader's only per-stream memory, reset with the stream.
+        // Suppressed blocks: a block type the IR does not model on a stream (`server_tool_use`,
+        // `web_search_tool_result`, `mcp_tool_use`, a future type) produces no `BlockStart`, so its
+        // deltas and stop would reach a foreign client for a block it never saw open. Remember
+        // each suppressed index and drop everything at it. The set lives in the per-stream decode
+        // state (`open_tools`), the reader's only per-stream memory.
         if event_type == EVT_CONTENT_BLOCK_START {
             let block_type = data
                 .get(super::CONTENT_BLOCK)
@@ -590,12 +533,9 @@ impl ProtocolReader for AnthropicReader {
                 }
             }
         }
-        // A streamed `redacted_thinking` block carries its full opaque encrypted `data` INLINE on the
-        // `content_block_start` event (Anthropic sends NO deltas for redacted blocks), so the 1:1
-        // single-event reader dropped it entirely (`_ => return None`). Emit the pair the IR models
-        // for redacted reasoning — a `Thinking` BlockStart plus a `RedactedReasoningDelta` carrying
-        // the opaque bytes — from this one start event (the natural `content_block_stop` that follows
-        // produces the BlockStop). Mirrors the Bedrock streaming reader + the non-stream `read_block`.
+        // A streamed `redacted_thinking` block carries its opaque `data` inline on the
+        // `content_block_start` (no deltas), so emit the pair the IR models for it, a `Thinking`
+        // BlockStart plus a `RedactedReasoningDelta` carrying the bytes, from this one event.
         if event_type == EVT_CONTENT_BLOCK_START {
             if let Some(block) = data.get(super::CONTENT_BLOCK) {
                 if block.get(keys::TYPE).and_then(|t| t.as_str())
@@ -608,9 +548,8 @@ impl ProtocolReader for AnthropicReader {
                             .unwrap_or("")
                             .to_string();
                         return vec![
-                            // A REDACTED start (not plaintext `Thinking`): the writer needs to know at
-                            // block-start time so it emits the native `redacted_thinking` start (with
-                            // the bytes from the delta), never a plaintext `thinking` seed.
+                            // A redacted start: the writer must know at block-start time to emit
+                            // `redacted_thinking`, never a plaintext `thinking` seed.
                             IrStreamEvent::BlockStart {
                                 index,
                                 block: IrBlockMeta::RedactedThinking,
@@ -669,40 +608,27 @@ impl ProtocolReader for AnthropicReader {
             .and_then(|r| r.as_str())
             .map(read_anthropic_stop_reason);
 
-        // Parse usage. `usage` is OPTIONAL on read here: do NOT `ok_or?` it. A native Anthropic
-        // non-streaming `Message` always carries `usage`, but an Anthropic-compatible backend that
-        // doesn't implement usage counting (or makes it conditional) may omit it — hard-requiring the
-        // field turned an otherwise-valid 200 body into a 400, inconsistent with this protocol's own
-        // streaming readers (`message_start`/`message_delta` above already zero-default a missing
-        // `usage` rather than bailing) and with the gemini/cohere reader tolerance. When `usage` is
-        // absent each counter defaults to zero (`Some` → parse, `None` → 0). A counter that is
-        // PRESENT and unreadable is not absent: it refuses instead of ledgering zero.
+        // `usage` is optional: an Anthropic-compatible backend may omit it, and requiring it would
+        // turn a valid 200 into a 400 (the streaming readers zero-default too). An absent counter
+        // is zero; a present but unreadable one refuses instead of ledgering zero.
         let usage_val = obj.get(keys::USAGE);
-        // The 5m/1h cache-creation TIER SPLIT rides the same table as the totals (see `USAGE`):
-        // the kernel counts the two tiers separately, so collapsing them would leave a total that
-        // reconciles in aggregate and cannot be reconciled per line.
+        // The 5m/1h cache-creation tier split rides the same table as the totals (see `USAGE`);
+        // the kernel counts the tiers separately, so collapsing them breaks per-line reconciliation.
         let usage = read_anthropic_usage(usage_val)?;
 
-        // Treat an empty `model` string as absent (`None`). The writer emits `model: ""` as the
-        // mandatory-field fallback when the source carried no model (see `write_response`); mapping
-        // that empty string back to `None` keeps a write→read round-trip IR-idempotent and never
-        // mistakes the placeholder for a real model identifier (a genuine model id is never empty).
+        // An empty `model` is absent: the writer emits `model: ""` as its fallback, and reading it
+        // back as `None` keeps the round-trip idempotent.
         let model = obj
             .get(keys::MODEL)
             .and_then(|m| m.as_str())
             .filter(|s| !s.is_empty())
             .map(String::from);
 
-        // Capture the native response identity so a same-protocol (anthropic→anthropic) passthrough
-        // preserves it byte-for-byte. An official SDK's `Message` carries `id` ("msg_<rand>"),
-        // `type` ("message"), `role`, `model`, `stop_reason`, `stop_sequence`, and `usage`; the
-        // first four plus `stop_sequence` round-trip through these IR fields (role/model/stop_reason
-        // are already parsed above; `type` is a constant the writer re-emits).
+        // Capture the native response identity (`id`, `stop_sequence`) so a same-protocol hop
+        // preserves it; `type` is a constant the writer re-emits.
         let id = obj.get(keys::ID).and_then(|i| i.as_str()).map(String::from);
-        // Anthropic's non-streaming `Message` has no `created` field, so there is nothing to carry
-        // through; the writer synthesizes one only on the cross-protocol path (where the IR field is
-        // None) for SDKs that read it. `system_fingerprint` is an OpenAI concept Anthropic never
-        // emits — left None so a same-protocol round-trip does not invent one.
+        // `Message` has no `created`, and `system_fingerprint` is an OpenAI concept; both stay None
+        // so a same-protocol round-trip invents neither.
         let stop_sequence = obj
             .get(keys::STOP_SEQUENCE)
             .and_then(|s| s.as_str())
@@ -721,7 +647,7 @@ impl ProtocolReader for AnthropicReader {
             stop_sequence,
 
             request_echo: None,
-            // IR-16 / IR-02 (buffered twin of the `message_delta` read above).
+            // The buffered twin of the `message_delta` read above.
             stop_detail: read_anthropic_stop_detail(
                 obj.get(super::STOP_REASON).and_then(|r| r.as_str()),
                 obj.get(super::STOP_DETAILS),
