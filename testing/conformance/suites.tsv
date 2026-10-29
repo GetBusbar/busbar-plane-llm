@@ -4,3 +4,5 @@ llm-responses	bash testing/conformance/llm.sh
 llm-gemini	bash testing/conformance/llm.sh
 llm-bedrock	bash testing/conformance/llm.sh
 llm-cohere	bash testing/conformance/llm.sh
+voice-transcribe	bash testing/conformance/audio.sh transcribe
+voice-tts	bash testing/conformance/audio.sh tts
