@@ -71,6 +71,8 @@ subject_run() {
     cat >"$W/config.yaml" <<YAML
 listen: "127.0.0.1:$L"
 admin_listen: "127.0.0.1:$Ad"
+advanced:
+  allow_destinations: ["127.0.0.1"]   # the provider is the loopback mock (the destination guard's documented exception)
 identity-providers:
   admin-tokens:
     module: admin-tokens
