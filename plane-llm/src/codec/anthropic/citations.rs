@@ -6,12 +6,10 @@
 use super::*;
 use crate::codec::keys;
 
-/// Map one RAW Anthropic citation object → neutral [`crate::codec::ir::IrCitation`]. Fills the neutral
-/// fields it recognizes AND stashes the source object verbatim in `raw`, so the Anthropic writer can
-/// re-emit it byte-exact (the no-regression guarantee) while a cross-protocol writer still has the
-/// neutral coordinates. The Anthropic citation `type` union uses differently-named start/end fields
-/// per variant (char/page/block index, or web-search `encrypted_index`); we read each into the shared
-/// neutral `start_index`/`end_index`/`encrypted_index` slots, keyed off the `type` tag.
+/// Map one raw citation object to a neutral [`crate::codec::ir::IrCitation`], keeping the source
+/// verbatim in `raw` so the Anthropic writer re-emits it byte-exact while a cross-protocol writer
+/// has the neutral coordinates. The `type` variants name start/end differently (char/page/block
+/// index, web-search `encrypted_index`); each is read into the shared neutral slots by `type`.
 pub(super) fn read_citation(val: &serde_json::Value) -> crate::codec::ir::IrCitation {
     let kind = val
         .get(keys::TYPE)
@@ -27,9 +25,8 @@ pub(super) fn read_citation(val: &serde_json::Value) -> crate::codec::ir::IrCita
         .or_else(|| val.get(keys::TITLE))
         .and_then(|v| v.as_str())
         .map(str::to_string);
-    // `url` (web_search_result_location) OR `source` (search_result_location — the caller-supplied
-    // `search_result.source` URI the passage came from). Reading only `url` lost the provenance of
-    // every search-result citation on a foreign egress (ANT-18).
+    // `url` (web_search_result_location) OR `source` (search_result_location, the caller-supplied
+    // URI); reading only `url` loses a search-result citation's provenance on a foreign egress.
     let url = val
         .get(keys::URL)
         .or_else(|| val.get(keys::SOURCE))
@@ -71,10 +68,9 @@ pub(super) fn read_citation(val: &serde_json::Value) -> crate::codec::ir::IrCita
     }
 }
 
-/// True when `raw` is an ANTHROPIC-shaped citation object — its `type` tag is one of the four
-/// Anthropic citation variants. Gates the byte-exact `raw` passthrough so a foreign-protocol `raw`
-/// (Gemini `citationSources[]`, which has no Anthropic `type`) is rebuilt from neutral fields rather
-/// than emitted verbatim.
+/// True when `raw` is an Anthropic citation object (its `type` is a known variant). Gates the
+/// byte-exact passthrough so a foreign `raw` (Gemini `citationSources[]`) is rebuilt from neutral
+/// fields.
 pub(super) fn is_anthropic_citation_shape(raw: &serde_json::Value) -> bool {
     matches!(
         raw.get(keys::TYPE).and_then(|v| v.as_str()),
@@ -88,18 +84,13 @@ pub(super) fn is_anthropic_citation_shape(raw: &serde_json::Value) -> bool {
     )
 }
 
-/// Map a neutral [`crate::codec::ir::IrCitation`] → an Anthropic citation object.
-///
-/// NO-REGRESSION GUARANTEE: when `raw` is present (an Anthropic-sourced citation, OR any source that
-/// preserved its original object), it is emitted VERBATIM — so Anthropic→IR→Anthropic is byte-exact
-/// regardless of how the neutral fields map. Only when `raw` is absent (a citation synthesized from
-/// neutral fields on a cross-protocol hop, e.g. Gemini→Anthropic) do we BUILD an Anthropic object
-/// from the neutral fields, keyed off `kind` to choose the variant + its field names.
+/// Map a neutral [`crate::codec::ir::IrCitation`] to an Anthropic citation object. A present `raw`
+/// is emitted verbatim, so Anthropic to IR to Anthropic is byte-exact; only when it is absent
+/// (a citation synthesized on a cross-protocol hop) is the object built from the neutral fields,
+/// with `kind` choosing the variant and its field names.
 pub(super) fn write_citation(c: &crate::codec::ir::IrCitation) -> serde_json::Value {
-    // Re-emit `raw` VERBATIM only when it is an ANTHROPIC citation object (same-protocol path) — keyed
-    // off an Anthropic `type` tag. A `raw` from a FOREIGN protocol (e.g. a Gemini `citationSources[]`
-    // entry on a Gemini→Anthropic hop, which has `uri`/`startIndex` and no Anthropic `type`) must NOT
-    // be emitted as-is; fall through to BUILD the Anthropic shape from the neutral fields instead.
+    // Re-emit `raw` verbatim only when it is an Anthropic citation (an Anthropic `type` tag); a
+    // foreign `raw` (e.g. Gemini `uri`/`startIndex`) falls through to the built shape.
     if let Some(raw) = &c.raw {
         if is_anthropic_citation_shape(raw) {
             return raw.clone();
@@ -125,8 +116,7 @@ pub(super) fn write_citation(c: &crate::codec::ir::IrCitation) -> serde_json::Va
             super::END_BLOCK_INDEX,
         ),
         // A search-result citation names its passage by `source` + `search_result_index` and its
-        // span by content-BLOCK indices; building it with char-location names (the old fall-through)
-        // produced an object no Anthropic SDK reads as a search-result citation (ANT-18).
+        // span by content-block indices; char-location names would not read as one.
         CITATION_TYPE_SEARCH_RESULT => {
             if let Some(u) = &c.url {
                 obj.insert(keys::SOURCE.to_string(), serde_json::json!(u));
