@@ -24,6 +24,7 @@ use busbar_contract::abi::plane::{
     PlaneRefreshOut, ProjectIn, ProjectOut, RefusalIn, RefusalOut, ServeIn, ServeOut, UnitCount,
     EMIT_DONE, EMIT_TO_FAR_END, FROM_CALLER, FROM_FAR_END, FROM_KERNEL, PIECE_HAS_STATUS,
     PIECE_LAST, PRINCIPAL_REQUIRED, REFUSAL_KERNEL, TAP_FAULT_BAD_JSON, UNITS_REPORTED,
+    VERDICT_HARD,
 };
 use busbar_contract::abi::sdk::capture::{CaptureHome, CaptureSlot};
 use busbar_contract::abi::sdk::door::kind_op;
@@ -1427,6 +1428,39 @@ fn the_fee_is_decided_by_the_leg_and_the_client_facing_status() {
         probe_far.contains("status=200") && !probe_far.contains(&fee),
         "a probe's 2xx is no billable request: {probe_far}"
     );
+}
+
+/// A redirect answer the far end would send: no JSON, just a pointer elsewhere.
+const REDIRECT_BODY: &[u8] =
+    b"<html><body>Moved: https://elsewhere.invalid/v1/messages</body></html>";
+
+/// A 3XX FROM THE PROVIDER IS A FAILURE, NOT FOLLOWED (security.md: redirects are refused on the
+/// provider surface). Whatever 3xx the far end answers under, the door reads it as a HARD failure
+/// (the breaker's reading of a provider that did not serve), ends the unit on that answer (`done`,
+/// and nothing is sent to the far end again: no second leg toward the redirect target), and posts
+/// no fee unit. The far end's answer is never read as a success.
+///
+/// RED: a door that treats a 3xx as a success, retries or re-issues toward it, or bills it.
+#[test]
+fn a_3xx_from_the_provider_is_a_failure_not_followed() {
+    let fee = fee_line();
+    let hard = format!("verdict={VERDICT_HARD}");
+    for status in [300, 301, 302, 303, 307, 308] {
+        let (_, _, far) = one_unit(status, REDIRECT_BODY);
+        assert!(far.starts_with("Ready "), "{status} is answered: {far}");
+        assert!(
+            far.contains("to_far_end=false") && far.contains("done=true"),
+            "a far-end {status} is not followed: the unit ends, nothing goes to the far end again: {far}"
+        );
+        assert!(
+            far.contains(&hard),
+            "a far-end {status} is a hard failure, not a success or a retry: {far}"
+        );
+        assert!(
+            !far.contains("status=200") && !far.contains(&fee),
+            "a far-end {status} is never a success and carries no fee: {far}"
+        );
+    }
 }
 
 // ── THE HOST LOG ────────────────────────────────────────────────────────────────────────────────
