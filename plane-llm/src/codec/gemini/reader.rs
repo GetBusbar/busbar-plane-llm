@@ -13,12 +13,14 @@ static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
         code: super::RESPONSE_CODE,
         drops: super::RESPONSE_DROPS,
         defaults: &[],
+        reroot: None,
     }),
     stream_carried: Some(crate::codec::drops::Carried {
         map: super::map::RESPONSE_PATHS,
         code: super::RESPONSE_CODE,
         drops: super::RESPONSE_DROPS,
         defaults: &[],
+        reroot: None,
     }),
     stream_keyed_by_event: false,
     block_kinds: super::IR_BLOCK_KINDS,
@@ -130,7 +132,7 @@ impl ProtocolReader for GeminiReader {
                     || (lower.contains("exceeds the maximum")
                         && (lower.contains(keys::TOKEN) || lower.contains("context")))
                 {
-                    Some(busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
+                    Some(crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
                 } else {
                     provider_code
                 }

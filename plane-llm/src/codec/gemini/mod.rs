@@ -4,6 +4,7 @@
 //! Gemini protocol reader/writer implementation.
 
 use crate::codec::dialect::*;
+use crate::codec::framework::ERR_TYPE_OVERLOADED;
 use crate::codec::ir::IrStreamEvent;
 use crate::codec::keys;
 use crate::codec::usage_count::read_count_u64;
@@ -81,7 +82,8 @@ fn claims(
     h: busbar_contract::protocol::HeadFields<'_>,
     path: &str,
 ) -> Option<busbar_contract::protocol::ClaimStrength> {
-    use busbar_contract::protocol::{head_field, ClaimStrength};
+    use crate::codec::framework::head_field;
+    use busbar_contract::protocol::ClaimStrength;
     if head_field(h, FIELD_X_GOOG_API_KEY).is_some() {
         return Some(ClaimStrength(3));
     }

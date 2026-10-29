@@ -9,10 +9,10 @@
 //! the contract carries only the vocabulary both sides of the seam must spell alike
 //! (`busbar_contract::protocol`: the error-`type` bank, the SSE frame-boundary scan and line walkers).
 
+use crate::codec::framework::ERR_TYPE_SERVER_ERROR;
 use busbar_contract::protocol::{
     sse_line_spans, ERR_TYPE_API_ERROR, ERR_TYPE_AUTHENTICATION, ERR_TYPE_INSUFFICIENT_QUOTA,
     ERR_TYPE_INVALID_REQUEST, ERR_TYPE_NOT_FOUND, ERR_TYPE_PERMISSION, ERR_TYPE_RATE_LIMIT,
-    ERR_TYPE_SERVER_ERROR,
 };
 
 /// Machine-readable `code` field emitted in a bad-key 401 OpenAI-family error envelope.
@@ -112,7 +112,7 @@ pub fn warn_dropped<'a>(dropped: impl IntoIterator<Item = &'a str>, warn: &DropW
 pub fn ir_parse_error() -> busbar_contract::protocol::IrError {
     busbar_contract::protocol::IrError {
         class: busbar_contract::upstream::StatusClass::ClientError,
-        provider_signal: Some(busbar_contract::protocol::SIGNAL_IR_PARSE.to_string()),
+        provider_signal: Some(crate::codec::framework::SIGNAL_IR_PARSE.to_string()),
         retry_after: None,
     }
 }
@@ -196,6 +196,39 @@ pub const BASE62_ALPHABET: &[u8; 62] =
     b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 /// The rejection-sampling threshold paired with [`BASE62_ALPHABET`]; see its docs.
 pub const BASE62_REJECT_THRESHOLD: u8 = 248;
+
+/// Fill `out` (at most 64 characters) with uniformly-distributed characters of `alphabet` drawn
+/// from the host's entropy, by rejection sampling: a bare `byte % 62` over-represents the residues
+/// 0..7 by ~25%, a statistical tell against a native (uniform) id, so a byte at or above
+/// [`BASE62_REJECT_THRESHOLD`] is discarded. Each round draws `out.len()` bytes. Returns `false` on
+/// an entropy failure, leaving the unfilled tail of `out` as it was (the callers' `'0'` fill).
+pub(crate) fn fill_base62(
+    host: &dyn busbar_contract::codec::CodecHost,
+    out: &mut [u8],
+    alphabet: &[u8; 62],
+) -> bool {
+    debug_assert!(out.len() <= 64, "fill_base62 draws at most 64 chars");
+    let len = out.len();
+    let mut filled = 0usize;
+    'outer: while filled < len {
+        let mut batch = [0u8; 64];
+        let batch = &mut batch[..len];
+        if !host.fill_entropy(batch) {
+            return false;
+        }
+        for &byte in batch.iter() {
+            if byte >= BASE62_REJECT_THRESHOLD {
+                continue;
+            }
+            out[filled] = alphabet[(byte % 62) as usize];
+            filled += 1;
+            if filled == len {
+                break 'outer;
+            }
+        }
+    }
+    true
+}
 
 /// Project each message's `(role, content)` into a `(String, String)` pair when BOTH are plain
 /// strings, or `None` if any message is missing a string role/content. A neutral serde_json projection

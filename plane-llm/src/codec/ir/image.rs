@@ -13,9 +13,9 @@
 //! billed (see [`ImageResp::billing`]); else `Billing::Images`
 //! (per-image, no usage body).
 
+use crate::codec::framework::ImageOutput;
 use busbar_contract::billing::{Billing, TokenUsage};
 use busbar_contract::ir::SourceScopedExtra;
-use busbar_contract::media::ImageOutput;
 
 /// Which image operation. Support is non-uniform per model → unsupported `(op, model)` = 404.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

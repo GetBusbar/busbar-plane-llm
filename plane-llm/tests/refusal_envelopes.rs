@@ -120,8 +120,9 @@ fn test_anthropic_ingress_error_request_id_header_matches_body() {
 fn every_refusal_class_renders_byte_identically_on_both_paths() {
     use busbar_contract::protocol::{
         KIND_AUTHENTICATION, KIND_INSUFFICIENT_QUOTA, KIND_INVALID_REQUEST, KIND_NOT_FOUND,
-        KIND_PERMISSION, KIND_RATE_LIMIT, KIND_REQUEST_TOO_LARGE, PROVIDER_CODE_CONTEXT_LENGTH,
+        KIND_PERMISSION, KIND_RATE_LIMIT, KIND_REQUEST_TOO_LARGE,
     };
+    use busbar_plane_llm::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH;
     use busbar_plane_llm::exchange::refuse::render;
     // (class, status, kind, message, retry-after seconds)
     let classes: [(&str, u16, &str, &str, u32); 8] = [

@@ -12,6 +12,7 @@ use busbar_contract::http::StatusCode;
 use crate::codec::dialect::{bearer_error_code, context_length_prose_scan};
 // The neutral canonical error-type vocabulary lives in the substrate; read it there, not via core's
 // re-export, so this plugin names no `busbar-core` implementation path for it.
+use crate::codec::framework::{ERR_TYPE_OVERLOADED, ERR_TYPE_SERVER_ERROR};
 use busbar_contract::protocol::*;
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
@@ -578,40 +579,11 @@ const BASE62: &[u8; 62] = crate::codec::dialect::BASE62_ALPHABET;
 /// so we are too. Never panics on the request path: on the near-impossible entropy failure the
 /// buffer stays the base62 zero char rather than `?`-ing out.
 ///
-/// Mapping CSPRNG bytes into base62 uses REJECTION SAMPLING, not `byte % 62`. A raw modulo is biased
-/// because 256 is not a multiple of 62 (256 = 4*62 + 8): the eight residues 0..=7 each receive one
-/// extra source byte (5/256 probability vs 4/256 for residues 8..=61), so the first eight alphabet
-/// characters ('0'..='7') would appear ~25% more often than the rest. A native vendor id is uniform
-/// over the alphabet, so a skewed character histogram is itself a statistical fingerprint. We accept
-/// only bytes below 248 (= 4*62, the largest multiple of 62 that fits in a byte) and discard the rest,
-/// which yields an exactly-uniform draw over 0..62. Discards are rare (8/256 ≈ 3.1%), so we refill the
-/// entropy buffer on demand rather than over-allocating up front; on an entropy failure the loop
-/// stops and the remaining slots keep their '0' fill, preserving the panic-free contract.
+/// The token is drawn by `dialect::fill_base62` (rejection sampling, so the characters are uniform
+/// like a native id's).
 fn synth_completion_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
-    // Largest multiple of 62 that fits in a u8; bytes >= this are rejected to keep the draw uniform.
-    const BASE62_REJECT_FLOOR: u8 = crate::codec::dialect::BASE62_REJECT_THRESHOLD; // 4 * 62
     let mut token = [b'0'; COMPLETION_ID_TOKEN_LEN];
-    let mut filled = 0usize;
-    // Pull entropy in batches and consume only the in-range bytes. If a batch yields too few usable
-    // bytes we draw another; on an entropy failure we stop and leave '0' fill.
-    'outer: while filled < COMPLETION_ID_TOKEN_LEN {
-        let mut batch = [0u8; COMPLETION_ID_TOKEN_LEN];
-        if !host.fill_entropy(&mut batch) {
-            // Near-impossible entropy failure: keep the remaining '0' fill rather than panic.
-            break 'outer;
-        }
-        for &byte in batch.iter() {
-            if byte >= BASE62_REJECT_FLOOR {
-                continue; // biased residue — discard to keep the distribution uniform
-            }
-            token[filled] = BASE62[(byte % 62) as usize];
-            filled += 1;
-            if filled == COMPLETION_ID_TOKEN_LEN {
-                break 'outer;
-            }
-        }
-    }
-
+    crate::codec::dialect::fill_base62(host, &mut token, BASE62);
     // `token` is ASCII base62 by construction, hence always valid UTF-8; the fallback only guards
     // against an impossible non-ASCII byte and keeps the path panic-free.
     let token = std::str::from_utf8(&token).unwrap_or("000000000000000000000000");
@@ -637,7 +609,7 @@ const STREAM_ERR_CODE_RATE_LIMIT: &str = "rate_limit_exceeded";
 fn stream_inline_error_class(error_type: Option<&str>, code: Option<&str>) -> StatusClass {
     let signal = code.filter(|c| !c.is_empty()).or(error_type);
     match signal {
-        Some(busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH) => StatusClass::ContextLength,
+        Some(crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH) => StatusClass::ContextLength,
         Some(STREAM_ERR_CODE_RATE_LIMIT)
         | Some(ERR_TYPE_RATE_LIMIT)
         | Some(ERR_TYPE_INSUFFICIENT_QUOTA) => StatusClass::RateLimit,

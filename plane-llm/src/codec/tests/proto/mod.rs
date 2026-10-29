@@ -53,7 +53,8 @@ pub use crate::codec::dialect::{
     strip_top_level_usage_member, write_sse_frame, BASE62_ALPHABET, SSE_DONE_FRAME,
     SSE_DONE_SENTINEL,
 };
-pub use busbar_contract::protocol::{find_frame_terminator, IrError, SIGNAL_IR_PARSE};
+pub use crate::codec::framework::SIGNAL_IR_PARSE;
+pub use busbar_contract::protocol::{find_frame_terminator, IrError};
 // The by-name views the suites read, over THIS PLANE'S OWN declarations (#83a SD-3: the codec's
 // tests prove the codec's own seam and never reach the host). `decl_for` is the plane's own lookup;
 // the list views are the plane's declaration table read in its declared order, which is the order
