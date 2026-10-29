@@ -40,6 +40,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 LLM = os.path.join(os.path.dirname(HERE), "llm-conformance")
 
 
+sys.dont_write_bytecode = True  # importing the llm harness must leave no __pycache__ in the tree
+
+
 def _validate_module():
     spec = importlib.util.spec_from_file_location("llm_validate", os.path.join(LLM, "validate.py"))
     mod = importlib.util.module_from_spec(spec)
