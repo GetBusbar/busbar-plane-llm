@@ -15,8 +15,8 @@
 #                     truncated audio, an error body missing what ErrorResponse requires, a provider
 #                     reached by an unauthenticated call, ...) MUST be refused by the assertion it targets
 #   subject           busbar at the pin with THIS checkout's plane-llm (built once per check by llm.sh
-#                     --subject), booted from the shadow oracle's own config against a recording provider
-#                     (testing/audio-conformance/mock.py); per op three cases: `ok`, `error` (the
+#                     --subject), booted with one openai provider (the recording mock, testing/audio-conformance/mock.py)
+#                     and the keys auth chain; per op three cases: `ok`, `error` (the
 #                     provider answers 400), `unauthenticated` (no busbar key)
 # `pass` only when all three hold. A subject that cannot be built or booted is `fail` (armed).
 #
@@ -57,37 +57,53 @@ subject_run() {
     [ -n "$bin" ] && [ -x "$bin" ] || fail="busbar with this plane could not be built (see subject.log: $(tail -n 2 "$run/subject.log" | tr '\n' ' '))"
   fi
 
-  # the shadow oracle's engine, at busbar's pin (its config is the one every oracle cell boots)
-  local W="$run/boot" eng="$run/engine" pinf="$BUSBAR_CHECKOUT/testing/shadow-oracle/oracle-rust.pin"
+  # the boot: one openai provider (the recording mock), one model, the keys auth chain, written in the
+  # 1.5.5 grammar every operator's config starts from and brought to this build's grammar by the
+  # build's own `--migrate-config` when it refuses it (as an upgrading operator does)
+  local W="$run/boot" L Ad M mpid="" bpid="" tok="audio-conformance-admin"
+  local benv=(BUSBAR_CONFIG="$W/config.yaml" BUSBAR_PROVIDERS="$W/providers.yaml" AUDIO_UPSTREAM_KEY=unused BUSBAR_ADMIN_TOKEN="$tok")
   if [ -z "$fail" ]; then
-    mkdir -p "$W"
-    export MODERNCI_CACHE_DIR="${MODERNCI_CACHE_DIR:-$TGT/llm-conformance/oracle-cache}"
-    for pair in BUSBAR_ORACLE_RELEASE_REPO=release_repo BUSBAR_ORACLE_RELEASE_REF=release_ref \
-                BUSBAR_ORACLE_SHA256_LINUX_X86_64=sha256_linux_x86_64 BUSBAR_ORACLE_SHA256_LINUX_AARCH64=sha256_linux_aarch64 \
-                BUSBAR_ORACLE_CRATE=crate BUSBAR_ORACLE_BIN=bin; do
-      var="${pair%%=*}"; k="${pair#*=}"
-      [ -n "${!var:-}" ] || export "$var=$(sed -n "s/^$k=//p" "$pinf" | head -1)"
-    done
-    printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$BUSBAR_CHECKOUT/bin/oracle" >"$eng"; chmod +x "$eng"
-  fi
-
-  local L Ad M mpid="" bpid=""
-  if [ -z "$fail" ]; then
-    L="$(port)"; Ad="$(port)"; M="$(port)"
+    mkdir -p "$W"; L="$(port)"; Ad="$(port)"; M="$(port)"
     echo ok >"$run/mode"; : >"$run/upstream.jsonl"
     "$(cat "$run/python")" -I "$A/mock.py" "$M" "$run/upstream.jsonl" "$run/mode" >"$run/mock.log" 2>&1 & mpid=$!
-    "$eng" config "$W" "$L" "$Ad" "$M" --bin "$bin" >"$run/config.log" 2>&1 || fail="the oracle config could not be written (see config.log)"
+    "$bin" --generate-signing-key >"$W/signing.key" 2>"$run/config.log" && [ -s "$W/signing.key" ] || fail="busbar could not generate a signing key (see config.log)"
+    printf 'openai:\n  protocol: openai\n  base_url: "http://127.0.0.1:%s"\n' "$M" >"$W/providers.yaml"
+    cat >"$W/config.yaml" <<YAML
+listen: "127.0.0.1:$L"
+admin_listen: "127.0.0.1:$Ad"
+identity-providers:
+  admin-tokens:
+    module: admin-tokens
+    token: { env: BUSBAR_ADMIN_TOKEN }
+auth:
+  chain:
+    - keys
+  signing_key: { file: "$W/signing.key" }
+  admin_auth: [admin-tokens]
+groups:
+  conformance:
+    limits:
+      - { requests: 100000, per: day }
+providers:
+  openai:
+    api_key: { env: AUDIO_UPSTREAM_KEY }
+models:
+  m-openai-chat:
+    provider: openai
+pools:
+  audio:
+    members:
+      - model: m-openai-chat
+YAML
+  fi
+  if [ -z "$fail" ] && ! env "${benv[@]}" "$bin" --validate >"$run/validate.log" 2>&1; then
+    "$bin" --migrate-config "$W/config.yaml" >"$W/config.migrated" 2>>"$run/validate.log" && [ -s "$W/config.migrated" ] \
+      && cp "$W/config.yaml" "$W/config.1.5.5.yaml" && mv "$W/config.migrated" "$W/config.yaml"
+    env "${benv[@]}" "$bin" --validate >>"$run/validate.log" 2>&1 \
+      || fail="busbar refuses the boot config, migrated or not: $(grep -v '^\s*$' "$run/validate.log" | tail -n 6 | tr '\n' ' ' | cut -c1-600)"
   fi
   if [ -z "$fail" ]; then
-    # a binary that refuses the oracle's config gets its own --migrate-config, then the operator's
-    # upgrade step (the oracle's migrate-on-candidate-boot, harness::oracle_write_config_for_bin)
-    if ! BUSBAR_CONFIG="$W/config.yaml" BUSBAR_PROVIDERS="$W/providers.yaml" ORACLE_UPSTREAM_KEY=unused \
-         BUSBAR_ADMIN_TOKEN=shadow-oracle-admin "$bin" --validate >"$run/validate.log" 2>&1; then
-      "$bin" --migrate-config "$W/config.yaml" >"$W/config.migrated" 2>>"$run/validate.log" && [ -s "$W/config.migrated" ] \
-        && mv "$W/config.migrated" "$W/config.yaml"
-      "$eng" upgrade-config "$bin" "$W/config.yaml" >>"$run/validate.log" 2>&1 || true
-    fi
-    bpid="$("$eng" spawn --work "$W" --admin-token shadow-oracle-admin "$run/busbar.log" "$bin" 2>>"$run/config.log")"
+    env "${benv[@]}" RUST_LOG=warn "$bin" </dev/null >"$run/busbar.log" 2>&1 & bpid=$!
     local i=0
     while [ $i -lt 400 ]; do
       curl -fsS -m 1 -o /dev/null "http://127.0.0.1:$L/healthz" 2>/dev/null && break
@@ -95,12 +111,14 @@ subject_run() {
       sleep 0.05; i=$((i + 1))
     done
     curl -fsS -m 1 -o /dev/null "http://127.0.0.1:$L/healthz" 2>/dev/null \
-      || fail="busbar did not come up (see busbar.log: $(tail -n 3 "$run/busbar.log" | tr '\n' ' ' | cut -c1-300))"
+      || fail="busbar did not come up: $(tail -n 4 "$run/busbar.log" | tr '\n' ' ' | cut -c1-400)"
   fi
-  local keys=""
+  local ORACLE_TOKEN_OK=""
   if [ -z "$fail" ]; then
-    keys="$("$eng" mint-keys --admin-token shadow-oracle-admin "$Ad" 2>>"$run/config.log")" && eval "$keys" \
-      && [ -n "${ORACLE_TOKEN_OK:-}" ] || fail="the oracle's keys could not be minted (see config.log)"
+    curl -sS -m 10 -X POST "http://127.0.0.1:$Ad/api/v1/admin/keys" -H "Authorization: Bearer $tok" \
+      -H 'Content-Type: application/json' -d '{"name":"audio-conformance","group":"conformance"}' >"$run/mint.json" 2>>"$run/config.log"
+    ORACLE_TOKEN_OK="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("token") or "")' "$run/mint.json" 2>/dev/null)"
+    [ -n "$ORACLE_TOKEN_OK" ] || fail="the admin API minted no key: $(head -c 300 "$run/mint.json")"
   fi
   if [ -z "$fail" ]; then
     local py; py="$(cat "$run/python")"
