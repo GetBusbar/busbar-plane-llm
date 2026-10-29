@@ -84,6 +84,10 @@ selftest() {
   rm -rf "$t"; return $ok
 }
 [ "${1:-}" = --selftest ] && { selftest; exit $?; }
+# `llm.sh --subject` (CONFORMANCE_SUITE=llm-<any>): the shared run, if this check has not made it, then
+# the path of the busbar it built with this plane on the last line of stdout (exit 1 when there is
+# none). The one-shot audio suites (audio.sh) judge that same build.
+mode=verdict; [ "${1:-}" = --subject ] && mode=subject
 : "${CONFORMANCE_SUITE:?}" "${CONFORMANCE_OUT:?}" "${BUSBAR_CHECKOUT:?}" "${BUSBAR_PIN:?}"
 
 dialect="${CONFORMANCE_SUITE#llm-}"
@@ -133,7 +137,8 @@ shared_run() {
   if [ -z "$fail" ]; then
     say "=== subject: build busbar with this plane"
     ( cd "$SRC" && CARGO_TARGET_DIR="$TGT" cargo build --locked --release --manifest-path dist/default/Cargo.toml --bin busbar ) >"$D/build.log" 2>&1 || build_rc=$?
-    if [ "$build_rc" -ne 0 ]; then tail -15 "$D/build.log" >&2; fail="busbar with this plane could not be built (exit $build_rc; see build.log)"; fi
+    if [ "$build_rc" -ne 0 ]; then tail -15 "$D/build.log" >&2; fail="busbar with this plane could not be built (exit $build_rc; see build.log)"
+    else cp "$TGT/release/busbar" "$D/busbar.new" && mv "$D/busbar.new" "$D/busbar"; fi
   fi
   if [ -z "$fail" ]; then
     say "=== subject: record the llm cells"
@@ -176,6 +181,10 @@ if [ -s "$D/shared.json" ] && { [ -e "$marker" ] || complete; }; then
   say "shared run cached at $D"
 else
   rm -f "$D/shared.json"; shared_run; : > "$marker"
+fi
+if [ "$mode" = subject ]; then
+  [ -x "$D/busbar" ] || { say "the shared run built no busbar ($D)"; exit 1; }
+  echo "$D/busbar"; exit 0
 fi
 
 # ── this suite's verdict, from the shared ledger ─────────────────────────────────────────────────
