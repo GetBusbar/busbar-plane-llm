@@ -1842,6 +1842,9 @@ slot!(
         } else {
             project::apply_rewrite(arrived, rewrite)
         };
+        // A rewrite with nowhere to go in this operation's body says so, so the kernel tells it
+        // from a chat whose rewrite failed to apply (which it refuses).
+        let rewrite_flags = project::rewrite_flags(arrived, rewrite, rewritten.is_some());
         let view = project::project(arrived);
         let dialect = arrived.dialect;
         let pool = arrived.model.clone();
@@ -1882,6 +1885,7 @@ slot!(
         if view.stream {
             flags |= REQUEST_STREAM;
         }
+        flags |= rewrite_flags;
         out.host_str(|o| &o.view.pool, &arena, pool);
         out.host_str(|o| &o.view.ingress_dialect, &arena, dialect);
         out.set(|o| &o.view.message_count, view.turn_count as u64);

@@ -13,8 +13,10 @@
 //! dropped; a Bedrock body's nested `inferenceConfig.maxTokens` is read where that key is absent. The IR's cap is the far end's, and a reader drops a cap it cannot carry; the hook
 //! signal is the caller's ask.
 
+use busbar_contract::abi::plane::PROJECT_REWRITE_NOT_APPLICABLE;
 use busbar_contract::hooks::RewriteReply;
 use busbar_contract::ir::facts::{ContentItem, IrFacts, Shape, Slot};
+use busbar_contract::operation::OpVerb;
 use serde_json::Value;
 
 use super::arrive::Arrived;
@@ -257,4 +259,26 @@ pub fn apply_rewrite(arrived: &mut Arrived, rewrite: &[u8]) -> Option<Vec<u8>> {
     arrived.body.clone_from(&bytes);
     arrived.parsed = Some(v);
     Some(bytes)
+}
+
+/// THE PLANE'S WORD ON A REWRITE IT DID NOT APPLY, in the `project` answer's view flags:
+/// [`PROJECT_REWRITE_NOT_APPLICABLE`] when the call carried a rewrite (`rewrite` non-empty), none
+/// was applied (`applied` false), and the arrival's operation has no conversation to frame one
+/// into. Only a chat frames its turns in a conversation container (`messages`, `contents`, the
+/// responses `input`) a hook's messages can be spliced into; a rerank's query and documents, an
+/// embedding's input, a moderation's input, an image's prompt, a speech's text and a
+/// transcription's upload are projected for the gates to screen, but no rewrite has anywhere to go
+/// in them (`apply_rewrite_to_ingress_body` finds no messages container). The kernel forwards such
+/// a unit unmodified and audits it.
+///
+/// NEVER FOR A CHAT, whatever kept its rewrite from applying (a body the splice cannot place it in,
+/// a container the body lacks, a rewrite that does not read): the mark clear, the kernel refuses
+/// the unit rather than forward its body un-rewritten. `0` when nothing was carried or the rewrite
+/// applied.
+#[must_use]
+pub fn rewrite_flags(arrived: &Arrived, rewrite: &[u8], applied: bool) -> u32 {
+    if rewrite.is_empty() || applied || arrived.operation == OpVerb::CHAT {
+        return 0;
+    }
+    PROJECT_REWRITE_NOT_APPLICABLE
 }
