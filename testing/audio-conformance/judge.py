@@ -176,7 +176,7 @@ def judge(spec, op, cap):
     # ok: what busbar answered the caller
     rid = f"{op}.ok.response"
     st, h, body = status(ok), head(ok), read(ok, "body")
-    probs = [] if st == 200 else [f"status {st}, not 200"]
+    probs = [] if st == 200 else [f"status {st}, not 200 ({read(ok, 'body')[:240].decode('utf-8', 'replace')})"]
     if op == "transcribe":
         try:
             inst = json.loads(body)
