@@ -89,7 +89,8 @@ fn claims(
     h: busbar_contract::protocol::HeadFields<'_>,
     path: &str,
 ) -> Option<busbar_contract::protocol::ClaimStrength> {
-    use busbar_contract::protocol::{head_field, ClaimStrength};
+    use crate::codec::framework::head_field;
+    use busbar_contract::protocol::ClaimStrength;
     if head_field(h, HDR_ANTHROPIC_VERSION).is_some() || head_field(h, "anthropic-beta").is_some() {
         return Some(ClaimStrength(2));
     }
@@ -556,7 +557,7 @@ fn stashed_inserts(sentinel: &[serde_json::Value], m: usize) -> Vec<(usize, serd
 
 /// Error `type` strings for error envelopes and in-stream error events. Shared values alias
 /// their canonical home; only `timeout_error` is Anthropic-specific.
-const ERR_TYPE_OVERLOADED: &str = busbar_contract::protocol::ERR_TYPE_OVERLOADED;
+const ERR_TYPE_OVERLOADED: &str = crate::codec::framework::ERR_TYPE_OVERLOADED;
 const ERR_TYPE_INVALID_REQUEST: &str = busbar_contract::protocol::ERR_TYPE_INVALID_REQUEST;
 const ERR_TYPE_AUTHENTICATION: &str = busbar_contract::protocol::ERR_TYPE_AUTHENTICATION;
 const ERR_TYPE_RATE_LIMIT: &str = busbar_contract::protocol::ERR_TYPE_RATE_LIMIT;

@@ -690,6 +690,7 @@ fn the_answer_walk_names_the_shallowest_uncarried_member() {
         code: &["type=ping"],
         drops: &[],
         defaults: &[],
+        reroot: None,
     };
     let answer = json!({"id": "m", "content": [{"type": "x", "deep": 1}], "container": {"id": "c"},
         "usage": {"input_tokens": 1, "output_tokens_details": {"t": 1}}, "stop_details": null});
@@ -717,6 +718,7 @@ fn the_answer_walk_names_the_shallowest_uncarried_member() {
         code: &[],
         drops: &[],
         defaults: &[],
+        reroot: None,
     };
     assert_eq!(
         keyed.unmapped(
@@ -879,9 +881,20 @@ fn no_dialect_drops_a_path_it_carries() {
                 ("stream", r.grammar().stream_carried),
             ] {
                 let Some(c) = carried else { continue };
-                for d in c.drops {
+                // A re-rooted list is checked as the stream spells each of its paths.
+                let mut listed: Vec<String> = c.drops.iter().map(|d| d.to_string()).collect();
+                if let Some(r) = c.reroot {
+                    for (from, to) in r.at {
+                        for d in c.drops.iter().chain(r.answer_drops) {
+                            if let Some(rest) = d.strip_prefix(to) {
+                                listed.push(format!("{from}{rest}"));
+                            }
+                        }
+                    }
+                }
+                for d in &listed {
                     assert!(
-                        !c.map.contains(d) && !c.code.contains(d),
+                        !c.map.iter().chain(c.code).any(|q| *q == d.as_str()),
                         "{dialect} {direction}: `{d}` is carried and listed as dropped"
                     );
                 }

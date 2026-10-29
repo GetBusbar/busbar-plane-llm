@@ -27,3 +27,38 @@ fn every_stated_reason_code_is_the_reason_it_is_named_for() {
         );
     }
 }
+
+/// THE BEDROCK QUOTA REFUSAL WEARS THE STATUS THE PLANE DECLARES (`codec/bedrock/refusals.json`,
+/// OWNER 2026-10-27): the stated row for bedrock `over_budget` is the declared table's status, so the
+/// 400 `ServiceQuotaExceededException` 1.5.5 answered is a 400 again, not the class default 429 under
+/// the restored exception. RED before: no row, so the kernel's 429.
+#[test]
+fn the_bedrock_over_budget_status_is_the_declared_refusals() {
+    use busbar_plane_llm::dialect::DIALECTS;
+    use busbar_plane_llm::refusal::REFUSAL_STATUSES;
+    let doc: serde_json::Value =
+        serde_json::from_str(busbar_plane_llm::codec::bedrock::REFUSALS_JSON).expect("parses");
+    let declared = doc["refusals"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .find(|r| {
+            r["outcomes"]
+                .as_array()
+                .is_some_and(|o| o.iter().any(|o| o == "over_budget_total"))
+        })
+        .expect("the over-budget refusal is declared");
+    let want = u32::try_from(declared["status"].as_u64().expect("a status")).expect("fits");
+    let bedrock = u32::try_from(
+        DIALECTS
+            .iter()
+            .position(|d| d.name == "bedrock")
+            .expect("bedrock"),
+    )
+    .expect("fits");
+    let stated = REFUSAL_STATUSES
+        .iter()
+        .find(|r| r.dialect == bedrock && r.reason == reason::OVER_BUDGET)
+        .map(|r| r.status);
+    assert_eq!(stated, Some(want));
+}

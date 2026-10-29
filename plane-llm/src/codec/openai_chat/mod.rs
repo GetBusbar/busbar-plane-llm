@@ -9,6 +9,8 @@ use crate::codec::keys;
 use busbar_contract::http::StatusCode;
 // The openai-family error helpers live in the neutral substrate.
 use crate::codec::dialect::{bearer_error_code, context_length_prose_scan};
+// The neutral error-type vocabulary lives in the substrate.
+use crate::codec::framework::{ERR_TYPE_OVERLOADED, ERR_TYPE_SERVER_ERROR};
 use busbar_contract::protocol::*;
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
@@ -460,33 +462,10 @@ const BASE62: &[u8; 62] = crate::codec::dialect::BASE62_ALPHABET;
 /// process counter: a counter leaves predictable characters, a structural tell native fully random
 /// ids lack. Never panics: on entropy failure the buffer keeps its '0' fill.
 ///
-/// Bytes map to base62 by rejection sampling, not `byte % 62`: 256 = 4*62 + 8 would make the first
-/// eight characters ~25% more frequent, a statistical tell. Only bytes below 248 are accepted,
-/// giving an exactly uniform draw; discards (~3.1%) refill the buffer on demand.
+/// The token is drawn by `dialect::fill_base62` (rejection sampling, so the characters are uniform).
 fn synth_completion_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
-    // Largest multiple of 62 in a u8; bytes >= this are rejected.
-    const BASE62_REJECT_FLOOR: u8 = crate::codec::dialect::BASE62_REJECT_THRESHOLD; // 4 * 62
     let mut token = [b'0'; COMPLETION_ID_TOKEN_LEN];
-    let mut filled = 0usize;
-    // Pull entropy in batches, consuming only in-range bytes; draw another batch if short.
-    'outer: while filled < COMPLETION_ID_TOKEN_LEN {
-        let mut batch = [0u8; COMPLETION_ID_TOKEN_LEN];
-        if !host.fill_entropy(&mut batch) {
-            // Near-impossible entropy failure: keep the remaining '0' fill rather than panic.
-            break 'outer;
-        }
-        for &byte in batch.iter() {
-            if byte >= BASE62_REJECT_FLOOR {
-                continue; // biased residue — discard to keep the distribution uniform
-            }
-            token[filled] = BASE62[(byte % 62) as usize];
-            filled += 1;
-            if filled == COMPLETION_ID_TOKEN_LEN {
-                break 'outer;
-            }
-        }
-    }
-
+    crate::codec::dialect::fill_base62(host, &mut token, BASE62);
     // `token` is ASCII base62, always valid UTF-8; the fallback keeps the path panic-free.
     let token = std::str::from_utf8(&token).unwrap_or("000000000000000000000000");
     format!("{COMPLETION_ID_PREFIX}{token}")
@@ -505,7 +484,7 @@ const STREAM_ERR_CODE_RATE_LIMIT: &str = "rate_limit_exceeded";
 fn stream_inline_error_class(error_type: Option<&str>, code: Option<&str>) -> StatusClass {
     let signal = code.filter(|c| !c.is_empty()).or(error_type);
     match signal {
-        Some(busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH) => StatusClass::ContextLength,
+        Some(crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH) => StatusClass::ContextLength,
         Some(STREAM_ERR_CODE_RATE_LIMIT)
         | Some(ERR_TYPE_RATE_LIMIT)
         | Some(ERR_TYPE_INSUFFICIENT_QUOTA) => StatusClass::RateLimit,

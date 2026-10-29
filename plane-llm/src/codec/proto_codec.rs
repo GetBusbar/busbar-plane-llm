@@ -424,18 +424,15 @@ pub trait ProtocolWriter: Send + Sync {
     ///
     /// This is the NEUTRAL seam for the host proxy's `wire` mid-stream error framer: core frames the
     /// returned pair without naming any concrete stream-event type, so the concrete `IrStreamEvent`
-    /// need not exist in core at all. Every SSE-framed writer overrides this to reproduce, byte for
-    /// byte, what its `write_response_event` produces for an error event.
-    ///
-    /// Returns `None` by default so a future protocol without an override falls back to core's
-    /// dialect-free terminal frame — the same fallback the caller already applies when a writer
-    /// declines to frame an error in-band.
+    /// need not exist in core at all. It is, byte for byte, what the writer's `write_response_event`
+    /// produces for an error event (`None` where that declines, and core falls back to its
+    /// dialect-free terminal frame).
     fn write_error_frame(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
-        _err: &IrError,
+        host: &dyn busbar_contract::codec::CodecHost,
+        err: &IrError,
     ) -> Option<(String, serde_json::Value)> {
-        None
+        self.write_response_event(host, &IrStreamEvent::Error(err.clone()))
     }
 
     /// Write a whole (non-streaming) response to wire JSON.

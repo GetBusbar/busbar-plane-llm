@@ -11,11 +11,12 @@
 //! dialect's own vendor sentence) from the reason; every other message is the kernel's own text,
 //! which names the facts only the kernel has (a group, a window, a model with no rate).
 
+use crate::codec::framework::KIND_TIMEOUT;
 use busbar_contract::abi::plane::{class_of_word, reason_of, RefusalClass};
 use busbar_contract::protocol::{
     APPLICATION_JSON, KIND_API_ERROR, KIND_AUTHENTICATION, KIND_INSUFFICIENT_QUOTA,
     KIND_INVALID_REQUEST, KIND_NOT_FOUND, KIND_OVERLOADED, KIND_PERMISSION, KIND_RATE_LIMIT,
-    KIND_REQUEST_TOO_LARGE, KIND_TIMEOUT,
+    KIND_REQUEST_TOO_LARGE,
 };
 use serde_json::Value;
 

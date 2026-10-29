@@ -6,7 +6,8 @@
 //! `StreamDecodeState`/…); the concrete IR is `crate::codec::ir::*` (this crate's own).
 
 use crate::codec::dialect::{parse_sse_frame, write_sse_frame, SSE_DONE_FRAME, SSE_DONE_SENTINEL};
-use busbar_contract::protocol::{find_frame_terminator, IrError, STREAM_ABORT_DETAIL};
+use crate::codec::framework::STREAM_ABORT_DETAIL;
+use busbar_contract::protocol::{find_frame_terminator, IrError};
 // G6 A4b: the wire-codec surface relocated to this plugin's `proto_codec`; reach it RELATIVELY so it
 // resolves both standalone (crate::codec::proto_codec) and netted into core (core::proto::proto_codec).
 use super::proto_codec::{protocol_for, Protocol, SameProtoEdit, StreamFraming, ToolIdRemap};
