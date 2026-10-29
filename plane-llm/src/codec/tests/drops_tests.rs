@@ -13,7 +13,7 @@ use crate::codec::translate::{TranslateCodec as _, TranslateReqInput};
 use busbar_contract::codec::EgressWire;
 use busbar_contract::ir::egress_prep::EgressPrep;
 use busbar_contract::operation::OpVerb;
-use busbar_contract::testkit::WarnCapture;
+use busbar_test_kit::warn_capture::WarnCapture;
 use serde_json::{json, Value};
 
 const SEAM: Seam<'static> = Seam {

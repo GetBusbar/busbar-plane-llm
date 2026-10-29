@@ -593,7 +593,7 @@ fn test_encode_frame_byte_for_byte_matches_reference() {
     );
 }
 
-use busbar_contract::testkit::WarnCapture;
+use busbar_test_kit::warn_capture::WarnCapture;
 
 /// When an oversized `:event-type` makes `push_string_header` reject the header, `encode_frame`
 /// drops the frame. The drop stays OBSERVABLE in the diagnostics catalog: it carries

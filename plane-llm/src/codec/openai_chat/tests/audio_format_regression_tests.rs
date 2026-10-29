@@ -7,7 +7,7 @@
 //! `media_type.rsplit('/')` produced `format:"mpeg"` for `audio/mpeg`, which the API 400-rejects.
 
 use super::*;
-use busbar_contract::testkit::WarnCapture;
+use busbar_test_kit::warn_capture::WarnCapture;
 
 fn audio_req(media_type: &str) -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {

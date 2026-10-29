@@ -285,7 +285,7 @@ fn a_total_above_the_ledgered_classes_ledgers_the_remainder_as_unitemized_tokens
         "completion_tokens_details": {"reasoning_tokens": 20},
         "total_tokens": 35
     });
-    let cap = busbar_contract::testkit::WarnCapture::default();
+    let cap = busbar_test_kit::warn_capture::WarnCapture::default();
     let read = tracing::subscriber::with_default(cap.clone(), || read_all_paths(&usage));
     for (path, (units, note, remainder)) in ["buffered", "streamed"].iter().zip(&read) {
         assert_eq!(*units, (10, 0, 0, 5), "{path}: the itemized counts only");
