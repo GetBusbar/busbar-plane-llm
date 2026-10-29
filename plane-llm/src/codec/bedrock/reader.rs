@@ -13,12 +13,14 @@ static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
         code: super::RESPONSE_CODE,
         drops: super::RESPONSE_DROPS,
         defaults: &[],
+        reroot: None,
     }),
     stream_carried: Some(crate::codec::drops::Carried {
         map: super::map::STREAM_PATHS,
         code: super::STREAM_CODE,
         drops: super::STREAM_DROPS,
         defaults: &[],
+        reroot: None,
     }),
     stream_keyed_by_event: true,
     block_kinds: super::IR_BLOCK_KINDS,
@@ -121,7 +123,7 @@ impl ProtocolReader for BedrockReader {
                 || (lower.contains("exceeds the maximum")
                     && (lower.contains(keys::TOKEN) || lower.contains(keys::CONTEXT)))
             {
-                Some(busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
+                Some(crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
             } else {
                 provider_code
             }

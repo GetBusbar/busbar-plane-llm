@@ -73,11 +73,11 @@ impl ProtocolWriter for AnthropicWriter {
             }
             // Context overflow: `context_length_exceeded` is a reader-synthesized provider code,
             // not an Anthropic type; real Anthropic returns `invalid_request_error`.
-            busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH
+            crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH
             | busbar_contract::protocol::DISPOSITION_CONTEXT_LENGTH => ERR_TYPE_INVALID_REQUEST,
             busbar_contract::protocol::KIND_OVERLOADED => ERR_TYPE_OVERLOADED,
-            busbar_contract::protocol::KIND_TIMEOUT => ERR_TYPE_TIMEOUT,
-            ERR_TYPE_API_ERROR | busbar_contract::protocol::KIND_SERVER_ERROR | "internal" => {
+            crate::codec::framework::KIND_TIMEOUT => ERR_TYPE_TIMEOUT,
+            ERR_TYPE_API_ERROR | crate::codec::framework::KIND_SERVER_ERROR | "internal" => {
                 ERR_TYPE_API_ERROR
             }
             // Already Anthropic-native or unmapped: emit unchanged.

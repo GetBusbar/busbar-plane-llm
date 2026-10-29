@@ -72,7 +72,7 @@ impl RequestHandler for OpenAiRequestHandler {
     fn upstream_path(&self, ctx: &EgressCtx) -> String {
         // The fallback is unreachable in practice: a verb with no cell above never reaches egress
         // here. It keeps the pre-1.6.0 answer verbatim rather than inventing a new one.
-        busbar_contract::codec::path_of(PATHS, ctx.operation)
+        crate::codec::framework::path_of(PATHS, ctx.operation)
             .unwrap_or(PATH_RERANK)
             .into()
     }
@@ -100,9 +100,11 @@ impl RequestHandler for OpenAiRequestHandler {
 
 // -------------------------------------------------- audio cells (real codecs, cross-protocol)
 
+use crate::codec::framework::MediaBlob;
+use crate::codec::framework::MediaPayload;
 use crate::codec::ir::audio::{SpeechReq, SpeechResp, TranscriptionReq, TranscriptionResp};
 use busbar_contract::billing::Billing;
-use busbar_contract::media::{base64_decode, MediaBlob, MediaPayload};
+use busbar_contract::media::base64_decode;
 
 /// One decoded part of a `multipart/form-data` body (its value borrowed from the request bytes).
 struct MultipartField<'a> {
@@ -274,11 +276,6 @@ pub const TRANSCRIPTION_BOUNDARY: &str = "----busbaraudioMIME";
 /// The Content-Type the transcription egress form is declared with; names [`TRANSCRIPTION_BOUNDARY`].
 const TRANSCRIPTION_CONTENT_TYPE: &str = "multipart/form-data; boundary=----busbaraudioMIME";
 
-/// The transcription egress boundary ([`TRANSCRIPTION_BOUNDARY`]).
-pub fn transcription_boundary() -> &'static str {
-    TRANSCRIPTION_BOUNDARY
-}
-
 /// Does `part` contain the multipart delimiter, i.e. can splicing it into a body framed with
 /// `boundary` terminate its own part and start a new one?
 ///
@@ -305,7 +302,7 @@ fn part_carries_delimiter(part: &[u8], boundary: &str) -> bool {
 /// refused 4xx at the seam and never dispatched. It is never truncated or silently sanitized: a
 /// request that tried to inject parts does not go upstream at all.
 pub fn write_transcription_request(r: &TranscriptionReq) -> Bytes {
-    let boundary = transcription_boundary();
+    let boundary = TRANSCRIPTION_BOUNDARY;
     let mut out: Vec<u8> = Vec::new();
     let mut push_field = |name: &str, val: &str| {
         // Strip CR/LF from the value: any field (model, language, prompt, response_format) can
@@ -428,7 +425,7 @@ pub fn write_transcription_response(r: &TranscriptionResp) -> WireBody {
         Some(Billing::Duration { seconds }) => {
             // The one render boundary — byte-identical to what this wrote before the quantity
             // became exact (see `billing::duration_seconds_to_wire`).
-            let seconds = busbar_contract::billing::duration_seconds_to_wire(*seconds);
+            let seconds = crate::codec::framework::duration_seconds_to_wire(*seconds);
             body[keys::USAGE] =
                 json!({ (keys::TYPE): super::W_DURATION, (super::SECONDS): seconds });
         }
@@ -628,8 +625,8 @@ pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
 
 // ---------------------------------------------------------------- image OperationHandler (real, cross-protocol)
 
+use crate::codec::framework::ImageOutput;
 use crate::codec::ir::image::{ImageOp, ImageReq, ImageResp, ImageSize};
-use busbar_contract::media::ImageOutput;
 
 struct OpenAiImage;
 
@@ -768,9 +765,9 @@ pub fn write_moderation_response(r: &ModerationResp) -> WireBody {
         .map(|res| {
             json!({
                 (super::FLAGGED): res.flagged,
-                (super::CATEGORIES): map_bool(&res.categories),
-                (super::CATEGORY_SCORES): map_f64(&res.category_scores),
-                (super::CATEGORY_APPLIED_INPUT_TYPES): map_strs(&res.applied_input_types),
+                (super::CATEGORIES): json_map(&res.categories),
+                (super::CATEGORY_SCORES): json_map(&res.category_scores),
+                (super::CATEGORY_APPLIED_INPUT_TYPES): json_map(&res.applied_input_types),
             })
         })
         .collect();
@@ -863,13 +860,7 @@ fn obj_map<T>(v: Option<&Value>, f: impl Fn(&Value) -> Option<T>) -> BTreeMap<St
         .unwrap_or_default()
 }
 
-fn map_bool(m: &BTreeMap<String, bool>) -> Value {
-    Value::Object(m.iter().map(|(k, v)| (k.clone(), json!(v))).collect())
-}
-fn map_f64(m: &BTreeMap<String, f64>) -> Value {
-    Value::Object(m.iter().map(|(k, v)| (k.clone(), json!(v))).collect())
-}
-fn map_strs(m: &BTreeMap<String, Vec<String>>) -> Value {
+fn json_map<V: serde::Serialize>(m: &BTreeMap<String, V>) -> Value {
     Value::Object(m.iter().map(|(k, v)| (k.clone(), json!(v))).collect())
 }
 

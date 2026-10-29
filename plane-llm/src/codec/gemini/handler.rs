@@ -22,10 +22,12 @@ use crate::codec::keys;
 use crate::codec::leaf_codec::LeafCodec;
 use busbar_contract::codec::{CodecError, IngressReject, RequestHandler};
 // The leaf cells' trait, which the dialect's handler tests call through.
+use crate::codec::framework::MediaBlob;
+use crate::codec::framework::MediaPayload;
 #[cfg(test)]
 use busbar_contract::codec::OperationHandler;
 use busbar_contract::codec::{EgressCtx, WireBody};
-use busbar_contract::media::{base64_encode, MediaBlob, MediaPayload};
+use busbar_contract::media::base64_encode;
 use busbar_contract::operation::OpVerb;
 use busbar_contract::SlabBytes;
 use bytes::Bytes;
@@ -67,7 +69,7 @@ impl RequestHandler for GeminiRequestHandler {
         // override it via `path_base` (e.g. Vertex AI's `/v1/projects/{p}/locations/{l}/publishers/
         // google/models`). The `:verb` suffix and streaming selection are unchanged.
         let base = ctx.path_base.unwrap_or("/v1beta/models");
-        if let Some(action) = busbar_contract::codec::path_of(ACTIONS, ctx.operation) {
+        if let Some(action) = crate::codec::framework::path_of(ACTIONS, ctx.operation) {
             return format!("{base}/{m}:{action}");
         }
         // Chat + audio understanding/TTS ride generateContent, stream-aware. Every other verb with
@@ -707,7 +709,7 @@ pub fn read_speech_response(
             .to_string();
         let pcm = mime
             .contains("pcm")
-            .then_some(busbar_contract::media::PcmParams {
+            .then_some(crate::codec::framework::PcmParams {
                 sample_rate: 24000,
                 channels: 1,
                 bit_depth: 16,
@@ -798,12 +800,12 @@ pub fn read_image_request(
 pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::ImageResp, CodecError> {
     let v: Value =
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
-    let images: Vec<busbar_contract::media::ImageOutput> = v
+    let images: Vec<crate::codec::framework::ImageOutput> = v
         .get(FIELD_PREDICTIONS)
         .and_then(Value::as_array)
         .map(|arr| {
             arr.iter()
-                .map(|p| busbar_contract::media::ImageOutput {
+                .map(|p| crate::codec::framework::ImageOutput {
                     b64: p
                         .get(FIELD_BYTES_BASE64_ENCODED)
                         .and_then(Value::as_str)

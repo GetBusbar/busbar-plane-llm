@@ -13,12 +13,14 @@ static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
         code: super::RESPONSE_CODE,
         drops: super::RESPONSE_DROPS,
         defaults: super::ANSWER_DEFAULTS,
+        reroot: None,
     }),
     stream_carried: Some(crate::codec::drops::Carried {
         map: super::map::STREAM_PATHS,
         code: super::STREAM_CODE,
         drops: super::STREAM_DROPS,
         defaults: super::ANSWER_DEFAULTS,
+        reroot: Some(super::STREAM_REROOT),
     }),
     stream_keyed_by_event: false,
     block_kinds: super::IR_BLOCK_KINDS,
@@ -83,7 +85,7 @@ impl ProtocolReader for ResponsesReader {
             }
             let lower = String::from_utf8_lossy(body).to_lowercase();
             if crate::codec::dialect::context_length_prose_scan(&lower) {
-                Some(busbar_contract::protocol::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
+                Some(crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH.to_string())
             } else {
                 None
             }

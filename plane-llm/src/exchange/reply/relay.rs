@@ -351,7 +351,7 @@ impl Relay {
         let usage = if !self.meter {
             None
         } else if let Some(t) = self.translate.as_ref() {
-            if t.terminal_error() == Some(busbar_contract::protocol::SIGNAL_IR_PARSE) {
+            if t.terminal_error() == Some(crate::codec::framework::SIGNAL_IR_PARSE) {
                 fault_unreadable(self.ingress, self.upstream_bytes);
                 Some(wire::estimate_usage_from_truncated_tail(
                     self.upstream_bytes,
@@ -526,7 +526,7 @@ fn far_reported_failure(
     };
     crate::codec::proto_codec::protocol_for(protocol).is_some_and(|p| {
         p.reader().read_response(host, &v).is_err_and(|e| {
-            e.provider_signal.as_deref() != Some(busbar_contract::protocol::SIGNAL_IR_PARSE)
+            e.provider_signal.as_deref() != Some(crate::codec::framework::SIGNAL_IR_PARSE)
         })
     })
 }
