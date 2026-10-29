@@ -20,13 +20,56 @@
 #
 # Env: CONFORMANCE_SUITE, CONFORMANCE_OUT, BUSBAR_CHECKOUT, BUSBAR_PIN, CARGO_TARGET_DIR (as run.sh sets).
 # Needs: rust, python3 with venv (PyYAML comes from a hash-pinned requirements file), curl, git.
+#
+#   bash testing/conformance/llm.sh --selftest   # the swap bites: BUSBAR_CHECKOUT (busbar at the pin) gets
+#                                                # this checkout's plane, and a busbar it cannot swap is refused
 set -uo pipefail
-: "${CONFORMANCE_SUITE:?}" "${CONFORMANCE_OUT:?}" "${BUSBAR_CHECKOUT:?}" "${BUSBAR_PIN:?}"
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 H="$repo/testing/llm-conformance"
 TGT="${CARGO_TARGET_DIR:-$repo/target}"
 say() { printf 'llm: %s\n' "$*" >&2; }
 sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1; else shasum -a 256 | cut -d' ' -f1; fi; }
+
+# busbar (a checkout at the pin, $1) staged at $2, with no build output.
+stage_busbar() { rm -rf "$2"; mkdir -p "$2" && tar -C "$1" --exclude=./target -cf - . | tar -C "$2" -xf -; }
+
+# Swap THIS checkout's plane-llm into the staged busbar at $1 (written at run time, never committed).
+swap_plane() {
+  local SRC="$1" P="$1/crates/busbar-plane-llm" K; K="$(mktemp -d)"
+  # busbar's manifest for the crate (path dependencies, its examples) stays; the code is this repo's.
+  mv "$P/Cargo.toml" "$K/plane.Cargo.toml" && mv "$P/examples" "$K/plane.examples" \
+    && rm -rf "$P" && cp -R "$repo/plane-llm" "$P" \
+    && cp "$K/plane.Cargo.toml" "$P/Cargo.toml" && cp -R "$K/plane.examples" "$P/examples"
+  local rc=$?; rm -rf "$K"; return $rc
+}
+
+# The swap's own proof, no build: busbar at the pin resolves this checkout's plane, and only it.
+selftest() {
+  : "${BUSBAR_CHECKOUT:?--selftest needs BUSBAR_CHECKOUT (busbar at the .busbar-ref pin)}"
+  local t ok=0 got; t="$(mktemp -d)"
+  stage_busbar "$BUSBAR_CHECKOUT" "$t/a" || { echo "selftest FAILED: busbar could not be staged"; rm -rf "$t"; return 1; }
+  if swap_plane "$t/a" >"$t/a.log" 2>&1; then
+    got="$( cargo metadata --locked --format-version 1 --manifest-path "$t/a/dist/default/Cargo.toml" 2>"$t/a.meta.log" \
+            | python3 -I -c 'import json,sys; print("\n".join(p["manifest_path"] for p in json.load(sys.stdin)["packages"] if p["name"]=="busbar-plane-llm"))' )"
+    if [ "$got" = "$repo/plane-llm/Cargo.toml" ]; then
+      echo "  ok: busbar at the pin resolves this checkout's plane-llm, --locked"
+    else
+      echo "selftest FAILED: after the swap busbar resolves busbar-plane-llm from [${got:-nothing}], not $repo/plane-llm"; tail -5 "$t/a.meta.log"; ok=1
+    fi
+  else
+    echo "selftest FAILED: this checkout's plane-llm could not be swapped into busbar"; tail -5 "$t/a.log"; ok=1
+  fi
+  # A busbar whose distribution names no plane-llm pin cannot take the swap: refused, never built as is.
+  stage_busbar "$BUSBAR_CHECKOUT" "$t/b" && sed -i.bak '/^busbar-plane-llm = { git = /d' "$t/b/dist/default/Cargo.toml"
+  if swap_plane "$t/b" >"$t/b.log" 2>&1; then
+    echo "selftest FAILED: a busbar with no plane-llm pin took the swap"; ok=1
+  else
+    echo "  ok: a busbar with no plane-llm pin is refused"
+  fi
+  rm -rf "$t"; return $ok
+}
+[ "${1:-}" = --selftest ] && { selftest; exit $?; }
+: "${CONFORMANCE_SUITE:?}" "${CONFORMANCE_OUT:?}" "${BUSBAR_CHECKOUT:?}" "${BUSBAR_PIN:?}"
 
 dialect="${CONFORMANCE_SUITE#llm-}"
 case "$dialect" in anthropic|openai|responses|gemini|bedrock|cohere) ;; *) say "unknown suite $CONFORMANCE_SUITE"; exit 2 ;; esac
@@ -54,18 +97,12 @@ shared_run() {
   [ -z "$fail" ] && export PATH="$venv/bin:$PATH"
 
   # busbar at the pin with this checkout's plane swapped in (written at run time, never committed).
-  local SRC="$D/busbar-src" P rc
+  local SRC="$D/busbar-src"
   if [ -z "$fail" ]; then
-    rm -rf "$SRC"; mkdir -p "$SRC" \
-      && tar -C "$BUSBAR_CHECKOUT" --exclude=./target -cf - . | tar -C "$SRC" -xf - || fail="busbar could not be staged"
+    stage_busbar "$BUSBAR_CHECKOUT" "$SRC" || fail="busbar could not be staged"
   fi
   if [ -z "$fail" ]; then
-    P="$SRC/crates/busbar-plane-llm"
-    # busbar's manifest for the crate (path dependencies, its examples) stays; the code is this repo's.
-    mv "$P/Cargo.toml" "$D/plane.Cargo.toml" && mv "$P/examples" "$D/plane.examples" \
-      && rm -rf "$P" && cp -R "$repo/plane-llm" "$P" \
-      && cp "$D/plane.Cargo.toml" "$P/Cargo.toml" && cp -R "$D/plane.examples" "$P/examples" \
-      || fail="this checkout's plane-llm could not be swapped into busbar"
+    swap_plane "$SRC" >"$D/swap.log" 2>&1 || { tail -15 "$D/swap.log" >&2; fail="this checkout's plane-llm could not be swapped into busbar (see swap.log)"; }
   fi
 
   # 1+2. CONTROL and NEGATIVE CONTROL: the harness's own selftest (BUSBAR_CHECKOUT supplies the shared verdict).
@@ -128,7 +165,7 @@ fi
 
 # ── this suite's verdict, from the shared ledger ─────────────────────────────────────────────────
 # The evidence this suite's verdict rests on, kept with the check's outputs (target/conformance/<id>/).
-for f in selftest.log build.log record.log run.log venv.log out/report.md out/ledger.tsv shared.json; do
+for f in swap.log selftest.log build.log record.log run.log venv.log out/report.md out/ledger.tsv shared.json; do
   if [ -f "$D/$f" ]; then
     case "$f" in build.log) tail -n 200 "$D/$f" ;; *) cat "$D/$f" ;; esac > "$CONFORMANCE_OUT/$(basename "$f")" 2>/dev/null || true
   fi
