@@ -13,7 +13,7 @@ use super::tests::{prep, translate as translate_body};
 use crate::codec::proto_codec::protocol_for;
 use crate::codec::translate::{TranslateCodec as _, TranslateReqInput};
 use busbar_contract::operation::OpVerb;
-use busbar_contract::testkit::WarnCapture;
+use busbar_test_kit::warn_capture::WarnCapture;
 use serde_json::{json, Value};
 
 /// Translate `body` from `ingress` onto `egress`: what the seam audits, and the warns.

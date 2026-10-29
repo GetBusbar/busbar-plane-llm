@@ -14,7 +14,7 @@
 //!   (`open_class::GUARDRAIL_COUNT_CLASSES`), summed over every guardrail on both sides.
 
 use super::*;
-use busbar_contract::testkit::WarnCapture;
+use busbar_test_kit::warn_capture::WarnCapture;
 
 /// What one count IS, per AWS's Converse semantics.
 #[derive(Clone, Copy, Debug)]

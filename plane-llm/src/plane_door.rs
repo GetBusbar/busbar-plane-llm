@@ -46,25 +46,22 @@ use busbar_contract::abi::host::conn::connector::{
     Need, DIRECTION_OUTBOUND, EGRESS_PROVIDER, KEEP_ALL_EXCEPT_DENIED,
 };
 use busbar_contract::abi::host::service::{ClockReading, MAX_RANDOM_FILL};
-use busbar_contract::abi::mechanism::call::{AbiStr, Blob, InHead, OutHead, Outcome, Span};
+use busbar_contract::abi::mechanism::call::{AbiStr, Blob, OutHead, Outcome, Span};
 use busbar_contract::abi::mechanism::door::{
     Section, Statement, SECTION_CONSUMED, SECTION_DECLARING,
 };
 use busbar_contract::abi::mechanism::door::{SECTION_REQUIRED, SECTION_SELECTS};
 use busbar_contract::abi::mechanism::extensions;
-use busbar_contract::abi::mechanism::lifecycle::{
-    GenIn, RefreshIn, ReleaseIn, TickIn, TickOut, ValidateIn,
-};
+use busbar_contract::abi::mechanism::lifecycle::GenIn;
 use busbar_contract::abi::mechanism::ticket::{CompletionHandle, Ticket};
 use busbar_contract::abi::plane::check::check_piece_in;
 use busbar_contract::abi::plane::{
     ArriveIn, ArriveOut, BillableClass, DialectAuth, OnPieceIn, OnPieceOut, OpClass, OutField,
-    PlaneDriveIn, PlaneDriveOut, PlaneOpenIn, PlaneOpenOut, PlaneRefreshOut, PlaneSnapshot,
-    PlaneTail, ProjectIn, ProjectOut, RefusalIn, RefusalOut, ServeIn, ServeOut, UnitCount,
-    ANSWER_LAYOUT, CANCEL_ABORTED, CANCEL_FAILED, CANCEL_OK_PARTIAL, CLAIM_ENTRY, CLAIM_EXACT,
-    CLAIM_PROBE, EMIT_DONE, EMIT_TO_FAR_END, FROM_CALLER, FROM_FAR_END, FROM_KERNEL,
-    INGRESS_REQUEST_RESPONSE, INGRESS_RESPONSE_STREAM, PIECE_CUT, PIECE_FIELDS, PIECE_FINAL,
-    PIECE_HAS_STATUS, PIECE_LAST, PRINCIPAL_NONE, PRINCIPAL_REQUIRED, REFUSAL_GATE,
+    PlaneOpenIn, PlaneSnapshot, PlaneTail, ProjectIn, ProjectOut, RefusalIn, RefusalOut, ServeIn,
+    ServeOut, UnitCount, ANSWER_LAYOUT, CANCEL_ABORTED, CANCEL_FAILED, CANCEL_OK_PARTIAL,
+    CLAIM_ENTRY, CLAIM_EXACT, CLAIM_PROBE, EMIT_DONE, EMIT_TO_FAR_END, FROM_CALLER, FROM_FAR_END,
+    FROM_KERNEL, INGRESS_REQUEST_RESPONSE, INGRESS_RESPONSE_STREAM, PIECE_CUT, PIECE_FIELDS,
+    PIECE_FINAL, PIECE_HAS_STATUS, PIECE_LAST, PRINCIPAL_NONE, PRINCIPAL_REQUIRED, REFUSAL_GATE,
     REFUSED_UNSUPPORTED_ACTION, ROUTE_DIRECT, ROUTE_POOL, SHAPE_PIECEWISE, SPAN_ABSENT,
     TAIL_FALLBACK, TAIL_PROBES, UNITS_FLOOR, UNITS_REPORTED, VERDICT_HARD, VERDICT_NONE,
     VERDICT_OK, VERDICT_RETRY,
@@ -75,10 +72,10 @@ use busbar_contract::abi::plane::{RecordWrite, AUDIT_APPLIED, AUDIT_DEGRADED, RE
 use busbar_contract::abi::plane::{CLAIM_RAW_AFFIX, CLAIM_SIGNED_INGRESS};
 use busbar_contract::abi::sdk::door::{abi_str, statement};
 use busbar_contract::abi::sdk::life::Refusal;
+use busbar_contract::abi::sdk::plane_life::{Opened, PlaneLife, Published};
 use busbar_contract::abi::sdk::publish::{ClaimSpec, SnapshotSpec};
 use busbar_contract::abi::sdk::{
-    open_failed, Generations, HostBuf, Instance, Lent, Out, Safe, SafeSlot, Services,
-    StaticServices,
+    Generations, HostBuf, Instance, Lent, Out, Safe, SafeSlot, Services, StaticServices,
 };
 use busbar_contract::abi::transport::{FAULT_CALLER, FAULT_HARD, FAULT_NONE, FAULT_TRANSIENT};
 use busbar_contract::ids::OpClassId;
@@ -1414,28 +1411,30 @@ macro_rules! slot {
     };
 }
 
-slot!(
-    /// `validate`: the settings read as the plane's tables, or refused in the reader's words.
-    Validate, ValidateIn, OutHead, |_, input, mut out| {
-        match read_settings(input.settings().bytes()) {
-            Ok(_) => Outcome::Ready,
-            Err(words) => out.fail(Refusal::refused(words)),
-        }
-    }
-);
+/// THE PLANE'S LIFECYCLE on the SDK's [`PlaneLife`] (`lifecycle: plane_life(LlmDoor)`): `tick`,
+/// `drive`, `release` and `close` are its defaults (no tick wanted, no unsolicited output, no
+/// lease); the plane states its settings, what a generation publishes, its tables beside each
+/// generation, and its `cancel`.
+impl PlaneLife for LlmDoor {
+    type Held = ();
 
-slot!(
-    /// `open`: the instance, its host clock, and the first generation's tables and snapshot.
-    Open, PlaneOpenIn, PlaneOpenOut, |instance, input, mut out| {
+    fn generations(&self) -> &Generations<PlaneSnapshot> {
+        &self.generations
+    }
+
+    /// `validate`: the settings read as the plane's tables, or refused in the reader's words.
+    fn validate(settings: &[u8]) -> Result<(), Refusal> {
+        read_settings(settings)
+            .map(|_| ())
+            .map_err(Refusal::refused)
+    }
+
+    /// `open`: the instance, its host clock, and the first generation's tables and snapshot; a
+    /// failed open answers FAILED with the reader's words in the host's reason buffer.
+    fn open(input: &Lent<'_, PlaneOpenIn>) -> Result<Opened<Self>, Refusal> {
         let open = input.open();
-        let shaping = match read_settings(open.settings().bytes()) {
-            Ok(shaping) => shaping,
-            Err(words) => return open_failed(open, &mut out, |o| &o.open.err_len, &words),
-        };
-        let webhooks = match webhook::from_owned(input.owned().bytes()) {
-            Ok(webhooks) => webhooks,
-            Err(words) => return open_failed(open, &mut out, |o| &o.open.err_len, &words),
-        };
+        let shaping = read_settings(open.settings().bytes()).map_err(Refusal::failed)?;
+        let webhooks = webhook::from_owned(input.owned().bytes()).map_err(Refusal::failed)?;
         let door = LlmDoor {
             generations: Generations::new(),
             shapings: Mutex::new(BTreeMap::from([(open.generation(), Arc::new(shaping))])),
@@ -1443,59 +1442,36 @@ slot!(
             services: open.host().and_then(|h| Services::of(&h)),
             webhooks,
         };
-        let snapshot = snapshot(door.webhooks);
-        out.publish(|o| &o.snapshot, &door.generations, open.generation(), &snapshot);
-        instance.open(door);
-        Outcome::Ready
-    }
-);
-
-slot!(
-    /// `refresh`: the new tables judged, and the next generation's snapshot.
-    Refresh, RefreshIn, PlaneRefreshOut, |instance, input, mut out| {
-        let Some(door) = instance.get() else {
-            return Outcome::Failed;
+        let first = Published {
+            spec: snapshot(door.webhooks),
+            held: (),
         };
-        let shaping = match read_settings(input.settings().bytes()) {
-            Ok(shaping) => shaping,
-            Err(words) => return out.fail(Refusal::refused(words)),
-        };
-        guard(&door.shapings).insert(input.generation(), Arc::new(shaping));
-        let snapshot = snapshot(door.webhooks);
-        out.publish(|o| &o.snapshot, &door.generations, input.generation(), &snapshot);
-        Outcome::Ready
+        Ok(Opened { plane: door, first })
     }
-);
 
-slot!(
-    /// `retire`: the generation's snapshot and tables are dropped; a unit that arrived on them
-    /// keeps its own hold until it ends.
-    Retire, GenIn, OutHead, |instance, input, _| {
-        if let Some(door) = instance.get() {
-            door.generations.retire(input.generation());
-            guard(&door.shapings).remove(&input.generation());
-        }
-        Outcome::Ready
+    /// `refresh`: the new tables judged and kept for `generation`, and its snapshot.
+    fn refresh(&self, settings: &[u8], generation: u64) -> Result<Published<()>, Refusal> {
+        let shaping = read_settings(settings).map_err(Refusal::refused)?;
+        guard(&self.shapings).insert(generation, Arc::new(shaping));
+        Ok(Published {
+            spec: snapshot(self.webhooks),
+            held: (),
+        })
     }
-);
 
-slot!(
-    /// `tick`: none wanted.
-    Tick, TickIn, TickOut, |_, _, mut out| {
-        out.set(|o| &o.next_tick_ns, 0);
-        Outcome::Ready
+    /// `retire`, after the SDK dropped the generation's snapshot: its tables are dropped; a unit
+    /// that arrived on them keeps its own hold until it ends.
+    fn retire(&self, generation: u64) {
+        guard(&self.shapings).remove(&generation);
     }
-);
 
-slot!(
-    /// `drive`: no session has unsolicited output.
-    Drive, PlaneDriveIn, PlaneDriveOut, |_, _, _| { Outcome::Ready }
-);
-
-slot!(
     /// `cancel`: the cancelled unit (the unit the cancel names, else the one on its ticket) ends;
     /// nothing it owed is delivered.
-    Cancel, PlaneCancelIn, PlaneCancelOut, |instance, input, mut out| {
+    fn cancel(
+        instance: Instance<'_, Self>,
+        input: Lent<'_, PlaneCancelIn>,
+        mut out: Out<'_, PlaneCancelOut>,
+    ) -> Outcome {
         let cancelled = instance
             .get()
             .and_then(|door| guard(&door.units).cancel(input.cancel().ticket(), input.unit()));
@@ -1512,17 +1488,7 @@ slot!(
         out.set(|o| &o.cancel.disposition, disposition);
         Outcome::Ready
     }
-);
-
-slot!(
-    /// `release`: this plane answers under no lease.
-    Release, ReleaseIn, OutHead, |_, _, _| { Outcome::Ready }
-);
-
-slot!(
-    /// `close`: the SDK drops the instance and every snapshot it still holds.
-    Close, InHead, OutHead, |_, _, _| { Outcome::Ready }
-);
+}
 
 slot!(
     /// `arrive`: the dialect, the operation and the op class of an arrival, kept with its unit by
@@ -1842,6 +1808,9 @@ slot!(
         } else {
             project::apply_rewrite(arrived, rewrite)
         };
+        // A rewrite with nowhere to go in this operation's body says so, so the kernel tells it
+        // from a chat whose rewrite failed to apply (which it refuses).
+        let rewrite_flags = project::rewrite_flags(arrived, rewrite, rewritten.is_some());
         let view = project::project(arrived);
         let dialect = arrived.dialect;
         let pool = arrived.model.clone();
@@ -1882,6 +1851,7 @@ slot!(
         if view.stream {
             flags |= REQUEST_STREAM;
         }
+        flags |= rewrite_flags;
         out.host_str(|o| &o.view.pool, &arena, pool);
         out.host_str(|o| &o.view.ingress_dialect, &arena, dialect);
         out.set(|o| &o.view.message_count, view.turn_count as u64);
@@ -1960,11 +1930,7 @@ slot!(
 busbar_contract::plugin_door! {
     ops: busbar_contract::abi::plane::Ops,
     statement: STATEMENT,
-    lifecycle: {
-        validate: Safe<Validate>, open: Safe<Open>, refresh: Safe<Refresh>, retire: Safe<Retire>,
-        tick: Safe<Tick>, drive: Safe<Drive>, cancel: Safe<Cancel>, release: Safe<Release>,
-        close: Safe<Close>,
-    },
+    lifecycle: plane_life(LlmDoor),
     kind_ops: {
         arrive: Safe<Arrive>, on_piece: Safe<OnPiece>, refusal: Safe<RefusalSlot>,
         serve: Safe<Serve>, hydrate: Safe<Hydrate>, start: Safe<Start>, project: Safe<Project>,

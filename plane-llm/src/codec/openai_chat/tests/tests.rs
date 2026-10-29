@@ -1488,7 +1488,7 @@ fn read_request_preserves_sampling_params_in_extra() {
 /// even OpenAI->OpenAI same-lane.
 #[test]
 fn unknown_reasoning_effort_survives_in_extra() {
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
 
     let body = serde_json::json!({
         "model": "gpt-5",
@@ -5217,7 +5217,7 @@ fn write_response_omits_annotations_when_there_are_no_citations() {
 /// adding e.g. `"original"`) is dropped, and that drop warns rather than vanishing.
 #[test]
 fn image_detail_is_carried_and_only_an_unknown_word_warns() {
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
 
     let body = |detail: &str| {
         serde_json::json!({
@@ -5496,7 +5496,7 @@ fn response_blank_tool_call_id_is_synthesized() {
 // response has no thinking output field. That drop must be OBSERVABLE (a `warn!`), not silent.
 #[test]
 fn openai_write_drops_thinking_observably() {
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
 
     let resp = crate::codec::ir::IrResponse {
         content: vec![
@@ -5575,7 +5575,7 @@ fn response_object_tool_arguments_preserved() {
 // dropped — but OBSERVABLY (a `warn!`), not silently.
 #[test]
 fn response_array_content_image_drop_warns() {
-    use busbar_contract::testkit::WarnCapture;
+    use busbar_test_kit::warn_capture::WarnCapture;
 
     let body = serde_json::json!({
         "id": "chatcmpl-x", "object": OBJ_COMPLETION, "created": 1u64, "model": "gpt-4o",

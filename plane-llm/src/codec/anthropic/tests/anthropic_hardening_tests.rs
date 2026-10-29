@@ -2824,7 +2824,7 @@ fn test_anthropic_streaming_safety_stop_reason_maps_to_refusal() {
 // ---- Fidelity items (Anthropic egress): sampling-param OMIT, response_format-drop
 // warn, and native thinking-block round-trip with signature. ----
 
-use busbar_contract::testkit::WarnCapture;
+use busbar_test_kit::warn_capture::WarnCapture;
 
 /// SAMPLING: Anthropic's Messages API does NOT support `frequency_penalty`,
 /// `presence_penalty`, `seed`, or `n`. A cross-protocol IR carrying every one of them (e.g. read

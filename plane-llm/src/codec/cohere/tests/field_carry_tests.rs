@@ -20,7 +20,7 @@
 //!   drop-with-warn.
 
 use super::*;
-use busbar_contract::testkit::WarnCapture;
+use busbar_test_kit::warn_capture::WarnCapture;
 use serde_json::json;
 
 /// Read a Cohere request body → IR → write it back on the Cohere wire.
