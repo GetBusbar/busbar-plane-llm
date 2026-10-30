@@ -30,10 +30,8 @@ static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
 impl ProtocolReader for ResponsesReader {
     fn recover_truncated_usage(&self, tail: &[u8]) -> Option<busbar_contract::billing::TokenUsage> {
         let v = super::super::usage_tail::isolate_tail_usage_object(tail, b"\"usage\"")?;
-        // Every count is read through the dialect's usage table (`USAGE`): an unreadable one is
-        // refused on its own and bills nothing, the readable
-        // ones recover. A truncated body reads the same cache tiers an
-        // untruncated one does.
+        // Every count is read through `USAGE`: an unreadable one is refused alone and bills nothing,
+        // the readable ones recover. A truncated body reads the same cache tiers as a whole one.
         Some(read_responses_usage(Some(&v), None).ok()?.to_token_usage())
     }
 
@@ -42,9 +40,7 @@ impl ProtocolReader for ResponsesReader {
         status: StatusCode,
         body: &[u8],
     ) -> busbar_contract::upstream::RawUpstreamError {
-        // Parse the error body ONCE and pull both fields from the single JSON tree, rather than
-        // re-parsing the same bytes per field (matches the anthropic.rs pattern; error paths are
-        // already degraded — avoid the extra parse+alloc on every non-2xx response).
+        // Parse the error body once and pull both fields from the one tree (error paths are already degraded).
         let (provider_code, structured_type) =
             match crate::codec::json::parse::<serde_json::Value>(body) {
                 Ok(json) => {
@@ -62,21 +58,14 @@ impl ProtocolReader for ResponsesReader {
                 Err(_) => (None, None),
             };
 
-        // Native /v1/responses already carries `code: "context_length_exceeded"` on the oversized
-        // path, so the common case flows straight through. But some upstreams (and the OpenAI
-        // Chat-Completions-shaped surface this proxy also fronts) signal the same condition only via
-        // the error MESSAGE — e.g. `This model's maximum context length is 8192 tokens...` — with a
-        // null or generic `code`. Mirror openai_chat.rs / anthropic.rs: when no canonical code was parsed,
-        // scan the body for the protocol's context-length phrasing and synthesize the canonical code
-        // so the breaker pipeline (normalize_raw_error, breaker.rs) → StatusClass::ContextLength
-        // and oversized-request failover triggers WITHOUT penalizing the lane. This is the production
-        // counterpart of the `#[cfg(test)] classify()` helper's message scan below.
+        // Native `/v1/responses` carries `code: "context_length_exceeded"`, but some upstreams (and the
+        // Chat-shaped surface this proxy fronts) signal it only in the message with a null or generic
+        // code. Mirror openai_chat.rs / anthropic.rs: with no canonical code, scan for the context-length
+        // phrasing and synthesize it so the breaker classifies `StatusClass::ContextLength` and fails
+        // over without penalizing the lane (counterpart of the `#[cfg(test)] classify()` scan).
         //
-        // GATE the message scan to the HTTP statuses an oversized request actually uses (400
-        // invalid_request_error; 413 payload-too-large), mirroring `OpenAiReader::extract_error`.
-        // Without the gate a 401/429/5xx whose prose happens to contain "maximum context length"
-        // would synthesize `context_length_exceeded` → the breaker maps it to ContextLength → the
-        // genuine auth/rate-limit/server failure escapes fault attribution (no fault recorded).
+        // The scan is gated to 400/413, as in `OpenAiReader::extract_error`: otherwise a 401/429/5xx
+        // whose prose says "maximum context length" would be misattributed and record no fault.
         let provider_code = provider_code.or_else(|| {
             let oversized_status =
                 status == StatusCode::BAD_REQUEST || status == StatusCode::PAYLOAD_TOO_LARGE;
@@ -101,7 +90,7 @@ impl ProtocolReader for ResponsesReader {
 
     #[cfg(test)]
     fn classify(&self, status: StatusCode, body: &[u8]) -> CanonicalSignal {
-        // Both bearer-envelope dialects classify alike: single-sourced in the shared dialect module.
+        // Both bearer-envelope dialects classify alike (shared dialect module).
         crate::codec::dialect_classify::bearer(status.as_u16(), body)
     }
 
@@ -115,21 +104,11 @@ impl ProtocolReader for ResponsesReader {
             return Err(ir_parse_error());
         }
 
-        // STATEFUL RESPONSES — server-side conversation-state knobs. `previous_response_id`
-        // (thread this turn onto an upstream-STORED prior response) and `store` (whether the upstream
-        // PERSISTS this response for a later `previous_response_id`) are the affordances a proxy must
-        // carry losslessly so a client using server-side conversation state keeps its linkage. They
-        // are provider-specific with NO cross-protocol target — busbar is a translator, the UPSTREAM
-        // owns the conversation state — so they ride `extra` verbatim (see `responses_modeled_keys`,
-        // which deliberately excludes them) and re-emit unchanged on a same-protocol hop.
-        //
-        // But the plane's leniency contract is "tolerate absent/unknown, reject present-but-wrong-
-        // TYPED" (the house 400 policy). The `extra` pass-through forwards a value blindly, so a
-        // `previous_response_id: 5` or `store: "yes"` would be relayed to the backend (which 400s)
-        // rather than caught at the edge. Edge-validate the TYPE here — `previous_response_id` is a
-        // string, `store` is a bool — mirroring the `input`/`content`/`tools` type-checks below.
-        // Absent or `null` stays lenient (an omitted knob is not a violation); a present value of the
-        // correct type still flows through `extra` untouched.
+        // Stateful Responses: `previous_response_id` and `store` have no cross-protocol target (the
+        // upstream owns conversation state), so they ride `extra` verbatim (see
+        // `responses_modeled_keys`) and re-emit unchanged on a same-protocol hop. Their types are
+        // edge-validated here (string, bool), per the plane's "reject present-but-wrong-typed" policy,
+        // since `extra` would otherwise relay a bad value to a backend that 400s. Absent or `null` stays lenient.
         if obj
             .get(PREVIOUS_RESPONSE_ID)
             .is_some_and(|v| !v.is_null() && !v.is_string())
@@ -145,14 +124,12 @@ impl ProtocolReader for ResponsesReader {
 
         let mut extra = serde_json::Map::new();
         let mut system_blocks: Vec<crate::codec::ir::IrBlock> = Vec::new();
-        // Count of `system`/`developer`-role ITEMS folded out of the `input` array below (the
-        // top-level `instructions` string is a separate wire field and is NOT counted here) —
-        // keeps `message_count` the raw `input` array length on `IrFacts::shape()`.
+        // `system`/`developer` items folded out of `input` (the top-level `instructions` string is
+        // not counted), keeping `message_count` the raw `input` length on `IrFacts::shape()`.
         let mut system_turns_folded: usize = 0;
-        // Where each folded entry stood, for the hook view (`IrRequest::system_folds`).
+        // Where each folded entry stood, for the hook view.
         let mut system_folds: Vec<crate::codec::ir::IrSystemFold> = Vec::new();
-        // IR-14: which roles the folded system entries were written in (`system` / `developer`), and
-        // whether a role-less top-level `instructions` string was folded beside them.
+        // IR-14: roles the folded system entries used, and whether a role-less `instructions` was folded.
         let (mut saw_system, mut saw_developer, mut saw_instructions) = (false, false, false);
 
         if let Some(instructions) = obj.get(keys::INSTRUCTIONS).and_then(|v| v.as_str()) {
@@ -165,11 +142,9 @@ impl ProtocolReader for ResponsesReader {
         let mut messages: Vec<crate::codec::ir::IrMessage> = Vec::new();
 
         if let Some(input_val) = obj.get(keys::INPUT) {
-            // EDGE-VALIDATE the top-level `input` TYPE: Responses `input` is legally a bare string or
-            // an array of input items. A PRESENT number/bool/object is a genuine structural violation
-            // the lenient string/array projection below would silently coerce to an empty
-            // conversation — reject it with a 400 (matching the strict openai_chat/cohere readers). A
-            // `null` input is tolerated as absent (an instructions-only request stays valid).
+            // Edge-validate `input`: a bare string or an array. A present number/bool/object would be
+            // coerced to an empty conversation, so reject with a 400 (as the openai_chat/cohere
+            // readers do). `null` is tolerated as absent.
             if !input_val.is_null() && !input_val.is_string() && !input_val.is_array() {
                 return Err(ir_parse_error());
             }
@@ -204,13 +179,9 @@ impl ProtocolReader for ResponsesReader {
                             });
                         }
                         Some(INPUT_IMAGE) => {
-                            // A Responses `input_image` can reference an uploaded file by
-                            // `file_id` INSTEAD of carrying an inline `image_url`. The prior code only
-                            // read `image_url`, so a file_id-only image produced an EMPTY Image block
-                            // (media_type/data both ""), a lossy degradation. Carry the file_id
-                            // faithfully under a distinct `file_id` sentinel (mirroring the `image_url`
-                            // sentinel) so the writer reconstructs `{type:input_image,file_id}` and the
-                            // round-trip is lossless. Prefer `image_url` when present (the inline form).
+                            // An `input_image` may reference an uploaded file by `file_id` instead of
+                            // an inline `image_url`. Carry it as the typed file-id source so the writer
+                            // restores `{type:input_image,file_id}`; `image_url` wins when present.
                             if let Some(block) = responses_input_image_block(item) {
                                 messages.push(crate::codec::ir::IrMessage {
                                     role: crate::codec::ir::IrRole::User,
@@ -224,10 +195,8 @@ impl ProtocolReader for ResponsesReader {
                                 .and_then(|t| t.as_str())
                                 .unwrap_or("")
                                 .to_string();
-                            // Carry the `annotations` (URL citations) on a top-level assistant
-                            // `output_text` input item into the Text block's citations, mirroring
-                            // the content-array path (`responses_block`) and the response-side reader.
-                            // Dropping them lost an assistant turn's grounding sources on replay.
+                            // Carry `annotations` (URL citations) on a top-level assistant `output_text`
+                            // item into the Text block's citations, as the content-array path does.
                             let citations = item
                                 .get(keys::ANNOTATIONS)
                                 .map(super::super::url_citation_wire::read_url_annotations)
@@ -243,10 +212,8 @@ impl ProtocolReader for ResponsesReader {
                             });
                         }
                         Some(ITEM_TYPE_FUNCTION_CALL) => {
-                            // A present function-call item MUST carry a non-empty string `call_id`:
-                            // it is the correlation key its `function_call_output` (and any egress
-                            // dialect) pairs against. An absent/blank/wrong-typed id yields an empty
-                            // IR id that silently breaks that pairing — reject rather than invent.
+                            // A function-call item needs a non-empty string `call_id`, the key its
+                            // `function_call_output` pairs against. Reject rather than invent one.
                             let call_id = item
                                 .get(CALL_ID)
                                 .and_then(|c| c.as_str())
@@ -258,10 +225,8 @@ impl ProtocolReader for ResponsesReader {
                                 .and_then(|n| n.as_str())
                                 .unwrap_or("")
                                 .to_string();
-                            // `arguments` is natively a JSON string (parsed to a value; a malformed
-                            // string is preserved verbatim rather than dropped). A non-string
-                            // (already-parsed object) is used directly instead of being collapsed to
-                            // `{}` — losing the caller's tool arguments is a lossy cross-protocol bug.
+                            // `arguments` is a JSON string: parsed, or kept verbatim if malformed. A
+                            // non-string (already-parsed) value is used directly, not collapsed to `{}`.
                             let input = tool_input_from_arguments(item.get(keys::ARGUMENTS));
 
                             messages.push(crate::codec::ir::IrMessage {
@@ -305,16 +270,10 @@ impl ProtocolReader for ResponsesReader {
                             });
                         }
                         Some(ITEM_TYPE_MESSAGE) => {
-                            // The official OpenAI Responses SDK emits conversation turns as typed
-                            // `{"type":"message","role":...,"content":[...]}` items. The role-keyed
-                            // fallback below only fires for UNTYPED items, so without this arm a
-                            // typed message turn would be silently dropped. Read role+content and
-                            // map the content blocks via `responses_block`, mirroring the untyped
-                            // branch.
-                            // EDGE-VALIDATE the message `content` TYPE: legally a string, an array of
-                            // content parts, or absent/`null`. A present number/bool/object is a
-                            // genuine TYPE violation `message_content_blocks`/`push_system_content`
-                            // would silently drop into an empty (vanished) turn — reject with a 400.
+                            // Typed `{"type":"message","role":...,"content":[...]}` items are the SDK's
+                            // turn form; the role-keyed fallback below only handles untyped items.
+                            // Edge-validate `content` (string, array or absent/`null`): a present
+                            // number/bool/object would vanish silently, so reject with a 400.
                             if let Some(cv) = item.get(keys::CONTENT) {
                                 if !cv.is_null() && !cv.is_string() && !cv.is_array() {
                                     return Err(ir_parse_error());
@@ -322,22 +281,13 @@ impl ProtocolReader for ResponsesReader {
                             }
                             let role_str =
                                 item.get(keys::ROLE).and_then(|r| r.as_str()).unwrap_or("");
-                            // `system`/`developer` turns carry the system prompt. They have no
-                            // IrRole and must NOT become conversation messages — accumulate their
-                            // text into `system_blocks` (which feeds `IrRequest.system` ->
-                            // top-level instructions), or the system prompt is silently lost on a
-                            // cross-protocol hop. Content can be an array of `input_text` blocks or
-                            // a bare string; handle both.
+                            // `system`/`developer` turns have no IrRole: their text goes into
+                            // `system_blocks` (-> `IrRequest.system`), or the prompt is lost cross-protocol.
                             if role_str == keys::SYSTEM || role_str == keys::DEVELOPER {
-                                // A `system`/`developer` item can legally appear ANYWHERE in
-                                // `input`, but the IR cannot express a positioned system turn
-                                // (`IrRole` has no such member, and every writer that models
-                                // system content re-folds it to the top — e.g.
-                                // `anthropic/writer.rs`'s Messages API cannot take `role:"system"`
-                                // mid-conversation). So this instruction is hoisted to apply from
-                                // turn 1 regardless of where it appeared — a real semantic change
-                                // when a conversational turn already preceded it. Warn so the
-                                // divergence is visible rather than silently reordering intent.
+                                // A `system`/`developer` item may appear anywhere in `input`, but the IR
+                                // cannot express a positioned system turn and writers re-fold it to the
+                                // top (the Anthropic API takes no mid-conversation system). It is hoisted
+                                // to apply from turn 1, a real change after an earlier turn; warn.
                                 if !messages.is_empty() {
                                     tracing::warn!(
                                         role = role_str,
@@ -372,9 +322,7 @@ impl ProtocolReader for ResponsesReader {
                                 _ => None,
                             };
                             if let Some(role) = role {
-                                // `content` may be an array of typed blocks OR a bare string
-                                // shorthand; `message_content_blocks` handles both so a
-                                // string-content turn is not silently dropped.
+                                // `content` is a typed-block array or a bare string; both are handled.
                                 if let Some(msg_content) =
                                     message_content_blocks(item.get(keys::CONTENT))
                                 {
@@ -386,26 +334,16 @@ impl ProtocolReader for ResponsesReader {
                             }
                         }
                         Some(ITEM_TYPE_REASONING) => {
-                            // A prior-turn `reasoning` INPUT item carries assistant
-                            // reasoning (text under `content`/`summary`, opaque blob under
-                            // `encrypted_content`). Dropping it lost that reasoning entirely on egress
-                            // to a protocol that models reasoning (Anthropic/Bedrock Thinking). Decode
-                            // it into an `IrBlock::Thinking` on its own assistant turn (a Responses
-                            // `reasoning` item is a top-level sibling of the assistant message it
-                            // precedes, so a standalone assistant turn is the faithful mapping). The
-                            // paired writer (`write_request`) re-emits this as a `reasoning` input
-                            // item, so a same-protocol Responses->Responses round-trip is preserved.
+                            // A prior-turn `reasoning` input item (text under `content`/`summary`,
+                            // opaque blob under `encrypted_content`) becomes an `IrBlock::Thinking` on
+                            // its own assistant turn, since it is a top-level sibling of the message it
+                            // precedes. `write_request` re-emits it, so a Responses round-trip is kept.
                             let text = read_reasoning_text(item);
                             let signature =
                                 read_reasoning_encrypted_content(item).map(String::from);
-                            // A prior-turn `reasoning` input item carries an opaque item `id`
-                            // (`rs_…`). The IR `Thinking` block has no id slot (adding one is a
-                            // cross-dialect blast-radius change on the shared `IrBlock::Thinking`
-                            // variant, constructed by every reader) and no other protocol models a
-                            // reasoning-item id, so it is DROPPED — but drop-with-warn per this file's
-                            // convention, never silently. The writer mints a fresh `rs_…` id on
-                            // re-emission, so the reasoning TEXT/encrypted_content round-trip while the
-                            // specific id does not. Gated on presence so an id-less item emits no warn.
+                            // The reasoning item's `id` (`rs_…`) has no IR slot and no other protocol
+                            // models one, so it is dropped with a warn (only when present). The writer
+                            // mints a fresh id; text and `encrypted_content` round-trip.
                             if item
                                 .get(keys::ID)
                                 .and_then(|i| i.as_str())
@@ -422,11 +360,10 @@ impl ProtocolReader for ResponsesReader {
                                 );
                             }
                             if !text.is_empty() || signature.is_some() {
-                                // IR-18: an `encrypted_content` on this dialect is an OpenAI-minted
-                                // blob, unless it is busbar's provenance envelope (another family's
-                                // signature handed to this client earlier), which restores the
-                                // original bytes and origin. IR-17: `content[]` vs `summary[]`
-                                // says full vs summary.
+                                // IR-18: `encrypted_content` is an OpenAI-minted blob unless it is
+                                // busbar's provenance envelope (another family's signature), which
+                                // restores the original bytes and origin. IR-17: `content[]` vs
+                                // `summary[]` says full vs summary.
                                 let (signature, signature_origin) =
                                     crate::codec::ir::sig_envelope::read_carried_opt(
                                         signature,
@@ -448,28 +385,22 @@ impl ProtocolReader for ResponsesReader {
                         Some(_) | None => {}
                     }
 
-                    // Handle role/content structured items (user/assistant messages) ONLY when the
-                    // item carries no `type` field. A typed item (e.g. "output_text") that also
-                    // happens to include a `role` must NOT be re-processed here, or the turn would
-                    // be duplicated in the resulting conversation.
+                    // Role/content items only when there is no `type`: a typed item that happens to
+                    // carry a `role` must not be re-processed, or the turn is duplicated.
                     if item.get(keys::TYPE).is_none() && item.get(keys::ROLE).is_some() {
                         let role_str = item.get(keys::ROLE).and_then(|r| r.as_str()).unwrap_or("");
                         let content_val = item.get(keys::CONTENT);
 
-                        // EDGE-VALIDATE the message `content` TYPE (see the typed `message` arm):
-                        // string/array/absent/null are legal; a present number/bool/object is a TYPE
-                        // violation the projections below would silently drop — reject with a 400.
+                        // Edge-validate `content` as in the typed `message` arm.
                         if let Some(cv) = content_val {
                             if !cv.is_null() && !cv.is_string() && !cv.is_array() {
                                 return Err(ir_parse_error());
                             }
                         }
 
-                        // As in the typed `message` arm, untyped `system`/`developer` turns carry
-                        // the system prompt and must be accumulated into `system_blocks` rather than
-                        // dropped (the prior `_ => continue` lost them on cross-protocol hops).
+                        // Untyped `system`/`developer` turns go to `system_blocks` as in the typed arm.
                         if role_str == keys::SYSTEM || role_str == keys::DEVELOPER {
-                            // Same hoist-visibility warn as the typed `message` arm above.
+                            // Same hoist warn as the typed arm.
                             if !messages.is_empty() {
                                 tracing::warn!(
                                     role = role_str,
@@ -505,9 +436,7 @@ impl ProtocolReader for ResponsesReader {
                             _ => continue,
                         };
 
-                        // As in the typed `message` arm, `content` may be an array of typed
-                        // blocks OR a bare string shorthand; handle both via
-                        // `message_content_blocks` so a string-content untyped turn survives.
+                        // Typed-block array or bare string, via `message_content_blocks`.
                         if let Some(msg_content) = message_content_blocks(content_val) {
                             messages.push(crate::codec::ir::IrMessage {
                                 role,
@@ -583,63 +512,46 @@ impl ProtocolReader for ResponsesReader {
                     input_schema,
                     cache_control: None,
                     hosted: None,
-                    // STRICT function calling. Flat on a Responses tool (the Chat shape nests it
-                    // under `function`). Absent ⇒ `None`, never `Some(false)`.
+                    // Strict function calling, flat on a Responses tool (Chat nests it). Absent is
+                    // `None`, never `Some(false)`.
                     strict: tool_val.get(keys::STRICT).and_then(|v| v.as_bool()),
                 });
             }
         }
 
-        // Read `max_output_tokens` as u64 and fall back to None on out-of-range values rather than
-        // silently truncating a value larger than u32::MAX via `as u32` (matches the anthropic and
-        // bedrock readers). `try_from` also rejects negatives, so an explicit `> 0` filter is moot;
-        // a value of 0 is preserved as Some(0) just as the prior code dropped it — keep dropping it.
+        // u64 with `try_from` so an out-of-range value becomes None instead of truncating (as the
+        // anthropic and bedrock readers do). 0 is dropped.
         let max_tokens = obj
             .get(INCOMPLETE_REASON_MAX_OUTPUT)
             .and_then(|v| v.as_u64())
             .filter(|&v| v > 0)
             .and_then(|v| u32::try_from(v).ok());
-        // `temperature` / `top_p` are rows of the mapping file, read below. The Responses API has
-        // NO `top_k` and no top-level stop-sequence param; `top_k`/`stop` stay None/empty.
-        // The Responses API carries `stream` in the request body — read it (don't drop the intent).
+        // `temperature` / `top_p` are map-file rows (read below). The API has no `top_k` or stop param.
+        // `stream` is in the request body and is read.
         let stream = obj
             .get(keys::STREAM)
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        // `tool_choice`: promote to the IR union so a forced/targeted directive survives the
-        // cross-protocol seam instead of degrading to `auto`. "tool_choice" is added to the modeled
-        // keys below so it does not also linger in `extra`.
-        // IR-10 (RSP-15): the `allowed_tools` form yields the subset beside an Auto/Required choice.
+        // Promote `tool_choice` to the IR union so a forced directive survives the seam (it is a
+        // modeled key, so it does not linger in `extra`). IR-10 (RSP-15): the `allowed_tools` form
+        // yields the subset beside an Auto/Required choice.
         let (tool_choice, allowed_tools) = read_responses_tool_choice(obj.get(keys::TOOL_CHOICE));
 
-        // response_format: the Responses API carries structured-output config under `text.format`
-        // (NOT a top-level `response_format` as Chat Completions does). Read `text.format` and
-        // normalize it into the IR's canonical `response_format` shape (the Chat-Completions shape the
-        // OpenAI reader stores), so a Responses structured-output request reaches an OpenAI/Anthropic
-        // backend faithfully and a same-protocol round-trip is lossless. `text` is added to the modeled
-        // keys below so it does not also linger in `extra` (which would double-emit it on write).
-        // SAMPLING: the Responses create API does NOT model `frequency_penalty`,
-        // `presence_penalty`, `seed`, or `n` (verified against the official openai-python
-        // `ResponseCreateParamsBase` — only `temperature`/`top_p`/`top_logprobs`/`text` are present),
-        // so none are promoted here (they stay None) and none are added to the modeled-keys exclusion.
-        // STOP: the Responses create API has NO `stop`/`stop_sequences` param either, so `stop`
-        // stays empty and is not read.
+        // response_format lives under `text.format` (not a top-level member): read and normalize it
+        // to the IR's canonical shape. The create API models no `frequency_penalty`,
+        // `presence_penalty`, `seed`, `n` or `stop` (verified against openai-python
+        // `ResponseCreateParamsBase`), so those stay None/empty.
         let response_format = read_text_format(obj.get(keys::TEXT));
 
-        // NOTE: `text` is NOT in the modeled-keys set — it is intercepted by its own branch in the
-        // loop below (its `format` sub-key → IR `response_format`, the remainder preserved
-        // in `extra`). `metadata` is also deliberately excluded from the set; see `responses_modeled_keys`.
+        // `text` is not in the modeled-keys set: its own branch below promotes `format` to
+        // `response_format` and keeps the remainder in `extra`. `metadata` is also excluded; see
+        // `responses_modeled_keys`.
 
         for (key, value) in obj.iter() {
-            // `text` is partially modeled: its `format` sub-key is promoted to the IR
-            // `response_format` and MUST NOT also linger in `extra` (the writer rebuilds `text`
-            // from `response_format`, so a leftover `extra["text"]["format"]` would double-emit /
-            // conflict). But `text` may carry OTHER sub-keys (e.g. `verbosity`) that busbar does not
-            // model — those must survive via `extra`. So when `text` carries non-`format` keys, route a
-            // `format`-stripped copy into `extra`; when `text` is format-only, drop it from `extra`
-            // entirely (the writer re-synthesizes it from `response_format`). Checked BEFORE the
-            // modeled-keys short-circuit so the format-stripped remainder is preserved even though
-            // `text` is listed as modeled.
+            // `text` is partially modeled. Its `format` goes to `response_format` and must not linger
+            // in `extra` (the writer rebuilds `text` from it, so a leftover would conflict), but other
+            // sub-keys (e.g. `verbosity`) survive via a `format`-stripped copy in `extra`. Format-only
+            // `text` is dropped from `extra`. Checked before the modeled-keys short-circuit.
             if key == keys::TEXT {
                 if let Some(text_obj) = value.as_object() {
                     let remainder: serde_json::Map<String, serde_json::Value> = text_obj
@@ -663,40 +575,30 @@ impl ProtocolReader for ResponsesReader {
             extra.insert(keys::MODEL.to_string(), model_val.clone());
         }
 
-        // The reasoning ASK: Responses spells it `reasoning: {effort}`. Promote the effort word so
-        // it carries to Anthropic/Gemini thinking budgets; the raw `reasoning` object (which can
-        // also carry `summary`) STAYS in extra for same-protocol fidelity — the writer emits from
-        // the typed field only when extra does not already carry the verbatim original.
+        // The reasoning ask: promote the `reasoning.effort` word for Anthropic/Gemini budgets. The raw
+        // object (which can carry `summary`) stays in `extra`; the writer uses the typed field only
+        // when `extra` has no verbatim original.
         let reasoning = obj
             .get(keys::REASONING)
             .and_then(|r| r.get(keys::EFFORT))
             .and_then(|v| v.as_str())
             .and_then(read_responses_reasoning_effort);
 
-        // `/v1/responses` models a top-level `parallel_tool_calls` boolean, identically to Chat
-        // Completions. Previously hardcoded `None`, which — unlike
-        // Bedrock/Gemini/Cohere (whose native dialects genuinely have no such parameter, so `None`
-        // there is the accurate "caller never said") — is total ingress loss for Responses callers
-        // who explicitly set it.
+        // `parallel_tool_calls` is modeled as on Chat (unlike Bedrock/Gemini/Cohere, where None is
+        // the accurate "never said").
         let parallel_tool_calls = obj.get(keys::PARALLEL_TOOL_CALLS).and_then(|v| v.as_bool());
 
-        // The `/v1/responses` create API models a top-level `top_logprobs` integer (0–20), identically
-        // to Chat Completions. Previously hardcoded `None`, which was total ingress loss for a
-        // Responses caller who set it — and, because it was ALSO absent from `responses_modeled_keys`,
-        // it rode `extra` and was cleared at the cross-protocol seam WITHOUT a drop-warn (unlike the
-        // sibling top_k/stop drops). Promote it first-class so it carries to an OpenAI/Gemini backend
-        // (which force the enabling `logprobs` flag from it). The Responses surface requests logprobs
-        // via `top_logprobs` alone (there is no top-level `logprobs` boolean — response-side logprobs
-        // ride `include`), so `logprobs` stays `None` here; the presence of `top_logprobs` is the ask.
+        // Top-level `top_logprobs` (0-20), as on Chat. Promoted first-class so it carries to OpenAI/
+        // Gemini backends (which force the enabling `logprobs` from it) instead of riding `extra`,
+        // which the seam clears without a drop-warn. `logprobs` stays `None`: there is no top-level
+        // `logprobs` boolean here, and `top_logprobs` itself is the ask.
         let top_logprobs = obj
             .get(keys::TOP_LOGPROBS)
             .and_then(|v| v.as_u64())
             .and_then(|v| u32::try_from(v).ok());
 
-        // RSP-08: response-side logprobs are asked for by naming `message.output_text.logprobs` in
-        // `include` — the Responses spelling of the logprobs switch. Carry it as the IR's
-        // `logprobs` ask so a Chat/Gemini/Cohere backend is asked for them too. `include` itself
-        // stays in `extra` (it can name other response members this reader does not model).
+        // RSP-08: naming `message.output_text.logprobs` in `include` is the logprobs switch; carry it
+        // as the IR `logprobs` ask. `include` stays in `extra` (it can name other members).
         let logprobs = obj
             .get(INCLUDE)
             .and_then(|i| i.as_array())
@@ -706,7 +608,7 @@ impl ProtocolReader for ResponsesReader {
             })
             .then_some(true);
 
-        // RSP-05: the end-user id. A string `user` is the same field Chat Completions carries.
+        // RSP-05: a string `user` is the same field Chat carries.
         let user = obj
             .get(keys::USER)
             .and_then(|u| u.as_str())
@@ -755,9 +657,8 @@ impl ProtocolReader for ResponsesReader {
             EVT_RESPONSE_CREATED | "response.in_progress" => {
                 if !state.started {
                     state.started = true;
-                    // Capture stream identity from the nested `response` object so a same-protocol
-                    // passthrough preserves it. `created_at` is the Responses field name (mapped to
-                    // the IR's `created`).
+                    // Capture stream identity from the nested `response` so same-protocol passthrough
+                    // keeps it. `created_at` maps to the IR's `created`.
                     let resp = data.get(keys::RESPONSE);
                     let id = resp
                         .and_then(|r| r.get(keys::ID))
@@ -794,11 +695,8 @@ impl ProtocolReader for ResponsesReader {
                             .to_string();
                         if let Some(output_index) = data.get(OUTPUT_INDEX).and_then(|i| i.as_u64())
                         {
-                            // RSP-16: a BLANK `call_id` gets the SAME synthesized id the buffered
-                            // `read_response` mints for this item. `output_index` is the item's
-                            // position in `response.output[]`, which is exactly the ordinal the
-                            // buffered path hashes, so a stream and a buffered read of one response
-                            // agree on the correlation key instead of the stream carrying `""`.
+                            // RSP-16: a blank `call_id` gets the same synthesized id the buffered
+                            // `read_response` mints, since `output_index` is the ordinal it hashes.
                             let call_id = if raw_call_id.is_empty() {
                                 synth_response_tool_call_id(
                                     usize::try_from(output_index).unwrap_or(usize::MAX),
@@ -807,36 +705,21 @@ impl ProtocolReader for ResponsesReader {
                             } else {
                                 raw_call_id.to_string()
                             };
-                            // Clamp the wire index before the cast: a crafted `u64::MAX` would
-                            // otherwise feed the per-stream set and downstream index arithmetic
-                            // unbounded. Saturate at MAX_OUTPUT_INDEX (mirrors openai_chat.rs).
+                            // Clamp the wire index before the cast (a crafted `u64::MAX` would feed
+                            // unbounded index arithmetic); mirrors openai_chat.rs.
                             let idx = (output_index as usize).min(MAX_OUTPUT_INDEX);
-                            // Record the open tool index so the terminal `output_item.done` for
-                            // this index closes the block EXACTLY once. Native Responses emits a
-                            // single `output_item.done` per function-call item, so unlike text
-                            // (which also gets a `content_part.done`) a tool index is closed by one
-                            // event — tracking it here keeps the open/close pair balanced and lets
-                            // the done arm distinguish a real open block from a duplicate close.
+                            // Record the open tool index so `output_item.done` closes it exactly once
+                            // (a tool gets one `done`, unlike text which also gets `content_part.done`).
                             //
-                            // Cap the distinct-index cardinality: a backend emitting a unique
-                            // `output_index` per event must not grow `open_tools` without bound
-                            // (a per-connection amplification DoS). Open a new block ONLY when the
-                            // index is not already tracked AND there is room under the cap. An
-                            // already-open index must NOT re-emit BlockStart — a second
-                            // `output_item.added` for an open index would produce an invalid
-                            // BlockStart→BlockStart→BlockStop sequence (a duplicate
-                            // `content_block_start`), a deterministic proxy tell that corrupts a
-                            // downstream writer's tool-call state. Beyond the cap a NEW index is
-                            // silently skipped (no BlockStart), matching openai_chat.rs.
-                            // An index must not open as BOTH a tool and a text block: a text delta
-                            // at this same `output_index` stores its open marker under
-                            // `idx + TEXT_INDEX_KEY_OFFSET`, and if such a text block is already open
-                            // here, opening a tool block at the raw `idx` too would leave two open
-                            // markers (`idx` and `idx + offset`) for one wire index — both BlockStarts
-                            // collapse onto IR index `idx`, yielding a duplicate
-                            // `content_block_start` and (at the terminal frame) a duplicate
-                            // BlockStop. Require the symmetric text key to be CLEAR before opening a
-                            // tool block, so a single output_index is exactly one block kind.
+                            // Cap distinct-index cardinality (a unique `output_index` per event must
+                            // not grow `open_tools` without bound). Open only when the index is not
+                            // tracked and under the cap: a second `output_item.added` must not re-emit
+                            // BlockStart (invalid BlockStart, BlockStart, BlockStop). Past the cap a
+                            // new index is skipped, as in openai_chat.rs.
+                            // An index must not open as both a tool and a text block (text uses
+                            // `idx + TEXT_INDEX_KEY_OFFSET`): both would collapse onto IR index `idx`,
+                            // duplicating `content_block_start` and BlockStop. So the text key must be
+                            // clear before opening a tool block.
                             let already_open = state.open_tools.contains(&idx)
                                 || state.open_tools.contains(&(idx + TEXT_INDEX_KEY_OFFSET));
                             if !already_open && state.open_tools.len() < MAX_OPEN_TOOLS {
@@ -854,14 +737,9 @@ impl ProtocolReader for ResponsesReader {
                     } else if item_obj.get(keys::TYPE).and_then(|t| t.as_str())
                         == Some(ITEM_TYPE_REASONING)
                     {
-                        // REASONING (stream): a native Responses stream opens a chain-of-thought
-                        // item with `output_item.added` typed `reasoning`. The prior `_`/`message`
-                        // no-op DROPPED it, so a reasoning stream lost its thinking on any
-                        // cross-protocol hop. Open a Thinking block at this `output_index`, tracked in
-                        // `open_tools` at the RAW idx (like a tool item — closed once by the single
-                        // `output_item.done` this index receives). Same cardinality cap and
-                        // already-open guard as the tool arm so a malformed stream cannot double-open
-                        // or grow the set without bound.
+                        // REASONING: `output_item.added` typed `reasoning` opens a Thinking block at
+                        // this `output_index`, tracked in `open_tools` at the raw idx and closed once by
+                        // `output_item.done`. Same cap and already-open guard as the tool arm.
                         if let Some(output_index) = data.get(OUTPUT_INDEX).and_then(|i| i.as_u64())
                         {
                             let idx = (output_index as usize).min(MAX_OUTPUT_INDEX);
@@ -871,8 +749,8 @@ impl ProtocolReader for ResponsesReader {
                                 state.open_tools.insert(idx);
                                 out.push(IrStreamEvent::BlockStart {
                                     index: idx,
-                                    // IR-17: what the added item already says (usually unknown —
-                                    // its arrays fill on the deltas that follow).
+                                    // IR-17: what the added item already says (usually unknown; its
+                                    // arrays fill on later deltas).
                                     block: crate::codec::ir::IrBlockMeta::Thinking {
                                         kind: data.get(ITEM).and_then(super::slots::reasoning_kind),
                                     },
@@ -884,14 +762,10 @@ impl ProtocolReader for ResponsesReader {
                 }
             }
 
-            // REASONING (stream): native reasoning text arrives as `response.reasoning_text.delta`
-            // (the full reasoning) and `response.reasoning_summary_text.delta` (a summarized form),
-            // both carrying an `output_index` and a `delta` string. The prior `_ => {}` DROPPED these,
-            // so a streamed reasoning response lost its chain-of-thought. Route each as an
-            // `IrDelta::ThinkingDelta` against the reasoning block at this `output_index`, lazily
-            // opening the Thinking BlockStart if the `output_item.added` was absent (some backends emit
-            // reasoning deltas with no preceding `added`). The block is tracked at the RAW idx in
-            // `open_tools`, closed once by the terminal `output_item.done`/stream end.
+            // REASONING: `reasoning_text.delta` (full) and `reasoning_summary_text.delta` (summary)
+            // become `IrDelta::ThinkingDelta` on the block at this `output_index`, lazily opening the
+            // Thinking BlockStart when `output_item.added` was absent (some backends omit it). Tracked
+            // at the raw idx in `open_tools`.
             EVT_REASONING_TEXT_DELTA | EVT_REASONING_SUMMARY_TEXT_DELTA => {
                 let delta = data
                     .get(keys::DELTA)
@@ -903,10 +777,9 @@ impl ProtocolReader for ResponsesReader {
                         .get(OUTPUT_INDEX)
                         .and_then(|i| i.as_u64())
                         .map_or(0, |v| (v as usize).min(MAX_OUTPUT_INDEX));
-                    // Lazily open the Thinking block if `output_item.added` did not already. Guard the
-                    // open against a TEXT key collision at the same index (a reasoning index and a text
-                    // index should never share a wire index, but stay defensive) and the cardinality
-                    // cap; beyond the cap suppress the delta rather than emit an orphan.
+                    // Lazily open the block unless `output_item.added` did. Guard against a TEXT key
+                    // collision at the same index and the cap; past the cap suppress the delta rather
+                    // than emit an orphan.
                     if !state.open_tools.contains(&idx)
                         && !state.open_tools.contains(&(idx + TEXT_INDEX_KEY_OFFSET))
                     {
@@ -914,7 +787,7 @@ impl ProtocolReader for ResponsesReader {
                             return out;
                         }
                         state.open_tools.insert(idx);
-                        // IR-17: the event that opens the block says which reasoning array it fills.
+                        // IR-17: the opening event says which reasoning array it fills.
                         let kind = if event_type == EVT_REASONING_TEXT_DELTA {
                             crate::codec::ir::IrThinkingKind::Full
                         } else {
@@ -939,59 +812,36 @@ impl ProtocolReader for ResponsesReader {
                     .and_then(|d| d.as_str())
                     .unwrap_or("")
                     .to_string();
-                // Drop empty keepalive deltas entirely: they neither open a block nor carry
-                // content, so emitting a zero-length TextDelta would be spurious noise.
+                // Drop empty keepalive deltas: no block opens and no zero-length TextDelta is emitted.
                 if !delta.is_empty() {
-                    // Use the wire `output_index` for BOTH the lazy BlockStart and the BlockDelta so
-                    // the open/close pair stays index-matched even when the text part is not at
-                    // index 0 (e.g. it follows a tool call at index 0).
+                    // The wire `output_index` is used for both the lazy BlockStart and the BlockDelta so
+                    // open/close stay index-matched.
                     //
-                    // ASSUMPTION — ONE output_text part per message item. This keys the block on
-                    // `output_index` ALONE and ignores the frame's `content_index`. The Responses
-                    // wire allows a single message `item` to carry MULTIPLE content parts (each with
-                    // its own `content_index`); two `output_text` parts under the SAME `output_index`
-                    // would collapse onto one IR block here (their deltas would merge into a single
-                    // text block rather than two). OpenAI does not emit multi-part `output_text`
-                    // message items today — every text item ships exactly one `output_text` part — so
-                    // this is latent, not a live defect. A full fix would key the open set on the
-                    // (output_index, content_index) pair (and thread content_index through the tool
-                    // arm and the finish-path close symmetrically); do that here if OpenAI ever ships
-                    // multi-part text items. Until then the keying assumes one `output_text` part per
-                    // message item.
+                    // ASSUMPTION: one `output_text` part per message item. The block is keyed on
+                    // `output_index` alone, ignoring `content_index`, so two parts under one index would
+                    // merge into one IR block. OpenAI ships exactly one today; if it ever ships
+                    // multi-part items, key on (output_index, content_index) here and in the tool arm
+                    // and finish-path close.
                     let idx = data
                         .get(OUTPUT_INDEX)
                         .and_then(|i| i.as_u64())
                         .map_or(0, |v| (v as usize).min(MAX_OUTPUT_INDEX));
-                    // Track open TEXT indices PER INDEX in `open_tools` under a disjoint key offset
-                    // (see `TEXT_INDEX_KEY_OFFSET`) instead of the single index-blind
-                    // `text_block_open` bool. A native stream can carry multiple message items, each
-                    // at its own `output_index`; the per-index set opens a BlockStart lazily ONLY for
-                    // an index not already open (so a second text item gets its own BlockStart rather
-                    // than an orphan delta), and bounds cardinality under the same cap as tool items
-                    // so a backend emitting a unique index per delta cannot grow the set without
-                    // bound. Beyond the cap a new index streams no BlockStart/BlockDelta (matching
-                    // the tool arm's suppression), never an orphan delta.
-                    // Symmetric to the tool arm: an index already open as a TOOL block (raw `idx` in
-                    // `open_tools`) must not also open a TEXT block under `idx +
-                    // TEXT_INDEX_KEY_OFFSET`. If a function-call item already holds this
-                    // `output_index`, a stray text delta at the same index must NOT open a second
-                    // block (two BlockStarts collapsing onto one IR index — a duplicate
-                    // `content_block_start` and an eventual duplicate BlockStop). Treat the index as
-                    // already open and route no text BlockStart/BlockDelta to it.
+                    // Open TEXT indices are tracked per index in `open_tools` under
+                    // `TEXT_INDEX_KEY_OFFSET`, not a single `text_block_open` bool: a stream can carry
+                    // several message items, and each new index gets its own lazy BlockStart rather than
+                    // an orphan delta. The same cap applies; past it no BlockStart/BlockDelta is sent.
+                    // Symmetric to the tool arm: an index already open as a TOOL block must not also open
+                    // a TEXT block (duplicate `content_block_start`, later duplicate BlockStop).
                     let text_key = idx + TEXT_INDEX_KEY_OFFSET;
                     if state.open_tools.contains(&idx) {
-                        // This `output_index` is already held by an OPEN TOOL block. A text delta
-                        // here must NOT open a second block (a duplicate `content_block_start`/
-                        // `_stop` once both keys collapse onto IR index `idx`) AND must NOT push a
-                        // TextDelta into a tool block (a malformed text fragment inside an open
-                        // tool-use block a strict SDK rejects). Drop the stray text delta entirely.
+                        // The index is held by an open TOOL block: drop the stray text delta, so no
+                        // second block opens and no text fragment lands inside a tool-use block.
                         return out;
                     }
                     let already_open = state.open_tools.contains(&text_key);
                     if !already_open {
                         if state.open_tools.len() >= MAX_OPEN_TOOLS {
-                            // Cap reached: suppress this index entirely (no BlockStart, no orphan
-                            // BlockDelta) rather than emitting a delta for an unopened block.
+                            // Cap reached: suppress this index (no BlockStart, no orphan BlockDelta).
                             return out;
                         }
                         state.open_tools.insert(text_key);
@@ -1005,10 +855,9 @@ impl ProtocolReader for ResponsesReader {
                         index: idx,
                         delta: crate::codec::ir::IrDelta::TextDelta(delta),
                     });
-                    // RSP-04: the delta's token logprobs (`logprobs[]`, the `ResponseLogProb` shape)
-                    // ride the SAME text block as a `LogprobsDelta`, the way the buffered read
-                    // carries the part's `logprobs` onto `IrResponse.logprobs`. An empty or absent
-                    // array (the caller asked for none) emits nothing.
+                    // RSP-04: the delta's `logprobs[]` (`ResponseLogProb`) ride the same text block as
+                    // a `LogprobsDelta`, as the buffered read carries them onto `IrResponse.logprobs`.
+                    // Empty or absent emits nothing.
                     let lps = read_responses_logprobs(data.get(keys::LOGPROBS));
                     if !lps.is_empty() {
                         out.push(IrStreamEvent::BlockDelta {
@@ -1019,16 +868,11 @@ impl ProtocolReader for ResponsesReader {
                 }
             }
 
-            // STREAMED CITATIONS. A native Responses stream delivers each `url_citation` on the
-            // `output_text` part as its own `output_text.annotation.added` frame, after the part's
-            // text deltas and before its `output_text.done`. Read the single `annotation` through the
-            // same `read_url_annotations` the buffered `read_response` uses for the part's
-            // `annotations` array, and carry it as an `IrDelta::CitationsDelta` on the open text
-            // block at this `output_index`, so the streamed citations equal the buffered ones and
-            // reach every egress whose writer carries a citation. Only an OPEN text block takes the
-            // delta: an annotation for an index that is not an open text block (a tool index, a
-            // closed or never-opened part) has no block to attach to and is dropped rather than
-            // emitted as an orphan delta.
+            // Streamed citations: each `url_citation` arrives as its own
+            // `output_text.annotation.added` frame, after the text deltas and before
+            // `output_text.done`. It is read through the same `read_url_annotations` as the buffered
+            // path and carried as `IrDelta::CitationsDelta` on the open text block at this index. An
+            // annotation for an index that is not an open text block is dropped, not orphaned.
             EVT_OUTPUT_TEXT_ANNOTATION_ADDED => {
                 let idx = data
                     .get(OUTPUT_INDEX)
@@ -1058,14 +902,10 @@ impl ProtocolReader for ResponsesReader {
                 if !delta.is_empty() {
                     if let Some(output_index) = data.get(OUTPUT_INDEX).and_then(|i| i.as_u64()) {
                         let idx = (output_index as usize).min(MAX_OUTPUT_INDEX);
-                        // Route the argument delta ONLY to an index that actually emitted a
-                        // BlockStart (tracked in `open_tools` by the `output_item.added` arm).
-                        // An index suppressed by the cardinality cap — or an arguments-delta that
-                        // arrives with no preceding `output_item.added` at all — has no open block,
-                        // so a BlockDelta against it would be a tool-argument fragment for a block
-                        // with no `content_block_start`: an invalid event sequence that breaks a
-                        // strict SDK reassembling tool-call arguments and a distinguishability tell.
-                        // Drop it (mirrors openai_chat.rs's `state.open_tools.contains` guard).
+                        // Route argument deltas only to an index that emitted a BlockStart (in
+                        // `open_tools`). A cap-suppressed index, or deltas with no preceding
+                        // `output_item.added`, would produce a fragment with no `content_block_start`
+                        // that breaks strict SDKs. Mirrors openai_chat.rs's guard.
                         if state.open_tools.contains(&idx) {
                             out.push(IrStreamEvent::BlockDelta {
                                 index: idx,
@@ -1079,32 +919,21 @@ impl ProtocolReader for ResponsesReader {
             EVT_OUTPUT_ITEM_DONE | EVT_CONTENT_PART_DONE => {
                 if let Some(output_index) = data.get(OUTPUT_INDEX).and_then(|i| i.as_u64()) {
                     let idx = (output_index as usize).min(MAX_OUTPUT_INDEX);
-                    // Native Responses closes a single text item with TWO terminal frames at the
-                    // SAME `output_index`: `content_part.done` (the text content part) immediately
-                    // followed by `output_item.done` (the enclosing message item). Emitting a
-                    // BlockStop for BOTH produces a duplicate `content_block_stop` at one index for
-                    // a block that opened once — an invalid event sequence and a distinguishability
-                    // tell. So close a block EXACTLY once: only emit BlockStop for an index that is
-                    // currently open, and clear the open marker so the second terminal frame at the
-                    // same index is a no-op. A tool index (raw `idx`) and a text index (stored under
-                    // `TEXT_INDEX_KEY_OFFSET`) are tracked PER INDEX in `open_tools`, so the close
-                    // routes to the correct block kind AND the correct index — a native stream's two
-                    // terminal frames for one text item (`content_part.done` then `output_item.done`,
-                    // same index) close it exactly once because the second frame finds the key gone.
+                    // Native Responses closes a text item with two terminal frames at one
+                    // `output_index` (`content_part.done`, then `output_item.done`). A BlockStop for
+                    // both would duplicate `content_block_stop`, so close exactly once: only for an
+                    // index currently open, clearing the marker so the second frame is a no-op. Tool
+                    // (raw `idx`) and text (`TEXT_INDEX_KEY_OFFSET`) indices are tracked per index in
+                    // `open_tools`, so the close routes to the right block.
                     //
-                    // A RAW index is a function-call or reasoning item, and those close on
-                    // `output_item.done` ONLY: a function-call item has no content parts, and a
-                    // reasoning item's `content_part.done` (its `reasoning_text` part) arrives BEFORE
-                    // the item's `output_item.done` — which is the frame that carries the reasoning
-                    // item's `encrypted_content`. Closing on the part would end the block before that
-                    // blob is read.
+                    // A raw index (function call or reasoning) closes on `output_item.done` only: a
+                    // reasoning item's `content_part.done` arrives first, and `output_item.done`
+                    // carries its `encrypted_content`, which must be read before closing.
                     let item_done = event_type == EVT_OUTPUT_ITEM_DONE;
                     if item_done && state.open_tools.remove(&idx) {
-                        // RSP-02: a reasoning item's opaque `encrypted_content` (the multi-turn
-                        // reasoning-reuse blob) rides the finalized item on this frame. Carry it as
-                        // the block's `SignatureDelta` BEFORE the BlockStop, exactly as the buffered
-                        // read carries it into `Thinking.signature` — the rule both paths share is
-                        // `read_reasoning_encrypted_content`.
+                        // RSP-02: a reasoning item's `encrypted_content` (multi-turn reuse blob) rides
+                        // this frame. Carry it as a `SignatureDelta` before the BlockStop, as the
+                        // buffered read does (rule shared via `read_reasoning_encrypted_content`).
                         if let Some(sig) = data
                             .get(ITEM)
                             .filter(|it| {
@@ -1118,39 +947,28 @@ impl ProtocolReader for ResponsesReader {
                                 delta: crate::codec::ir::IrDelta::SignatureDelta(sig.to_string()),
                             });
                         }
-                        // This index was a (now-closed) function-call or reasoning item.
+                        // A now-closed function-call or reasoning item.
                         out.push(IrStreamEvent::BlockStop { index: idx });
                     } else if state.open_tools.remove(&(idx + TEXT_INDEX_KEY_OFFSET)) {
-                        // This index was an open text block; close THIS index once. Removing the
-                        // per-index key (rather than clearing a global bool) lets a different text
-                        // index stay open and close on its own terminal frame, and makes the paired
-                        // `content_part.done`/`output_item.done` for the same item a no-op the
-                        // second time.
+                        // An open text block: close this index once. Removing the per-index key lets
+                        // other text indices stay open and makes the paired second terminal frame a no-op.
                         out.push(IrStreamEvent::BlockStop { index: idx });
                     }
-                    // Otherwise nothing is open at this index (e.g. the second terminal frame of a
-                    // text item, or a `done` for an item we never opened): emit nothing.
+                    // Otherwise nothing is open here (second terminal frame, or a `done` for an
+                    // unopened item): emit nothing.
                 }
             }
 
             EVT_RESPONSE_COMPLETED | EVT_RESPONSE_FAILED | EVT_RESPONSE_INCOMPLETE => {
-                // A terminal event ends the message. Any content block still open at this point
-                // (a tool index tracked as a raw `idx`, or a text index tracked under
-                // `TEXT_INDEX_KEY_OFFSET`) was opened with a BlockStart but never received its
-                // matching `output_item.done`/`content_part.done` — e.g. the upstream cut the
-                // stream off mid-block, or a `failed`/`incomplete` arrives while content is still
-                // streaming. Pushing MessageStop without closing them emits an unbalanced
-                // BlockStart-without-BlockStop, which a strict SDK reassembling the stream rejects.
-                // Drain `open_tools` and emit a BlockStop for every still-open index BEFORE the
-                // MessageStop, converting text keys (>= TEXT_INDEX_KEY_OFFSET) back to their IR
-                // index. This closure is invoked in EVERY terminal sub-path (incl. the failed
-                // early-return) right before the MessageStop is pushed.
+                // A terminal event ends the message. Blocks still open (upstream cut off mid-block, or
+                // `failed`/`incomplete` mid-stream) are drained from `open_tools` and given a BlockStop
+                // before MessageStop, converting text keys back to IR indices; otherwise a strict SDK
+                // rejects the unbalanced stream. Invoked on every terminal path, including the failed
+                // early-return.
                 let close_open_blocks =
                     |out: &mut Vec<IrStreamEvent>,
                      state: &mut crate::codec::ir::StreamDecodeState| {
-                        // Drain into a sorted Vec first: closing in ascending IR-index order keeps
-                        // the emitted BlockStop sequence deterministic regardless of insertion order
-                        // (text and tool keys interleave under the offset scheme).
+                        // Drain into a sorted Vec so BlockStops are in ascending IR-index order.
                         let mut indices: Vec<usize> = state
                             .open_tools
                             .iter()
@@ -1163,12 +981,9 @@ impl ProtocolReader for ResponsesReader {
                             })
                             .collect();
                         state.open_tools.clear();
-                        // Dedup AFTER sorting: a tool key (`N`) and a text key (`N +
-                        // TEXT_INDEX_KEY_OFFSET`) both map back to the SAME IR index `N`, so without
-                        // dedup a single output_index that was (erroneously, pre-fix) opened as both
-                        // kinds would emit TWO BlockStop{N} — a duplicate `content_block_stop` the
-                        // downstream Anthropic writer relays for an already-closed index. One
-                        // BlockStop per distinct IR index, regardless of how many keys collapsed onto
+                        // Dedup after sorting: a tool key `N` and a text key `N + TEXT_INDEX_KEY_OFFSET`
+                        // map to the same IR index, so one index opened as both would emit two
+                        // BlockStop{N}. One BlockStop per distinct IR index.
                         // it. (The output_item.added / output_text.delta guards below also prevent the
                         // double-open in the first place; this dedup is the second, defensive layer.)
                         indices.sort_unstable();
@@ -1235,10 +1050,9 @@ impl ProtocolReader for ResponsesReader {
                             retry_after: None,
                         }));
                         close_open_blocks(&mut out, state);
-                        // The usage rides a `MessageDelta{Error}` AFTER the Error, the shape the
-                        // Cohere `ERROR` and Gemini `MALFORMED_FUNCTION_CALL` arms already emit: the
-                        // translator folds it into the billing source, and every writer reads a
-                        // delta that follows an Error as the end of a failed stream (RSP-11).
+                        // The usage rides a `MessageDelta{Error}` after the Error, as in the Cohere
+                        // `ERROR` and Gemini `MALFORMED_FUNCTION_CALL` arms: the translator folds it
+                        // into billing and writers read a delta after an Error as the end (RSP-11).
                         if let Some(usage) = usage {
                             out.push(IrStreamEvent::MessageDelta {
                                 stop_reason: Some(crate::codec::ir::IrStopReason::Error),
@@ -1251,13 +1065,11 @@ impl ProtocolReader for ResponsesReader {
                         return out;
                     }
 
-                    // Enumerate the recognized statuses rather than defaulting unknown ones to a
-                    // successful end_turn. An unrecognized status is treated as a terminal stop
-                    // with no specific reason (None) rather than silently claiming success.
+                    // Enumerate the known statuses; an unrecognized one is a terminal stop with
+                    // reason None, never a claimed success.
                     let stop_reason = match status {
                         STATUS_COMPLETED | "" => Some(crate::codec::ir::IrStopReason::EndTurn),
-                        // An `incomplete` is NOT a successful end_turn; map its machine-readable
-                        // reason, or surface None (don't mask the truncation) when there is none.
+                        // `incomplete` is not a clean end_turn: map its reason, or None (don't mask truncation).
                         STATUS_INCOMPLETE => response_obj
                             .get(INCOMPLETE_DETAILS)
                             .and_then(|d| d.get(keys::REASON))
@@ -1266,13 +1078,9 @@ impl ProtocolReader for ResponsesReader {
                         _ => None,
                     };
 
-                    // Tool-use override, mirroring the non-streaming `read_response` (which flips a
-                    // `completed` end_turn to `tool_use` when the output carries a function_call).
-                    // Without this, a STREAMED Responses tool call terminated stop_reason=end_turn
-                    // while the non-stream path said tool_use — so a cross-protocol client (OpenAI/
-                    // Anthropic ingress) never saw the tool-call finish signal on the streaming path.
-                    // The `response.completed` event carries the fully-assembled `output`, so detect a
-                    // function_call item there and override only the successful end_turn cases.
+                    // Tool-use override, as in `read_response`: a `completed` end_turn becomes
+                    // `tool_use` when the fully assembled `output` carries a function_call, so
+                    // streamed tool calls give cross-protocol clients the finish signal.
                     let stop_reason = if stop_reason
                         == Some(crate::codec::ir::IrStopReason::EndTurn)
                         && response_obj
@@ -1289,16 +1097,11 @@ impl ProtocolReader for ResponsesReader {
                         stop_reason
                     };
 
-                    // Refusal override, mirroring the non-streaming `read_response`. A STREAMED
-                    // Responses refusal does NOT arrive via `output_text.delta` — the refusal text
-                    // appears ONLY in this terminal `response.completed` frame as an
-                    // `output[].content[]` `{type:"refusal", refusal:"..."}` part (status stays
-                    // `completed`). Without this scan the streaming path SILENTLY DROPPED the refusal
-                    // text and left stop_reason=end_turn — the client saw an empty response with no
-                    // refusal signal. Emit the refusal text as a Text block (opened here, closed by
-                    // `close_open_blocks` below) and promote stop_reason end_turn -> Refusal so a
-                    // non-Responses client still sees the refusal. Anthropic/Bedrock have no distinct
-                    // refusal part, so a refusal is plain assistant text + a `refusal` stop there.
+                    // Refusal override, as in `read_response`. A streamed refusal arrives only in this
+                    // terminal frame as an `output[].content[]` `{type:"refusal"}` part (status stays
+                    // `completed`), never via `output_text.delta`. Emit it as a Text block (closed by
+                    // `close_open_blocks`) and promote end_turn to Refusal. Anthropic/Bedrock have no
+                    // refusal part: plain text plus a `refusal` stop.
                     let mut saw_refusal = false;
                     if let Some(items) = response_obj.get(keys::OUTPUT).and_then(|o| o.as_array()) {
                         for (item_pos, item) in items.iter().enumerate() {
@@ -1320,9 +1123,8 @@ impl ProtocolReader for ResponsesReader {
                                     continue;
                                 };
                                 saw_refusal = true;
-                                // Open a Text block for the refusal text at this item's index, unless
-                                // that index is already open (defensive — a refusal is normally the
-                                // sole output) or the per-stream block cap is reached.
+                                // Open a Text block at this item's index unless already open
+                                // (defensive) or the per-stream block cap is reached.
                                 let idx = item_pos.min(MAX_OUTPUT_INDEX);
                                 let text_key = idx + TEXT_INDEX_KEY_OFFSET;
                                 if !state.open_tools.contains(&idx)
@@ -1330,7 +1132,7 @@ impl ProtocolReader for ResponsesReader {
                                     && state.open_tools.len() < MAX_OPEN_TOOLS
                                 {
                                     state.open_tools.insert(text_key);
-                                    // IR-02: the block IS the refusal, as the buffered read says.
+                                    // IR-02: the block is the refusal, as the buffered read says.
                                     out.push(IrStreamEvent::BlockStart {
                                         index: idx,
                                         block: crate::codec::ir::IrBlockMeta::Text,
@@ -1354,8 +1156,8 @@ impl ProtocolReader for ResponsesReader {
                         stop_reason
                     };
 
-                    // Billed counts: absent is zero, a present-but-unreadable count refuses
-                    // — the stream ends in an error instead of ledgering zero tokens.
+                    // Billed counts: absent is zero; a present-but-unreadable count ends the stream in
+                    // an error instead of ledgering zero tokens.
                     let usage = response_obj
                         .get(keys::USAGE)
                         .map(|u| read_responses_usage(Some(u), Some(response_obj)))
@@ -1380,29 +1182,23 @@ impl ProtocolReader for ResponsesReader {
                         }
                     };
 
-                    // Close any still-open content blocks BEFORE the MessageDelta so the emitted
-                    // order is BlockStop* → MessageDelta → MessageStop, mirroring Anthropic's
-                    // content_block_stop-before-message_delta sequencing.
+                    // Close open blocks before the MessageDelta: BlockStop*, MessageDelta, MessageStop,
+                    // as Anthropic sequences them.
                     close_open_blocks(&mut out, state);
                     out.push(IrStreamEvent::MessageDelta {
                         stop_reason,
-                        // Responses API has no stop_sequence analog in its stream.
+                        // The Responses stream has no stop_sequence analog.
                         stop_sequence: None,
                         usage,
                         stop_detail: None,
                     });
                     out.push(IrStreamEvent::MessageStop);
                 } else if event_type == EVT_RESPONSE_FAILED {
-                    // Terminal failure event with no nested `response` object (e.g. a truncated SSE
-                    // frame or a proxy that stripped the body). The wire `event_type` is the only
-                    // failure signal available — honour it. Surfacing this as a successful end_turn
-                    // would mask the upstream failure from downstream clients AND deny the breaker
-                    // the failure signal, so we mirror the body-present failure arm above: emit an
-                    // explicit Error followed by MessageStop.
-                    // No nested response object → no error code/type to inspect. The only signal is
-                    // the wire event_type; classify via the shared helper (which defaults the
-                    // unrecognized "response_failed" sentinel to ServerError) so both response.failed
-                    // arms derive their class through the same mapping.
+                    // Terminal failure with no nested `response` (truncated SSE frame, or a proxy
+                    // stripped the body). The wire `event_type` is the only signal; a successful
+                    // end_turn would mask the failure and deny the breaker its signal. Emit Error then
+                    // MessageStop, classified through the shared helper (which maps the unrecognized
+                    // "response_failed" sentinel to ServerError) like the body-present arm.
                     let provider_signal = SIGNAL_RESPONSE_FAILED;
                     out.push(IrStreamEvent::Error(IrError {
                         class: class_for_response_failed(provider_signal),
@@ -1412,17 +1208,11 @@ impl ProtocolReader for ResponsesReader {
                     close_open_blocks(&mut out, state);
                     out.push(IrStreamEvent::MessageStop);
                 } else {
-                    // Terminal completed/incomplete event with no nested `response` object. We must
-                    // still terminate the translated stream with a MessageDelta + MessageStop so
-                    // downstream consumers do not hang waiting for the end of the message.
-                    //
-                    // The wire `event_type` is the only status signal available — select the stop
-                    // reason from it rather than hardcoding end_turn. A bodyless `incomplete` is NOT
-                    // a successful end_turn: with no nested `incomplete_details.reason` to inspect
-                    // there is no specific truncation reason to surface, so emit None (mirrors the
-                    // body-present `incomplete`/no-details precedent above and the non-streaming
-                    // `read_response`). Only a `completed` event maps to end_turn. (`failed` is
-                    // handled by the branch above; this else covers `completed`/`incomplete`.)
+                    // Terminal completed/incomplete with no nested `response`: still end the stream
+                    // with MessageDelta + MessageStop so consumers do not hang. The stop reason comes
+                    // from the event name; a bodyless `incomplete` has no reason to surface, so None
+                    // (as in the body-present arm and `read_response`). Only `completed` is end_turn.
+                    // `failed` is handled above.
                     let stop_reason = (event_type == EVT_RESPONSE_COMPLETED)
                         .then_some(crate::codec::ir::IrStopReason::EndTurn);
                     let usage = crate::codec::ir::IrUsage::default();
@@ -1437,8 +1227,8 @@ impl ProtocolReader for ResponsesReader {
                 }
             }
 
-            // The TOP-LEVEL `error` stream event (`{"type":"error","code","message","param"}`) has no
-            // arm: it ends nothing and fails nothing, so the stream bills and closes normally.
+            // The top-level `error` stream event (`{"type":"error",...}`) has no arm: it ends and
+            // fails nothing, so the stream bills and closes normally.
             _ => {}
         }
 
@@ -1454,16 +1244,12 @@ impl ProtocolReader for ResponsesReader {
 
         let status = obj.get(keys::STATUS).and_then(|s| s.as_str()).unwrap_or("");
 
-        // A non-streaming Responses body with `status:"failed"` is an upstream provider failure
-        // (rate_limit, content_filter, server_error, etc.), NOT a parse failure. The writer emits
-        // `{"status":"failed","output":[],"error":{...}}` — note `output` is a PRESENT EMPTY array,
-        // not null/absent — so this MUST be handled before the `output`-array branch below, or an
-        // empty `output:[]` would iterate zero items, fail the usage check, and mask the real error
-        // as an internal `ir_parse` (ClientFault, no-retry) — the wrong breaker transition. Handle
-        // failed bodies uniformly here whether `output` is `[]`, null, or absent. Surface the
-        // upstream signal so the real error reaches the client and the breaker sees the correct
-        // class via `class_for_response_failed`. Mirror the streaming `response.failed` arm: prefer
-        // the `error.code` enum, fall back to `error.type`, then a generic `response_failed`.
+        // A body with `status:"failed"` is an upstream provider failure, not a parse failure. The
+        // writer emits `{"status":"failed","output":[],"error":{...}}` (a present empty array), so
+        // handle it before the `output` branch or the empty array would fail the usage check and
+        // surface as an `ir_parse` ClientFault (wrong breaker transition). Whether `output` is `[]`,
+        // null or absent, surface the upstream signal as the streaming `response.failed` arm does:
+        // `error.code`, else `error.type`, else a generic `response_failed`.
         if status == STATUS_FAILED {
             let provider_signal = obj
                 .get(keys::ERROR_WORD)
@@ -1476,9 +1262,8 @@ impl ProtocolReader for ResponsesReader {
                 })
                 .map(String::from)
                 .or_else(|| Some(SIGNAL_RESPONSE_FAILED.to_string()));
-            // Same class as the streaming `response.failed` arms: derive the breaker class from the
-            // captured provider signal rather than hardcoding ServerError, so an auth/rate-limit/
-            // context-length failed body classifies correctly (right breaker disposition/failover).
+            // Derive the breaker class from the captured signal, as the streaming arms do, not a
+            // hardcoded ServerError.
             let class = class_for_response_failed(
                 provider_signal.as_deref().unwrap_or(SIGNAL_RESPONSE_FAILED),
             );
@@ -1500,8 +1285,8 @@ impl ProtocolReader for ResponsesReader {
         };
 
         let mut content: Vec<crate::codec::ir::IrBlock> = Vec::new();
-        // A refusal rides on a `refusal` content part with `status:"completed"`, so the refusal
-        // SIGNAL is not in `status`. Track it here to promote `stop_reason` to `Refusal` below.
+        // A refusal rides a `refusal` content part with `status:"completed"`; tracked here to
+        // promote `stop_reason` to `Refusal` below.
         let mut saw_refusal = false;
         let mut logprobs: Vec<crate::codec::ir::IrTokenLogprob> = Vec::new();
         if let Some(output_arr) = obj.get(keys::OUTPUT).and_then(|o| o.as_array()) {
@@ -1523,9 +1308,8 @@ impl ProtocolReader for ResponsesReader {
                                     if let Some(text) =
                                         block_item.get(keys::TEXT).and_then(|t| t.as_str())
                                     {
-                                        // `annotations` is a sibling key on this same content-part
-                                        // object. See `read_url_annotations` for why offsets are
-                                        // deliberately not carried.
+                                        // `annotations` is a sibling key on this part; see
+                                        // `read_url_annotations` for why offsets are not carried.
                                         let mut citations = block_item
                                             .get(keys::ANNOTATIONS)
                                             .map(super::super::url_citation_wire::read_url_annotations)
@@ -1533,9 +1317,8 @@ impl ProtocolReader for ResponsesReader {
                                         citations.extend(super::read_file_annotations(
                                             block_item.get(keys::ANNOTATIONS),
                                         ));
-                                        // RSP-03: the part's token `logprobs` join the response's
-                                        // one IR logprob run, in part order — the writer's inverse
-                                        // attaches that run to the first text part.
+                                        // RSP-03: part `logprobs` join the response's one IR logprob
+                                        // run in part order; the writer attaches that run to the first part.
                                         logprobs.extend(read_responses_logprobs(
                                             block_item.get(keys::LOGPROBS),
                                         ));
@@ -1547,19 +1330,15 @@ impl ProtocolReader for ResponsesReader {
                                         });
                                     }
                                 } else if block_type == keys::REFUSAL {
-                                    // A model refusal rides on a `{type:"refusal", refusal:"..."}`
-                                    // content part (the status stays `completed`). The prior reader
-                                    // only matched `output_text`, SILENTLY DROPPING the refusal text.
-                                    // Carry it as assistant Text so the explanation survives the
-                                    // translation (Anthropic/Bedrock have no distinct refusal part —
-                                    // a refusal is plain assistant text there). The refusal SIGNAL is
-                                    // separately promoted onto `stop_reason` below.
+                                    // A model refusal rides a `{type:"refusal"}` content part. Carried
+                                    // as assistant Text so the explanation survives (Anthropic/Bedrock
+                                    // have no refusal part); the signal is promoted onto `stop_reason`
+                                    // below.
                                     if let Some(text) =
                                         block_item.get(keys::REFUSAL).and_then(|t| t.as_str())
                                     {
                                         saw_refusal = true;
-                                        // IR-02: flagged, so a Chat / Responses client gets it
-                                        // back in its refusal slot.
+                                        // IR-02: flagged, so Chat/Responses clients get it in their refusal slot.
                                         content.push(crate::codec::ir::IrBlock::Text {
                                             text: text.to_string(),
                                             cache_control: None,
@@ -1578,22 +1357,18 @@ impl ProtocolReader for ResponsesReader {
                             .and_then(|n| n.as_str())
                             .unwrap_or("")
                             .to_string();
-                        // The RESPONSE-path `call_id` is the correlation key a later
-                        // `function_call_output` (and any cross-protocol target, e.g. Anthropic
-                        // `tool_use.id`) pairs against; a BLANK id becomes an empty tool_use id the
-                        // target rejects. The request path forbids a blank id; here — rather than fail
-                        // an otherwise-good upstream body — SYNTHESIZE a deterministic `call_…` id when
-                        // the backend supplied none, so the correlation key is never blank.
-                        // (`unwrap_or("")` previously let an empty id reach egress.)
+                        // The `call_id` is the key a later `function_call_output` and cross-protocol
+                        // targets (Anthropic `tool_use.id`) pair against, and a blank one is rejected.
+                        // Rather than fail an otherwise good body, synthesize a deterministic `call_…`
+                        // id when the backend supplied none.
                         let raw_call_id = item.get(CALL_ID).and_then(|c| c.as_str()).unwrap_or("");
                         let call_id = if raw_call_id.is_empty() {
                             synth_response_tool_call_id(item_ordinal, &name)
                         } else {
                             raw_call_id.to_string()
                         };
-                        // Native `arguments` is a JSON string (malformed strings preserved verbatim);
-                        // a non-string (already-parsed object) is used directly rather than collapsed
-                        // to `{}`, avoiding a lossy drop of the caller's tool arguments.
+                        // `arguments` is a JSON string (malformed kept verbatim); a non-string value is
+                        // used directly, not collapsed to `{}`.
                         let input = tool_input_from_arguments(item.get(keys::ARGUMENTS));
 
                         content.push(crate::codec::ir::IrBlock::ToolUse {
@@ -1605,36 +1380,23 @@ impl ProtocolReader for ResponsesReader {
                         });
                     }
 
-                    // REASONING: a native Responses `reasoning` output item carries the model's
-                    // chain-of-thought. The prior `_ => {}` DROPPED it, so a reasoning response lost
-                    // its thinking entirely on any cross-protocol hop (Responses → Anthropic/Bedrock,
-                    // which DO carry thinking). Read it into an `IrBlock::Thinking` so it survives the
-                    // seam. The reasoning text lives in `content[].text` (`reasoning_text` parts) and/or
-                    // `summary[].text` (`summary_text` parts); concatenate whichever is present (a real
-                    // reasoning item carries one or the other). Responses has no `signature`, but it
-                    // carries an opaque `encrypted_content` blob for multi-turn reasoning reuse — map it
-                    // into the IR `signature` slot so a same-protocol round-trip preserves it (and a
-                    // cross-protocol hop to a signature-carrying protocol keeps the opaque token).
+                    // REASONING: a `reasoning` output item becomes an `IrBlock::Thinking`. The text is
+                    // in `content[].text` (`reasoning_text`) and/or `summary[].text` (`summary_text`),
+                    // concatenated. `encrypted_content` (multi-turn reuse blob) maps to the IR
+                    // `signature` slot so a same-protocol round-trip preserves it.
                     //
-                    // LOW (accepted, non-portable by nature): the IR `signature` slot is a single
-                    // opaque token shared across protocols (Anthropic `thinking.signature`, Responses
-                    // `encrypted_content`, Gemini `thoughtSignature`). These are each PROTOCOL-OPAQUE
-                    // and vendor-scoped: an Anthropic signature carried into a Responses
-                    // `encrypted_content` (or vice-versa) preserves the BYTES, but the blob is NOT
-                    // re-feedable to the OTHER vendor's API — each vendor only accepts its own. So the
-                    // token round-trips faithfully same-protocol and survives the seam as an opaque
-                    // value, but cross-vendor reasoning-reuse (replaying a foreign vendor's signature)
-                    // is inherently unsupported. No behavior change; documented so the limitation is
-                    // explicit rather than an implied promise of cross-vendor reasoning continuation.
+                    // The slot is one opaque token shared across protocols, but each vendor's is
+                    // vendor-scoped (Anthropic `signature`, Responses `encrypted_content`, Gemini
+                    // `thoughtSignature`): the bytes survive the seam, yet a foreign vendor's blob is
+                    // not re-feedable to the other API, so cross-vendor reasoning reuse is unsupported.
                     ITEM_TYPE_REASONING => {
                         let text = read_reasoning_text(item);
                         let signature = read_reasoning_encrypted_content(item).map(String::from);
-                        // Skip a wholly-empty reasoning item (no text and no encrypted_content)
-                        // rather than emitting a blank Thinking block.
+                        // Skip a wholly empty reasoning item (no text, no `encrypted_content`).
                         if !text.is_empty() || signature.is_some() {
-                            // IR-18: this dialect's `encrypted_content` is OpenAI-minted (a busbar
-                            // provenance envelope restores the bytes and origin it recorded).
-                            // IR-17: `content[]` vs `summary[]` says full vs summary.
+                            // IR-18: `encrypted_content` is OpenAI-minted (a busbar provenance
+                            // envelope restores the bytes and origin). IR-17: `content[]` vs
+                            // `summary[]` says full vs summary.
                             let (signature, signature_origin) =
                                 crate::codec::ir::sig_envelope::read_carried_opt(
                                     signature,
@@ -1651,23 +1413,16 @@ impl ProtocolReader for ResponsesReader {
                         }
                     }
 
-                    // A provider-run web search: the IR's hosted web-search record,
-                    // its sources as results.
+                    // A provider-run web search: the IR hosted web-search record, sources as results.
                     super::ITEM_TYPE_WEB_SEARCH_CALL => {
                         content.push(super::read_web_search_call(item));
                     }
-                    // A HOSTED-tool output item (`web_search_call`, `file_search_call`,
-                    // `code_interpreter_call`, `computer_call`, `mcp_call`, …). These carry the
-                    // provider-side execution of a built-in tool (an `id` and a `status`, plus
-                    // tool-specific fields) and have NO neutral IR representation — the IR models
-                    // assistant `message`/`function_call`/`reasoning` output, not a hosted-tool
-                    // invocation record — and no other protocol has a cross-protocol analog. So the
-                    // item is DROPPED, but drop-with-warn per this file's convention (naming the type),
-                    // never silently: a hosted-tool run that vanished with no log is exactly the
-                    // invisible floor-drop this work exists to eliminate. The assistant's actual
+                    // Other hosted-tool output items (`file_search_call`, `code_interpreter_call`,
+                    // `computer_call`, `mcp_call`, ...) have no neutral IR representation or
+                    // cross-protocol analog, so they are dropped with a warn naming the type, never
+                    // silently. On a translate attempt this goes through the one drop path (WARN plus
+                    // audit row `output[].type=<item>`); a same-dialect relay says nothing. The
                     // message/tool-call/reasoning output is still carried by the arms above.
-                    // On a translate attempt it goes through the one drop path (WARN + audit
-                    // row naming `output[].type=<item>`); a same-dialect relay's tap says nothing.
                     other => {
                         crate::codec::drops::note(crate::codec::drops::Dropped::new(
                             format!("output[].type={other}"),
@@ -1681,18 +1436,13 @@ impl ProtocolReader for ResponsesReader {
                 }
             }
         } else {
-            // `status:"failed"` is handled by the early return above, so a missing/non-array
-            // `output` here is a genuine parse failure (malformed body).
+            // `status:"failed"` returned early, so a missing or non-array `output` is a parse failure.
             return Err(ir_parse_error());
         }
 
-        // Promote a successful end_turn to tool_use when the assembled content carries a tool call,
-        // mirroring the streaming `response.completed` arm. Guard the override on `end_turn` ONLY: an
-        // `incomplete` status (max_tokens/safety/other truncation reason) means the model was cut off
-        // mid-output — even if a partial function_call survived, the turn did NOT cleanly finish on a
-        // tool call, and clobbering `max_tokens`/`safety` with `tool_use` would tell the client the
-        // call is complete and deny the truncation signal to the breaker. Only the clean-finish case
-        // (`end_turn`) is promoted; any other reason is left untouched.
+        // Promote a clean `end_turn` to `tool_use` when the content carries a tool call, as the
+        // streaming arm does. Only `end_turn` is promoted: for an `incomplete` status a surviving
+        // partial function_call must not clobber `max_tokens`/`safety` and hide the truncation.
         if stop_reason == Some(crate::codec::ir::IrStopReason::EndTurn)
             && content
                 .iter()
@@ -1701,21 +1451,16 @@ impl ProtocolReader for ResponsesReader {
             stop_reason = Some(crate::codec::ir::IrStopReason::ToolUse);
         }
 
-        // A `completed` response that carried a `refusal` part is a refusal, not a clean end_turn.
-        // Promote the typed `Refusal` stop_reason (which the Anthropic/OpenAI writers translate) so
-        // the refusal signal survives even though the Responses `status` was `completed`.
+        // A `completed` response with a `refusal` part is a refusal: promote the typed `Refusal`.
         if saw_refusal && stop_reason == Some(crate::codec::ir::IrStopReason::EndTurn) {
             stop_reason = Some(crate::codec::ir::IrStopReason::Refusal);
         }
 
-        // Tolerate an absent `usage` object leniently — zero-default rather than hard-erroring,
-        // mirroring all five sibling readers (openai_chat.rs, gemini, cohere, etc.). A missing
-        // `usage` on an otherwise valid 200 is an upstream response-format quirk (a mock/staging/
-        // proxy backend that omits it), NOT a client mistake: a `ClientError` here would make
-        // proxy engine discard a valid body and emit a spurious 500.
+        // An absent `usage` is zero-defaulted, as in the sibling readers: it is an upstream quirk
+        // (mock/staging/proxy), and an error here would make the engine discard a valid body.
         let usage_val = obj.get(keys::USAGE);
 
-        // Absent is zero, a present-but-unreadable count refuses. See `USAGE` for the cache
+        // Absent is zero; a present-but-unreadable count refuses. See `USAGE` for cache
         // normalization; the serving tier is the top-level `service_tier`.
         let usage = read_responses_usage(usage_val, Some(body))?;
 
@@ -1724,22 +1469,15 @@ impl ProtocolReader for ResponsesReader {
             .and_then(|m| m.as_str())
             .map(String::from);
 
-        // Capture the upstream response's identity so a same-protocol (responses → responses)
-        // passthrough preserves `id`/`created_at` exactly. The Responses API names its creation
-        // timestamp `created_at` (NOT `created`, which is the Chat Completions field); we map it
-        // into the shared IR `created` slot. `system_fingerprint`/`stop_sequence` have no analog in
-        // the Responses shape, so they stay `None`.
+        // Capture identity so responses-to-responses passthrough keeps `id`/`created_at`. The API
+        // names the timestamp `created_at`, mapped to the IR `created`; `system_fingerprint` and
+        // `stop_sequence` have no analog and stay `None`.
         let id = obj.get(keys::ID).and_then(|i| i.as_str()).map(String::from);
         let created = obj.get(keys::CREATED_AT).and_then(|c| c.as_u64());
 
-        // A native Responses response ECHOES the request's `instructions` (system prompt) and
-        // `metadata` (user key/value tags) back on the response object. The IR `IrResponse` models
-        // neither (it carries generated output, not a request echo; adding an echo slot is a
-        // cross-dialect blast-radius change on the shared struct constructed by every reader), and no
-        // other protocol echoes them on its response, so they are DROPPED on read — but drop-with-warn
-        // per this file's convention, never silently. The request-side `instructions`/`metadata` are
-        // separately carried on the REQUEST hop (system blocks / `extra`); only the redundant response
-        // echo is not reconstructed. Gated on presence so a response without them emits no warn.
+        // A response echoes the request's `instructions` and `metadata`. `IrResponse` models neither
+        // and no other protocol echoes them, so they are dropped on read with a warn (only when
+        // present). The request side carries them separately (system blocks / `extra`).
         if obj
             .get(keys::INSTRUCTIONS)
             .is_some_and(|v| !v.is_null() && v != &serde_json::json!(""))
@@ -1765,14 +1503,9 @@ impl ProtocolReader for ResponsesReader {
                  request-echo slot; the request-side metadata is carried on the request hop"
             );
         }
-        // STATEFUL RESPONSES: a native Responses response ALSO echoes the request's
-        // `previous_response_id` (the prior turn this response threaded onto) and `store` flag. The
-        // stateful LINKAGE a client needs — feed THIS response's `id` as the NEXT request's
-        // `previous_response_id` — is preserved by the `response.id` correlation (`IrResponse.id`,
-        // captured above and re-emitted by the writer). The redundant request-echo of
-        // `previous_response_id`/`store` is not reconstructed (IrResponse models generated output,
-        // not a request echo, exactly like `instructions`/`metadata` above), so it is dropped — but
-        // drop-with-warn per this file's convention, never silently. Gated on presence.
+        // The response also echoes `previous_response_id` and `store`. The stateful linkage (this
+        // `id` as the next request's `previous_response_id`) is preserved by `IrResponse.id`; the
+        // echo is not reconstructed, so it is dropped with a warn (only when present).
         if obj
             .get(PREVIOUS_RESPONSE_ID)
             .is_some_and(|v| !v.is_null() && v != &serde_json::json!(""))
