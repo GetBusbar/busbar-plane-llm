@@ -831,15 +831,6 @@ impl ProtocolWriter for AnthropicWriter {
         }
     }
 
-    fn write_error_frame(
-        &self,
-        host: &dyn busbar_contract::codec::CodecHost,
-        err: &IrError,
-    ) -> Option<(String, serde_json::Value)> {
-        // Delegate to the event writer so the mid-stream error frame is what an `Error` event produces.
-        self.write_response_event(host, &IrStreamEvent::Error(err.clone()))
-    }
-
     fn write_response(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
