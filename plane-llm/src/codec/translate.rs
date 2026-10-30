@@ -81,6 +81,7 @@ pub trait TranslateCodec: OperationHandler {
     ///   - JSON: read, `prepare_for_egress`, (egress absent gives [`TranslateReqReject::EgressUnsupported`]),
     ///     representability guard, collect dropped controls, egress `write_request_value` (`Some` is a
     ///     JSON body the router still post-shapes; `None` is `set_model` + `write_request` bytes).
+    ///
     /// `prep` is the router-built neutral param bag; `model` is the resolved lane wire model.
     fn translate_request(
         &self,
