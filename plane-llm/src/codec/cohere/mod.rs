@@ -11,14 +11,11 @@ use busbar_contract::protocol::*;
 use busbar_contract::upstream::CanonicalSignal;
 #[cfg(test)]
 use busbar_contract::upstream::StatusClass;
-// G6 A4b: the wire-codec surface (ProtocolReader/Writer/Protocol/StreamFraming/ToolIdRemap/
-// protocol_for) relocated to this plugin's `proto_codec`; reach it RELATIVELY so it resolves both
-// standalone (crate::codec::proto_codec) and netted into core (core::proto::proto_codec).
+// Relative path so it resolves both standalone and netted into core.
 #[allow(unused_imports)]
 // used standalone; redundant with the `busbar_contract::protocol::*` glob when netted into core
 use super::proto_codec::*;
-// See the anthropic dialect for the rationale: an explicit import of the codec surface so it binds to
-// THIS crate's own `proto_codec` rather than the `busbar_contract::protocol::*` glob.
+// Explicit import so it binds to this crate's own `proto_codec`, not the `busbar_contract::protocol::*` glob.
 #[allow(unused_imports)]
 use super::proto_codec::{Protocol, ProtocolReader, ProtocolWriter, StreamFraming};
 
@@ -29,16 +26,14 @@ mod map;
 mod reader;
 mod writer;
 
-/// Build this dialect's wire codec — the [`ProtocolDecl::codec`] constructor. A fresh instance per
-/// resolution, exactly as the registry's field doc requires (the writer carries per-stream mutable
-/// state).
+/// Build this dialect's wire codec. A fresh instance per resolution (the writer carries per-stream
+/// mutable state).
 pub fn protocol() -> Protocol {
     Protocol::new(VENDOR_NAME, CohereReader, CohereWriter)
 }
 
-/// COHERE'S ROUTER DETECTION — its rungs of the old core `protocol_id` ladder: the v2/v1 chat paths
-/// (`/v2/chat`, `/v1/chat`, rung 8) and the v2 embed/rerank paths (`/v2/embed`, `/v2/rerank`, rung
-/// 9). Lower strength binds tighter — the shared ladder positions.
+/// Router detection: the v2/v1 chat paths (`/v2/chat`, `/v1/chat`, rung 8) and the v2 embed/rerank
+/// paths (`/v2/embed`, `/v2/rerank`, rung 9). Lower strength binds tighter.
 fn claims(
     _h: busbar_contract::protocol::HeadFields<'_>,
     path: &str,
@@ -53,8 +48,7 @@ fn claims(
     None
 }
 
-/// COHERE'S RESIDUAL DETECTION — its arm of the headerless `residual_dialect_for_path` ladder: an
-/// exact `/v2/chat` names Cohere (rung 50).
+/// Headerless residual detection: an exact `/v2/chat` names Cohere (rung 50).
 fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrength> {
     if path == "/v2/chat" {
         return Some(busbar_contract::protocol::ClaimStrength(50));
@@ -62,7 +56,7 @@ fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrengt
     None
 }
 
-/// COHERE'S DECLARATION.
+/// Cohere's declaration.
 pub const DECL: ProtocolDecl = ProtocolDecl {
     name: VENDOR_NAME,
     codec: dialect_codec!(VENDOR_NAME),
@@ -75,20 +69,17 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     head_keys: super::proto_codec::LLM_CHAT_HEAD_KEYS,
     streaming_content_type: Some(busbar_contract::protocol::TEXT_EVENT_STREAM),
     array_stream_shim_key: None,
-    // Cohere tool ids are free-form with NO canonical prefix. An empty prefix would make the
-    // reversibility marker itself the only distinguishing signal, which collides with a legitimate
-    // client-authored id and corrupts tool_use/tool_result correlation on a cross-protocol hop; so
-    // Cohere ids pass through verbatim and there is nothing to mis-decode on the echo.
+    // Cohere tool ids are free-form with no canonical prefix. An empty prefix would make the
+    // reversibility marker the only signal, colliding with client-authored ids and corrupting
+    // tool_use/tool_result correlation cross-protocol, so ids pass through verbatim.
     native_tool_id_prefix: None,
     ingress_auth: IngressAuth::Bearer,
-    // Cohere's native credential scheme is a plain `Authorization: Bearer <key>` — DECLARED here as
-    // data: the kernel's egress-auth unit presents the lane credential under it
-    // (lane-constant, so prebuilt), and the key never passes through this plane.
+    // Plain `Authorization: Bearer <key>`, declared as data: the kernel's egress-auth unit presents
+    // the lane credential and the key never passes through this plane.
     egress_auth_headers: None,
     egress_auth_lane_constant: false,
     egress_scheme: Some(EgressScheme::bearer()),
     stream_usage_requires_opt_in: false,
-    // ── Promoted writer facts (G6 step A1): the same constants the `CohereWriter` methods returned.
     requires_max_tokens: false,
     stop_sequence_cap: Some((5, "Cohere")),
     cache_markers_model_gated: false,
@@ -99,17 +90,13 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     quota_exceeded_status: busbar_contract::http::StatusCode::TOO_MANY_REQUESTS.as_u16(),
     ingress_is_eventstream: false,
     emits_sse_done_terminator: false,
-    // Cohere v2's `citation-start` event carries a SINGLE Citation at `delta.message.citations`
-    // (docs.cohere.com/v2/docs/streaming), so a multi-citation IR delta MUST be fanned out to one
-    // event per citation at the framing seam (`StreamTranslate`) before the writer serializes it —
-    // exactly like Anthropic/Bedrock. Without this a batched upstream delta would arrive as more
-    // than one citation for a single-object writer to drop.
+    // Cohere v2's `citation-start` carries a single Citation at `delta.message.citations`
+    // (docs.cohere.com/v2/docs/streaming), so a multi-citation IR delta must be fanned out to one
+    // event per citation at the framing seam (`StreamTranslate`), as for Anthropic/Bedrock.
     max_citations_per_delta: Some(1),
-    // Cohere Python SDK UA. RELEASE OBLIGATION: re-verify/bump per release;
-    // `test_egress_ua_versions_are_pinned_and_present` guards drift.
-    // The plane writes this on a translated route into this dialect, on a
-    // same-dialect route whose caller sent no user-agent, and on the
-    // kernel-originated health probe; a same-dialect caller's own user-agent replaces it.
+    // Cohere Python SDK UA. Re-verify per release; `test_egress_ua_versions_are_pinned_and_present`
+    // guards drift. Written on a translated route, on a same-dialect route whose caller sent no
+    // user-agent, and on the health probe.
     egress_user_agent: "cohere-python/5.11.0",
     has_model_in_url: false,
     auth_failure_status_and_kind: (
@@ -122,14 +109,13 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     uses_array_stream_shim: false,
     has_native_path_not_found: false,
     egress_stream_accept: busbar_contract::protocol::TEXT_EVENT_STREAM,
-    // No model-discovery surface: Cohere's `/v1/models` fingerprint resolves to the OpenAI envelope
-    // (documented), so this dialect declares none of its own.
+    // No model-discovery surface: `/v1/models` resolves to the OpenAI envelope (documented).
     models_list_envelope: None,
     claims: Some(claims),
     residual_claims: Some(residual_claims),
     residual_default: false,
     vendor_response_metadata: None,
-    // Cohere carries no wire-fingerprint header for the shared list-models surface.
+    // No fingerprint header for the shared list-models surface.
     list_models_fingerprint_headers: &[],
     static_headers: &[],
 };
@@ -146,36 +132,28 @@ pub(crate) const ENTRY: super::proto_codec::DialectEntry = super::proto_codec::D
     leaf: &handler::LEAF,
 };
 
-/// Upstream URL path for the Cohere v2 chat endpoint. Mirrors the `PATH_UPSTREAM` pattern used by
-/// openai_chat.rs and anthropic.rs — single source of truth for the string that was previously
-/// hard-coded in `upstream_path()`.
+/// Upstream URL path for the Cohere v2 chat endpoint (mirrors `PATH_UPSTREAM` in openai_chat.rs and anthropic.rs).
 const PATH_UPSTREAM: &str = "/v2/chat";
 
-/// Read a Cohere v2 `message.citations[]` array into neutral IR citations.
+/// Read a Cohere v2 `message.citations[]` array into neutral IR citations. Cohere spells one
+/// `{"start", "end", "text", "type": "TEXT_CONTENT", "sources": [{"type": "document", "id",
+/// "document"}]}`. The offsets are character offsets into the assembled content, the IR contract
+/// ([`crate::codec::ir::IrCitation::start_index`]), so they carry with no conversion (unlike the
+/// OpenAI-family `annotations`, whose unit is undocumented and not asserted).
 ///
-/// Cohere spells a citation `{"start": <char>, "end": <char>, "text": "<quoted span>", "type":
-/// "TEXT_CONTENT", "sources": [{"type": "document", "id": "…", "document": {…}}]}`. The offsets are
-/// CHARACTER offsets into the assembled content text, which is exactly the IR contract
-/// ([`crate::codec::ir::IrCitation::start_index`]), so they carry across with no unit conversion — unlike
-/// the OpenAI-family `annotations`, whose byte-vs-character unit is undocumented and therefore
-/// deliberately not asserted.
+/// This reader is why a Cohere backend's RAG grounding survives a hop: the writer emitted citations
+/// while every reader site hardcoded `citations: Vec::new()`, so a citation into Cohere worked and
+/// out of Cohere vanished (a missing reader, not a translation limit).
 ///
-/// This reader is why a Cohere backend's RAG grounding now survives a hop. Every construction site
-/// in the Cohere reader used to hardcode `citations: Vec::new()`, while the Cohere WRITER emitted
-/// citations — so a citation INTO Cohere worked and a citation OUT of Cohere vanished. That
-/// asymmetry is the tell that it was a missing reader, not a translation limit: `IrCitation`
-/// already existed and both sides' writers already spoke it.
-///
-/// The source object is kept VERBATIM in `raw` so a same-protocol path can re-emit it unchanged,
-/// the same no-regression guarantee the Anthropic reader gives.
+/// The source object is kept verbatim in `raw` so a same-protocol path re-emits it unchanged, as
+/// the Anthropic reader does.
 pub fn read_cohere_citations(citations: &serde_json::Value) -> Vec<crate::codec::ir::IrCitation> {
     let mut out = Vec::new();
     let Some(arr) = citations.as_array() else {
         return out;
     };
     for entry in arr {
-        // A citation with neither a quoted span nor offsets carries no locatable claim; skip it
-        // rather than synthesize one (never invent a fact).
+        // A citation with neither a quoted span nor offsets carries no locatable claim: skipped, not synthesized.
         let start = entry.get(keys::START).and_then(|v| v.as_i64());
         let end = entry.get(keys::END).and_then(|v| v.as_i64());
         let cited_text = entry
@@ -186,8 +164,8 @@ pub fn read_cohere_citations(citations: &serde_json::Value) -> Vec<crate::codec:
         if start.is_none() && end.is_none() && cited_text.is_none() {
             continue;
         }
-        // The first source supplies the neutral title/url/document-index coordinates; the WHOLE
-        // entry (all sources included) is preserved in `raw`.
+        // The first source supplies the neutral title/url/document-index; the whole entry (all
+        // sources) is preserved in `raw`.
         let first_source = entry
             .get(SOURCES)
             .and_then(|s| s.as_array())
@@ -195,8 +173,7 @@ pub fn read_cohere_citations(citations: &serde_json::Value) -> Vec<crate::codec:
         let doc = first_source.and_then(|s| s.get(keys::DOCUMENT));
         out.push(crate::codec::ir::IrCitation {
             domain: None,
-            // Cohere citations are character spans into the answer text — the same thing
-            // Anthropic calls a `char_location`, which is the vocabulary the neutral `kind` uses.
+            // Character spans into the answer text: Anthropic's `char_location`, the neutral `kind` vocabulary.
             kind: Some("char_location".to_string()),
             cited_text,
             title: doc
@@ -220,19 +197,15 @@ pub fn read_cohere_citations(citations: &serde_json::Value) -> Vec<crate::codec:
     out
 }
 
-/// Project a neutral [`crate::codec::ir::IrCitation`] into Cohere v2's native citation object — the
-/// inverse of [`read_cohere_citations`].
-///
-/// A citation this protocol itself READ carries the source object verbatim in `raw`; re-emitting
-/// that unchanged is the same byte-exact same-protocol guarantee the Anthropic writer gives, and it
-/// is strictly better than a field-by-field reconstruction that could only lose Cohere-specific
-/// members. Only a citation with no `raw` (one synthesized on a cross-protocol hop) is built from
+/// Project a neutral [`crate::codec::ir::IrCitation`] into Cohere v2's citation object, the inverse
+/// of [`read_cohere_citations`]. A citation this protocol read carries the source verbatim in
+/// `raw`; re-emitting it is byte-exact and beats a field-by-field rebuild that would lose
+/// Cohere-specific members. Only a citation with no `raw` (synthesized cross-protocol) is built from
 /// the neutral fields.
 fn write_cohere_citation(c: &crate::codec::ir::IrCitation) -> serde_json::Value {
     if let Some(raw) = &c.raw {
-        // Only re-emit `raw` when it IS a Cohere citation: a foreign raw (an Anthropic
-        // `web_search_result_location`) would put a foreign shape on the Cohere wire, which is the
-        // exact defect typed IR fields exist to prevent.
+        // Re-emit `raw` only when it is a Cohere citation: a foreign raw (an Anthropic
+        // `web_search_result_location`) would put a foreign shape on the Cohere wire.
         if raw.get(keys::START).is_some() || raw.get(SOURCES).is_some() {
             return raw.clone();
         }
@@ -263,48 +236,35 @@ fn write_cohere_citation(c: &crate::codec::ir::IrCitation) -> serde_json::Value 
     serde_json::Value::Object(obj)
 }
 
-/// The `vendor` tag on an [`crate::codec::ir::IrImageSource::Vendor`] this protocol produces — a Cohere v2
-/// tool-result `document` object, whose `data` is an arbitrary map of string fields rather than
-/// bytes with a mime type, so it has NO neutral base64/url form. Only this protocol's writer
-/// re-emits it; a foreign writer, which could only mangle it, drops it with a warn.
+/// The `vendor` tag on an [`crate::codec::ir::IrImageSource::Vendor`] this protocol produces: a Cohere
+/// v2 tool-result `document`, whose `data` is an arbitrary string map, not bytes with a mime type,
+/// so it has no neutral base64/url form. Only this writer re-emits it; a foreign writer drops it with a warn.
 const VENDOR_NAME: &str = "cohere";
 
-// Cohere wire words no other dialect speaks: one const each, spelled once.
-/// The cohere wire word `binary`, spelled once.
 const BINARY: &str = "binary";
 
-/// The cohere wire word `classifications`, spelled once.
 const CLASSIFICATIONS: &str = "classifications";
 
-/// The cohere wire word `embeddings`, spelled once.
 const EMBEDDINGS: &str = "embeddings";
 
-/// The cohere wire word `embedding_types`, spelled once.
 const EMBEDDING_TYPES: &str = "embedding_types";
 
-/// The cohere wire word `float`, spelled once.
 const FLOAT: &str = "float";
 
-/// The cohere wire word `input_type`, spelled once.
 const INPUT_TYPE: &str = "input_type";
 
-/// The cohere wire word `int8`, spelled once.
 const INT8: &str = "int8";
 
-/// The cohere wire word `max_tokens_per_doc`, spelled once.
 const MAX_TOKENS_PER_DOC: &str = "max_tokens_per_doc";
 
-/// The cohere wire word `output_dimension`, spelled once.
 const OUTPUT_DIMENSION: &str = "output_dimension";
 
-/// The cohere wire word `sources`, spelled once.
 const SOURCES: &str = "sources";
 
-/// The cohere wire word `strict_tools`, spelled once.
 const STRICT_TOOLS: &str = "strict_tools";
 
-/// The Cohere v2 request content grammar (`codec::drops`). A part of any other kind does not cross
-/// a translate attempt, which names it.
+/// The Cohere v2 request content grammar (`codec::drops`). A part of any other kind is named as
+/// dropped on a translate attempt.
 const REQUEST_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::Blocks {
     at: &["messages[]", "content[]"],
     tag: Some(keys::TYPE),
@@ -312,7 +272,6 @@ const REQUEST_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::Bl
     companions: &[],
 }];
 
-/// The Cohere v2 answer content grammar.
 /// How this dialect spells each IR content-block kind (a dropped block's warn names it so).
 const IR_BLOCK_KINDS: &[(&str, &str)] = &[
     (crate::codec::drops::kind::TEXT, "type=text"),
@@ -321,8 +280,7 @@ const IR_BLOCK_KINDS: &[(&str, &str)] = &[
     (crate::codec::drops::kind::THINKING, "type=thinking"),
 ];
 
-/// The IR request members the reader carries by code from a path no map-file row names (how a drop
-/// of one is named by the caller's wire path).
+/// IR request members the reader carries by code from a path no map-file row names.
 const REQUEST_CODE_NAMES: &[(&str, &str)] = &[
     (crate::codec::drops::name::REASONING, keys::THINKING),
     (
@@ -338,14 +296,12 @@ const RESPONSE_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::B
     companions: &[],
 }];
 
-/// What this dialect's answers carry beyond its map file's rows (the drop walk, design F3 "Drops").
-// The prompt-cache hit count is a slice of the input count the usage carries (never dropped); the
-// serving model is read beside the id.
+/// What this dialect's answers carry beyond its map file's rows (drop walk, design F3 "Drops").
+// The prompt-cache hit count is a slice of the input count (never dropped); the model is read beside the id.
 const RESPONSE_CODE: &[&str] = &["usage.cached_tokens", "model"];
 const STREAM_CODE: &[&str] = &[];
 
-/// The answer paths INSIDE a subtree this dialect carries that its code does not carry, named by the
-/// drop walk (the paths that a coarse map row covers).
+/// Answer paths inside a carried subtree that its code does not carry (where a coarse map row covers them).
 const RESPONSE_DROPS: &[&str] = &[
     "message.citations[].content_index",
     "message.citations[].sources[].type=tool.tool_output",
@@ -355,92 +311,62 @@ const STREAM_DROPS: &[&str] = &[
     "type=citation-start.delta.message.citations.sources[].type=tool.tool_output",
 ];
 
-/// The cohere wire word `texts`, spelled once.
 const TEXTS: &str = "texts";
 
-/// The cohere wire word `token_budget`, spelled once.
 const TOKEN_BUDGET: &str = "token_budget";
 
-/// The cohere wire word `tool_plan`, spelled once.
 const TOOL_PLAN: &str = "tool_plan";
 
-/// The cohere wire word `truncate`, spelled once.
 const TRUNCATE: &str = "truncate";
 
-/// The cohere wire word `ubinary`, spelled once.
 const UBINARY: &str = "ubinary";
 
-/// The cohere wire word `uint8`, spelled once.
 const UINT8: &str = "uint8";
 
-/// Hard cap on the number of distinct tool-call frame indices recorded in `state.open_tools` for a
-/// single stream. The set is intentionally never shrunk (so each tool's IR block index stays stable
-/// for its lifetime — see `state.tool_ir_index`), which means a malicious or buggy upstream
-/// that streams an unbounded number of distinct `tool-call-start` frame indices would grow it
-/// without bound. No legitimate Cohere v2 stream approaches this many parallel tool calls; past the
-/// cap we stop recording new frames so memory stays bounded. The cap leaves every realistic stream
-/// untouched.
+/// Cap on distinct tool-call frame indices in `state.open_tools` for one stream. The set is never
+/// shrunk (each tool's IR block index stays stable, see `state.tool_ir_index`), so an upstream
+/// streaming unbounded distinct `tool-call-start` indices would grow it without bound. Past the cap
+/// new frames are not recorded; no real Cohere v2 stream approaches it.
 const MAX_TRACKED_TOOL_FRAMES: usize = 4096;
 
-/// Reserved sentinel recorded in `state.open_tools` the first time a text content block opens on a
-/// Cohere stream. It encodes the otherwise-unrecoverable fact that "a text block has occupied IR
-/// index 0 at some point this stream", which the tool-index assignment needs to keep tool blocks off
-/// index 0 EVEN AFTER the text block has closed (`text_block_open` reverts to false on
-/// `content-end`, so that live flag cannot answer the question on its own).
+/// Sentinel recorded in `state.open_tools` the first time a text block opens, encoding that "a text
+/// block has occupied IR index 0 this stream" so tool blocks stay off index 0 even after the text
+/// block closes (`text_block_open` reverts on `content-end`).
 ///
-/// `usize::MAX` is used because every genuine tool entry recorded in `open_tools` is the (clamped)
-/// wire `frame_idx` itself, bounded far below `usize::MAX` by `MAX_TOOL_FRAME_INDEX`; a `frame_idx`
-/// of `usize::MAX` can never occur in practice, so the sentinel never collides with a genuine tool
-/// entry and is trivially excluded from every scan below. Recording it in the existing `open_tools`
-/// set keeps the fix entirely within this protocol module (the shared `StreamDecodeState` carries no
-/// text-high-water field).
-///
-/// The wire `index` is upstream-controlled, so a hostile/buggy backend could send a huge value;
-/// every read site clamps it to `MAX_TOOL_FRAME_INDEX` (see `clamp_frame_index`), so no real entry
-/// can ever reach the sentinel.
+/// `usize::MAX` cannot collide: every real `open_tools` entry is the clamped wire `frame_idx`,
+/// bounded far below it by `MAX_TOOL_FRAME_INDEX`, so the sentinel is excluded from every scan.
+/// Keeping it in the existing set keeps the fix inside this module (the shared `StreamDecodeState`
+/// has no text-high-water field). The wire `index` is upstream-controlled, so every read site clamps
+/// it (`clamp_frame_index`).
 const TEXT_BLOCK_SEEN_SENTINEL: usize = usize::MAX;
 
-/// Upper bound applied to the upstream-controlled stream-frame `index` at every tool-call read
-/// site. The wire value is attacker-controllable; clamping to a small bounded cap (matching
-/// `MAX_TRACKED_TOOL_FRAMES`) keeps every recorded `frame_idx` far below the
-/// `TEXT_BLOCK_SEEN_SENTINEL`, while leaving every realistic stream (small sequential indices)
-/// untouched. Mirrors the OpenAI reader's `MAX_TOOL_INDEX` clamp.
+/// Bound on the upstream-controlled stream-frame `index` at every tool-call read site, matching
+/// `MAX_TRACKED_TOOL_FRAMES`: it keeps every recorded `frame_idx` far below
+/// `TEXT_BLOCK_SEEN_SENTINEL` and leaves realistic streams (small sequential indices) alone.
+/// Mirrors the OpenAI reader's `MAX_TOOL_INDEX`.
 const MAX_TOOL_FRAME_INDEX: u64 = MAX_TRACKED_TOOL_FRAMES as u64;
 
-// ── Cohere v2 stream event-type tokens ────────────────────────────────────────
-/// Cohere v2 stream `type` field value for the message-start event.
 const ET_MESSAGE_START: &str = "message-start";
-/// Cohere v2 stream `type` field value for the message-end event.
 const ET_MESSAGE_END: &str = "message-end";
-/// Cohere v2 stream `type` field value for the content-start event.
 const ET_CONTENT_START: &str = "content-start";
-/// Cohere v2 stream `type` field value for the content-delta event.
 const ET_CONTENT_DELTA: &str = "content-delta";
-/// Cohere v2 stream `type` field value for the tool-plan-delta event — the streamed counterpart of
-/// the non-stream `message.tool_plan` (the assistant's pre-tool-call reasoning). Emitted, one token
-/// per frame, ahead of the `tool-call-start` frames; the token text rides at
+/// Stream `type` of the tool-plan-delta event, the streamed `message.tool_plan` (the assistant's
+/// pre-tool-call reasoning): one token per frame ahead of `tool-call-start`, text at
 /// `delta.message.tool_plan`.
 const ET_TOOL_PLAN_DELTA: &str = "tool-plan-delta";
 
-/// Cohere v2's streamed-citation frame. Its EXISTENCE is the point: the writer used to suppress
-/// every streamed citation on the belief that Cohere v2 had no citation frame, which made a
-/// grounded answer arrive with sources when not streaming and without them when streaming.
+/// Cohere v2's streamed-citation frame. The writer once suppressed streamed citations on the belief
+/// there was no such frame, so a grounded answer had sources non-streaming but not streaming.
 const ET_CITATION_START: &str = "citation-start";
-/// Cohere v2 stream `type` field value for the citation-end event — the bare structural close that
-/// natively PAIRS with each `citation-start` (docs.cohere.com/v2/docs/streaming). Emitted by the
-/// writer's multi-frame `write_response_events` override so a streamed citation is bracketed exactly
-/// like a native Cohere one instead of leaving an unbalanced lone `citation-start`.
+/// Stream `type` of the citation-end event, the structural close that pairs with each
+/// `citation-start` (docs.cohere.com/v2/docs/streaming). The writer's `write_response_events`
+/// emits it so a streamed citation is bracketed natively, not left as a lone `citation-start`.
 const ET_CITATION_END: &str = "citation-end";
-/// Cohere v2 stream `type` field value for the content-end event.
 const ET_CONTENT_END: &str = "content-end";
-/// Cohere v2 stream `type` field value for the tool-call-start event.
 const ET_TOOL_CALL_START: &str = "tool-call-start";
-/// Cohere v2 stream `type` field value for the tool-call-delta event.
 const ET_TOOL_CALL_DELTA: &str = "tool-call-delta";
-/// Cohere v2 stream `type` field value for the tool-call-end event.
 const ET_TOOL_CALL_END: &str = "tool-call-end";
 
-// ── Cohere v2 finish_reason tokens ────────────────────────────────────────────
 /// Cohere v2 `finish_reason` for a normal end-of-turn completion.
 const COHERE_FINISH_COMPLETE: &str = "COMPLETE";
 /// Cohere v2 `finish_reason` for a content-moderation stop.
@@ -454,7 +380,6 @@ const COHERE_FINISH_TOOL_CALL: &str = "TOOL_CALL";
 /// Cohere v2 `finish_reason` for a max-tokens stop.
 const COHERE_FINISH_MAX_TOKENS: &str = "MAX_TOKENS";
 
-// ── Cohere v2 tool_choice tokens ──────────────────────────────────────────────
 /// Cohere v2 `tool_choice` value requiring at least one tool call.
 const COHERE_TOOL_CHOICE_REQUIRED: &str = "REQUIRED";
 /// Cohere v2 `tool_choice` value forbidding all tool calls.
@@ -469,12 +394,11 @@ fn clamp_frame_index(data: &serde_json::Value) -> usize {
         .min(MAX_TOOL_FRAME_INDEX) as usize
 }
 
-/// Normalize Cohere v2's native `tool_choice` (a top-level enum STRING) into the IR's tool-choice
-/// union so a forced directive survives the cross-protocol seam instead of degrading to `auto`.
-/// Cohere v2 models only `REQUIRED` (must call some tool) and `NONE` (no tool); it has no
-/// `auto` literal (auto is the default when omitted) and no way to pin ONE specific tool. So an
-/// unrecognized/absent value yields `None` (omitted), and the targeted-tool case is handled lossily
-/// on the WRITE side (degraded to `REQUIRED`). The reader can only ever observe `REQUIRED`/`NONE`.
+/// Normalize Cohere v2's `tool_choice` (a top-level enum string) into the IR union so a forced
+/// directive survives the seam instead of degrading to `auto`. Cohere models only `REQUIRED` (must
+/// call some tool) and `NONE`, with no `auto` literal (the default when omitted) and no way to pin
+/// one tool, so an unrecognized or absent value is `None` and a targeted tool degrades to `REQUIRED`
+/// on write. The reader only ever sees `REQUIRED`/`NONE`.
 fn read_cohere_tool_choice(
     val: Option<&serde_json::Value>,
 ) -> Option<crate::codec::ir::IrToolChoice> {
@@ -485,18 +409,16 @@ fn read_cohere_tool_choice(
     }
 }
 
-/// Read a Cohere v2 `response_format` into the protocol-agnostic [`crate::codec::ir::IrResponseFormat`]. The
-/// ONLY code that knows Cohere's structured-output wire shape: `{"type":"text"}`,
-/// `{"type":"json_object"}`, or `{"type":"json_object","json_schema":<schema>}` (the schema sits
-/// DIRECTLY under `json_schema`, not nested under `.schema` as in OpenAI).
+/// Read a Cohere v2 `response_format` into [`crate::codec::ir::IrResponseFormat`]. The only code that
+/// knows its shape: `{"type":"text"}`, `{"type":"json_object"}`, or `{"type":"json_object","json_schema":<schema>}`
+/// (the schema sits directly under `json_schema`, not under `.schema` as in OpenAI).
 fn read_cohere_response_format(
     v: &serde_json::Value,
 ) -> Option<crate::codec::ir::IrResponseFormat> {
     let o = v.as_object()?;
     match o.get(keys::TYPE).and_then(|t| t.as_str()) {
         Some(keys::TEXT) => Some(crate::codec::ir::IrResponseFormat::bare(false, None)),
-        // `json_object` may carry the schema directly under `json_schema`. An unrecognized `type` is
-        // treated as free-form JSON (safe default).
+        // `json_object` may carry the schema directly under `json_schema`. An unrecognized `type` is free-form JSON.
         Some(_) => Some(crate::codec::ir::IrResponseFormat::bare(
             true,
             o.get(keys::JSON_SCHEMA)
@@ -508,8 +430,7 @@ fn read_cohere_response_format(
     }
 }
 
-/// Project the agnostic [`crate::codec::ir::IrResponseFormat`] into Cohere v2's native `response_format`. The
-/// ONLY code that builds Cohere's structured-output wire shape.
+/// Project [`crate::codec::ir::IrResponseFormat`] into Cohere v2's `response_format`; the only code that builds it.
 fn write_cohere_response_format(rf: &crate::codec::ir::IrResponseFormat) -> serde_json::Value {
     if !rf.json {
         return serde_json::json!({ (keys::TYPE): keys::TEXT });
@@ -522,18 +443,16 @@ fn write_cohere_response_format(rf: &crate::codec::ir::IrResponseFormat) -> serd
     }
 }
 
-/// Read Cohere v2's request `thinking` param into the IR reasoning ask — see `read_request`.
-/// `{type:"enabled", token_budget:N}` is `Budget(N)`; `{type:"enabled"}` with no (or a `null`) budget
-/// is `Dynamic` ("the model decides"); `{type:"disabled"}` is `Off` (IR-09). Anything else — an
-/// unknown type, a budget that is not a `u32` — is no promotable ask (`None`).
+/// Read Cohere v2's request `thinking` into the IR reasoning ask (see `read_request`):
+/// `{type:"enabled", token_budget:N}` is `Budget(N)`; `{type:"enabled"}` with no or `null` budget is
+/// `Dynamic`; `{type:"disabled"}` is `Off` (IR-09). Anything else (unknown type, non-`u32` budget) is `None`.
 fn read_cohere_reasoning(
     v: Option<&serde_json::Value>,
 ) -> Option<crate::codec::ir::IrReasoningAsk> {
     let t = v?.as_object()?;
     match t.get(keys::TYPE).and_then(|ty| ty.as_str()) {
         Some(keys::ENABLED) => {}
-        // IR-09: reasoning switched OFF — a reasoning-by-default model stops thinking. Not the
-        // same as saying nothing.
+        // IR-09: reasoning off, which a reasoning-by-default model honors. Not the same as saying nothing.
         Some(keys::DISABLED) => return Some(crate::codec::ir::IrReasoningAsk::Off),
         _ => return None,
     }
@@ -546,16 +465,15 @@ fn read_cohere_reasoning(
     }
 }
 
-/// Project the IR reasoning ask into Cohere v2's `thinking` param — the inverse of
-/// [`read_cohere_reasoning`]. A numeric budget is emitted as-is and a word-form effort goes through
-/// the operator's effort-budget table; `Dynamic` ("the model decides") is Cohere's own
-/// `{type:"enabled"}` with no budget, so it needs no table guess here.
+/// Project the IR reasoning ask into Cohere v2's `thinking`, inverse of [`read_cohere_reasoning`]. A
+/// numeric budget is emitted as is and an effort word goes through the operator's effort-budget
+/// table; `Dynamic` is Cohere's own budget-less `{type:"enabled"}`, needing no table guess.
 fn write_cohere_reasoning(
     ask: crate::codec::ir::IrReasoningAsk,
     table: [u32; 4],
 ) -> serde_json::Value {
     match ask {
-        // IR-09: matched FIRST — `Off` is a disable ask, never an enable with a budget.
+        // IR-09: matched first; `Off` is a disable ask, never an enable with a budget.
         crate::codec::ir::IrReasoningAsk::Off => {
             serde_json::json!({ (keys::TYPE): keys::DISABLED })
         }
@@ -569,24 +487,20 @@ fn write_cohere_reasoning(
     }
 }
 
-/// Read a Cohere v2 document (`{"id"?: "…", "data": {…}}` — a user content part's `document`, or
-/// an entry of the request's top-level `documents`) into the IR's document
-/// [`crate::codec::ir::IrBlock::Media`] (COH-04, IR-13).
-///
-/// Every readable document becomes a base64 `text/plain` document — the one form every dialect with
-/// a document slot carries (Anthropic `document`, Gemini `inlineData`, Bedrock `document`, OpenAI
-/// `file`):
-/// - a plain TEXT document (`data` holding a string `text` and at most a string `title`) carries its
-///   `text`;
-/// - a bare string (a top-level `documents` entry may be one) or a string `data` carries that string;
-/// - any other `data` is a JSON map of fields (`title`/`snippet`/`url`/…, which Cohere itself renders
-///   to the model as fields of text): it carries the map's JSON text. It used to ride the opaque
-///   cohere `Vendor` escape, which every foreign writer drops, so a grounding document never reached
-///   a foreign model (map where it can).
+/// Read a Cohere v2 document (`{"id"?: "…", "data": {…}}`: a user content part's `document`, or an
+/// entry of top-level `documents`) into a document [`crate::codec::ir::IrBlock::Media`] (COH-04,
+/// IR-13). Every readable document becomes a base64 `text/plain` document, the one form every
+/// dialect with a document slot carries (Anthropic `document`, Gemini `inlineData`, Bedrock
+/// `document`, OpenAI `file`):
+/// - a plain text document (`data` with a string `text` and at most a string `title`) carries its `text`;
+/// - a bare string (a `documents` entry may be one) or string `data` carries that string;
+/// - any other `data` is a JSON map of fields (`title`/`snippet`/`url`/..., which Cohere renders to
+///   the model as text) and carries the map's JSON text. It once rode the opaque cohere `Vendor`
+///   escape that every foreign writer drops, so a grounding document never reached a foreign model.
 ///
 /// The name is the string `title`, else the `id`. Only a document with no readable content (no
-/// `data`, or a non-string non-object `data`) keeps the `Vendor` escape: this dialect's writer
-/// re-emits it, and a foreign writer drops it with a warn.
+/// `data`, or a non-string non-object `data`) keeps the `Vendor` escape: this writer re-emits it and
+/// a foreign writer drops it with a warn.
 fn read_cohere_document(doc: &serde_json::Value) -> crate::codec::ir::IrBlock {
     let text_document = |text: &str, name: Option<&str>| crate::codec::ir::IrBlock::Media {
         kind: crate::codec::ir::IrMediaKind::Document,
@@ -641,9 +555,8 @@ fn read_cohere_document(doc: &serde_json::Value) -> crate::codec::ir::IrBlock {
     }
 }
 
-/// Read the `detail` of a Cohere v2 `image_url` object (`{"url": …, "detail": "auto"|"low"|"high"}`)
-/// into the IR's requested image fidelity (IR-08). An unknown word is `None`, with a warn: it is not
-/// coerced onto a fidelity the caller did not ask for.
+/// Read the `detail` of a Cohere v2 `image_url` object (`"auto"|"low"|"high"`) into the requested
+/// image fidelity (IR-08). An unknown word is `None` with a warn, not coerced onto another fidelity.
 fn read_cohere_image_detail(
     image_url: Option<&serde_json::Value>,
 ) -> Option<crate::codec::ir::IrImageDetail> {
@@ -660,13 +573,11 @@ fn read_cohere_image_detail(
     detail
 }
 
-/// Read a Cohere v2 TOOL-RESULT `document` part (`{"id"?: "…", "data": …}`) into the IR (the ANT-17
-/// follow-up). A tool-result document is the tool's OUTPUT, so it takes the IR's tool-output
-/// carriers rather than an attachment slot: a JSON `data` (object / array / number / bool) is a
-/// [`crate::codec::ir::IrBlock::Json`] block, a string `data` a `Text` block — the forms every writer
-/// projects inside a tool result (Anthropic / OpenAI / Responses / Gemini tool-result JSON as text,
-/// Bedrock `{"json": …}`, Cohere as its JSON text). The document `id` is a Cohere citation handle
-/// with no foreign analog. A document with no `data` keeps the opaque cohere `Vendor` escape.
+/// Read a Cohere v2 tool-result `document` part (`{"id"?: "…", "data": …}`) into the IR (the ANT-17
+/// follow-up). It is the tool's output, so it takes the tool-output carriers, not an attachment slot:
+/// JSON `data` (object/array/number/bool) is an [`crate::codec::ir::IrBlock::Json`], string `data`
+/// a `Text`, the forms every writer projects inside a tool result. The `id` is a Cohere citation
+/// handle with no foreign analog. A document with no `data` keeps the opaque cohere `Vendor` escape.
 fn read_cohere_tool_result_document(doc: &serde_json::Value) -> crate::codec::ir::IrBlock {
     match doc.get(keys::DATA) {
         Some(serde_json::Value::String(text)) => crate::codec::ir::IrBlock::text(text.clone()),
@@ -689,11 +600,10 @@ fn read_cohere_tool_result_document(doc: &serde_json::Value) -> crate::codec::ir
     }
 }
 
-/// The document object Cohere's top-level `documents` carries for an IR document Media, when it has
-/// one (COH-18): this dialect's own `Vendor` document verbatim, or a base64 `text/*` document as
-/// `{"data": {"text": <decoded>, "title"?: <name>}}` (the inverse of [`read_cohere_document`]).
-/// `None` for anything with no Cohere document form — binary bytes (a PDF), a URL, a foreign vendor
-/// handle, undecodable base64.
+/// The document object Cohere's top-level `documents` carries for an IR document Media (COH-18):
+/// this dialect's own `Vendor` document verbatim, or a base64 `text/*` document as
+/// `{"data": {"text": <decoded>, "title"?: <name>}}` (inverse of [`read_cohere_document`]). `None`
+/// for anything with no Cohere form: binary bytes (a PDF), a URL, a foreign vendor handle, bad base64.
 fn write_cohere_document(
     source: &crate::codec::ir::IrImageSource,
     name: Option<&str>,
@@ -720,16 +630,12 @@ fn write_cohere_document(
     }
 }
 
-/// Read one Cohere v2 `LogprobItem` — `{"text": "<chunk>", "token_ids": [..], "logprobs": [..]}` —
-/// into the neutral [`crate::codec::ir::IrTokenLogprob`] (COH-13 / COH-14).
-///
-/// Cohere reports log probabilities per decoded text chunk: the chunk's text, the ids of the tokens
-/// it decodes from, and one log probability per token. The IR's unit is a text span with its log
-/// probability, so a chunk maps with its `text` as the span and the SUM of its token log
-/// probabilities as the span's log probability — the joint log probability of exactly that text,
-/// which for the usual one-token chunk is its token's own figure. A chunk with no text, no
-/// log probabilities, or an unreadable one carries no span to report and is skipped (never
-/// invented). Cohere reports no alternatives, so `top` is empty.
+/// Read one Cohere v2 `LogprobItem` (`{"text", "token_ids", "logprobs"}`) into
+/// [`crate::codec::ir::IrTokenLogprob`] (COH-13 / COH-14). Cohere reports per decoded text chunk; the
+/// IR unit is a span with its log probability, so a chunk maps to its `text` with the sum of its
+/// token logprobs (the joint probability of that text; for a one-token chunk, the token's own). A
+/// chunk with no text, no logprobs or an unreadable one is skipped, never invented. Cohere reports
+/// no alternatives, so `top` is empty.
 fn read_cohere_logprob(item: &serde_json::Value) -> Option<crate::codec::ir::IrTokenLogprob> {
     let text = item.get(keys::TEXT)?.as_str()?;
     let lps = item.get(keys::LOGPROBS)?.as_array()?;
@@ -745,8 +651,8 @@ fn read_cohere_logprob(item: &serde_json::Value) -> Option<crate::codec::ir::IrT
     })
 }
 
-/// Cohere v2 native `finish_reason` → canonical [`crate::codec::ir::IrStopReason`]. The ONLY place that knows
-/// Cohere's finish vocabulary on the read side; an unmodeled token maps to `Other`.
+/// Cohere v2 `finish_reason` to canonical [`crate::codec::ir::IrStopReason`]; the only read-side
+/// place that knows the vocabulary. An unmodeled token is `Other`.
 fn read_cohere_stop_reason(token: &str) -> crate::codec::ir::IrStopReason {
     use crate::codec::ir::IrStopReason as S;
     match token {
@@ -757,30 +663,25 @@ fn read_cohere_stop_reason(token: &str) -> crate::codec::ir::IrStopReason {
         // `ERROR_TOXIC` is the content-moderation stop; generic `ERROR` is an infra failure.
         COHERE_FINISH_ERROR_TOXIC => S::Safety,
         COHERE_FINISH_ERROR => S::Error,
-        // `TIMEOUT` reads as `Other` (`_ => S::Other`): the answer Cohere returned is served and
-        // billed. Reading it as `Error` would turn a translated buffered answer into a billed 502
-        // and a lane fault (only the generic stream `ERROR` reads as an error).
+        // `TIMEOUT` reads as `Other`: the returned answer is served and billed, whereas `Error`
+        // would turn a buffered answer into a billed 502 and a lane fault (only stream `ERROR` is an error).
         _ => S::Other,
     }
 }
 
-/// Map a canonical IR stop reason to a valid Cohere v2 `finish_reason`. `ERROR` IS folded into the
-/// canonical set (reader `ERROR`→`S::Error`, writer `S::Error`→`ERROR`), so it round-trips as a
-/// first-class mapping. The reader lowercases only the native tokens it does NOT model
-/// (`ERROR_LIMIT`→`error_limit`, `USER_CANCEL`→`user_cancel`); those reach the writer as `S::Other`
-/// and degrade to `COMPLETE` below (a strict client rejects an unmodeled token). A foreign token from another protocol (e.g. `refusal` from the
-/// Responses reader) upper-cases to `REFUSAL`, which is NOT a member of Cohere's `finish_reason`
-/// enum and a strict client rejects; such reasons degrade to the SDK-safe terminal `COMPLETE`.
-/// EXHAUSTIVE: a reason with no Cohere analog (`refusal`, `pause_turn`, `other`) also falls back to
+/// Map a canonical IR stop reason to a valid Cohere v2 `finish_reason`. `ERROR` is first-class
+/// (reader `ERROR` to `S::Error`, writer back). The reader lowercases only tokens it does not model
+/// (`ERROR_LIMIT`, `USER_CANCEL`), which arrive as `S::Other` and degrade to `COMPLETE`, as does a
+/// foreign token such as `refusal` (it would upper-case to `REFUSAL`, not a member of Cohere's enum,
+/// which a strict client rejects). Exhaustive: `refusal`, `pause_turn` and `other` fall back to
 /// `COMPLETE`.
 ///
-/// `S::Safety` maps to `COMPLETE` (COH-15). A safety/content-filter stop is a SERVED response — the
-/// model's answer, cut short or withheld by a filter — not an upstream failure, and v2 `/v2/chat`'s
-/// `finish_reason` enum (`COMPLETE|STOP_SEQUENCE|MAX_TOKENS|TOOL_CALL|ERROR|TIMEOUT`) has no token
-/// for it: `ERROR_TOXIC` is a v1 Generate-API value, off-spec here. It used to map to `ERROR`, which
-/// told a Cohere client its request had FAILED — an infrastructure error it might retry or alert on —
-/// when the upstream had answered. `COMPLETE` is the same projection `Refusal` (the model declining)
-/// already takes. The reader's `ERROR_TOXIC`→`S::Safety` stays for a v1-dialect upstream.
+/// `S::Safety` maps to `COMPLETE` (COH-15). A safety stop is a served response cut short or
+/// withheld, not an upstream failure, and v2 `/v2/chat`'s enum
+/// (`COMPLETE|STOP_SEQUENCE|MAX_TOKENS|TOOL_CALL|ERROR|TIMEOUT`) has no token for it (`ERROR_TOXIC`
+/// is a v1 value). Mapping it to `ERROR` told a client its request had failed (retry, alert) when
+/// the upstream had answered. `COMPLETE` is the projection `Refusal` already takes. The reader's
+/// `ERROR_TOXIC` to `S::Safety` stays for a v1-dialect upstream.
 fn write_cohere_stop_reason(reason: crate::codec::ir::IrStopReason) -> &'static str {
     use crate::codec::ir::IrStopReason as S;
     match reason {
@@ -793,21 +694,17 @@ fn write_cohere_stop_reason(reason: crate::codec::ir::IrStopReason) -> &'static 
     }
 }
 
-/// Cohere's `usage.tokens.input_tokens` for an IR usage: the WHOLE prompt.
+/// Cohere's `usage.tokens.input_tokens` for an IR usage: the whole prompt. The IR's `input_tokens`
+/// is the uncached share only, with cache read and write additive beside it (`IrUsage`'s
+/// convention), whereas Cohere's is the whole prompt including the cached share, with the hit
+/// reported separately as `usage.cached_tokens` (a slice this reader leaves inside the input count).
 ///
-/// The two sides count the prompt differently. The IR's `input_tokens` is the UNCACHED share only,
-/// with the cache read and the cache write carried ADDITIVELY beside it (`IrUsage`'s documented
-/// convention). Cohere's `tokens.input_tokens` is the whole prompt, the cached share included, and
-/// it reports the cache hit separately as `usage.cached_tokens` (a slice this dialect's reader
-/// leaves inside the input count).
-///
-/// The writer used to copy the IR's uncached count straight into `tokens.input_tokens`, so a
-/// Cohere-dialect client of a foreign backend was told a prompt SMALLER than the one it sent: an
-/// OpenAI turn of 10 prompt tokens, 4 of them cached, reached it as `input_tokens: 6` with no
-/// `cached_tokens`; an Anthropic turn of 10 uncached + 4 cache-read + 3 cache-written reached it as
-/// `input_tokens: 10` (COH-10). The inverse of the reader restores what the backend reported: the
-/// uncached, cache-read and cache-written shares summed. Cohere has no cache-WRITE tier, so a cache
-/// write is ordinary prompt input on this wire.
+/// Copying the uncached count straight across told a Cohere client of a foreign backend a smaller
+/// prompt than it sent: an OpenAI turn of 10 prompt tokens, 4 cached, reached it as
+/// `input_tokens: 6` with no `cached_tokens`, and an Anthropic turn of 10 uncached + 4 cache-read +
+/// 3 cache-written as `input_tokens: 10` (COH-10). This restores what the backend reported:
+/// uncached, cache-read and cache-written summed. Cohere has no cache-write tier, so a cache write
+/// is ordinary prompt input here.
 fn cohere_prompt_tokens(usage: &crate::codec::ir::IrUsage) -> u64 {
     usage
         .input_tokens
@@ -815,13 +712,12 @@ fn cohere_prompt_tokens(usage: &crate::codec::ir::IrUsage) -> u64 {
         .saturating_add(usage.cache_creation_input_tokens.unwrap_or(0))
 }
 
-/// Format 16 bytes as a UUID-shaped (8-4-4-4-12 lowercase hex) token. Real Cohere v2 chat response
-/// ids are bare RFC-4122 UUIDv4s (e.g. `c14c80c3-18eb-4519-9460-6c92edd8cfb4` — note the version
-/// nibble `4` opening the 3rd group and the variant nibble `9` (`10xx`) opening the 4th), with NO
-/// literal prefix, so a synthesized id must match that layout to stay shape-indistinguishable from
-/// a native one. The caller is responsible for having already stamped the version/variant bits.
+/// Format 16 bytes as a UUID-shaped (8-4-4-4-12 lowercase hex) token. Native Cohere v2 chat ids are
+/// bare RFC-4122 UUIDv4s with no prefix (version nibble `4` opening group 3, variant `10xx` opening
+/// group 4), so a synthesized id must match to stay indistinguishable. The caller has already
+/// stamped the version/variant bits.
 fn format_uuid_layout(bytes: &[u8; 16]) -> String {
-    // One allocation for the 32-char lowercase hex string (no per-byte `format!`).
+    // One allocation for the 32-char lowercase hex string.
     let s = ::hex::encode(bytes);
     format!(
         "{}-{}-{}-{}-{}",
@@ -833,41 +729,32 @@ fn format_uuid_layout(bytes: &[u8; 16]) -> String {
     )
 }
 
-/// Synthesize a Cohere-shaped response id for the cross-protocol case where the backend supplied
-/// none. Native Cohere v2 ids are bare RFC-4122 UUIDv4s (8-4-4-4-12 hex, no prefix), so we emit a
-/// PROPER v4: all 128 bits seeded from the host CSPRNG, with the version nibble forced
-/// to `4` and the variant bits forced to `10xx`. A client (or any observer) that validates the id
-/// as a UUIDv4 — Cohere's are — sees a well-formed value, so this is no longer a proxy tell, and no
-/// timestamp is embedded (the earlier `secs << 32` layout leaked the server clock in the first
-/// group). A native UUIDv4 is fully random in its 122 free bits (~5.3e36 values), so there is NO
-/// monotonic-counter overlay: a counter folded into any fixed region leaves those bytes
-/// predictable/low-entropy, a structural tell a native random v4 never carries, and a 122-bit random
-/// id is collision-free in practice for a per-process id stream. Never panics on the request path:
-/// on the near-impossible entropy failure the buffer stays zeroed and the version/variant
-/// stamping still yields a well-formed (if non-random) v4.
+/// Synthesize a Cohere-shaped response id where the backend supplied none (cross-protocol). Native
+/// ids are bare RFC-4122 UUIDv4s, so this emits a proper v4: all 128 bits from the host CSPRNG, the
+/// version nibble forced to `4` and the variant bits to `10xx`, with no embedded timestamp (an
+/// earlier `secs << 32` layout leaked the server clock). There is no counter overlay: it would leave
+/// predictable bytes a random v4 never has, and 122 random bits are collision-free in practice.
+/// Never panics: on entropy failure the buffer stays zeroed and the stamping still yields a
+/// well-formed (if non-random) v4.
 fn synthesize_cohere_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
     let mut bytes = [0u8; 16];
-    // OS CSPRNG. Ignore failure (no unwrap/expect/panic on the request path): the version/variant
-    // stamping below still produces a valid v4 even if the buffer stays all-zero.
+    // Host CSPRNG; failure is ignored (no panic on the request path), as stamping below still gives a valid v4.
     let _ = host.fill_entropy(&mut bytes);
 
-    // RFC-4122 v4: high nibble of byte 6 (the 3rd group's first nibble) = 4; top two bits of byte 8
-    // (the 4th group's first nibble) = 10.
+    // RFC-4122 v4: byte 6 high nibble = 4 (group 3); byte 8 top two bits = 10 (group 4).
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
 
     format_uuid_layout(&bytes)
 }
 
-/// Whether a mid-stream `IrError`'s `provider_signal` names a CONTENT-MODERATION stop (so the
-/// Cohere-ingress writer should terminate with `ERROR_TOXIC` rather than the generic `ERROR`).
-///
-/// The IR `Error` arrives from any upstream protocol, so the signal text is not Cohere-specific. We
-/// recognise the canonical moderation tokens busbar's readers normalise to (`safety`, the IR stop
-/// reason) plus the native Cohere `ERROR_TOXIC` and the common provider words for a moderation/
-/// content-policy stop. Anything else is an infrastructure-class error and maps to `ERROR`. This is
-/// an exhaustive boolean classifier — there is no catch-all hiding an unhandled case; the `else`
-/// branch is the explicit "not a moderation stop" disposition.
+/// Whether a mid-stream `IrError`'s `provider_signal` names a content-moderation stop (so the
+/// Cohere-ingress writer ends with `ERROR_TOXIC`, not generic `ERROR`). The IR `Error` arrives from
+/// any upstream, so the text is not Cohere-specific: we recognise the canonical moderation tokens
+/// busbar's readers normalise to (`safety`, the IR stop reason), the native Cohere `ERROR_TOXIC` and
+/// the common provider words for a moderation or content-policy stop. Anything else is an
+/// infrastructure-class error and maps to `ERROR`. An exhaustive boolean classifier with no
+/// catch-all hiding an unhandled case.
 fn cohere_error_is_content_moderation(signal: &str) -> bool {
     let s = signal.to_ascii_lowercase();
     s.contains("toxic")

@@ -1,134 +1,105 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! Response-stream translation — the concrete `StreamTranslate` + its factory, driven by the
-//! relay (`exchange::reply::relay`). It names the concrete stream IR (`IrStreamEvent`/`IrUsage`/
-//! `StreamDecodeState`/…); the concrete IR is `crate::codec::ir::*` (this crate's own).
+//! Response-stream translation: the concrete `StreamTranslate` and its factory, driven by the
+//! relay (`exchange::reply::relay`).
 
 use crate::codec::dialect::{parse_sse_frame, write_sse_frame, SSE_DONE_FRAME, SSE_DONE_SENTINEL};
 use crate::codec::framework::STREAM_ABORT_DETAIL;
 use busbar_contract::protocol::{find_frame_terminator, IrError};
-// G6 A4b: the wire-codec surface relocated to this plugin's `proto_codec`; reach it RELATIVELY so it
-// resolves both standalone (crate::codec::proto_codec) and netted into core (core::proto::proto_codec).
+// Relative path so it resolves both standalone and netted into core.
 use super::proto_codec::{protocol_for, Protocol, SameProtoEdit, StreamFraming, ToolIdRemap};
 use std::borrow::Cow;
 
-/// pure cross-protocol response-stream translator. Feed EGRESS-protocol SSE bytes,
-/// get the equivalent INGRESS-protocol SSE bytes — composing `egress.reader().read_response_events`
-/// (wire → IR, stateful fan-out) with `ingress.writer().write_response_event` (IR → wire). Holds
-/// a reassembly buffer for frames split across chunks and the IR decode state across the stream.
-/// It is driven from the live streaming response path (see `FirstByteBody` in `forward`).
+/// Pure cross-protocol response-stream translator. Feed egress-protocol SSE bytes, get ingress
+/// SSE bytes: `egress.reader().read_response_events` (wire to IR, stateful fan-out) composed with
+/// `ingress.writer().write_response_event` (IR to wire). Holds a reassembly buffer for frames
+/// split across chunks and the IR decode state. Driven from the live streaming path (`FirstByteBody`).
 pub struct StreamTranslate {
     ingress: Protocol,
     egress: Protocol,
     pub decode: crate::codec::ir::StreamDecodeState,
     pub buf: Vec<u8>,
-    /// How far into `buf` we have already scanned for an SSE frame terminator. Searching only the
-    /// unscanned tail keeps `feed()` linear even when a single large frame arrives as many small
-    /// chunks (otherwise the whole accumulated prefix is re-scanned on every call → O(n^2)).
+    /// How far into `buf` we have scanned for a frame terminator; scanning only the tail keeps
+    /// `feed()` linear when one large frame arrives in many small chunks.
     pub scanned: usize,
     /// Set once the reassembly buffer exceeds `MAX_BUF` with no complete frame: the stream is
-    /// abandoned (an untrusted upstream that never emits a terminator must not grow `buf`
-    /// without bound — that is a memory-exhaustion DoS).
+    /// abandoned so an upstream that never emits a terminator cannot exhaust memory.
     pub aborted: bool,
-    /// ingress == "openai" → the stream must terminate with `data: [DONE]\n\n`.
+    /// ingress == "openai": the stream must end with `data: [DONE]\n\n`.
     emit_done: bool,
-    /// egress == "bedrock" → frames are binary `application/vnd.amazon.eventstream`, not SSE.
+    /// egress == "bedrock": frames are binary `application/vnd.amazon.eventstream`, not SSE.
     pub egress_eventstream: bool,
-    /// ingress == "bedrock" → the CLIENT is a native AWS SDK, so each translated event must be
-    /// packed into a binary `application/vnd.amazon.eventstream` frame (with valid CRC32) instead of
-    /// reframed as SSE. The stream's terminator is the `messageStop`/`metadata` frames themselves
-    /// (Bedrock has no `[DONE]`), so `finish()` stays empty. See `docs/architecture.md`.
+    /// ingress == "bedrock": the client is an AWS SDK, so each event is packed into a binary
+    /// eventstream frame (valid CRC32), not SSE. The `messageStop`/`metadata` frames are the
+    /// terminator (no `[DONE]`), so `finish()` stays empty. See `docs/architecture.md`.
     pub ingress_eventstream: bool,
-    /// The host's monotonic reading (nanoseconds) when the first byte was fed, used to report a
-    /// real `metrics.latencyMs` on a Bedrock-INGRESS `metadata` frame (a native ConverseStream
-    /// reports actual latency; a hard-coded `0` was a detectable tell). Both ends of the duration
-    /// are the HOST's clock (`CodecHost::monotonic_ns`, the kernel's one clock); the plane reads no
-    /// clock of its own. Set lazily on the first `feed`; `None` until then, and when the host holds
-    /// no clock.
+    /// The host's monotonic reading (ns) when the first byte was fed, for a real `metrics.latencyMs`
+    /// on a Bedrock-ingress `metadata` frame (a hard-coded `0` was a tell). Both ends use the
+    /// host's clock (`CodecHost::monotonic_ns`); the plane reads no clock of its own. Set on the
+    /// first `feed`; `None` before then or when the host has no clock.
     started_at: Option<u64>,
-    /// Per-stream, INGRESS-keyed protocol framing state. All protocol-specific stream-shape
-    /// decisions the translator used to make inline — the OpenAI per-chunk identity replay +
-    /// include_usage trailing-usage un-fold, and the Bedrock messageStop/metadata two-frame deferral
-    /// with its finish-time flush — live BEHIND this vtable, implemented in the owning protocol's
-    /// module (see [`StreamFraming`]). Built once from `ingress.writer().new_stream_framing()`; the
-    /// translator consults it and never names a protocol's wire quirk. A protocol with no per-stream
-    /// quirk gets the inert [`PassthroughFraming`] default.
+    /// Per-stream ingress-keyed framing state. The protocol-specific stream-shape decisions (OpenAI
+    /// per-chunk identity replay and `include_usage` un-fold, Bedrock messageStop/metadata deferral
+    /// and finish flush) live behind this vtable in the owning protocol's module
+    /// ([`StreamFraming`]), so the translator names no wire quirk. Built from
+    /// `ingress.writer().new_stream_framing()`; the default is the inert [`PassthroughFraming`].
     framing: Box<dyn StreamFraming>,
-    /// CROSS-PROTOCOL tool-id native remap (the streaming half of the class fix). Reshapes
-    /// each egress `tool_use` id (e.g. OpenAI `call_…`) to the INGRESS client's native shape (Anthropic
-    /// `toolu_…`) before the ingress writer serializes it, so a foreign id never reaches the client. The
-    /// map is stream-scoped: a tool id seen on `BlockStart` maps stably for the life of this stream (and
-    /// the transform is deterministic, so the matching `tool_result` the client sends back next round
-    /// decodes to the original egress id). The same-protocol path re-emits frames verbatim and bypasses
-    /// `translate_event` entirely, so this remap only ever runs on a cross-protocol hop.
+    /// Cross-protocol tool-id native remap: reshapes each egress `tool_use` id (OpenAI `call_…`) to
+    /// the ingress client's native shape (Anthropic `toolu_…`) so a foreign id never reaches the
+    /// client. Stream-scoped and deterministic, so the client's matching `tool_result` decodes back
+    /// to the original egress id. The same-protocol path bypasses `translate_event`, so this runs
+    /// only cross-protocol.
     tool_id_remap: ToolIdRemap,
-    /// The events fed to `translate_ir_event` come from an answer that ALREADY went through the
-    /// ingress preparation pass, so their tool ids are already in the client's native shape and must
-    /// NOT be reshaped a second time.
+    /// The events fed to `translate_ir_event` come from an answer that already went through the
+    /// ingress preparation pass, so their tool ids are in the client's shape and must not be
+    /// reshaped again.
     ///
-    /// Only the buffered-answer synthesizer sets this. That path is reached AFTER the engine has run
-    /// the answer through the ingress preparation pass, which reshapes every tool id in the answer;
-    /// re-encoding those ids here produced a doubly-wrapped id, and the reverse decode on the next
-    /// turn strips exactly one level, so the backend received an id it never issued and rejected the
-    /// `tool_result`. The live wire-frame path (`translate_event`) feeds ids read straight off the
-    /// egress wire, which have had NO reshape applied, so it leaves this `false` and remaps as before.
+    /// Only the buffered-answer synthesizer sets this. A second encode produced a doubly-wrapped id;
+    /// the next turn's reverse decode strips one level, so the backend got an id it never issued and
+    /// rejected the `tool_result`. The live wire-frame path feeds un-reshaped ids and leaves it `false`.
     ir_already_prepared: bool,
-    /// Input-token usage captured at stream start (`MessageStart.usage`), carried forward so the
-    /// terminal `MessageDelta` reports the prompt-token count.
+    /// Input-token usage captured at `MessageStart.usage`, carried to the terminal `MessageDelta`.
     ///
-    /// Anthropic's SSE puts `usage.input_tokens` (and the cache-token splits) ONLY on `message_start`;
-    /// its `message_delta` carries `output_tokens` alone. Every other protocol bundles input+output
-    /// into the terminal usage event. So on a cross-protocol hop OUT of an Anthropic backend the IR's
-    /// terminal `MessageDelta.usage.input_tokens` is 0 and the prompt-token count is lost — the ingress
-    /// writer under-reports usage (and the IR-derived `last_usage` that billing reads inherits the gap). Latch the
-    /// start-usage input/cache fields here and backfill them onto the terminal delta when the delta
-    /// itself carries none, so input tokens survive the seam regardless of how the egress protocol
-    /// split start-vs-terminal usage. `None` until the first `MessageStart` carrying usage is seen.
+    /// Anthropic puts `usage.input_tokens` (and cache splits) only on `message_start`; its
+    /// `message_delta` has `output_tokens` alone, whereas other protocols bundle both in the terminal
+    /// usage. Out of an Anthropic backend the terminal `input_tokens` would be 0, under-reporting
+    /// usage (and the `last_usage` billing reads). The start-usage input/cache fields are latched
+    /// here and backfilled onto the terminal delta when it carries none. `None` until a
+    /// usage-bearing `MessageStart`.
     start_usage: Option<crate::codec::ir::IrUsage>,
-    /// Set once a terminal `MessageStop` has been emitted for this stream. Guards against an
-    /// out-of-order trailing `MessageDelta` of ANY flavour being written AFTER the terminal frame on
-    /// a NON-eventstream ingress — e.g. an Anthropic `message_delta` after `message_stop`, which is
-    /// invalid stream framing and a proxy tell. The common case is a usage-only
-    /// `MessageDelta{stop_reason: None}` (the OpenAI `include_usage` convention puts token totals in a
-    /// chunk that arrives AFTER the finish chunk); a re-emitting backend can also repeat a terminal
-    /// `MessageDelta{stop_reason: Some(_)}` after the stop. The bedrock (`ingress_eventstream`) path
-    /// folds late usage into its single `metadata` frame and so is handled separately above; for
-    /// every other ingress ANY post-stop `MessageDelta` is dropped once the message has stopped
-    /// (matching v1.0.0-rc.2, which did not read trailing usage at all).
+    /// Set once a terminal `MessageStop` was emitted. Guards against a trailing `MessageDelta`
+    /// being written after the terminal frame on a non-eventstream ingress (e.g. an Anthropic
+    /// `message_delta` after `message_stop`, invalid framing and a proxy tell). Usually a usage-only
+    /// `MessageDelta{stop_reason: None}` (OpenAI `include_usage` sends totals after the finish
+    /// chunk); a backend can also repeat a terminal delta. The Bedrock path folds late usage into
+    /// its single `metadata` frame; elsewhere any post-stop `MessageDelta` is dropped.
     message_stopped: bool,
-    /// SAME-PROTOCOL universal-translate mode (Change B step 2): `true` when ingress == egress and
-    /// the translator was built via [`StreamTranslate::new_same_proto`]. In this mode `feed` re-emits
-    /// the ORIGINAL frame bytes verbatim (byte-exact passthrough) INSTEAD of re-serializing the IR —
-    /// every frame is structurally pristine (no cross-protocol mutation can fire), so the short-
-    /// circuit is unconditional. The IR pipeline still runs per frame, but purely as a side-channel:
-    /// it drives `last_usage` (the A-tap billing value). The
-    /// serialized IR output it produces is DISCARDED — only the retained original bytes reach `out`.
+    /// Same-protocol universal-translate mode (Change B step 2): ingress == egress, built via
+    /// [`StreamTranslate::new_same_proto`]. `feed` re-emits the original frame bytes verbatim
+    /// (every frame is structurally pristine, so the short-circuit is unconditional). The IR
+    /// pipeline still runs per frame as a side channel driving `last_usage` (the A-tap billing
+    /// value); its serialized output is discarded.
     same_proto: bool,
-    /// The terminal IR-derived usage for this stream (Change A "A-tap" value), accumulated from the
-    /// `MessageStart`/`MessageDelta`/`MessageStop` events `translate_event` processes — AFTER the
-    /// Anthropic start-usage backfill, so it reports the real prompt+completion token counts for every
-    /// protocol. PRODUCTION billing source (Change A step 3, now permanent): `FirstByteBody`'s
-    /// stream-end arm reads this via `usage()` for the per-request token fee (the old `UsageTap`
-    /// byte-scanner and the shadow-check that proved this value matched it have both been retired).
-    /// `None` until the first usage-bearing terminal event is seen.
+    /// The terminal IR-derived usage (Change A "A-tap"), accumulated from the
+    /// `MessageStart`/`MessageDelta`/`MessageStop` events after the Anthropic start-usage backfill,
+    /// so it has the real prompt and completion counts for every protocol. The production billing
+    /// source: `FirstByteBody`'s stream-end arm reads it via `usage()` for the per-request token fee.
+    /// `None` until the first usage-bearing terminal event.
     last_usage: Option<crate::codec::ir::IrUsage>,
-    /// A genuine terminal ERROR seen mid-stream — the IR-sourced replacement for the byte-scanner's
-    /// `UsageTap::terminal_error` (Change A). Set when a reader emits an [`crate::codec::ir::IrStreamEvent::Error`]
-    /// (an Anthropic `error` event, an OpenAI in-band `{"error":...}` frame, a Responses
-    /// `response.failed` frame, or a Bedrock in-band `*Exception` frame). This is the breaker-failure
-    /// signal the stream-end arm reads to distinguish a clean close from an aborted one. Holds the
-    /// human message (`provider_signal`) for observability; `None` on a clean stream.
+    /// A genuine terminal error seen mid-stream, set when a reader emits an
+    /// [`crate::codec::ir::IrStreamEvent::Error`] (Anthropic `error`, OpenAI in-band `{"error":...}`,
+    /// Responses `response.failed`, Bedrock `*Exception`). The breaker-failure signal the stream-end
+    /// arm reads to tell a clean close from an aborted one. Holds the human message
+    /// (`provider_signal`); `None` on a clean stream.
     terminal_error: Option<String>,
-    /// TERMINAL-USAGE FOLD (SSE ingress: anthropic/gemini/cohere/responses — see
+    /// Terminal-usage fold (SSE ingress: anthropic/gemini/cohere/responses; see
     /// `StreamFraming::folds_terminal_usage`). Holds the deferred terminal `MessageDelta`
     /// `(stop_reason, stop_sequence, usage, stop_detail)` so a trailing usage-only chunk (OpenAI
-    /// `include_usage`) can be merged into it before it is flushed at `finish()`. `None` until the
-    /// finish delta arrives
-    /// (and for the OpenAI/Bedrock ingresses, which opt out). `pending_stop` records that the paired
-    /// `MessageStop` was also deferred, so `finish()` re-emits it after the flushed delta. The response
-    /// body feeds `finish()`'s output through the json-array framer too, so this flush reaches the
-    /// client uniformly on both the SSE and gemini-json-array paths.
+    /// `include_usage`) can merge into it before the `finish()` flush. `None` until the finish
+    /// delta arrives (and for OpenAI/Bedrock ingress, which opt out). `pending_stop` records that
+    /// the paired `MessageStop` was also deferred, so `finish()` re-emits it after the delta. The
+    /// flush goes through the json-array framer too, reaching both SSE and gemini-json-array paths.
     pending_terminal: Option<(
         crate::codec::ir::IrStopReason,
         Option<String>,
@@ -136,27 +107,22 @@ pub struct StreamTranslate {
         Option<crate::codec::ir::IrStopDetail>,
     )>,
     pending_stop: bool,
-    /// IR block indices whose BlockStart was TRANSLATED and whose BlockStop has not been. Anything
-    /// still here at the terminal frame was never closed by the egress reader — a truncated upstream,
-    /// or a reader whose terminal branch does not drain every block (cohere `message-end` closes only
-    /// text). Synthesized closes are routed back through `emit_ir_event`, so each ingress writer applies
-    /// its OWN projection and no wire shape is named here.
+    /// IR block indices whose BlockStart was translated and BlockStop has not. Anything left at the
+    /// terminal frame was never closed by the egress reader (truncated upstream, or a terminal branch
+    /// that does not drain every block, e.g. cohere `message-end` closes only text). Synthesized
+    /// closes route through `emit_ir_event` so each writer applies its own projection.
     open_blocks: std::collections::BTreeSet<usize>,
-    /// Test-only instrumentation: counts frames that reached the `crate::codec::json::parse_str` DOM parse
-    /// in the SSE loop. Proves the same-proto read probe actually elides the parse for frames that
-    /// carry no usage or failure, rather than asserting a tautology about the diff. Compiled out
-    /// entirely in non-test builds — zero production cost.
+    /// Test-only: counts frames that reached the `crate::codec::json::parse_str` DOM parse in the
+    /// SSE loop, proving the same-proto read probe elides the parse for frames with no usage or
+    /// failure. Compiled out of non-test builds.
     #[cfg(test)]
     pub decode_calls: std::cell::Cell<usize>,
 }
 
 impl StreamTranslate {
-    /// Build a translator for an ingress→egress pair. `None` if either protocol is unknown OR
-    /// ingress == egress (no translation needed — the caller does native passthrough).
-    ///
-    /// This is the CROSS-protocol constructor and its same-proto guard is UNCHANGED: same-protocol
-    /// callers that want the universal-translate verbatim path use [`new_same_proto`] explicitly, so
-    /// the legacy `ingress == egress → None` contract (and every caller relying on it) is preserved.
+    /// Build a translator for an ingress to egress pair. `None` if either protocol is unknown or
+    /// ingress == egress (the caller does native passthrough). Same-protocol callers wanting the
+    /// verbatim path use [`new_same_proto`], so the `ingress == egress -> None` contract holds.
     pub fn new(ingress: &str, egress: &str) -> Option<Self> {
         if ingress == egress {
             return None;
@@ -164,27 +130,21 @@ impl StreamTranslate {
         Self::build(ingress, egress, false)
     }
 
-    /// Build a SAME-PROTOCOL universal translator (Change B step 2). Unlike [`new`], this returns
-    /// `Some` when `ingress == egress` (the protocol must be known). The resulting translator runs the
-    /// full reader→IR pipeline per frame for usage extraction but re-emits the ORIGINAL frame bytes
-    /// verbatim (see the `same_proto` field) — a byte-exact passthrough with an IR side-channel. The
-    /// caller gates this behind the reversible universal-same-proto flag
-    /// (`proxy::ENABLE_UNIVERSAL_SAME_PROTO_TRANSLATE`); when the flag is off the caller passes
-    /// `None` and falls back to the legacy raw-chunk passthrough.
+    /// Build a same-protocol universal translator (Change B step 2). Unlike [`new`] it returns `Some`
+    /// when `ingress == egress`. It runs the full reader-to-IR pipeline per frame for usage
+    /// extraction but re-emits the original bytes verbatim (see `same_proto`). The caller gates it
+    /// on `proxy::ENABLE_UNIVERSAL_SAME_PROTO_TRANSLATE`; off, it falls back to raw-chunk passthrough.
     pub fn new_same_proto(proto: &str) -> Option<Self> {
         Self::build(proto, proto, true)
     }
 
-    /// Shared constructor body for [`new`] and [`new_same_proto`]. `same_proto` selects the verbatim
-    /// re-emit path in `feed`.
+    /// Shared body of [`new`] and [`new_same_proto`]; `same_proto` selects the verbatim re-emit path in `feed`.
     fn build(ingress: &str, egress: &str, same_proto: bool) -> Option<Self> {
         let ingress_proto = protocol_for(ingress)?;
         let egress_proto = protocol_for(egress)?;
-        // Derive the framing flags from the protocol vtable rather than re-comparing the name
-        // strings: `ingress_eventstream`/`egress_eventstream` reuse the SAME `ingress_is_eventstream()`
-        // method `FirstByteBody` already dispatches through (so the two can never drift from it), and
-        // `emit_done` reads `emits_sse_done_terminator()`. This constructor carries no provider-name
-        // branch; a 7th protocol gets the safe `false` defaults.
+        // Framing flags come from the protocol vtable, not name comparisons: `ingress_eventstream`/
+        // `egress_eventstream` reuse `ingress_is_eventstream()` (as `FirstByteBody` does, so they
+        // cannot drift) and `emit_done` reads `emits_sse_done_terminator()`. No provider-name branch.
         let emit_done = ingress_proto
             .decl()
             .is_some_and(|d| d.emits_sse_done_terminator);
@@ -194,8 +154,7 @@ impl StreamTranslate {
         let egress_eventstream = egress_proto
             .decl()
             .is_some_and(|d| d.ingress_is_eventstream);
-        // The per-stream framing is keyed to the INGRESS writer — it produces the client-facing wire.
-        // A protocol with no per-stream framing quirk yields the inert PassthroughFraming.
+        // Framing is keyed to the ingress writer, which produces the client-facing wire.
         let framing = ingress_proto.writer().new_stream_framing();
         Some(Self {
             ingress: ingress_proto,
@@ -210,8 +169,8 @@ impl StreamTranslate {
             started_at: None,
             framing,
             tool_id_remap: ToolIdRemap::default(),
-            // The wire-frame paths (`new`/`new_same_proto`) always read ids straight off the egress
-            // wire, so the remap is theirs to run; only the buffered-answer synthesizer flips this.
+            // The wire-frame paths read ids off the egress wire, so the remap runs; only the
+            // buffered-answer synthesizer flips this.
             ir_already_prepared: false,
             start_usage: None,
             message_stopped: false,
@@ -226,31 +185,26 @@ impl StreamTranslate {
         })
     }
 
-    /// The translator whose ingress writer bounds each of its per-item accumulators at `cap`: the
-    /// TRANSLATION CAP the plane enforces, the one the kernel handed it in its settings
-    /// (`limits.request_body_max_bytes`). A translator never handed one holds
-    /// [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`].
+    /// The translator whose ingress writer bounds each per-item accumulator at `cap`: the
+    /// translation cap the plane enforces (`limits.request_body_max_bytes`). One never handed a cap
+    /// holds [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`].
     #[must_use]
     pub fn with_translate_cap(self, cap: usize) -> Self {
         self.ingress.writer().set_translate_cap(cap);
         self
     }
 
-    /// Record whether the ORIGINAL client request opted into streaming usage
-    /// (`stream_options.include_usage == true`), forwarding it to the ingress framing.
-    /// Only the OpenAI-ingress framing acts on it (its `include_usage` un-fold/strip); every other
-    /// ingress framing ignores it. Called by the engine after it captures the client's intent from the
-    /// request body and before the first frame is fed.
+    /// Record whether the client opted into streaming usage (`stream_options.include_usage ==
+    /// true`) and forward it to the ingress framing. Only OpenAI-ingress framing acts on it.
+    /// Called by the engine before the first frame is fed.
     pub fn set_client_include_usage(&mut self, include: bool) {
         self.framing.set_client_include_usage(include);
     }
 
-    /// Forward the ORIGINAL ingress request body to the INGRESS writer this translator holds for the
-    /// life of the stream. Every writer but `ResponsesWriter` no-ops; `ResponsesWriter` latches it
-    /// (mirroring how `set_response_id`/`set_created_at`/`set_model` already carry per-stream
-    /// identity forward) so `response.created`/`response.completed` answer with the client's actual
-    /// `temperature`/`top_p`/`instructions`/`metadata`/`tool_choice`/`parallel_tool_calls`/`tools`
-    /// instead of the spec's bare defaults.
+    /// Forward the original ingress request body to the ingress writer for the stream's life.
+    /// Only `ResponsesWriter` latches it, so `response.created`/`response.completed` answer with
+    /// the client's `temperature`/`top_p`/`instructions`/`metadata`/`tool_choice`/
+    /// `parallel_tool_calls`/`tools` instead of spec defaults.
     pub fn set_request_echo(&mut self, ingress_request_body: &serde_json::Value) {
         self.ingress.writer().set_request_echo(ingress_request_body);
     }
@@ -264,13 +218,11 @@ impl StreamTranslate {
         data: &serde_json::Value,
         out: &mut Vec<u8>,
     ) {
-        // Ingress protocol name for the tool-id remap below. `name_static(&self) -> &'static str`
-        // does not borrow `self`, so holding it does not conflict with the mutable
-        // `self.tool_id_remap` borrow in `remap_event` below — unlike `Protocol::name(&self) -> &str`,
-        // whose return borrows `self`'s (elided) lifetime and so would collide. No allocation per frame.
+        // `name_static(&self) -> &'static str` does not borrow `self`, so it does not conflict with
+        // the mutable `self.tool_id_remap` borrow in `remap_event` (`Protocol::name` would).
         let ingress_name = self.ingress.name_static();
-        // ONE translate attempt per stream: what the caller's dialect will not get is named once per
-        // path for the whole stream (design F3 "Drops"), and read back by [`Self::dropped`].
+        // One translate attempt per stream: what the caller's dialect will not get is named once
+        // per path (design F3 "Drops") and read back by [`Self::dropped`].
         let seam = crate::codec::drops::Seam {
             direction: crate::codec::drops::Direction::Response,
             ingress: ingress_name,
@@ -289,17 +241,16 @@ impl StreamTranslate {
         }
     }
 
-    /// The far-end wire paths this stream dropped on its way to the caller, each warned once; the
-    /// host records one audit row per path at the stream's end.
+    /// Far-end wire paths this stream dropped on its way to the caller, each warned once; the host
+    /// records one audit row per path at stream end.
     pub fn dropped(&self) -> &[String] {
         &self.decode.dropped
     }
 
-    /// Run ONE decoded IR event through the cross-protocol pipeline (tool-id remap, identity strip,
-    /// usage backfill and A-tap, the per-ingress framing seams, the ingress writer) and append the
-    /// framed bytes to `out`. Split out of `translate_event` so the buffered-response synthesizer
-    /// (`synthesize_from_response`) can drive the SAME per-event pipeline from an IR event sequence it
-    /// builds itself, instead of from egress wire frames — the two paths cannot drift.
+    /// Run one decoded IR event through the cross-protocol pipeline (tool-id remap, identity strip,
+    /// usage backfill and A-tap, framing seams, ingress writer) and append the framed bytes to
+    /// `out`. Split from `translate_event` so the buffered-response synthesizer
+    /// (`synthesize_from_response`) drives the same pipeline from an IR sequence.
     fn translate_ir_event(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -307,18 +258,15 @@ impl StreamTranslate {
         mut ev: crate::codec::ir::IrStreamEvent,
         out: &mut Vec<u8>,
     ) {
-        // CROSS-PROTOCOL tool-id native remap: reshape the egress `tool_use` id on a `BlockStart`
-        // to the ingress client's native shape (see `StreamTranslate::tool_id_remap`). Done before
-        // identity-strip/usage-backfill so the rest of the pipeline sees the client-facing id.
-        // Skipped when the events were fanned out of an ALREADY-PREPARED answer (see
-        // `ir_already_prepared`): those ids carry the client-facing shape already, and reshaping a
-        // reshaped id is not idempotent — the reverse decode peels exactly one layer, so the second
-        // encode is a permanent corruption of the tool_use/tool_result correlation, not a cosmetic one.
+        // Reshape the egress `tool_use` id on a `BlockStart` to the client's native shape
+        // (`tool_id_remap`), before identity-strip and usage-backfill. Skipped for events from an
+        // already-prepared answer (`ir_already_prepared`): reshaping is not idempotent (the reverse
+        // decode peels one layer), so a second encode permanently corrupts tool_use/tool_result correlation.
         if !self.ir_already_prepared {
             self.tool_id_remap.remap_event(ingress_name, &mut ev);
-            // IR-18: a signature the egress family minted that the client's
-            // carrier would read as its own family's is wrapped in the busbar provenance envelope —
-            // the stream half of `chat_prepare_for_ingress` (an already-prepared answer carries it).
+            // IR-18: a signature the egress family minted that the client's carrier would read as its
+            // own family's is wrapped in the busbar provenance envelope (stream half of
+            // `chat_prepare_for_ingress`; an already-prepared answer carries it).
             if let crate::codec::ir::IrStreamEvent::BlockDelta {
                 delta: crate::codec::ir::IrDelta::SignatureDelta(sig),
                 ..
@@ -331,59 +279,44 @@ impl StreamTranslate {
                 });
             }
         }
-        // Cross-protocol stream identity strip: a `StreamTranslate` only exists when
-        // ingress != egress (`new` returns None otherwise), so every event here crosses a
-        // protocol boundary. Clear the foreign-format `MessageStart` `id`/`created` so the INGRESS
-        // writer synthesizes NATIVE-format stream identity rather than leaking the backend's
-        // `chatcmpl-…`/`msg_…` id to a different-protocol client — mirrors the non-stream strip in
-        // proxy engine (`ir.id = None`). `model` is DELIBERATELY LEFT INTACT: it is the lane's model
-        // name (format-neutral, like `created`), and ingress writers use a populated `model` as
-        // the anchor for synthesizing the full native stream-start skeleton — clearing it
-        // suppressed that synthesis (the Anthropic writer emitted a degenerate `message_start`
-        // missing `id`/`type`/`content`/`stop_reason`/`stop_sequence`; the Gemini writer omitted
-        // `modelVersion`). The non-stream path in proxy engine also does NOT clear `model`. Same-
-        // protocol byte-exact round-trips never reach here, so they are untouched.
+        // Identity strip: a `StreamTranslate` exists only when ingress != egress, so every event
+        // crosses a boundary. Clear `MessageStart`'s foreign `id`/`created` so the ingress writer
+        // mints native identity instead of leaking `chatcmpl-…`/`msg_…` (mirrors the non-stream
+        // strip in proxy engine). `model` is kept on purpose: it is the lane's format-neutral name
+        // and writers anchor the native stream-start skeleton on it (clearing it gave a degenerate
+        // Anthropic `message_start` and a Gemini frame without `modelVersion`).
         if let crate::codec::ir::IrStreamEvent::MessageStart {
             id, created, usage, ..
         } = &mut ev
         {
-            // Latch the start-usage input/cache token counts (before stripping identity). Anthropic
-            // carries input tokens ONLY here, never on `message_delta`; backfilling the terminal
-            // delta below keeps the prompt-token count from vanishing across the cross-protocol seam.
+            // Latch start-usage input/cache counts before stripping identity: Anthropic carries input
+            // tokens only here, and the backfill below keeps them across the seam.
             if let Some(u) = usage {
                 self.start_usage = Some(u.clone());
-                // The far end has REPORTED these counts: they bill even when the stream ends
-                // before its terminal delta (cut or abandoned), so they fold into `last_usage` now.
+                // These counts are reported, so they bill even if the stream ends before its terminal
+                // delta; fold them into `last_usage` now.
                 self.fold_reported_usage(u);
             }
             *id = None;
             *created = None;
         }
-        // Backfill the terminal usage: if the egress protocol reported input/cache tokens only at
-        // stream start (Anthropic), the `MessageDelta` arrives with `input_tokens == 0` and no cache
-        // splits. Restore them from the latched start-usage so the ingress writer emits — and the
-        // billing-source `last_usage` reflects — the real prompt-token count. Only fills fields the delta
-        // itself left empty, so a protocol that DOES carry input on its terminal delta (OpenAI
-        // include_usage, Gemini, Bedrock, Cohere) is never overwritten.
+        // Backfill the terminal usage: when the egress protocol reported input/cache tokens only at
+        // start (Anthropic), restore them from the latched start-usage. Only empty fields are
+        // filled, so protocols carrying input on the terminal delta (OpenAI include_usage, Gemini,
+        // Bedrock, Cohere) are never overwritten.
         if let crate::codec::ir::IrStreamEvent::MessageDelta { usage, .. } = &mut ev {
             if let Some(start) = &self.start_usage {
                 backfill_from_start_usage(usage, start);
             }
-            // A-tap capture (Change A): accumulate the terminal IR usage AFTER the start-usage
-            // backfill, so `last_usage` reports the real prompt+completion counts for every
-            // protocol regardless of how it split start-vs-terminal usage. Merge per field (keep
-            // any non-zero / Some already seen) rather than blind-overwrite, so a backend that
-            // splits usage across two deltas (e.g. OpenAI `include_usage`: a finish delta with
-            // zero usage, then a usage-only delta) does not let the first zero clobber the second's
-            // real counts. `last_usage` is the production billing source the stream-end arm reads
-            // for the per-request token fee (Change A step 3, now permanent).
+            // A-tap capture: accumulate the terminal IR usage after the backfill, merged per field
+            // (keeping any non-zero / Some seen), so a backend splitting usage across two deltas
+            // (OpenAI `include_usage`: zero-usage finish delta, then a usage-only one) does not let
+            // the first zero clobber the second's counts. `last_usage` is the production billing source.
             self.fold_reported_usage(usage);
         }
-        // A-tap terminal-error capture (Change A): a reader-emitted `Error` event is the IR-sourced
-        // breaker-failure signal that replaces the byte-scanner's `UsageTap::terminal_error`. Record
-        // its message so the stream-end breaker/billing arms treat the stream as failed (no token
-        // billing, record a breaker transient). Mirrors the byte-scanner's per-shape detection, but
-        // sourced from the reader's structured decode rather than a brace-scan of the output bytes.
+        // A-tap terminal-error capture: a reader-emitted `Error` is the breaker-failure signal. Its
+        // message is recorded so the stream-end arms treat the stream as failed (no token billing,
+        // breaker transient), from the reader's structured decode, not a brace-scan of output bytes.
         if let crate::codec::ir::IrStreamEvent::Error(err) = &ev {
             self.terminal_error = Some(
                 err.provider_signal
@@ -391,12 +324,10 @@ impl StreamTranslate {
                     .unwrap_or_else(|| "upstream stream error".to_string()),
             );
         }
-        // Bedrock-INGRESS error path: a native AWS SDK dispatches mid-stream errors off the
-        // `:message-type: exception` / `:exception-type` headers, which ONLY
-        // `encode_exception_frame` produces. A normal `write_response_event` pair would be framed
-        // `:message-type: event` and silently dropped by a strict decoder. So when the ingress is
-        // an event-stream client and the IR event is an Error, emit a real modeled-exception frame
-        // via the writer's `write_response_exception` mapping instead of the event encoder.
+        // Bedrock-ingress errors: an AWS SDK dispatches mid-stream errors off the
+        // `:message-type: exception` / `:exception-type` headers that only `encode_exception_frame`
+        // produces; a normal event frame would be silently dropped by a strict decoder. So for an
+        // event-stream client an Error IR event goes through the writer's `write_response_exception`.
         if self.ingress_eventstream {
             if let crate::codec::ir::IrStreamEvent::Error(err) = &ev {
                 if let Some((exc_name, message)) =
@@ -410,11 +341,10 @@ impl StreamTranslate {
             }
         }
 
-        // INV-A: close any block the egress reader left open BEFORE the terminal frame goes out.
-        // Placed ahead of the Bedrock two-frame fan-out, the terminal-usage deferral, the post-stop
-        // drop guard and the citation fan-out below — every terminal path, deferred or immediate,
-        // reaches this without duplicating the site. A reader that already closes correctly leaves
-        // `open_blocks` empty, so this is a no-op on every existing exact-sequence stream.
+        // INV-A: close any block the egress reader left open before the terminal frame. Placed ahead
+        // of the Bedrock fan-out, terminal-usage deferral, post-stop guard and citation fan-out so
+        // every terminal path reaches it once; a reader that closes correctly leaves `open_blocks`
+        // empty, making it a no-op.
         if matches!(
             ev,
             crate::codec::ir::IrStreamEvent::MessageDelta {
@@ -425,22 +355,13 @@ impl StreamTranslate {
             self.close_open_blocks(host, out);
         }
 
-        // Bedrock-INGRESS combined-delta fan-out: the IR carries ONE combined
-        // `MessageDelta{stop_reason: Some, usage}` (the egress reader collapses Bedrock's native
-        // two-frame stop/usage split — or any other protocol's single message_delta — into one).
-        // A native AWS SDK Bedrock client, however, expects the real TWO-frame sequence: a
-        // `messageStop` frame carrying the stop reason FOLLOWED by a `metadata` frame carrying the
-        // token usage (and a `metrics` object). The single-`(String,Value)`-return writer trait
-        // cannot emit two frames, so we fan the combined delta into two synthetic single-purpose
-        // deltas here — a stop-only delta → `messageStop`, then a usage-only delta → `metadata` —
-        // and inject the real `metrics.latencyMs` onto the metadata frame (see below). This
-        // reproduces exactly what `BedrockReader::read_response_events` consumed, so a
-        // bedrock->bedrock stream still round-trips frame-for-frame.
-        // Bedrock-INGRESS messageStop/metadata two-frame deferral — entirely behind the
-        // framing vtable. The framing decides WHAT to emit and tracks the
-        // exactly-one-metadata invariant; the translator stays the emission primitive and names no
-        // Bedrock wire shape. PassthroughFraming returns `None` for both seams, so non-Bedrock
-        // ingress falls through unchanged.
+        // Bedrock-ingress terminal fan-out. The IR carries one combined `MessageDelta{stop_reason,
+        // usage}`, but an AWS SDK client expects a `messageStop` frame then a `metadata` frame (with
+        // `metrics`). The single-return writer trait cannot emit two frames, so the combined delta is
+        // split into a stop-only and a usage-only delta, with the real `metrics.latencyMs` injected on
+        // the metadata frame; bedrock-to-bedrock still round-trips frame for frame. The framing
+        // vtable decides what to emit and tracks the exactly-one-metadata invariant, so the translator
+        // names no Bedrock wire shape (`PassthroughFraming` returns `None` for non-Bedrock ingress).
         if let crate::codec::ir::IrStreamEvent::MessageDelta {
             stop_reason: Some(reason),
             usage,
@@ -452,9 +373,8 @@ impl StreamTranslate {
                 self.framing
                     .on_combined_stop_delta(*reason, stop_sequence.clone(), usage)
             {
-                // The framing re-splits the terminal delta into its own frames and names no
-                // `IrStopDetail`; the refinement rides the stop-bearing one it produced, so a
-                // context-window / refusal detail is not lost on this ingress (buffered == stream).
+                // The framing re-splits the terminal delta and names no `IrStopDetail`; the refinement
+                // rides the stop-bearing frame it produced, so it is not lost (buffered == stream).
                 for emit in &mut events {
                     if let crate::codec::ir::IrStreamEvent::MessageDelta {
                         stop_reason: Some(_),
@@ -471,15 +391,12 @@ impl StreamTranslate {
                 return;
             }
         }
-        // TERMINAL-USAGE FOLD (SSE ingress: anthropic/gemini/cohere/responses). These ingresses
-        // carry usage in their single terminal `message_delta`, but an egress like OpenAI under
-        // include_usage reports it in a SEPARATE trailing usage-only chunk that arrives AFTER the
-        // finish chunk — so the terminal frame would ship with zeros and the real usage would be
-        // dropped by the post-stop guard below. Defer the terminal delta + its MessageStop, merge
-        // any trailing usage, and flush at `finish()` (which the response body now feeds through the
-        // json-array framer too, so it reaches the client on every ingress). OpenAI/Bedrock opt out
-        // (folds_terminal_usage == false) — they re-emit/fold usage via their own framing seams
-        // above. Mutually exclusive with the Bedrock combined-stop path (which returned).
+        // Terminal-usage fold (SSE ingress: anthropic/gemini/cohere/responses). These carry usage in
+        // one terminal `message_delta`, but an OpenAI egress under include_usage reports it in a
+        // separate trailing chunk after the finish chunk, which the post-stop guard below would drop.
+        // So defer the terminal delta and its MessageStop, merge any trailing usage, and flush at
+        // `finish()` (fed through the json-array framer too). OpenAI/Bedrock opt out
+        // (`folds_terminal_usage == false`). Mutually exclusive with the Bedrock path above (which returned).
         if self.framing.folds_terminal_usage() {
             match &ev {
                 crate::codec::ir::IrStreamEvent::MessageDelta {
@@ -489,11 +406,9 @@ impl StreamTranslate {
                     stop_detail,
                 } => {
                     match self.pending_terminal.as_mut() {
-                        // A DUPLICATE stop-bearing delta (some providers repeat the terminal
-                        // message_delta): keep the FIRST terminal's captured usage and merge any this
-                        // one carries (non-zero fields only), instead of overwriting the whole tuple —
-                        // a duplicate with empty usage would otherwise drop the real, client-visible
-                        // terminal usage. (found: 1.4.0, streaming-billing.)
+                        // A duplicate stop-bearing delta (some providers repeat it): keep the first
+                        // terminal's usage and merge non-zero fields from this one, rather than
+                        // overwriting and dropping the client-visible usage. (found: 1.4.0, streaming-billing.)
                         Some((_, _, acc, _)) => merge_trailing_usage(acc, usage),
                         None => {
                             self.pending_terminal = Some((
@@ -535,16 +450,10 @@ impl StreamTranslate {
             }
         }
 
-        // Non-eventstream ingress ordering guard: once the terminal `MessageStop` has been
-        // emitted, drop ANY trailing `MessageDelta` (regardless of `stop_reason`). The common
-        // case is a usage-only `MessageDelta{stop_reason: None}` (OpenAI `include_usage`
-        // delivers token totals in a chunk that arrives AFTER the finish chunk), but a backend
-        // can also re-emit a DUPLICATE terminal `MessageDelta{stop_reason: Some(_)}` after the
-        // stop. Either one, written now, would put a `message_delta` AFTER `message_stop` on the
-        // wire — invalid stream framing and a proxy tell for SSE ingress
-        // (Anthropic/Gemini/Cohere/OpenAI). The bedrock (`ingress_eventstream`) path already
-        // folded such usage into its single `metadata` frame above and returned early,
-        // so it never reaches here.
+        // Non-eventstream ordering guard: once `MessageStop` is emitted, drop any trailing
+        // `MessageDelta`, whether a usage-only one (OpenAI `include_usage` totals after the finish
+        // chunk) or a duplicate terminal. Written, it would put `message_delta` after `message_stop`:
+        // invalid framing and a proxy tell. The Bedrock path folded such usage into `metadata` above.
         if self.message_stopped
             && matches!(ev, crate::codec::ir::IrStreamEvent::MessageDelta { .. })
         {
@@ -554,19 +463,12 @@ impl StreamTranslate {
             self.message_stopped = true;
         }
 
-        // Multi-citation fan-out (wire-correctness, HIGH-1): a single
-        // `BlockDelta{CitationsDelta(vec of N)}` (e.g. ONE Gemini chunk batches 3–10
-        // `citationSources[]` → ONE delta carrying N citations) MUST NOT serialize to a single
-        // wire event whose body is a JSON ARRAY of N citation frames when the ingress protocol
-        // frames exactly one citation per event — a native Anthropic SDK `JSON.parse`s ONE object
-        // per `data:` line and crashes on an array. The single-`(String,Value)`-return writer trait
-        // cannot emit N frames from one event, so — mirroring the Bedrock combined-delta fan-out
-        // above — split the multi-citation delta into N single-citation `BlockDelta`s here at the
-        // framing seam. The per-event citation limit is a per-protocol WIRE constraint, read via the
-        // `max_citations_per_delta()` vtable (Anthropic → Some(1)) rather than an `ingress ==
-        // "anthropic"` name-branch: Gemini legitimately coalesces N sources into one candidate-level
-        // `citationMetadata` chunk (None → no fan-out). A single-citation delta (the common case)
-        // is within any limit and takes the untouched fall-through below.
+        // Multi-citation fan-out: one `BlockDelta{CitationsDelta(N)}` (e.g. a Gemini chunk batching
+        // 3-10 `citationSources[]`) must not serialize to one wire event with a JSON array body where
+        // the ingress frames one citation per event (an Anthropic SDK `JSON.parse`s one object per
+        // `data:` line and crashes on an array). As in the Bedrock fan-out, split it into N
+        // single-citation deltas here. The limit is a per-protocol wire constraint read via
+        // `max_citations_per_delta()` (Anthropic: Some(1)); Gemini coalesces (None, no fan-out).
         if let Some(max_per_event) = self.ingress.decl().and_then(|d| d.max_citations_per_delta) {
             if let crate::codec::ir::IrStreamEvent::BlockDelta {
                 index,
@@ -588,12 +490,10 @@ impl StreamTranslate {
 
         let is_message_start = matches!(ev, crate::codec::ir::IrStreamEvent::MessageStart { .. });
         self.emit_ir_event(host, &ev, out);
-        // Some dialects emit a frame of their own right after `message_start` (Anthropic's
-        // `event: ping`), and a translated stream that omitted it was both a fingerprintable
-        // proxy tell and a missed keepalive. WHICH frame — and whether there is one — is the
-        // INGRESS writer's; this translator only knows where it goes. `translate_event` runs
-        // cross-protocol only (`ingress != egress`, enforced by `new`), so a same-protocol
-        // passthrough (which carries the upstream's own frames verbatim) cannot double-emit.
+        // Some dialects emit a frame right after `message_start` (Anthropic's `event: ping`); omitting
+        // it was a fingerprintable tell. The ingress writer decides which frame, if any; this only
+        // places it. `translate_event` runs cross-protocol only, so same-protocol passthrough cannot
+        // double-emit.
         if is_message_start {
             if let Some(frame) = self
                 .ingress
@@ -605,35 +505,29 @@ impl StreamTranslate {
         }
     }
 
-    /// Re-emit a BUFFERED (non-stream) 2xx as the ingress dialect's NATIVE stream. This is the
-    /// "client asked to stream, upstream answered with one JSON body" case: the client's stream
-    /// decoder cannot parse a bare JSON body, so the single translated response is fanned out into
-    /// the event sequence a live stream would have carried (`response_to_ir_events`) and each event
-    /// is driven through the SAME per-event pipeline (`translate_ir_event`) and the same `finish()`
-    /// the live cross-protocol translator uses — identity synthesis, per-ingress framing quirks,
-    /// terminal-usage fold, the `[DONE]` terminator — so the synthesized bytes are what the live path
-    /// would have produced for the equivalent stream. The SSE-framed dialects all take this path; a
-    /// native binary-eventstream ingress (Bedrock) keeps its own writer-side synthesizer and gets
-    /// `None` here. `None` also for an unknown ingress. `translate_cap` is the plane's translation
-    /// cap ([`Self::with_translate_cap`]).
+    /// Re-emit a buffered (non-stream) 2xx as the ingress dialect's native stream, for a client that
+    /// asked to stream when the upstream answered with one JSON body its stream decoder cannot parse.
+    /// The translated response is fanned into the live event sequence (`response_to_ir_events`) and
+    /// driven through the same per-event pipeline (`translate_ir_event`) and `finish()` (identity
+    /// synthesis, framing quirks, terminal-usage fold, `[DONE]`), so the bytes match the live path.
+    /// A native binary-eventstream ingress (Bedrock) keeps its own writer-side synthesizer and gets
+    /// `None`, as does an unknown ingress. `translate_cap` is the plane's translation cap
+    /// ([`Self::with_translate_cap`]).
     pub fn synthesize_from_response(
         host: &dyn busbar_contract::codec::CodecHost,
         ingress: &str,
         ir: &crate::codec::ir::IrResponse,
         translate_cap: usize,
     ) -> Option<Vec<u8>> {
-        // Built with the ingress on both sides: the egress reader is never consulted (the events come
-        // from the IR, not from wire frames), and `same_proto = false` keeps the writer path live —
-        // the verbatim re-emit needs original bytes this path does not have.
+        // Built with the ingress on both sides: the egress reader is not consulted (events come from
+        // the IR) and `same_proto = false` keeps the writer live (verbatim re-emit needs original bytes).
         let mut st = Self::build(ingress, ingress, false)?.with_translate_cap(translate_cap);
         if st.ingress_eventstream {
             return None;
         }
-        // The answer handed in here has already been through the ingress preparation pass, which
-        // reshaped every tool id it carries into the client's native form. The per-event pipeline
-        // below would otherwise reshape them AGAIN, and one reverse decode strips one layer — so the
-        // client would echo back an id the backend never issued and the next turn would be rejected.
-        // Tell the pipeline the ids are already client-facing; everything else it does still applies.
+        // The answer has been through the ingress preparation pass, which already reshaped its tool
+        // ids to the client's form. Reshaping again strips only one layer on reverse decode, so the
+        // client would echo an id the backend never issued. Tell the pipeline they are client-facing.
         st.ir_already_prepared = true;
         let ingress_name = st.ingress.name_static();
         let mut out: Vec<u8> = Vec::new();
@@ -644,11 +538,11 @@ impl StreamTranslate {
         Some(out)
     }
 
-    /// Fold a far-end-reported usage into `last_usage`, the billing source. The ONE per-field
-    /// non-zero/`Some`-wins merge (shared with the terminal-usage fold), so the cross-protocol and
-    /// same-protocol A-taps cannot drift and the DETAIL sub-buckets ride along. Fed by every usage the
-    /// far end reports: the stream-start counts (Anthropic `message_start`) as well as the terminal
-    /// delta, so a stream that ends before its terminal frame bills what was reported so far (#62).
+    /// Fold a far-end-reported usage into `last_usage`, the billing source: the one per-field
+    /// non-zero/`Some`-wins merge (shared with the terminal-usage fold), so the cross- and
+    /// same-protocol A-taps cannot drift and the detail buckets ride along. Fed by every reported
+    /// usage, stream-start counts (Anthropic `message_start`) included, so a stream that ends before
+    /// its terminal frame bills what was reported (#62).
     fn fold_reported_usage(&mut self, reported: &crate::codec::ir::IrUsage) {
         let acc = self
             .last_usage
@@ -656,13 +550,11 @@ impl StreamTranslate {
         merge_trailing_usage(acc, reported);
     }
 
-    /// SAME-PROTOCOL usage side-channel (Change B step 2). Runs ONLY the egress reader + the
-    /// start-usage/backfill/`last_usage` accumulation that `translate_event` does — and NOTHING ELSE
-    /// (no tool-id remap, no identity strip, no writer/fan-out/reframe). The same-proto path re-emits
-    /// the ORIGINAL frame bytes verbatim, so the writer half is pure waste; skipping it keeps the
-    /// short-circuit at-or-below the cost of NOT translating at all (the benchmark gate). The decode
-    /// state still advances (the reader owns it) so multi-frame streams parse correctly, and the A-tap
-    /// `last_usage` is populated by the SAME A-tap accumulation as the cross-protocol `translate_event`.
+    /// Same-protocol usage side-channel (Change B step 2): runs only the egress reader and the
+    /// start-usage/backfill/`last_usage` accumulation of `translate_event`, with no remap, identity
+    /// strip, writer or reframe, since the original bytes re-emit verbatim. That keeps the
+    /// short-circuit at or below the cost of not translating (the benchmark gate). The reader owns
+    /// the decode state, which still advances for multi-frame streams.
     fn extract_usage_only(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -678,10 +570,8 @@ impl StreamTranslate {
                 self.start_usage = Some(u.clone());
                 self.fold_reported_usage(u);
             }
-            // A-tap terminal-error capture (Change A) on the SAME-PROTOCOL path: a reader-emitted
-            // `Error` event is the IR-sourced breaker-failure signal replacing the byte-scanner's
-            // `UsageTap::terminal_error`. Same-proto streams re-emit the original error frame verbatim,
-            // but the breaker/billing arms still need to KNOW the stream ended abnormally, so record it.
+            // A-tap terminal-error capture on the same-protocol path: the original error frame
+            // re-emits verbatim, but the breaker/billing arms still need to know the stream aborted.
             if let crate::codec::ir::IrStreamEvent::Error(err) = &ev {
                 self.terminal_error = Some(
                     err.provider_signal
@@ -690,13 +580,10 @@ impl StreamTranslate {
                 );
             }
             if let crate::codec::ir::IrStreamEvent::MessageDelta { usage, .. } = &ev {
-                // The EXACT accumulation `translate_event` runs: the same start-usage backfill, then
-                // the same one shared Some-wins fold. This arm used to hand-roll a four-field copy of
-                // the totals, which meant the same-protocol A-tap silently discarded every
-                // `IrUsageDetail` bucket the reader had just decoded — so a same-protocol stream
-                // reported no attribution while its buffered twin reported all of it (and a streamed
-                // Cohere call metered the RAW totals where the buffered one meters `billed_units`).
-                // Sharing the fold makes a third accumulation rule impossible to drift.
+                // The exact accumulation `translate_event` runs: start-usage backfill, then the one
+                // shared Some-wins fold. A hand-rolled four-field copy here once discarded every
+                // `IrUsageDetail` bucket, so a same-protocol stream reported no attribution (and a
+                // streamed Cohere call metered RAW totals where buffered meters `billed_units`).
                 let mut trailing = usage.clone();
                 if let Some(start) = &self.start_usage {
                     backfill_from_start_usage(&mut trailing, start);
@@ -706,25 +593,20 @@ impl StreamTranslate {
         }
     }
 
-    /// Write a single IR event through the ingress writer and append its framed bytes to `out`.
-    /// Handles the eventstream-vs-SSE framing split and routes every protocol-specific per-frame
-    /// decision through the [`StreamFraming`] vtable — the ingress writer's framing injects any
-    /// per-frame metrics (a native eventstream usage frame's real latency) and replays per-chunk SSE
-    /// identity — so this emitter branches only on transport (binary frame vs SSE), never on a wire
-    /// event-type or protocol name.
+    /// Write one IR event through the ingress writer and append its framed bytes to `out`. Branches
+    /// only on transport (binary frame vs SSE); every protocol-specific per-frame decision (a native
+    /// usage frame's real latency, per-chunk SSE identity) goes through the [`StreamFraming`] vtable.
     fn emit_ir_event(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
         ev: &crate::codec::ir::IrStreamEvent,
         out: &mut Vec<u8>,
     ) {
-        // Track the IR lifecycle BEFORE the writer runs, NOT after. `write_response_event` returning
-        // `None` does not mean "no block was opened": `gemini/writer.rs`'s ToolUse `BlockStart` arm
-        // returns `None` DELIBERATELY — it buffers (name, args) and emits the single native
-        // `functionCall` part on `BlockStop`. Tracking after the let-else would never record a gemini
-        // tool block, so the terminal drain would never emit its stop, and the buffered call would
-        // never flush: on a truncated cohere->gemini stream the TOOL CALL IS SILENTLY DELETED. Track
-        // the IR intent; let each writer decide the wire projection.
+        // Track the IR lifecycle before the writer runs: `write_response_event` returning `None` does
+        // not mean no block opened. `gemini/writer.rs`'s ToolUse `BlockStart` returns `None` on
+        // purpose (it buffers name/args and emits the `functionCall` part on `BlockStop`); tracking
+        // afterwards would never record it, the terminal drain would not close it, and on a truncated
+        // cohere-to-gemini stream the tool call would be silently deleted. Track the IR intent.
         match ev {
             crate::codec::ir::IrStreamEvent::BlockStart { index, .. } => {
                 self.open_blocks.insert(*index);
@@ -734,19 +616,15 @@ impl StreamTranslate {
             }
             _ => {}
         }
-        // One IR event may frame as MORE than one wire event: the OpenAI Responses writer expands a
-        // single text `BlockStart`/`BlockStop` into the `output_item.added → content_part.added` and
-        // `output_text.done → content_part.done → output_item.done` brackets a strict Responses SDK
-        // requires (see `ProtocolWriter::write_response_events`). Every other writer yields 0 or 1
-        // frame (the default wraps `write_response_event`), so this loop is a no-op change for them.
-        // Each frame is framed INDEPENDENTLY through the same transport/vtable split below.
+        // One IR event may frame as several wire events: the Responses writer expands a text
+        // `BlockStart`/`BlockStop` into the content-part brackets a strict SDK requires
+        // (`ProtocolWriter::write_response_events`). Other writers yield 0 or 1. Each frame goes
+        // through the transport/vtable split below independently.
         for (out_et, mut out_data) in self.ingress.writer().write_response_events(host, ev) {
             if self.ingress_eventstream {
-                // ingress is a native AWS SDK Bedrock client: pack the logical event into a binary
-                // `application/vnd.amazon.eventstream` frame with valid CRC32. Per-frame protocol metrics
-                // (a native usage frame's real latency) are injected through the framing vtable, so this
-                // agnostic emitter names no wire event-type of its own.
-                // u128 -> u64 for JSON; saturate (elapsed never realistically exceeds u64 ms).
+                // Bedrock-ingress client: pack the event into a binary eventstream frame (valid
+                // CRC32). Per-frame metrics (a usage frame's real latency) come through the framing
+                // vtable. u128 to u64 for JSON, saturating.
                 let elapsed_ms = self
                     .started_at
                     .zip(host.monotonic_ns())
@@ -754,19 +632,15 @@ impl StreamTranslate {
                 self.framing
                     .inject_streaming_metrics(&out_et, &mut out_data, elapsed_ms);
                 let payload = crate::codec::json::to_vec(&out_data).unwrap_or_default();
-                // Bedrock-INGRESS usage (Change A): the usage carried by this frame was already accumulated
-                // into `last_usage` by `translate_event`/`extract_usage_only` from the structured IR event,
-                // BEFORE this writer ran — so billing reads `usage()` and no longer needs the pre-encode
-                // JSON side-channel the deleted byte-scanner consumed. Just encode the binary frame.
+                // Usage in this frame was already accumulated into `last_usage` from the IR event
+                // before the writer ran, so billing needs no pre-encode side channel. Just encode.
                 out.extend_from_slice(&crate::codec::eventstream::encode_frame(&out_et, &payload));
             } else {
-                // EGRESS-CHUNK framing seam: the OpenAI per-chunk identity replay AND the
-                // include_usage trailing-usage un-fold now live behind the framing vtable. The framing
-                // mutates the chunk in place (latch/replay id/created/model) and, when it is a usage-bearing
-                // finish chunk, returns a separate trailing usage-only chunk to frame after it — preserving
-                // the exact two-frame order. PassthroughFraming is inert (no mutation, returns `None`), so
-                // every non-OpenAI ingress is untouched. The `[DONE]` terminator stays a separate `finish()`
-                // literal — only the chunk-identity + trailing-usage logic moved here.
+                // Egress-chunk framing seam: the OpenAI per-chunk identity replay and `include_usage`
+                // trailing-usage un-fold live behind the framing vtable. It mutates the chunk in place
+                // and, for a usage-bearing finish chunk, returns a trailing usage-only chunk to frame
+                // after it (two-frame order preserved). `PassthroughFraming` is inert. The `[DONE]`
+                // terminator stays a separate `finish()` literal.
                 if let Some(trailing) = self.framing.on_egress_chunk(&mut out_data) {
                     write_sse_frame(out, &out_et, &out_data);
                     write_sse_frame(out, &out_et, &trailing);
@@ -777,9 +651,8 @@ impl StreamTranslate {
         }
     }
 
-    /// Close every block the egress reader left open. `mem::take` FIRST so the re-entrant
-    /// `emit_ir_event` calls cannot re-insert, which also makes this idempotent. `BTreeSet` iterates
-    /// ascending, so closes go out in index order.
+    /// Close every block the egress reader left open. `mem::take` first so re-entrant
+    /// `emit_ir_event` calls cannot re-insert (idempotent). `BTreeSet` order gives ascending indices.
     fn close_open_blocks(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -794,28 +667,22 @@ impl StreamTranslate {
         }
     }
 
-    /// Hard cap on the reassembly buffer. An upstream that streams bytes without ever emitting a
-    /// frame terminator must not grow `buf` indefinitely (memory-exhaustion DoS). DEFINED as
-    /// `eventstream::MAX_FRAME_BYTES` (a single source of truth) so any single frame the binary
-    /// decoder is willing to assemble can be buffered to completion here — a smaller cap would
-    /// silently abort an oversized-but-decoder-legal frame before `drain_frames` ever saw it, and a
-    /// divergence between the two literals (the previous hand-copied `16 * 1024 * 1024`) would
-    /// reintroduce that bug with no compile-time signal. Far larger than any legitimate single SSE /
-    /// event-stream frame from a chat completion.
+    /// Hard cap on the reassembly buffer, so an upstream that never emits a frame terminator cannot
+    /// exhaust memory. Defined as `eventstream::MAX_FRAME_BYTES` (single source of truth): a smaller
+    /// cap would abort a frame the binary decoder accepts before `drain_frames` saw it, and
+    /// diverging literals would reintroduce that with no compile-time signal.
     pub const MAX_BUF: usize = crate::codec::eventstream::MAX_FRAME_BYTES;
 
-    /// Feed a chunk of EGRESS SSE bytes; return translated INGRESS SSE bytes for whatever
-    /// COMPLETE frames are now available (empty if only a partial frame is buffered). Once the
-    /// reassembly buffer exceeds [`Self::MAX_BUF`] with no complete frame the stream is abandoned
-    /// and all further input is ignored.
+    /// Feed a chunk of egress SSE bytes; return translated ingress bytes for the complete frames now
+    /// available (empty for a partial frame). Past [`Self::MAX_BUF`] with no complete frame the
+    /// stream is abandoned and further input ignored.
     pub fn feed(&mut self, host: &dyn busbar_contract::codec::CodecHost, chunk: &[u8]) -> Vec<u8> {
         self.feed_borrowed(host, chunk).into_owned()
     }
 
-    /// [`Self::feed`], BORROWING where it can. A same-protocol SSE piece that arrives on a frame
-    /// boundary (nothing buffered from the previous piece) and needs no edit is answered as its own
-    /// complete frames, `chunk[..consumed]`, with no copy; only an unterminated tail is copied into
-    /// the reassembly buffer.
+    /// [`Self::feed`], borrowing where it can: a same-protocol SSE piece on a frame boundary
+    /// (nothing buffered) needing no edit is answered as `chunk[..consumed]` with no copy; only an
+    /// unterminated tail is copied into the reassembly buffer.
     pub fn feed_borrowed<'a>(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -824,17 +691,15 @@ impl StreamTranslate {
         if self.aborted {
             return Cow::Borrowed(&[]);
         }
-        // Stamp the stream's start on the first byte fed, on the host's monotonic clock, so a
-        // Bedrock-INGRESS `metadata` frame can report a real `metrics.latencyMs` (elapsed since the
-        // stream began) instead of a tell-tale hard-coded 0. One host read per stream.
+        // Stamp the stream start on the first byte, on the host's monotonic clock, so a Bedrock-ingress
+        // `metadata` frame reports a real `metrics.latencyMs`. One host read per stream.
         if self.started_at.is_none() && self.ingress_eventstream {
             self.started_at = host.monotonic_ns();
         }
         if self.egress_eventstream {
             return Cow::Owned(self.feed_eventstream(host, chunk));
         }
-        // The reassembly buffer is taken out for the drain, so the frames it borrows can be read
-        // while the readers' state advances.
+        // The buffer is taken out for the drain so its borrowed frames can be read while reader state advances.
         let mut buf = std::mem::take(&mut self.buf);
         let fresh = buf.is_empty();
         let (consumed, edited) = if fresh {
@@ -848,7 +713,7 @@ impl StreamTranslate {
             None if fresh => Cow::Borrowed(&chunk[..consumed]),
             None => Cow::Owned(buf[..consumed].to_vec()),
         };
-        // Keep only the unterminated tail: the consumed prefix is reclaimed in one shift (linear).
+        // Keep only the unterminated tail: the consumed prefix is reclaimed in one linear shift.
         if fresh {
             buf.extend_from_slice(&chunk[consumed..]);
         } else {
@@ -862,9 +727,9 @@ impl StreamTranslate {
         out
     }
 
-    /// Egress is binary AWS event-stream framing (Bedrock ConverseStream). The event name lives in
-    /// the frame's `:event-type` header, not the JSON payload; the Bedrock reader keys off a `type`
-    /// field, so the header is folded into the payload.
+    /// Egress is binary AWS event-stream framing (Bedrock ConverseStream). The event name is in the
+    /// `:event-type` header, not the payload; the Bedrock reader keys off a `type` field, so the
+    /// header is folded into the payload.
     fn feed_eventstream(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -872,21 +737,15 @@ impl StreamTranslate {
     ) -> Vec<u8> {
         self.buf.extend_from_slice(chunk);
         let mut out: Vec<u8> = Vec::new();
-        // `drain_frames_checked` (not the discarding `drain_frames` wrapper), so a MALFORMED EGRESS
-        // PRELUDE — an out-of-range `total_len` / oversized `headers_len` from a corrupt or
-        // adversarial Bedrock stream — surfaces as the EXPLICIT `DrainStatus::MalformedPrelude` abort
-        // signal rather than being silently swallowed (the decoder clears the buffer and stops, which
-        // a length-only check could not tell apart from a clean full drain).
+        // `drain_frames_checked` (not the discarding `drain_frames`) so a malformed egress prelude
+        // (out-of-range `total_len` / oversized `headers_len`) surfaces as an explicit
+        // `DrainStatus::MalformedPrelude` abort, not a silent clear-and-stop.
         //
-        // SAME-PROTOCOL bedrock→bedrock re-emits the ORIGINAL binary frame bytes verbatim — NEVER
-        // re-encoded: `encode_frame` would recompute the length-prefix and CRC32, and any divergence
-        // (key ordering, float formatting, whitespace) from the upstream's exact bytes is an
-        // undecodable frame for a native AWS SDK. The drain collects the verbatim bytes of each
-        // COMPLETE valid frame DIRECTLY into `out` via the `consumed_sink` (in frame order), so the
-        // re-emit costs only the consumed bytes, never a per-chunk clone of the whole buffer; the
-        // sink never receives a cleared malformed-prelude remainder, so the client never gets
-        // undecodable garbage ahead of the synthesized exception frame. Cross-protocol the sink is
-        // `None` (the bytes are re-encoded by `translate_event`).
+        // Same-protocol bedrock-to-bedrock re-emits the original frame bytes verbatim, never
+        // re-encoded: `encode_frame` recomputes length and CRC32 and any divergence (key order,
+        // float formatting) makes an undecodable frame for an AWS SDK. The drain writes each complete
+        // valid frame's bytes straight into `out` via `consumed_sink` (no per-chunk clone), and never
+        // a cleared malformed-prelude remainder. Cross-protocol the sink is `None`.
         let (frames, status, _valid_consumed) = crate::codec::eventstream::drain_frames_checked(
             &mut self.buf,
             if self.same_proto {
@@ -896,8 +755,8 @@ impl StreamTranslate {
             },
         );
         for (event_type, payload) in frames {
-            // Same-proto: the frame's bytes are already out; its payload is read only when its
-            // event type can carry the stream's usage or failure.
+            // Same-proto: the frame's bytes are already out; the payload is read only if its event
+            // type can carry usage or failure.
             if self.same_proto && !self.egress.reader().same_proto_reads(&event_type, &payload) {
                 continue;
             }
@@ -911,16 +770,14 @@ impl StreamTranslate {
                 );
             }
             if self.same_proto {
-                // Same-proto: run ONLY the reader + usage accumulation (`extract_usage_only`) — the
-                // writer/reframe half would be discarded, so skip it.
+                // Same-proto: run only the reader and usage accumulation (`extract_usage_only`).
                 self.extract_usage_only(host, &event_type, &data);
             } else {
                 self.translate_event(host, &event_type, &data, &mut out);
             }
         }
-        // A malformed prelude is unrecoverable: abandon the stream exactly like the MAX_BUF
-        // overflow path so the terminal exception frame is emitted by `finish()` (the `aborted`
-        // flag drives that branch). Without this the stream would silently truncate.
+        // A malformed prelude is unrecoverable: abandon the stream like the MAX_BUF overflow so
+        // `finish()` emits the terminal exception frame (driven by `aborted`), not a silent truncation.
         if status == crate::codec::eventstream::DrainStatus::MalformedPrelude
             || self.buf.len() > Self::MAX_BUF
         {
@@ -929,22 +786,19 @@ impl StreamTranslate {
         out
     }
 
-    /// Drain every complete blank-line-delimited SSE frame of `src` (the reassembly buffer, or a
-    /// piece that arrived on a frame boundary). Cross-protocol each frame is translated; same-protocol
-    /// each is read only for the usage side-channel ([`super::proto_codec::ProtocolReader::same_proto_reads`] skips the
-    /// rest unparsed) and re-emitted VERBATIM — the client sees the upstream SSE stream byte-for-byte
-    /// (comments, keepalives, `[DONE]`, the exact `event:`/`data:` line shape and terminator),
-    /// except a frame the ingress framing edits ([`StreamFraming::same_proto_edit`]). Answers how many
-    /// bytes of `src` were complete frames, and the bytes the caller reads: `None` when those are
-    /// exactly `src[..consumed]` (a same-protocol run nothing edited).
+    /// Drain every complete blank-line-delimited SSE frame of `src` (the buffer, or a piece on a
+    /// frame boundary). Cross-protocol each frame is translated; same-protocol each is read only for
+    /// the usage side channel ([`super::proto_codec::ProtocolReader::same_proto_reads`] skips the
+    /// rest unparsed) and re-emitted verbatim, byte for byte (comments, keepalives, `[DONE]`, line
+    /// shape, terminator), except a frame the ingress framing edits
+    /// ([`StreamFraming::same_proto_edit`]). Returns how many bytes of `src` were complete frames,
+    /// and the bytes the caller reads: `None` when those are exactly `src[..consumed]`.
     ///
-    /// Both the LF-LF and the spec-legal CRLF (and bare-CR) terminators are recognized — some
-    /// gateways / CDNs in front of model APIs emit CRLF SSE, which an LF-only scanner would buffer
-    /// until MAX_BUF and silently abort. `consumed` is a FRONT cursor: each complete frame advances
-    /// it (the caller reclaims the prefix ONCE). The search floor is `consumed` — NEVER below it (a
-    /// sub-`consumed` start would re-find the terminator just consumed: an empty frame and an
-    /// infinite loop); the 3-byte backup (a CRLF terminator straddling the previous chunk boundary)
-    /// and the `scanned` skip (no rescan of a frame split across many feeds) apply only above it.
+    /// LF-LF, CRLF and bare-CR terminators are all recognized (CRLF SSE from gateways/CDNs would
+    /// otherwise buffer to MAX_BUF and abort). `consumed` is a front cursor the caller reclaims once.
+    /// The search floor is `consumed`, never below it (that re-finds the consumed terminator: an
+    /// empty frame and an infinite loop); the 3-byte backup (a CRLF split across chunks) and the
+    /// `scanned` skip apply only above it.
     fn drain_sse(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -952,7 +806,7 @@ impl StreamTranslate {
     ) -> (usize, Option<Vec<u8>>) {
         let mut consumed = 0usize;
         let mut out: Vec<u8> = Vec::new();
-        // Same-protocol: the start of the not-yet-flushed verbatim run, split only by an edited frame.
+        // Same-protocol: start of the not-yet-flushed verbatim run, split only by an edited frame.
         let mut emit_from = 0usize;
         let mut edited = !self.same_proto;
         loop {
@@ -969,8 +823,8 @@ impl StreamTranslate {
                 continue; // no data: line, or non-utf8 — skip
             };
             if data.is_empty() || data == SSE_DONE_SENTINEL {
-                // egress terminator/keepalive — ingress terminator is finish()'s. Carries no usage on
-                // any current protocol (its bytes still re-emit verbatim same-protocol).
+                // Egress terminator/keepalive (ingress's is `finish()`'s). Carries no usage on any
+                // current protocol; still re-emitted verbatim same-protocol.
                 continue;
             }
             if !self.same_proto {
@@ -994,10 +848,9 @@ impl StreamTranslate {
                 };
                 self.extract_usage_only(host, event_type, &value);
             }
-            // The framing's edit (an opted-out OpenAI client: the unsolicited trailing usage chunk
-            // dropped, the forced `"usage":null` stripped) applies only to a payload that parses;
-            // one that does not is relayed as it came. Flush the verbatim run up to this frame,
-            // emit its edit, and resume the run after it.
+            // The framing's edit (for an opted-out OpenAI client: drop the unsolicited trailing usage
+            // chunk, strip the forced `"usage":null`) applies only to a payload that parses; others
+            // relay as they came. Flush the verbatim run, emit the edit, resume after it.
             let edit = self.framing.same_proto_edit(data.as_bytes());
             if edit == SameProtoEdit::Keep
                 || (!reads
@@ -1018,58 +871,45 @@ impl StreamTranslate {
         (consumed, edited.then_some(out))
     }
 
-    /// True once this translator abandoned its stream — the reassembly buffer grew past
-    /// [`Self::MAX_BUF`] without a frame terminator, or a malformed egress event-stream prelude was
-    /// hit (`abort`), so the happy-path terminal events were never produced and every subsequent
-    /// `feed` is a no-op.
+    /// True once this translator abandoned its stream (reassembly buffer past [`Self::MAX_BUF`] with
+    /// no terminator, or a malformed egress event-stream prelude), so the happy-path terminal events
+    /// were never produced and further `feed`s are no-ops.
     ///
-    /// On the SSE-ingress path `finish()` already surfaces this abort as the ingress protocol's
-    /// native in-band error frame. On the GEMINI JSON-ARRAY ingress path the close arm normally FEEDS
-    /// `finish()`'s tail THROUGH [`GeminiJsonArrayFramer::feed`] (so the terminal usage frame is
-    /// delivered as a trailing array element) and then closes with
-    /// [`GeminiJsonArrayFramer::finish_for_translate`]. But on an ABORT the SSE `finish()` bytes are an
-    /// error frame that cannot ride inside a JSON-array body, so the tail is NOT fed through; the
-    /// framer's OWN `aborted` flag is also unset (the translate simply stopped feeding it bytes), so a
-    /// bare `]` would silently swallow the truncation. This accessor lets that close path observe the
-    /// translate-side abort and emit the framer error-close instead, mirroring the SSE-ingress
-    /// terminal-error behavior in `finish()`.
-    ///
-    /// Production wiring lives in `proxy engine`: the `FirstByteBody` `Poll::Ready(None)` JSON-array
-    /// close arm reads `translate.aborted()` and passes it to
-    /// `framer.finish_for_translate(translate_aborted)` so an aborted gemini-json-array stream
-    /// surfaces a native error element instead of a bare close.
+    /// SSE ingress: `finish()` already surfaces the abort as the native in-band error frame. Gemini
+    /// JSON-array ingress: the close arm normally feeds `finish()`'s tail through
+    /// [`GeminiJsonArrayFramer::feed`] then calls [`GeminiJsonArrayFramer::finish_for_translate`], but
+    /// on abort the SSE bytes are an error frame that cannot ride inside a JSON array, and the
+    /// framer's own `aborted` flag is unset (translate just stopped feeding), so a bare `]` would
+    /// swallow the truncation. This accessor lets the close path emit the framer error-close.
+    /// Wired in `proxy engine`: the `FirstByteBody` `Poll::Ready(None)` JSON-array close arm passes
+    /// `translate.aborted()` to `framer.finish_for_translate(translate_aborted)`.
     pub fn aborted(&self) -> bool {
         self.aborted
     }
 
-    /// The terminal IR-derived usage accumulated for this stream (the Change A "A-tap" value), or
-    /// `None` if no usage-bearing terminal event was seen. PRODUCTION billing source (Change A step 3):
-    /// the `FirstByteBody` stream-end arm reads this for the per-request token fee instead of the
-    /// deleted `UsageTap` byte-scanner. Populated by `translate_event` / `extract_usage_only` AFTER the
-    /// Anthropic start-usage backfill, so it carries the TERMINAL prompt+completion counts. See the
-    /// `last_usage` field.
+    /// The terminal IR-derived usage (Change A "A-tap"), or `None` if no usage-bearing terminal event
+    /// was seen. The production billing source: the `FirstByteBody` stream-end arm reads it for the
+    /// per-request token fee. Populated by `translate_event` / `extract_usage_only` after the
+    /// Anthropic start-usage backfill. See the `last_usage` field.
     pub fn usage(&self) -> Option<&crate::codec::ir::IrUsage> {
         self.last_usage.as_ref()
     }
 
-    /// The terminal stream ERROR message, or `None` for a clean stream (Change A). The IR-sourced
-    /// replacement for `UsageTap::terminal_error`: the `FirstByteBody` stream-end arm reads this to
-    /// decide breaker disposition (a non-`None` value records a breaker transient and suppresses token
-    /// billing). Set when a reader emits an [`crate::codec::ir::IrStreamEvent::Error`]. See `terminal_error`.
+    /// The terminal stream error message, or `None` for a clean stream (Change A). The
+    /// `FirstByteBody` stream-end arm reads it for breaker disposition (non-`None` records a breaker
+    /// transient and suppresses token billing). Set when a reader emits an
+    /// [`crate::codec::ir::IrStreamEvent::Error`]. See `terminal_error`.
     pub fn terminal_error(&self) -> Option<&str> {
         self.terminal_error.as_deref()
     }
 
-    /// Frame a TERMINAL mid-stream error through the LIVE ingress writer this translator has been
-    /// driving since the first frame — the writer that latched this stream's identity. The transport
-    /// path used to resolve a FRESH writer from the dialect registry for this frame, which restarts
-    /// every per-stream cell the ingress writer owns: on a Responses ingress the failure event then
-    /// carries `sequence_number: 0` (behind, not after, every frame the client already read) and a
-    /// response id unrelated to the `response.created` the SDK opened on, so a strict decoder cannot
-    /// reconcile the failure with the stream it is holding. Asking the live writer replays the latched
-    /// identity and advances the same counter, exactly as the in-band abort frame `finish()` emits
-    /// already does. `None` when the ingress writer frames no in-band error; the caller then falls
-    /// back to the dialect seam.
+    /// Frame a terminal mid-stream error through the live ingress writer this translator has driven
+    /// since the first frame, the one that latched the stream's identity. A fresh writer from the
+    /// registry restarts every per-stream cell: on a Responses ingress the failure would carry
+    /// `sequence_number: 0` and an unrelated response id, which a strict decoder cannot reconcile.
+    /// The live writer replays the latched identity and advances the same counter, as the in-band
+    /// abort frame from `finish()` does. `None` when the writer frames no in-band error; the caller
+    /// falls back to the dialect seam.
     pub fn terminal_error_frame(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -1078,12 +918,11 @@ impl StreamTranslate {
         self.ingress.writer().write_error_frame(host, err)
     }
 
-    /// Abandon the stream as unrecoverable: release the reassembly buffer, set `aborted` so every
-    /// subsequent `feed()` is a no-op, and let `finish()` emit the ingress-native terminal error
-    /// frame. The two abandonment triggers are a reassembly buffer that grew past [`Self::MAX_BUF`]
-    /// without a frame terminator, and a malformed egress event-stream prelude
-    /// ([`crate::codec::eventstream::DrainStatus::MalformedPrelude`]); both must surface an error, never a
-    /// silent truncation.
+    /// Abandon the stream as unrecoverable: release the reassembly buffer, set `aborted` so further
+    /// `feed()` is a no-op, and let `finish()` emit the ingress-native terminal error frame. Triggers
+    /// are a buffer past [`Self::MAX_BUF`] without a terminator and a malformed egress event-stream
+    /// prelude ([`crate::codec::eventstream::DrainStatus::MalformedPrelude`]); both must surface an
+    /// error, never a silent truncation.
     fn abort(&mut self) {
         self.aborted = true;
         self.buf.clear();
@@ -1091,45 +930,34 @@ impl StreamTranslate {
         self.scanned = 0;
     }
 
-    /// Call once at end-of-stream. Returns the INGRESS terminator (OpenAI → `data: [DONE]\n\n`,
-    /// Anthropic → empty: its `message_stop` event already carries termination).
+    /// Call once at end-of-stream. Returns the ingress terminator (OpenAI: `data: [DONE]\n\n`;
+    /// Anthropic: empty, `message_stop` already terminates).
     pub fn finish(&mut self, host: &dyn busbar_contract::codec::CodecHost) -> Vec<u8> {
         let mut out: Vec<u8> = Vec::new();
-        // Bedrock-INGRESS abort path: the SSE reassembly buffer overflowed `MAX_BUF` without a frame
-        // terminator (a malformed/adversarial upstream that never emits `\n\n`), so the translator was
-        // abandoned and no `messageStop`/`metadata` was ever translated. A bare TCP close with neither
-        // a terminal `:message-type: exception` frame nor `metadata` is structurally impossible from a
-        // real ConverseStream endpoint (it ALWAYS ends with messageStop+metadata or an exception
-        // frame) — a protocol-indistinguishability tell, and it leaves an AWS SDK keying on the final
-        // exception/metadata event in an ambiguous state. Emit a modeled `InternalServerException`
-        // frame so the close is well-formed for the native decoder, mirroring the inner-stream
-        // transport-error path in proxy engine (`mid_stream_error_bytes`, also keyed off
-        // `ingress_eventstream`). This is the only terminator on an aborted stream, so return early.
+        // Bedrock-ingress abort: the buffer overflowed `MAX_BUF` with no terminator, so no
+        // `messageStop`/`metadata` was translated. A real ConverseStream always ends with
+        // messageStop+metadata or an exception frame, so a bare close is a tell and leaves an SDK in
+        // an ambiguous state. Emit a modeled `InternalServerException` frame, mirroring the
+        // transport-error path in proxy engine (`mid_stream_error_bytes`). The only terminator on an
+        // aborted stream, so return early.
         if self.aborted {
-            // The shared abort detail (see `STREAM_ABORT_DETAIL`) so the text a client sees is
-            // identical across this Bedrock-eventstream path and proxy engine's SSE/forward abort path.
+            // The shared abort detail (`STREAM_ABORT_DETAIL`) keeps the client-visible text identical
+            // to proxy engine's SSE/forward abort path.
             const ABORT_DETAIL: &str = STREAM_ABORT_DETAIL;
             if let Some(exc_type) = self.framing.abort_exception_type() {
-                // The ingress framing owns the wire exception TYPE name (Bedrock →
-                // `InternalServerException`); this agnostic translator names none. `Some` here is the
-                // eventstream-ingress abort signal (equivalent to the prior `ingress_eventstream` gate,
-                // which only Bedrock sets).
+                // The ingress framing owns the wire exception type name (Bedrock:
+                // `InternalServerException`); `Some` here is the eventstream-ingress abort signal.
                 out.extend_from_slice(&crate::codec::eventstream::encode_exception_frame(
                     exc_type,
                     ABORT_DETAIL,
                 ));
                 return out;
             }
-            // SSE-INGRESS abort path (openai/anthropic/gemini/cohere/responses): the reassembly buffer
-            // overflowed `MAX_BUF` without a frame terminator, so the translator was abandoned and the
-            // happy-path terminal events (`message_stop`/finish chunk/…) were never produced. Returning
-            // a bare close here leaves the SSE client with a SILENTLY-TRUNCATED stream and NO terminal /
-            // error frame — indistinguishable from a successful short completion, so a native SDK
-            // believes it received the whole answer. Emit the ingress protocol's NATIVE streaming error
-            // frame so the truncation is signaled in-band, mirroring `proxy::mid_stream_error_bytes`'s
-            // SSE branch (the same `write_response_event(&IrStreamEvent::Error(..))` path, framed by
-            // `emit_ir_event` exactly as every other event on this stream). `emit_ir_event` takes the
-            // non-eventstream branch here (`ingress_eventstream` is false), so this stays SSE text.
+            // SSE-ingress abort: the buffer overflowed `MAX_BUF`, so the happy-path terminal events
+            // were never produced. A bare close would look like a successful short completion, so emit
+            // the ingress protocol's native in-band error frame (the same
+            // `write_response_event(&IrStreamEvent::Error(..))` path as `proxy::mid_stream_error_bytes`'s
+            // SSE branch), framed as SSE text by `emit_ir_event`.
             let err = IrError {
                 class: busbar_contract::upstream::StatusClass::ServerError,
                 provider_signal: Some(ABORT_DETAIL.to_string()),
@@ -1137,47 +965,37 @@ impl StreamTranslate {
             };
             let ev = crate::codec::ir::IrStreamEvent::Error(err);
             self.emit_ir_event(host, &ev, &mut out);
-            // OpenAI ingress still terminates with `data: [DONE]\n\n` after the error frame, matching a
-            // genuine OpenAI stream (the error event is an in-band `data:` chunk, not the terminator).
+            // OpenAI ingress still ends with `data: [DONE]\n\n` after the error frame, as a genuine
+            // stream does (the error is an in-band `data:` chunk, not the terminator).
             if self.emit_done {
                 out.extend_from_slice(SSE_DONE_FRAME);
             }
             return out;
         }
-        // SAME-PROTOCOL verbatim mode: the upstream's OWN native terminator (`[DONE]`, the final
-        // bedrock `metadata`/`messageStop` frame, etc.) already rode through `feed` byte-for-byte, so
-        // `finish` must add NOTHING on the happy path — appending a synthetic `[DONE]` or a deferred
-        // `metadata` frame here would duplicate the terminator and corrupt the verbatim stream. The
-        // abort branch above still fires (a truncated same-proto stream must surface an in-band error),
-        // and the IR pipeline never ran its terminator-emitting fan-out into `out` for same-proto.
+        // Same-protocol verbatim mode: the upstream's own terminator (`[DONE]`, the final bedrock
+        // frames) already rode through `feed`, so `finish` adds nothing on the happy path (a synthetic
+        // one would duplicate it). The abort branch above still fires so a truncated stream surfaces
+        // an in-band error.
         if self.same_proto {
             return out;
         }
-        // INV-A: close any block the egress reader left open going into `finish()` — the truncation
-        // case (no terminal frame ever arrived, so the `translate_event` drain never ran) and the
-        // reader-terminal-branch-does-not-drain-everything case (cohere `message-end` closes only
-        // text; `open_tools` is deliberately never drained, so tool blocks reach here still open).
-        // Unconditional and BEFORE `framing.on_finish()`: v1 placed this at the `pending_terminal`
-        // flush below, which is dead code for this case — `pending_terminal` is only set when
-        // `folds_terminal_usage()` is true, and both bedrock and openai_chat return `false`.
+        // INV-A: close any block the egress reader left open, before `framing.on_finish()`: on
+        // truncation no terminal frame arrived, and some readers' terminal branches do not drain every
+        // block (cohere `message-end` closes only text; `open_tools` is never drained). Unconditional;
+        // the `pending_terminal` flush below is dead for these because `pending_terminal` is only set
+        // when `folds_terminal_usage()` is true, which bedrock and openai_chat do not.
         self.close_open_blocks(host, &mut out);
-        // FINISH framing seam: if the ingress framing deferred a `metadata` frame that was
-        // never resolved (the Bedrock-ingress zero-usage stop with no trailing usage delta — the
-        // default OpenAI streaming case), it returns the single best-effort zero-usage event to flush
-        // here. A genuine Bedrock ConverseStream ALWAYS ends with a `metadata` frame; emitting a
-        // zero-usage one is far closer to native than omitting it (which loses the AWS SDK's
-        // `ConverseStreamMetadataEvent` callback and is a deterministic proxy tell). PassthroughFraming
-        // returns `None`, so non-Bedrock ingress flushes nothing.
+        // Finish framing seam: a `metadata` frame the ingress framing deferred and never resolved
+        // (Bedrock-ingress zero-usage stop with no trailing usage delta, the default OpenAI streaming
+        // case) is flushed here as one best-effort zero-usage event. A real ConverseStream always ends
+        // with `metadata`, so this is closer to native than omitting it. `PassthroughFraming` returns `None`.
         if let Some(trailing) = self.framing.on_finish() {
             self.emit_ir_event(host, &trailing, &mut out);
         }
-        // TERMINAL-USAGE FOLD flush (SSE ingress): the terminal `message_delta` was deferred during
-        // `feed` so a trailing usage-only chunk could be merged into it (see `folds_terminal_usage`).
-        // Emit it now — with the merged usage — followed by its `MessageStop`. On a stream that never
-        // sent a trailing usage chunk this simply emits the terminal frame with the usage it already
-        // had, just deferred to end-of-stream (nothing follows a stop, so ordering is unchanged). The
-        // response body feeds this `finish()` output through the json-array framer too, so the terminal
-        // frame reaches the client on the gemini-json-array path as well as plain SSE.
+        // Terminal-usage fold flush (SSE ingress): the terminal `message_delta` deferred in `feed`
+        // (see `folds_terminal_usage`) is emitted now with the merged usage, then its `MessageStop`.
+        // Without a trailing usage chunk it is just the terminal frame deferred to end of stream
+        // (nothing follows a stop). The body feeds this output through the json-array framer too.
         if let Some((reason, stop_sequence, usage, stop_detail)) = self.pending_terminal.take() {
             self.emit_ir_event(
                 host,
@@ -1204,13 +1022,11 @@ impl StreamTranslate {
     }
 }
 
-/// Fan a whole (buffered) response out into the IR event sequence a live stream of the same
-/// completion carries: one `MessageStart`, then per content block a `BlockStart`, its delta(s) and a
-/// `BlockStop`, then the terminal `MessageDelta` (stop reason + usage) and `MessageStop`. Mirrors
-/// the per-block framing every reader's `read_response_events` produces, so the ingress writer sees
-/// the same shape it sees on the live path. Block indices advance only for blocks that emit events
-/// (a tool result / image / media / raw-JSON block has no streamed analog and is skipped without
-/// spending an index, so the synthesized stream has no gaps a native one would never have).
+/// Fan a whole (buffered) response out into the IR events a live stream of the same completion
+/// carries: `MessageStart`, per block a `BlockStart`, delta(s) and `BlockStop`, then the terminal
+/// `MessageDelta` and `MessageStop`, so the ingress writer sees the live-path shape. Indices advance
+/// only for blocks that emit events (tool result / image / media / raw JSON have no streamed analog
+/// and are skipped), so the stream has no gaps a native one would not.
 pub fn response_to_ir_events(
     ir: &crate::codec::ir::IrResponse,
 ) -> Vec<crate::codec::ir::IrStreamEvent> {
@@ -1218,7 +1034,7 @@ pub fn response_to_ir_events(
     let mut events: Vec<IrStreamEvent> = Vec::new();
     events.push(IrStreamEvent::MessageStart {
         role: ir.role,
-        // Usage rides the terminal delta, as it does for every egress that reports it in one place.
+        // Usage rides the terminal delta.
         usage: None,
         id: ir.id.clone(),
         created: ir.created,
@@ -1234,7 +1050,7 @@ pub fn response_to_ir_events(
                 refusal,
                 ..
             } => {
-                // A refusal message stays a refusal on the synthesized stream (IR-02).
+                // A refusal message stays a refusal (IR-02).
                 events.push(IrStreamEvent::BlockStart {
                     index,
                     block: IrBlockMeta::Text,
@@ -1250,7 +1066,7 @@ pub fn response_to_ir_events(
                         delta: IrDelta::CitationsDelta(citations.clone()),
                     });
                 }
-                // Per-token logprobs belong to the generated text; attach them to the first text block.
+                // Per-token logprobs belong to the generated text: attached to the first text block.
                 if logprobs_pending {
                     logprobs_pending = false;
                     events.push(IrStreamEvent::BlockDelta {
@@ -1316,17 +1132,16 @@ pub fn response_to_ir_events(
                 events.push(IrStreamEvent::BlockStop { index });
                 index += 1;
             }
-            // Generated media rides the stream AFTER the other blocks (IR-21, below).
+            // Generated media rides the stream after the other blocks (IR-21, below).
             IrBlock::Image { .. } | IrBlock::Media { .. } => {}
-            // No streamed analog: skipped without spending an index. Enumerated explicitly so a new
-            // block kind is a compile error here rather than silent data loss.
+            // No streamed analog: skipped without spending an index. Listed explicitly so a new block
+            // kind fails to compile.
             IrBlock::ToolResult { .. } | IrBlock::Json(_) | IrBlock::HostedToolRecord { .. } => {}
         }
     }
-    // IR-21: a GENERATED image / audio part (a Bedrock response `image`, a
-    // Gemini `inlineData`) streams whole as `MediaDelta` in its own block. These blocks TRAIL the
-    // answer's other blocks, so a client dialect that has no streamed media (and emits no frame for
-    // the block) still sees contiguous block indices.
+    // IR-21: a generated image / audio part (a Bedrock `image`, a Gemini `inlineData`) streams whole
+    // as `MediaDelta` in its own block, trailing the other blocks so a dialect with no streamed
+    // media still sees contiguous indices.
     for block in ir.content.iter() {
         if matches!(block, IrBlock::Image { .. } | IrBlock::Media { .. }) {
             events.push(IrStreamEvent::BlockStart {
@@ -1342,7 +1157,7 @@ pub fn response_to_ir_events(
             index += 1;
         }
     }
-    // A completion that called a tool stops for `tool_use` when the upstream body named no reason.
+    // A completion that called a tool stops for `tool_use` when the upstream named no reason.
     let default_stop = if ir
         .content
         .iter()
@@ -1362,14 +1177,12 @@ pub fn response_to_ir_events(
     events
 }
 
-/// Registry-resolved streaming-translator factory — the SINGLE construction seam both the hot
-/// (`engine/mod.rs`) and degraded (`engine/walk.rs`) forward paths call, so their translator wiring
-/// cannot drift. Resolves the ingress→egress pair through the registry via [`StreamTranslate`]:
-/// same-protocol builds the verbatim same-proto translator (byte-exact re-emit + IR usage A-tap);
-/// cross-protocol builds the reframing translator. Returns `None` (legacy raw passthrough) when the
-/// response is not an incremental stream (`!is_sse`), or for an unknown protocol with no reader to
-/// drive the IR. Byte-identical to the two inlined `StreamTranslate::new*` sites it replaces. Its
-/// writer is bounded at the plane's `translate_cap` ([`StreamTranslate::with_translate_cap`]).
+/// Registry-resolved streaming-translator factory, the single seam both the hot (`engine/mod.rs`)
+/// and degraded (`engine/walk.rs`) forward paths call so their wiring cannot drift. Same-protocol
+/// builds the verbatim same-proto translator (byte-exact re-emit plus IR usage A-tap); cross-protocol
+/// the reframing one. `None` (raw passthrough) when the response is not an incremental stream
+/// (`!is_sse`) or the protocol is unknown. Its writer is bounded at the plane's `translate_cap`
+/// ([`StreamTranslate::with_translate_cap`]).
 pub fn new_stream_translator_on(
     ingress: &str,
     egress: &str,
@@ -1377,9 +1190,8 @@ pub fn new_stream_translator_on(
     translate_cap: usize,
 ) -> Option<StreamTranslate> {
     if !is_sse {
-        // A buffered (non-stream) body. Cross-protocol never reaches here (the forward path buffers
-        // and translates it before building a stream wrapper); same-protocol is a verbatim relay:
-        // the far end's bytes, untouched (dialect fidelity).
+        // A buffered body: cross-protocol never reaches here (the forward path buffers and
+        // translates first); same-protocol is a verbatim relay of the far end's bytes.
         return None;
     }
     let st = if ingress == egress {
@@ -1391,32 +1203,25 @@ pub fn new_stream_translator_on(
 }
 
 /// Write a same-protocol OpenAI SSE frame to `out` with its top-level `usage` member removed,
-/// preserving every other byte (the `data:` prefix, the exact terminator, and the rest of the JSON).
-/// `frame` is the ORIGINAL complete frame bytes (including the `data:` line and terminator);
-/// `data_str` is the JSON payload `parse_sse_frame` read from it.
+/// preserving every other byte. `frame` is the original complete frame (with `data:` line and
+/// terminator); `data_str` is the JSON payload `parse_sse_frame` read from it.
 ///
-/// Fast path: byte-level splice. [`crate::codec::dialect::top_level_usage_cut`] locates the `usage`
-/// member (and one adjacent comma) without a DOM round-trip, and because for an OpenAI bare-`data:`
-/// chunk the JSON is a single line that appears verbatim as a substring of the frame, the frame is
-/// written around that range, leaving its framing bytes untouched.
+/// Fast path: a byte-level splice. [`crate::codec::dialect::top_level_usage_cut`] locates `usage`
+/// (and one adjacent comma) without a DOM round-trip, and since an OpenAI bare-`data:` chunk's JSON
+/// is a single-line verbatim substring, the frame is written around that range.
 ///
-/// Fallback (rare shapes only): if the JSON is not a clean single substring of the frame (e.g. a
-/// multi-`data:`-line frame), the frame is reframed as a bare `data:` frame carrying the stripped
-/// payload. It must NOT itself introduce a wire-shape tell: it PRESERVES the JSON key ORDER and the
-/// ORIGINAL line TERMINATOR (CRLF vs LF) exactly, differing from a direct stream only by the removed
-/// `usage` key. If the scanner cannot classify the payload (a non-object, or a shape it does not
-/// fully understand), the ORIGINAL frame bytes are written unchanged: a DOM reserialize is
-/// deliberately NOT used — `serde_json` is built WITHOUT `preserve_order`, so a round-trip would
-/// REORDER keys, reintroducing exactly the tell this strip exists to remove. Best-effort, but the
-/// stream is never damaged.
+/// Fallback (rare, e.g. a multi-`data:`-line frame): reframe as a bare `data:` frame with the
+/// stripped payload, preserving JSON key order and the original terminator (CRLF vs LF), differing
+/// from a direct stream only by the missing key. If the scanner cannot classify the payload, the
+/// original bytes are written unchanged. No DOM reserialize: `serde_json` is built without
+/// `preserve_order`, so it would reorder keys, the tell this strip removes. The stream is never damaged.
 fn rewrite_frame_strip_usage(out: &mut Vec<u8>, frame: &[u8], data_str: &str) {
     let Some((cut_start, cut_end)) = crate::codec::dialect::top_level_usage_cut(data_str) else {
         out.extend_from_slice(frame);
         return;
     };
-    // For an OpenAI bare `data: {json}\n\n` frame the JSON is present verbatim and unique, so a
-    // single-substring find is exact. A second occurrence would mean the payload text also lives
-    // elsewhere in the frame: refuse the splice and reframe.
+    // The JSON appears verbatim and unique in a bare `data: {json}\n\n` frame, so a single-substring
+    // find is exact. A second occurrence means the text also lives elsewhere: reframe.
     if let Ok(frame_str) = std::str::from_utf8(frame) {
         if let Some(pos) = frame_str.find(data_str) {
             if !frame_str[pos + data_str.len()..].contains(data_str) {
@@ -1426,8 +1231,7 @@ fn rewrite_frame_strip_usage(out: &mut Vec<u8>, frame: &[u8], data_str: &str) {
             }
         }
     }
-    // The ORIGINAL terminator, so the reframed frame matches the wire shape a direct stream would
-    // send (a native OpenAI stream never silently downgrades CRLF to LF).
+    // The original terminator, so the reframed frame matches a direct stream (CRLF is not downgraded to LF).
     let terminator: &[u8] = if frame.ends_with(b"\r\n\r\n") {
         b"\r\n\r\n"
     } else if frame.ends_with(b"\n\n") {
@@ -1449,19 +1253,15 @@ fn rewrite_frame_strip_usage(out: &mut Vec<u8>, frame: &[u8], data_str: &str) {
 #[path = "tests/rewrite_frame_strip_usage_tests.rs"]
 mod rewrite_frame_strip_usage_tests;
 
-/// Merge a trailing usage-only chunk's token counts into the deferred terminal usage (SSE
-/// terminal-usage fold). Mirrors the `last_usage` accumulation rule: a non-zero/`Some` field in the
-/// trailing chunk overrides the (typically zero) terminal value; a zero/`None` trailing field leaves
-/// the terminal value intact, so a protocol that already carried usage on its terminal delta is never
-/// clobbered by an absent trailing chunk.
+/// Merge a trailing usage-only chunk's counts into the deferred terminal usage (SSE terminal-usage
+/// fold), by the `last_usage` rule: a non-zero/`Some` trailing field overrides the terminal value,
+/// a zero/`None` one leaves it intact.
 /// Restore onto a terminal `MessageDelta`'s usage the input/cache fields the egress protocol only
-/// ever reported at STREAM START (Anthropic): the delta arrives with `input_tokens == 0` and no
-/// cache splits, so without this the ingress writer emits — and billing reads — a zero prompt-token
-/// count. Fills ONLY fields the delta itself left empty, so a protocol that DOES carry input on its
-/// terminal delta (OpenAI `include_usage`, Gemini, Bedrock, Cohere) is never overwritten.
+/// reports at stream start (Anthropic), else the ingress writer and billing see a zero prompt-token
+/// count. Fills only fields the delta left empty, so protocols carrying input on the terminal delta
+/// (OpenAI `include_usage`, Gemini, Bedrock, Cohere) are never overwritten.
 ///
-/// Shared by the cross-protocol translate path and the same-protocol usage side-channel so the two
-/// cannot disagree about what a stream's prompt tokens were.
+/// Shared by the cross-protocol path and the same-protocol side channel so they cannot disagree.
 fn backfill_from_start_usage(
     usage: &mut crate::codec::ir::IrUsage,
     start: &crate::codec::ir::IrUsage,
@@ -1475,10 +1275,8 @@ fn backfill_from_start_usage(
     if usage.cache_read_input_tokens.is_none() {
         usage.cache_read_input_tokens = start.cache_read_input_tokens;
     }
-    // The separately-priced cache-tier SUB-BUCKETS ride the same fill-if-absent rule as their parent
-    // `cache_creation_input_tokens` above: Anthropic reports them only at stream start, and a
-    // backfill that restored the parent while dropping the tiers would make the split irreconcilable
-    // on the terminal frame.
+    // The cache-tier sub-buckets use the same fill-if-absent rule as `cache_creation_input_tokens`:
+    // restoring the parent but not the tiers would make the split irreconcilable.
     if usage.detail.cache_creation_5m_input_tokens.is_none() {
         usage.detail.cache_creation_5m_input_tokens = start.detail.cache_creation_5m_input_tokens;
     }
@@ -1501,13 +1299,12 @@ fn merge_trailing_usage(acc: &mut crate::codec::ir::IrUsage, trailing: &crate::c
         acc.cache_read_input_tokens = trailing.cache_read_input_tokens;
     }
     merge_trailing_usage_detail(&mut acc.detail, &trailing.detail);
-    // THE STATED-TOTAL CHECK BELONGS TO THE COUNTERS IT WAS COMPUTED FROM. A frame that carries
-    // counters states them cumulatively (Gemini restates every counter on each usage-bearing
-    // chunk), so its note, Some or None, is the check of the counts the fold now holds: a stale
-    // gap from an earlier frame that a following frame reconciled is no unit (its remainder is the
-    // billed open class `unitemized_tokens`, so a kept stale note would bill tokens
-    // the provider's final total does not state). A counter-less frame (Gemini's early chunks)
-    // checked nothing and leaves the note as it was.
+    // The stated-total check belongs to the counters it was computed from. A frame carrying
+    // counters states them cumulatively (Gemini restates every counter per usage-bearing chunk), so
+    // its note, Some or None, checks the counts the fold now holds. A stale gap a later frame
+    // reconciled must go, since its remainder is the billed open class `unitemized_tokens` and would
+    // bill tokens the provider's final total does not state. A counter-less frame checked nothing
+    // and leaves the note as it was.
     let counted = trailing.input_tokens > 0
         || trailing.output_tokens > 0
         || trailing.cache_creation_input_tokens.is_some()
@@ -1517,18 +1314,14 @@ fn merge_trailing_usage(acc: &mut crate::codec::ir::IrUsage, trailing: &crate::c
     }
 }
 
-/// The DETAIL half of the fold: every [`crate::codec::ir::IrUsageDetail`] bucket rides the same Some-wins
-/// rule as the cache fields above. Left out, a streamed `/v1/responses` call over an OpenAI-chat
-/// reasoning egress answered `output_tokens_details.reasoning_tokens: 0` while the identical
-/// buffered call answered the real value — the trailing usage-only chunk is the ONLY place those
-/// egresses report the sub-buckets, and the fold merged only the four totals.
+/// The detail half of the fold: every [`crate::codec::ir::IrUsageDetail`] bucket rides the same
+/// Some-wins rule. Without it a streamed `/v1/responses` call over an OpenAI-chat reasoning egress
+/// answered `reasoning_tokens: 0` where the buffered call had the real value, since the trailing
+/// usage-only chunk is the only place those egresses report the sub-buckets.
 ///
-/// The trailing detail is destructured with NO `..` REST PATTERN on purpose. Every field is a
-/// per-dialect attribution carrier added one batch at a time (the Anthropic web-search/service-tier
-/// pair, the four OpenAI audio/predicted-outputs slices, Gemini's tool-use prompt bucket, Cohere's
-/// billed trio), and each batch that landed on the struct without landing here reopened the same
-/// stream-versus-buffered attribution hole for its own dialect. Naming every field makes the NEXT
-/// such field a compile error at this line instead of a number a customer finds missing from a bill.
+/// The trailing detail is destructured with no `..` rest pattern on purpose: each new per-dialect
+/// attribution field that landed on the struct without landing here reopened the stream-versus-
+/// buffered hole for its dialect, so the next one must be a compile error here.
 fn merge_trailing_usage_detail(
     acc: &mut crate::codec::ir::IrUsageDetail,
     trailing: &crate::codec::ir::IrUsageDetail,
@@ -1569,14 +1362,12 @@ fn merge_trailing_usage_detail(
     if search_units.is_some() {
         acc.search_units = *search_units;
     }
-    // Anthropic reports the server-side web-search count and the tier that actually served the turn
-    // on its usage-bearing frames; both are separately-metered/attribution values invisible in a
-    // token total that reconciles perfectly, so an unmerged one is a silent attribution loss.
+    // Anthropic's web-search count and served tier are attribution invisible in a reconciling token
+    // total, so an unmerged one is a silent loss.
     if web_search_requests.is_some() {
         acc.web_search_requests = *web_search_requests;
     }
-    // The server-side fetch count rides the same frames as the search count (Anthropic's
-    // `message_delta`), and is the billed open class `web_fetch_requests`.
+    // The fetch count rides the same Anthropic `message_delta` frames; it is the billed open class `web_fetch_requests`.
     if web_fetch_requests.is_some() {
         acc.web_fetch_requests = *web_fetch_requests;
     }
@@ -1587,9 +1378,8 @@ fn merge_trailing_usage_detail(
     if by_modality.is_some() {
         acc.by_modality = by_modality.clone();
     }
-    // The four OpenAI-family slices arrive on the trailing `include_usage` chunk — the only frame of
-    // an OpenAI stream that carries a usage object at all — so folding only the four totals reported
-    // them as absent at `stream:true` and real at `stream:false` for the same request.
+    // The four OpenAI-family slices arrive on the trailing `include_usage` chunk, the only frame of
+    // an OpenAI stream with a usage object, so they would read absent at `stream:true` and real at `stream:false`.
     if input_audio_tokens.is_some() {
         acc.input_audio_tokens = *input_audio_tokens;
     }
@@ -1602,52 +1392,42 @@ fn merge_trailing_usage_detail(
     if rejected_prediction_tokens.is_some() {
         acc.rejected_prediction_tokens = *rejected_prediction_tokens;
     }
-    // A streamed Gemini egress reports `toolUsePromptTokenCount` only on the trailing usage-bearing
-    // chunk, so folding only the four totals would zero its attribution.
+    // Gemini reports `toolUsePromptTokenCount` only on the trailing usage-bearing chunk.
     if tool_use_prompt_tokens.is_some() {
         acc.tool_use_prompt_tokens = *tool_use_prompt_tokens;
     }
-    // Cohere `billed_units.{input,output}_tokens`/`classifications` ride the same Some-wins rule: a
-    // streamed Cohere call reports them only on the terminal `message-end.delta.usage`, so the fold
-    // must carry them or a streamed call under-reports the billed attribution its buffered twin has.
+    // Cohere `billed_units.*` ride the same rule: a streamed call reports them only on the terminal
+    // `message-end.delta.usage`, else it under-reports vs buffered.
     if billed_input_tokens.is_some() {
         acc.billed_input_tokens = *billed_input_tokens;
     }
     if billed_output_tokens.is_some() {
         acc.billed_output_tokens = *billed_output_tokens;
     }
-    // The usage-identity cross-check is computed from whichever frame carried the counters, and on a
-    // Gemini stream that is the TRAILING frame — the early ones carry a `usageMetadata` object with
-    // no counters in it at all. Same-wins rule as the rest: a trailing frame that found a
-    // discrepancy must be able to report one the accumulator does not have yet, or a streamed turn
-    // would reconcile silently where its buffered twin reports the shortfall.
+    // The usage-identity cross-check comes from whichever frame carried the counters, on Gemini the
+    // trailing one (early chunks have a `usageMetadata` with no counters). Same-wins, so a trailing
+    // discrepancy is reported as it would be buffered.
     if usage_identity_note.is_some() {
         acc.usage_identity_note = usage_identity_note.clone();
     }
     if billed_classifications.is_some() {
         acc.billed_classifications = *billed_classifications;
     }
-    // The open-class counts a reader carried (Bedrock's guardrail policy units, billed under their
-    // own classes) ride the frame that reported them: they arrive on the stream's
-    // `metadata` frame only, and a fold that dropped them would bill the streamed turn less than
-    // its buffered twin.
+    // Open-class counts a reader carried (Bedrock guardrail policy units) arrive only on the
+    // `metadata` frame; dropping them would bill the streamed turn less than its buffered twin.
     if !open_units.is_empty() {
         acc.open_units = open_units.clone();
     }
-    // The residuals (counts no billing class records, never billed) ride the frame that reported
-    // them the same way.
+    // Residuals (never billed) ride the frame that reported them likewise.
     if !residual_units.is_empty() {
         acc.residual_units = residual_units.clone();
     }
-    // A streamed Gemini egress reports `usageMetadata.trafficType` only on the trailing
-    // usage-bearing chunk (same shape as `tool_use_prompt_tokens` above), so folding only the four
-    // totals would drop the billing-lane attribution on every streamed Gemini/Vertex turn while the
-    // buffered twin kept it.
+    // Gemini `usageMetadata.trafficType` arrives only on the trailing chunk (like
+    // `tool_use_prompt_tokens`); dropping it loses the billing-lane attribution vs buffered.
     if traffic_type.is_some() {
         acc.traffic_type = traffic_type.clone();
     }
-    // Same shape as `traffic_type` immediately above: a streamed Gemini/Vertex turn's top-level
-    // `createTime` rides the trailing usage-bearing chunk too.
+    // Like `traffic_type`: Gemini's top-level `createTime` rides the trailing usage-bearing chunk.
     if create_time.is_some() {
         acc.create_time = create_time.clone();
     }
