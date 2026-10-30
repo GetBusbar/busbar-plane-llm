@@ -1,21 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! TAIL-USAGE ISOLATION — the dialect-neutral byte-scan behind each reader's
-//! `recover_truncated_usage`.
+//! Tail-usage isolation: the dialect-neutral byte-scan behind each reader's `recover_truncated_usage`.
 //!
-//! A same-protocol non-stream billing buffer whose HEAD was dropped to keep it bounded at
-//! `max_translated_body_bytes()` is no longer a well-formed top-level JSON document (its opening
-//! structure — or a string it cut through — is gone), so the normal `Op::extract_usage`
-//! full-document parse reliably fails on it. But the `usage` object itself sits at (or near) the
-//! TAIL of every supported dialect's response and is a small, SELF-CONTAINED balanced `{...}` value,
-//! so it can be isolated and parsed on its own even though the surrounding document cannot be. This
-//! module owns that isolation; each dialect reader maps the resulting `Value`'s fields onto the
-//! neutral `TokenUsage` itself.
+//! A same-protocol non-stream billing buffer whose head was dropped to stay within
+//! `max_translated_body_bytes()` is no longer a well-formed JSON document, so the normal
+//! `Op::extract_usage` parse fails. But the `usage` object sits at or near the tail of every
+//! supported dialect's response as a small self-contained balanced `{...}` value, so it can be
+//! isolated and parsed alone. This module owns that isolation; each reader maps the resulting
+//! `Value` onto the neutral `TokenUsage`.
 
-/// Find the LAST occurrence of `needle` in `hay` (there can be more than one `"usage"` substring —
-/// e.g. inside delivered assistant content — so anchoring on the last one biases toward the real
-/// trailing usage object, which is where every dialect places it).
+/// Find the last occurrence of `needle` in `hay`. There can be several `"usage"` substrings (e.g. in
+/// delivered assistant content); the last biases toward the real trailing usage object.
 fn find_last(hay: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || hay.len() < needle.len() {
         return None;
@@ -26,8 +22,8 @@ fn find_last(hay: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// From just past a `"usage"`/`"usageMetadata"` key, skip the `:` and whitespace, then
-/// bracket-match the following `{...}` object (string- and escape-aware, so a `}` inside a quoted
-/// string value does not close the object early). Returns the byte span INCLUDING both braces.
+/// bracket-match the following `{...}` (string- and escape-aware, so a `}` inside a quoted string
+/// does not close it early). Returns the span including both braces.
 fn balanced_object_after(buf: &[u8], mut i: usize) -> Option<&[u8]> {
     while i < buf.len() && (buf[i] as char).is_whitespace() {
         i += 1;
@@ -74,11 +70,10 @@ fn balanced_object_after(buf: &[u8], mut i: usize) -> Option<&[u8]> {
     None
 }
 
-/// Isolate the self-contained trailing usage object from a HEAD-truncated response `tail`: find the
-/// LAST `key` (`"usage"` for most dialects, `"usageMetadata"` for gemini), bracket-match the
-/// balanced `{...}` value after it, and parse just that span into a `Value`. Returns `None` when the
-/// key is absent or its object doesn't fit in the retained tail (never observed — a usage object is a
-/// handful of integer fields). The caller maps this dialect's fields off the returned value.
+/// Isolate the self-contained trailing usage object from a head-truncated response `tail`: find the
+/// last `key` (`"usage"`, or `"usageMetadata"` for gemini), bracket-match the `{...}` after it and
+/// parse that span. `None` when the key is absent or its object does not fit in the retained tail
+/// (never observed; it is a handful of integer fields). The caller maps its dialect's fields.
 pub fn isolate_tail_usage_object(tail: &[u8], key: &[u8]) -> Option<serde_json::Value> {
     let key_pos = find_last(tail, key)?;
     let obj = balanced_object_after(tail, key_pos + key.len())?;
@@ -86,24 +81,22 @@ pub fn isolate_tail_usage_object(tail: &[u8], key: &[u8]) -> Option<serde_json::
 }
 
 /// The longest string value [`StopKeyScanner`] reads. A stop-reason token is a short enum member
-/// (`ERROR`, `MALFORMED_FUNCTION_CALL`); a value that runs past this is not one, and reading it
-/// would be work proportional to the body rather than to the field.
+/// (`ERROR`, `MALFORMED_FUNCTION_CALL`); a longer value is not one, and reading it would cost work
+/// proportional to the body.
 const MAX_TOKEN_BYTES: usize = 64;
 
-/// The longest stop-reason KEY (quotes included) [`StopKeyScanner`] can look for. Every dialect's
-/// key is a short field name; the bound is what lets the scanner carry its state inline.
+/// The longest stop-reason key (quotes included) [`StopKeyScanner`] looks for; the bound lets it
+/// carry its state inline.
 pub const MAX_STOP_KEY_BYTES: usize = 32;
 
-/// The deepest container nesting [`StopKeyScanner`] tracks the container kinds of. A dialect's stop
-/// field sits a few levels deep; a body nested past this is still scanned, and its deeper
-/// containers are never the stop field's.
+/// The deepest container nesting [`StopKeyScanner`] tracks kinds of. A stop field sits a few levels
+/// deep; a deeper body is still scanned but its deeper containers are never the stop field's.
 const MAX_TRACKED_DEPTH: u16 = 64;
 
-/// A dialect's non-stream stop-reason field, located STRUCTURALLY: the member `key` (quotes
-/// included, e.g. `b"\"finish_reason\""`) of an object at container nesting `depth`, counting every
-/// `{` and `[` from the document root (`1` is a top-level member; a Gemini candidate's member,
-/// `{"candidates":[{…}]}`, is `3`). Only that member is the field: the same name spelled deeper —
-/// inside a tool call's `args` object, say — is content, never the stop reason.
+/// A dialect's non-stream stop-reason field, located structurally: member `key` (quotes included,
+/// e.g. `b"\"finish_reason\""`) of an object at container nesting `depth`, counting every `{` and
+/// `[` from the root (`1` is top-level; a Gemini candidate's member `{"candidates":[{…}]}` is `3`).
+/// The same name deeper, e.g. inside a tool call's `args`, is content, never the stop reason.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StopKey {
     pub key: &'static [u8],
@@ -125,13 +118,12 @@ enum ScanState {
     Gone,
 }
 
-/// The string value of the FIRST member [`StopKey`] names, read INCREMENTALLY: fed a body chunk by
-/// chunk as it passes through a relay, it walks the JSON lexically (strings, escapes, container
-/// nesting) without parsing or keeping a copy of the body. The state it carries is bounded and
-/// inline (no heap): the nesting depth, a bit per tracked container, the match position in the key
-/// and at most [`MAX_TOKEN_BYTES`] of the token. A member of the same name at another depth — a
-/// tool's `args` object that happens to hold `"finishReason":"MALFORMED_FUNCTION_CALL"` — or the
-/// name spelled inside a string value never matches.
+/// The string value of the first member [`StopKey`] names, read incrementally as a body streams
+/// through a relay: it walks the JSON lexically (strings, escapes, nesting) without parsing or
+/// copying the body. State is bounded and inline (no heap): depth, a bit per tracked container, the
+/// key match position and at most [`MAX_TOKEN_BYTES`] of token. A same-named member at another depth
+/// (a tool's `args` holding `"finishReason":"MALFORMED_FUNCTION_CALL"`) or the name inside a string
+/// value never matches.
 #[derive(Clone, Debug)]
 pub struct StopKeyScanner {
     /// The key's name, quotes stripped.
@@ -148,8 +140,8 @@ pub struct StopKeyScanner {
     candidate: bool,
     /// How many bytes of `name` the candidate has matched.
     matched: usize,
-    /// A candidate that matched `name` whole has just closed: the next non-whitespace byte decides
-    /// whether it was a member name (`:`) or a value.
+    /// A candidate that matched `name` whole just closed: the next non-whitespace byte says whether
+    /// it was a member name (`:`) or a value.
     closed_match: bool,
     token: [u8; MAX_TOKEN_BYTES],
     token_len: usize,

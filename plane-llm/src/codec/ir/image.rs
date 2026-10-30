@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! Image-generation IR. Cross-protocol across OpenAI, Gemini, Bedrock.
-//! ONE operation with an `op` discriminant (Generate/Edit/Variation) — edit/variation are not separate
-//! ops; an unsupported `(op, model)` pair is a sub-op 404. Split request/response per.
+//! Image-generation IR, cross-protocol across OpenAI, Gemini, Bedrock. One operation with an `op`
+//! discriminant (Generate/Edit/Variation); an unsupported `(op, model)` pair is a sub-op 404.
 //!
-//! Losslessness: the three provider geometry conventions (explicit W×H, `aspect_ratio` string, size
-//! `tier`) are PARALLEL optionals — never collapsed. Response images are additive [`ImageOutput`]
-//! (b64 AND url may coexist). Common cross-provider fields are typed; provider-unique knobs (Titan
-//! `controlMode`, SDXL `sampler`/`clip_guidance_preset`, per-prompt weights…) ride source-scoped
-//! `extra`. Billing: the token counts a gpt-image-1 or Gemini answer reports are RECORDED, never
-//! billed (see [`ImageResp::billing`]); else `Billing::Images`
-//! (per-image, no usage body).
+//! Losslessness: the three geometry conventions (explicit W×H, `aspect_ratio` string, size `tier`)
+//! are parallel optionals, never collapsed. Response images are additive [`ImageOutput`] (b64 and
+//! url may coexist). Common fields are typed; provider-unique knobs (Titan `controlMode`, SDXL
+//! `sampler`/`clip_guidance_preset`, per-prompt weights) ride source-scoped `extra`. Token counts a
+//! gpt-image-1 or Gemini answer reports are recorded, never billed (see [`ImageResp::billing`]);
+//! otherwise `Billing::Images` (per-image, no usage body).
 
 use crate::codec::framework::ImageOutput;
 use busbar_contract::billing::{Billing, TokenUsage};
@@ -22,12 +20,10 @@ use busbar_contract::ir::SourceScopedExtra;
 pub enum ImageOp {
     #[default]
     Generate,
-    /// No 1.5.0 egress writer emits anything but `/v1/images/generations`, so nothing constructs
-    /// this variant yet; kept because the superset IR must be able to express an edit request.
+    /// No egress writer emits anything but `/v1/images/generations`, so nothing constructs this yet; kept so the IR can express an edit.
     #[allow(dead_code)]
     Edit,
-    /// No 1.5.0 egress writer emits anything but `/v1/images/generations`, so nothing constructs
-    /// this variant in production yet; kept for the same reason as `Edit`.
+    /// Nothing constructs this in production yet; kept for the same reason as `Edit`.
     #[cfg_attr(not(test), allow(dead_code))]
     Variation,
 }
@@ -47,7 +43,7 @@ pub struct ImageReq {
     pub prompt: Option<String>, // Option: dall-e-2 variations carry no prompt
     pub negative_prompt: Option<String>,
     pub n: Option<u32>,
-    // --- geometry: three mutually-exclusive provider conventions, kept parallel (lossless) ---
+    // --- geometry: three mutually exclusive provider conventions, kept parallel (lossless) ---
     pub size: Option<ImageSize>,         // OpenAI/Titan/SDXL
     pub aspect_ratio: Option<String>,    // Google, Stable Image ("16:9")
     pub image_size_tier: Option<String>, // Imagen ("1K"/"2K")
@@ -78,15 +74,14 @@ pub struct ImageReq {
     pub extra: SourceScopedExtra,
 }
 
-/// THE IMAGE FAMILY'S WALK — this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. Unlike an enum, a
-/// struct has no exhaustiveness check on its fields, so EVERY caller-text field is enumerated here by
-/// hand and the `image_projection_covers_every_text_field` forcing-function test fails
-/// loudly if a new `String` field is added without a projection decision. Screenable text →
-/// [`busbar_contract::ir::facts::ContentItem::Text`]: `prompt`, `negative_prompt`, `mask_prompt`, and each
-/// `weighted_prompts` string (SDXL, which override `prompt`). Binary edit inputs →
-/// [`busbar_contract::ir::facts::ContentItem::Opaque`] (present-but-unscreenable, mirroring chat's image
-/// opacity): each `input_images` entry and the `mask`. The geometry / quality / sampling / provenance
-/// knobs are enum/numeric roles, not caller free-text, and stay out.
+/// The image family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. A struct has
+/// no field exhaustiveness check, so every caller-text field is enumerated by hand and the
+/// `image_projection_covers_every_text_field` test fails if a new `String` field lacks a projection
+/// decision. Screenable text is [`busbar_contract::ir::facts::ContentItem::Text`]: `prompt`,
+/// `negative_prompt`, `mask_prompt` and each `weighted_prompts` string (SDXL, overriding `prompt`).
+/// Binary edit inputs are [`busbar_contract::ir::facts::ContentItem::Opaque`] (present but
+/// unscreenable, like chat's image opacity): each `input_images` entry and the `mask`. Geometry,
+/// quality, sampling and provenance knobs are enum/numeric roles, not caller free text.
 impl busbar_contract::ir::facts::IrFacts for ImageReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::IMAGE
@@ -156,8 +151,8 @@ impl busbar_contract::ir::facts::IrFacts for ImageReq {
     }
 }
 
-/// For per-image providers that return no usage object — the gateway records what it billed from
-/// request params (priced by 1.3). Complements `usage` (token-metered models).
+/// For per-image providers that return no usage object: what the gateway billed, from request params
+/// (priced by 1.3). Complements `usage` (token-metered models).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct CostBasis {
     pub count: u32,
@@ -177,10 +172,9 @@ pub struct ImageResp {
 }
 
 /// The token counts an image answer reported (gpt-image-1 `usage`, a Gemini image model's
-/// `usageMetadata`). They are RECORDED, never billed (see [`ImageResp::billing`]). `None` is
-/// UNKNOWN: the provider sent a count this build cannot read. An unknown count is left out of the
-/// record, never written as 0, and never refuses the answer (it is served whatever the usage
-/// said).
+/// `usageMetadata`), recorded and never billed (see [`ImageResp::billing`]). `None` is unknown: a
+/// count this build cannot read is left out of the record, never written as 0, and never refuses the
+/// answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ImageTokens {
     pub input: Option<u64>,
@@ -193,13 +187,12 @@ pub const IMAGE_INPUT_TOKENS_RESIDUAL: &str = "image.input_tokens";
 pub const IMAGE_OUTPUT_TOKENS_RESIDUAL: &str = "image.output_tokens";
 
 impl ImageResp {
-    /// Billing projection. An answer that reports token usage (gpt-image-1, a Gemini image model)
-    /// bills NO token: its counts are RECORDED on [`TokenUsage::residual_units`] (the settle's one
-    /// `usage.residual` audit row), never on the four billed tiers. No image token is billed on any path: the OpenAI, Gemini and
-    /// Bedrock image readers set neither `usage` nor `cost_basis`, and no image handler taps a
-    /// same-dialect body (the only `taps_usage` overrides are embeddings and chat). Billing the
-    /// tokens would charge a key, and spend its `tokens:` caps, where nothing is charged today.
-    /// A per-image answer with no usage body bills its `images` count.
+    /// Billing projection. An answer reporting token usage (gpt-image-1, a Gemini image model) bills
+    /// no token: its counts are recorded on [`TokenUsage::residual_units`] (the settle's one
+    /// `usage.residual` audit row), never on the four billed tiers. No image token is billed on any
+    /// path (the OpenAI, Gemini and Bedrock readers set neither `usage` nor `cost_basis`, and no
+    /// image handler taps a same-dialect body); billing them would charge a key and its `tokens:` caps
+    /// where nothing is charged today. A per-image answer with no usage body bills its `images` count.
     pub fn billing(&self) -> Option<Billing> {
         if let Some(u) = &self.usage {
             let mut residual_units = std::collections::BTreeMap::new();
