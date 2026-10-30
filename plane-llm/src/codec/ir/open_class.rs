@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE OPEN CLASSES: every count a far end reports beside its four token totals, by the meter class
-//! it is ledgered under ("every unit
-//! a provider/far end reports is a ledger line under its meter class; its price comes from the
-//! ratecard"; an unledgered reported unit is a defect, not a residual).
+//! The open classes: every count a far end reports beside its four token totals, by the meter class
+//! it is ledgered under (every reported unit is a ledger line, priced by the ratecard; an unledgered
+//! reported unit is a defect, not a residual).
 //!
-//! The plane REPORTS units and never a price. Each class below is declared in the plane's tail
-//! ([`crate::plane_door::OPEN_CLASSES`]) and in the linked declaration's billable classes, so the
-//! kernel prices it from the operator's `rate_card.<model>.units.<class>` with no plane literal of
-//! its own. The ratecard's absent-rate rule is unchanged: no card reads the class at 0; a
-//! present card that does not configure a declared class is a boot refusal naming it; a
-//! per-lane gap refuses at run time.
+//! The plane reports units, never a price. Each class is declared in the plane's tail
+//! ([`crate::plane_door::OPEN_CLASSES`]) and the linked declaration's billable classes, so the kernel
+//! prices it from the operator's `rate_card.<model>.units.<class>` with no plane literal. The
+//! absent-rate rule is unchanged: no card reads the class at 0; a present card that does not
+//! configure a declared class is a boot refusal naming it; a per-lane gap refuses at run time.
 
 use crate::codec::ir::rerank::SEARCH_UNITS_CLASS;
 
@@ -24,11 +22,10 @@ pub const CLASSIFICATIONS_CLASS: &str = "classifications";
 /// operator prices it (0 makes it free).
 pub const WEB_FETCH_REQUESTS_CLASS: &str = "web_fetch_requests";
 
-/// The tokens a provider's own stated total counts ABOVE the itemized buckets this dialect reads
-/// (OpenAI `total_tokens`, Responses `total_tokens`, Gemini `totalTokenCount`, Bedrock
-/// `totalTokens`): `reported_total - summed_total` when positive. A total BELOW its terms adds no
-/// unit. The itemized buckets stay exactly as the provider sent them, so the four token classes
-/// bill what they billed in 1.5.5 and this class carries only the remainder.
+/// The tokens a provider's stated total counts above the itemized buckets this dialect reads (OpenAI
+/// and Responses `total_tokens`, Gemini `totalTokenCount`, Bedrock `totalTokens`): `reported_total -
+/// summed_total` when positive. A total below its terms adds no unit. The itemized buckets stay as
+/// sent, so the four token classes bill what they did in 1.5.5 and this class carries only the remainder.
 pub const UNITEMIZED_TOKENS_CLASS: &str = "unitemized_tokens";
 
 /// The images a per-image provider returned (dall-e, Imagen, Titan, SDXL: one per `data` entry),
@@ -36,9 +33,9 @@ pub const UNITEMIZED_TOKENS_CLASS: &str = "unitemized_tokens";
 pub const IMAGES_CLASS: &str = "images";
 
 /// The audio duration a transcription far end reported (whisper `usage.seconds`), in whole
-/// MILLISECONDS. The exact decimal (`busbar_contract::Count`, microsecond scale) is floored to the
-/// millisecond, integer only: a duration with three decimals or fewer (every provider's spelling)
-/// is exact, and a finer one is never rounded up past what was reported.
+/// milliseconds: the exact decimal (`busbar_contract::Count`, microsecond scale) floored to the
+/// millisecond, integer only. A duration of three decimals or fewer (every provider) is exact; a
+/// finer one is never rounded up past what was reported.
 pub const AUDIO_MS_CLASS: &str = "audio_ms";
 
 /// Bedrock guardrail `invocationMetrics.usage.automatedReasoningPolicies`.
@@ -69,15 +66,15 @@ pub const GUARDRAIL_WORD_POLICY_UNITS_CLASS: &str = "guardrail_word_policy_units
 /// The family a count-shaped open class rolls up into.
 const COUNT: &str = "count";
 
-/// EVERY OPEN CLASS THIS PLANE DECLARES, each `(class, family)`, in the order the tail states them
-/// after the four token classes. `search_units` keeps its place (and family) first.
+/// Every open class this plane declares, `(class, family)`, in the tail's order after the four token
+/// classes. `search_units` keeps its place (and family) first.
 pub const OPEN_CLASSES: &[(&str, &str)] = &[
     (SEARCH_UNITS_CLASS, "units"),
     (CLASSIFICATIONS_CLASS, COUNT),
     (WEB_FETCH_REQUESTS_CLASS, COUNT),
     // Family `count`, not `token`: a token-family class counts toward a `tokens:` cap
-    // (`governance::is_token_class`), and the caps keep counting exactly the itemized tokens they
-    // counted in 1.5.5. The remainder is billed, never capped.
+    // (`governance::is_token_class`), and caps keep counting exactly the itemized tokens as in 1.5.5.
+    // The remainder is billed, never capped.
     (UNITEMIZED_TOKENS_CLASS, COUNT),
     (IMAGES_CLASS, COUNT),
     (AUDIO_MS_CLASS, "duration"),

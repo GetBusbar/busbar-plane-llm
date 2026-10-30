@@ -72,6 +72,7 @@ use busbar_contract::abi::plane::{RecordWrite, AUDIT_APPLIED, AUDIT_DEGRADED, RE
 use busbar_contract::abi::plane::{CLAIM_RAW_AFFIX, CLAIM_SIGNED_INGRESS};
 use busbar_contract::abi::sdk::door::{abi_str, statement};
 use busbar_contract::abi::sdk::life::Refusal;
+use busbar_contract::abi::sdk::plane::UnitCancel;
 use busbar_contract::abi::sdk::plane_life::{Opened, PlaneLife, Published};
 use busbar_contract::abi::sdk::publish::{ClaimSpec, SnapshotSpec};
 use busbar_contract::abi::sdk::{
@@ -574,7 +575,7 @@ impl<S> UnitBook<S> {
     /// bound to `ticket`: that unit leaves the book, its ticket binding with it, and its state is
     /// handed back. Keyed on the unit first, so a unit cancelled before any piece bound a ticket
     /// (its caller left during admission or the hooks) leaves nothing either.
-    pub fn cancel(&mut self, ticket: Ticket, unit: u64) -> Option<S> {
+    pub fn cancel(&mut self, UnitCancel { ticket, unit }: UnitCancel) -> Option<S> {
         let unit = if unit == 0 {
             *self.tickets.get(&ticket)?
         } else {
@@ -1474,7 +1475,7 @@ impl PlaneLife for LlmDoor {
     ) -> Outcome {
         let cancelled = instance
             .get()
-            .and_then(|door| guard(&door.units).cancel(input.cancel().ticket(), input.unit()));
+            .and_then(|door| guard(&door.units).cancel(UnitCancel::of(&input)));
         // A caller that left a usable part of the answer leaves a PARTIAL unit: the units the
         // answer stated so far bill (a same-dialect whole body states none while
         // it relays, so it bills none). A unit whose far end answered and left the
@@ -1931,6 +1932,7 @@ busbar_contract::plugin_door! {
     ops: busbar_contract::abi::plane::Ops,
     statement: STATEMENT,
     lifecycle: plane_life(LlmDoor),
+    migrate: busbar_contract::abi::sdk::migrate::Migrator<crate::migrate::LlmMigration>,
     kind_ops: {
         arrive: Safe<Arrive>, on_piece: Safe<OnPiece>, refusal: Safe<RefusalSlot>,
         serve: Safe<Serve>, hydrate: Safe<Hydrate>, start: Safe<Start>, project: Safe<Project>,

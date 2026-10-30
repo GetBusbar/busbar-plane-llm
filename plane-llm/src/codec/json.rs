@@ -9,54 +9,11 @@
 //! contract takes no sonic-rs (#83(d) call 1), and the host keeps its own copy of this seam for its
 //! own bodies.
 //!
-//! TWO COPIES OF ONE SECURITY FLOOR. The nesting-depth guard below is a security floor, not a
-//! tunable, and the host's copy guards the same way. `MAX_JSON_DEPTH` is 128 on both sides; the drift
-//! test beside this module fails if the two copies disagree on the floor or on the depth scan's
-//! verdict over a shared fixture set.
+//! Every parse refuses a body nested deeper than `MAX_JSON_DEPTH` first, with the SDK's own guard
+//! (`busbar_contract::spans::exceeds_max_depth`, a security floor: a deep tree's recursive
+//! re-serialize and drop would overflow the stack).
 
-/// Maximum JSON nesting depth accepted at any parse boundary. Matches `serde_json`'s long-standing
-/// default of 128 — generous for real plugin payloads (a deeply nested structured body is still only
-/// a handful of levels) while bounding the recursion below. This is a SECURITY floor, not an
-/// operational tunable: `sonic-rs` parses nesting ITERATIVELY into a `serde_json::Value` (no depth
-/// limit on that path, unlike `serde_json::from_slice` which rejects past 128), but the resulting
-/// `Value` is then recursively re-serialized (`to_vec` on the injected body) and recursively dropped —
-/// and a ~10k-deep body (well under the 32 MiB body cap) overflows the worker stack and ABORTS the
-/// process (uncatchable; kills every in-flight request). The pre-scan below rejects such input before
-/// any `Value` is built, so it can neither be re-serialized nor dropped.
-pub(crate) const MAX_JSON_DEPTH: usize = 128;
-
-/// Single-pass, string-aware scan for the maximum `{`/`[` nesting depth in `bytes`. Brackets inside
-/// JSON string literals (and `\`-escaped quotes) do not count. Returns `true` as soon as `max` is
-/// exceeded (short-circuit). O(n), no allocation — far cheaper than the parse it guards.
-pub(crate) fn exceeds_max_depth(bytes: &[u8], max: usize) -> bool {
-    let mut depth: usize = 0;
-    let mut in_string = false;
-    let mut escaped = false;
-    for &b in bytes {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if b == b'\\' {
-                escaped = true;
-            } else if b == b'"' {
-                in_string = false;
-            }
-            continue;
-        }
-        match b {
-            b'"' => in_string = true,
-            b'{' | b'[' => {
-                depth += 1;
-                if depth > max {
-                    return true;
-                }
-            }
-            b'}' | b']' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-    false
-}
+use busbar_contract::spans::{exceeds_max_depth, MAX_JSON_DEPTH};
 
 /// Parse body bytes into a document. SIMD-accelerated. Rejects pathologically-nested input (see
 /// `MAX_JSON_DEPTH`) BEFORE building a `Value`, returning a parse `Err` so callers take their existing
