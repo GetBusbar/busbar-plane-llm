@@ -1,51 +1,34 @@
-//! The ONE seam every usage/billing count read in this crate goes through.
+//! The one seam every usage/billing count read in this crate goes through.
 //!
-//! # Why this module exists
+//! [`serde_json::Value::as_u64`] returns `None` for any float-backed `Number`, including `27.0`,
+//! which is exactly an integer. `.as_u64().unwrap_or(0)` would turn a genuine count of 27 into
+//! **zero**. Cohere's spec types every usage count as a JSON `number`, which permits a float
+//! spelling, so a reader that cannot read one bills zero for real work.
 //!
-//! [`serde_json::Value::as_u64`] returns `None` for any float-backed `Number` — including `27.0`,
-//! which is exactly representable as an integer. Reading with `.as_u64().unwrap_or(0)` would turn
-//! a provider's genuine count of 27 into a recorded count of **zero**. Cohere's published spec
-//! types every usage count as a JSON `number`, which permits a float spelling — so a reader that
-//! cannot read one is a reader that can bill zero for real work.
+//! That is a ledger bug, worse than a money bug: money is a view over `ledger x ratecard`, so if the
+//! ledger says nothing happened every derived view faithfully reports nothing, invisibly. The read
+//! is the only place to catch it.
 //!
-//! This is not a money bug — it is a **ledger** bug, which is worse.
-//! Money is a view over `ledger x ratecard` and cannot be wrong on its own; if the ledger says the
-//! provider returned nothing, then every view derived from it faithfully reports nothing, and the
-//! error is invisible at every downstream layer. The only place it can be caught is here, at the
-//! read.
-//!
-//! Every dialect reads its counts through [`read_count_u64`]. A bare `.as_u64()` on a usage or
-//! billing field is a defect; use this.
-
-/// Read a JSON number as an exact, non-negative integer, or `None` if it is not one.
+//! Every dialect reads counts through [`read_count_u64`]. A bare `.as_u64()` on a usage or billing
+//! field is a defect.
+/// Read a JSON number as an exact, non-negative integer, or `None`. Tries the integer
+/// representation first (the common path) and falls back to the float only when it provably denotes
+/// an exact integer; the float is merely how the wire spelled it.
 ///
-/// Tries the integer representation first — the cheap, common path for an already-integer payload —
-/// and falls back to the float representation only when it provably denotes an exact integer. The
-/// float is merely how the wire happened to spell it.
-///
-/// # What is rejected, and why
-///
-/// - **A fractional value** (`27.5`) is not a token count. It is rejected, never rounded: rounding
-///   would invent a quantity the provider never reported, and an invented ledger row is the thing
-///   this module exists to prevent.
-/// - **A negative value** is not a count.
-/// - **Infinity and NaN** are not counts.
-/// - **Anything at or above 2^53** is rejected even though it "looks" integral. Past 2^53 an `f64`
-///   cannot represent consecutive integers, so `fract() == 0.0` is trivially true for *every*
-///   remaining value and the fractional test stops carrying any information at all. A number that
-///   large cannot be trusted to be the count the provider actually sent, and no honest token count
-///   approaches it. (This bound is deliberately tighter than `u64::MAX`, which would admit values
-///   whose integrality the check can no longer actually verify.)
+/// Rejected, never rounded (rounding would invent a ledger row, which this module exists to prevent):
+/// - a fractional value (`27.5`);
+/// - a negative value, infinity and NaN;
+/// - anything at or above 2^53, even if "integral": past it an `f64` cannot represent consecutive
+///   integers, so `fract() == 0.0` is trivially true and proves nothing, and no honest token count
+///   approaches it. (Tighter than `u64::MAX` on purpose.)
 pub fn read_count_u64(v: &serde_json::Value) -> Option<u64> {
     if let Some(u) = v.as_u64() {
         return Some(u);
     }
     let f = v.as_f64()?;
-    // 2^53 — the largest magnitude at which an f64 still represents every integer distinctly, and
-    // therefore the largest at which `fract() == 0.0` still proves anything.
+    // 2^53: the largest magnitude at which an f64 represents every integer, so `fract() == 0.0` still proves integrality.
     const EXACT_INTEGER_LIMIT: f64 = 9_007_199_254_740_992.0;
-    // `contains` also rejects NaN and both infinities, since neither compares inside any range —
-    // so the bound check and the finiteness check are the same check.
+    // `contains` also rejects NaN and both infinities, so the bound and finiteness checks are one.
     if (0.0..EXACT_INTEGER_LIMIT).contains(&f) && f.fract() == 0.0 {
         Some(f as u64)
     } else {
@@ -53,17 +36,13 @@ pub fn read_count_u64(v: &serde_json::Value) -> Option<u64> {
     }
 }
 
-/// A usage field that was THERE and could not be read as a count.
-///
-/// Distinct from absence on purpose: "the provider reported nothing" and "the provider reported
-/// something this build does not understand" are different facts, and only the first of them is
-/// honestly worth zero.
+/// A usage field that was there and could not be read as a count. Distinct from absence: "reported
+/// nothing" (honestly zero) and "reported something this build does not understand" are different facts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnreadableCount {
     /// Which usage field it was.
     pub field: &'static str,
-    /// How it was spelled on the wire, so the operator can see what arrived. Bounded, because a
-    /// hostile body must not be able to write an unbounded string into a log line.
+    /// How it was spelled on the wire, bounded so a hostile body cannot write an unbounded log line.
     pub spelling: String,
 }
 
@@ -79,35 +58,21 @@ impl std::fmt::Display for UnreadableCount {
 
 impl std::error::Error for UnreadableCount {}
 
-/// How much of an unreadable value is quoted back. Enough to diagnose, bounded so a hostile body
-/// cannot write an essay into an operator's log.
+/// How much of an unreadable value is quoted back: enough to diagnose, bounded against a hostile body.
 const SPELLING_BUDGET: usize = 64;
 
-/// READ ONE BILLED COUNT OUT OF A USAGE OBJECT — ABSENT IS ZERO, UNREADABLE IS A REFUSAL.
+/// Read one billed count out of a usage object: absent is zero, unreadable is a refusal.
 ///
-/// # Why this exists rather than `.and_then(read_count_u64).unwrap_or(0)`
+/// `.and_then(read_count_u64).unwrap_or(0)` collapses two facts. A field the provider did not send
+/// is genuinely zero of that unit (embeddings report no output tokens). A field that is there and
+/// unreadable is the provider saying something this build does not understand, and writing zero
+/// records that no work happened: every money view over the row is faithfully wrong and nothing
+/// downstream can tell. So three cases stay apart:
 ///
-/// That idiom collapses two different facts into one number. A usage field the provider did not
-/// send is genuinely zero of that unit — an embeddings response reports no output tokens because
-/// there are none, and billing zero for it is correct. But a field that IS
-/// there and cannot be read is the provider telling us something this build does not understand,
-/// and writing zero for it is the worst available answer: the ledger records that no work happened,
-/// every money view over that row is faithfully derived and faithfully wrong, and nothing anywhere
-/// downstream can tell. Money is a VIEW over `ledger x ratecard`, so a zeroed count is not a
-/// display bug — it is a book that disagrees with reality and says nothing about it.
-///
-/// So the three cases are kept apart:
-///
-/// * **absent, or JSON `null`** — no such quantity was reported. `Ok(0)`, exactly as before. `null`
-///   counts as absence because that is what `null` means, and because a provider spelling "nothing"
-///   that way must not fail a request that works today.
-/// * **readable** — the count, through [`read_count_u64`], including the float-spelled integer that
-///   the bare `as_u64` reads as nothing at all.
-/// * **present, not `null`, unreadable** — [`UnreadableCount`], which the caller turns into a
-///   refusal.
-///
-/// # Errors
-/// The field is present, is not `null`, and is not a count.
+/// * absent or JSON `null`: nothing reported, `Ok(0)` (a provider spelling "nothing" as `null` must
+///   not fail a request that works today);
+/// * readable: the count, via [`read_count_u64`], including a float-spelled integer;
+/// * present, not `null`, unreadable: [`UnreadableCount`], which the caller turns into a refusal.
 pub fn billed_count(
     usage: &serde_json::Value,
     field: &'static str,
@@ -120,9 +85,8 @@ pub fn billed_count(
             spelling: {
                 let mut s = v.to_string();
                 if s.len() > SPELLING_BUDGET {
-                    // Cut on a CHARACTER boundary at or below the byte budget. `truncate` panics
-                    // when its offset lands inside a multi-byte character, so a byte cut let a
-                    // hostile spelling (forty `é`) panic the read that exists to refuse it.
+                    // Cut on a character boundary at or below the byte budget: `truncate` panics inside
+                    // a multi-byte character, so a byte cut let a hostile spelling (forty `é`) panic the read.
                     let mut cut = SPELLING_BUDGET;
                     while !s.is_char_boundary(cut) {
                         cut -= 1;
@@ -136,11 +100,10 @@ pub fn billed_count(
     }
 }
 
-/// [`billed_count`] for a count whose ABSENCE is kept distinct from zero (a cache tier, a per-TTL
-/// split): an absent usage object, an absent field or a JSON `null` is `None` (never a spurious
-/// `Some(0)`), a readable count is `Some(n)`, and a present-but-UNREADABLE count is the same
-/// [`UnreadableCount`] refusal — never the `None` that reads as "the provider reported no cache".
-///
+/// [`billed_count`] for a count whose absence is distinct from zero (a cache tier, a per-TTL
+/// split): an absent usage object, field or `null` is `None` (never `Some(0)`), a readable count is
+/// `Some(n)`, and a present-but-unreadable count is the same [`UnreadableCount`] refusal, never the
+/// `None` that reads as "no cache reported".
 /// # Errors
 /// The field is present, is not `null`, and is not a count.
 pub fn billed_count_opt(
@@ -153,12 +116,11 @@ pub fn billed_count_opt(
     }
 }
 
-/// A RECORDED count (one the ledger notes and never bills): absent or `null` is `Some(0)` (nothing
-/// reported, as [`billed_count`] reads it), a readable count is `Some(n)`, and a present count this
-/// build cannot read is UNKNOWN, `None`. It is never a zero, because a zero records no work for
-/// work that happened. It is never a refusal either, because a count nothing
-/// bills does not justify refusing an answer. The unreadable field is named on `warnings` and in a
-/// warning log line, so the gap is visible where the record is read.
+/// A recorded count (one the ledger notes and never bills): absent or `null` is `Some(0)` (as
+/// [`billed_count`] reads it), a readable count is `Some(n)`, and a present unreadable one is
+/// unknown, `None`. Never zero (that records no work for work that happened) and never a refusal (a
+/// count nothing bills does not justify refusing an answer). The field is named on `warnings` and in
+/// a warning log line so the gap is visible where the record is read.
 pub fn recorded_count(
     usage: &serde_json::Value,
     field: &'static str,
@@ -177,8 +139,6 @@ pub fn recorded_count(
         }
     }
 }
-
-// ── THE USAGE TABLE WALK ───────────────────────────────────────────────────────────────
 
 /// Where one usage count lands in the IR.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -235,11 +195,11 @@ pub enum CountRead {
     /// An attribution slice inside a total that is already read: unreadable is `None`, never a
     /// refusal. Sets the slot.
     Lenient(&'static [&'static str]),
-    /// A slice the provider counts INSIDE the slot's total (a cached prefix inside the prompt):
-    /// read as [`CountRead::Opt`] and SUBTRACTED (saturating) from the slot.
+    /// A slice the provider counts inside the slot's total (a cached prefix inside the prompt): read
+    /// as [`CountRead::Opt`] and subtracted (saturating) from the slot.
     Less(&'static [&'static str]),
-    /// A term the provider reports BESIDE the slot's total (thinking beside the visible answer):
-    /// read as [`CountRead::Opt`] and ADDED (saturating) to the slot.
+    /// A term the provider reports beside the slot's total (thinking beside the answer): read as
+    /// [`CountRead::Opt`] and added (saturating) to the slot.
     More(&'static [&'static str]),
     /// The sum of `count` over every entry of the list at `list` whose `key` member is `value`;
     /// `None` when no such entry reports one, unreadable REFUSES (a per-TTL cache list).
@@ -286,7 +246,7 @@ fn parent<'a>(
     }
 }
 
-/// One OPTIONAL counter: absent or `null` is `None`, a readable count is `Some`, unreadable is the
+/// One optional counter: absent or `null` is `None`, readable is `Some`, unreadable is the
 /// [`UnreadableCount`] the walk refuses on.
 fn opt(
     usage: Option<&serde_json::Value>,
@@ -296,9 +256,8 @@ fn opt(
     billed_count_opt(up, field)
 }
 
-/// One billed leaf-operation usage count that is present and unreadable, REFUSED ON ITS OWN:
-/// said loudly, it bills nothing, nothing stands in for it, and the answer it rode on is served.
-/// Every such answer is served.
+/// One billed leaf-operation usage count that is present and unreadable, refused on its own: warned
+/// loudly, it bills nothing, nothing stands in for it, and the answer it rode on is served.
 pub fn refused_count(protocol: &'static str, unreadable: &UnreadableCount) {
     tracing::warn!(
         protocol,
@@ -309,20 +268,15 @@ pub fn refused_count(protocol: &'static str, unreadable: &UnreadableCount) {
     );
 }
 
-/// THE ONE USAGE READER. Walks a dialect's usage table over one wire usage object (`None` when the
-/// response carried none) and builds the IR usage it states. Each row is read under
-/// [`billed_count`]'s contract: absent is zero (or `None`), a readable count is the count, and a
-/// present-but-UNREADABLE count is REFUSED.
+/// The one usage reader. Walks a dialect's usage table over one wire usage object (`None` when
+/// absent) and builds the IR usage it states, each row under [`billed_count`]'s contract (absent is
+/// zero or `None`, readable is the count, present-but-unreadable is refused).
 ///
-/// THE REFUSAL IS PER FIELD: each usage field is judged
-/// on its own. A readable field bills as stated; an unreadable one (a stringified `"1500"`) is
-/// refused, so IT bills nothing, and the refusal is loud (the warn line below, naming the protocol,
-/// the field and its spelling). Nothing is substituted for it: it is never
-/// read as a zero count and no floor stands in for it. The answer and its readable counts
-/// are not refused with it: `{"prompt_tokens":"1500","completion_tokens":9}` bills (0, 9), reached without reading the
-/// unreadable count as anything. A dialect supplies only the table and its `protocol` label; it
-/// never reads a count itself.
-///
+/// Refusal is per field. A readable field bills as stated; an unreadable one (a stringified
+/// `"1500"`) bills nothing and is warned loudly (protocol, field, spelling). Nothing substitutes for
+/// it: not a zero, not a floor. The answer and its readable counts are not refused with it:
+/// `{"prompt_tokens":"1500","completion_tokens":9}` bills (0, 9). A dialect supplies only the table
+/// and its `protocol` label and never reads a count itself.
 /// # Errors
 /// None today: an unreadable count refuses only itself. The `Result` stays the readers' seam.
 pub fn read_usage(
@@ -330,7 +284,7 @@ pub fn read_usage(
     usage: Option<&serde_json::Value>,
     table: &[UsageCount],
 ) -> Result<crate::codec::ir::IrUsage, busbar_contract::protocol::IrError> {
-    // One refused field: said loudly, and it bills nothing. The readable fields bill as stated.
+    // One refused field: warned, bills nothing; readable fields bill as stated.
     let kept = |read: Result<Option<u64>, UnreadableCount>| match read {
         Ok(n) => n,
         Err(unreadable) => {
@@ -429,11 +383,10 @@ pub fn read_usage(
     })
 }
 
-/// Whether [`read_usage`] REFUSED a count of `usage` under `table`: a billed row present, not
-/// `null`, and not a count. A usage with a refused count has no stated-total gap to ledger: the
-/// gap would be the refused count itself, priced back in under another name, which is exactly the
-/// substitution a refusal forbids (each usage field is judged on its own). The caller skips
-/// [`stated_total_note`] for it.
+/// Whether [`read_usage`] refused a count of `usage` under `table` (a billed row present, not
+/// `null`, not a count). Such a usage has no stated-total gap to ledger: the gap would be the
+/// refused count priced back in under another name, the substitution a refusal forbids. The caller
+/// skips [`stated_total_note`] for it.
 #[must_use]
 pub fn refused_any(usage: Option<&serde_json::Value>, table: &[UsageCount]) -> bool {
     table.iter().any(|&(_, read)| match read {
@@ -456,22 +409,21 @@ pub fn refused_any(usage: Option<&serde_json::Value>, table: &[UsageCount]) -> b
     })
 }
 
-/// THE STATED-TOTAL CROSS-CHECK: the total a provider states beside its itemized counts, against
-/// what the dialect's usage table LEDGERS from those counts (the four meter classes: uncached
-/// input, cache read, cache write, output). A provider's total is its own sum of the counts it
-/// itemizes, never a unit: nothing is zeroed, clamped or back-filled to make the two agree, and
-/// the itemized counts stay exactly as reported. A total ABOVE them is the open class
-/// `unitemized_tokens` (`IrUsage::to_token_usage`).
+/// The stated-total cross-check: the total a provider states beside its itemized counts, against
+/// what the usage table ledgers from them (the four meter classes: uncached input, cache read, cache
+/// write, output). A stated total is the provider's own sum, never a unit: nothing is zeroed,
+/// clamped or back-filled, and the itemized counts stay as reported. A total above them is the open
+/// class `unitemized_tokens` (`IrUsage::to_token_usage`).
 ///
-/// `None` in the ordinary case — no total on the usage object (absent, `null`, or not a count: a
-/// total is checked, never billed, so an unreadable one is not a refusal), or a total equal to the
-/// ledgered sum. Otherwise the gap is WARN-logged with both figures and returned as the note the IR
-/// carries beside the counts: a POSITIVE `unaccounted` is units the provider counted that land in
-/// no meter class (a counter the table does not read, e.g. an OpenAI-compatible backend reporting
-/// reasoning outside `completion_tokens`), a negative one is a total below its own terms.
+/// `None` ordinarily: no total (absent, `null`, or not a count, since a total is checked never
+/// billed, so unreadable is no refusal), or one equal to the ledgered sum. Otherwise the gap is
+/// WARN-logged with both figures and returned as the note: positive `unaccounted` is units the
+/// provider counted that land in no meter class (a counter the table does not read, e.g. an
+/// OpenAI-compatible backend reporting reasoning outside `completion_tokens`), negative is a total
+/// below its own terms.
 ///
-/// `protocol` names the dialect on the log line, `identity` the usage object checked (stable, for
-/// a caller to branch on), `total` the provider's stated total member.
+/// `protocol` names the dialect on the log line, `identity` the usage object checked (stable, for a
+/// caller to branch on), `total` the stated-total member.
 #[must_use]
 pub fn stated_total_note(
     protocol: &'static str,

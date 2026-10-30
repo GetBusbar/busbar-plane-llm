@@ -1,31 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE DIALECT MAPPING WALKER (TODO 36b, stage 0 of the dialect file): one walker for every
+//! The dialect mapping walker (TODO 36b, stage 0 of the dialect file): one walker for every
 //! dialect's mapped request fields.
 //!
-//! Each dialect states its wire ↔ IR mapping as data in `crates/busbar-plane-llm/dialects/<d>.toml`;
-//! `cargo xtask dialect compile` emits it as the `const` tables of `codec/<d>/map.gen.rs` (the
+//! Each dialect states its wire/IR mapping as data in `crates/busbar-plane-llm/dialects/<d>.toml`;
+//! `cargo xtask dialect compile` emits the `const` tables of `codec/<d>/map.gen.rs` (the
 //! `dialect-map` gate refuses a committed table that differs from a fresh compile). A row is a
 //! [`Field`]: wire path, [`Slot`], [`ValueCodec`]. This module is the only code that reads the tables:
 //!
-//! * [`read_fields`] fills each slot from its wire path, then parks in `extra` every raw top-level member
-//!   the slot does not reproduce byte-for-byte, so a same-dialect re-serialize keeps the caller's
-//!   exact member (`extra` is written last and is cleared on the cross-protocol seam);
+//! * [`read_fields`] fills each slot from its wire path, then parks in `extra` every raw top-level
+//!   member the slot does not reproduce byte for byte, so a same-dialect re-serialize keeps the
+//!   caller's exact member (`extra` is written last and cleared on the cross-protocol seam);
 //! * [`write_fields`] emits each carried slot at its wire path, overlaying a nested path onto the
 //!   container already in the body;
 //! * [`keys`] names the top-level members a table models, for the reader's modelled-key list.
 //!
-//! A row whose carry is irregular names a [`Hook`] from the one registry below; the walker calls
-//! the hook's reader and writer in the row's place.
+//! A row with irregular carry names a [`Hook`] from the registry below; the walker calls the hook's
+//! reader and writer in its place.
 
 use serde_json::{Map, Value};
 
 use crate::codec::ir::{IrReasoningAsk, IrReasoningEffort, IrRequest, IrServiceTier, IrVerbosity};
 
-/// A flat IR request slot a field table can name. Each slot has ONE neutral JSON spelling (the
-/// slot's own number / flag / string, a string map, or the IR word); a row's [`ValueCodec`] maps it to
-/// the dialect's spelling.
+/// A flat IR request slot a field table can name, with one neutral JSON spelling (a number, flag,
+/// string, string map, or the IR word); a row's [`ValueCodec`] maps it to the dialect's spelling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Slot {
     /// `IrRequest::metadata`: a string → string map.
@@ -69,11 +68,10 @@ pub enum Slot {
     Structure,
 }
 
-/// The control order: every request control a dialect may have no form for, in the order a
-/// dialect's dropped controls are warned and audited. Each dialect's dropped set is DERIVED from
-/// its mapping: a control is dropped when the request carries it and the dialect has no row for it
-/// (or its row's word table has no word for the value), unless the dialect's `[controls]` names it
-/// silent (a waiver) or carried by its own code.
+/// The control order: every request control a dialect may have no form for, in the order dropped
+/// controls are warned and audited. A dialect's dropped set is derived from its mapping: a control
+/// is dropped when the request carries it and the dialect has no row for it (or its word table has
+/// no word for the value), unless `[controls]` names it silent (a waiver) or carried by code.
 pub const CONTROL_ORDER: &[Slot] = &[
     Slot::TopK,
     Slot::Stop,
@@ -94,8 +92,8 @@ pub const CONTROL_ORDER: &[Slot] = &[
 /// How a dialect handles a control slot beyond its rows (`[controls]` in the mapping file).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Handled {
-    /// No form, and no text of the dialect's own (`silent = true`). A drop is never silent, so it
-    /// is dropped like a control with no row: the dialect's `drop_warn` and the seam's audit.
+    /// No form and no text of the dialect's own (`silent = true`). A drop is never silent: it is
+    /// dropped like a control with no row (the dialect's `drop_warn` and the seam's audit).
     Silent,
     /// Carried, warned or reported by the named dialect code (`code = "<name>"`).
     Code(&'static str),
@@ -135,9 +133,9 @@ pub enum ValueCodec {
     Prim(&'static str),
 }
 
-/// THE HOOK REGISTRY: every named piece of irregular carry a mapping row may cite (`hook = "<name>"`
-/// in the dialect file names the variant in snake case). Each hook is a reader (wire value → IR)
-/// and a writer (IR → wire value, `None` to omit the member).
+/// The hook registry: every named piece of irregular carry a mapping row may cite (`hook = "<name>"`
+/// in the dialect file, snake case). Each is a reader (wire to IR) and a writer (IR to wire, `None`
+/// to omit the member).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hook {
     /// Chat `modalities`: `audio` output is written only beside the caller's own `audio` member.
@@ -181,9 +179,9 @@ pub struct Field {
     pub drop_if: Option<DropIf>,
 }
 
-/// The clamp a row applies on write (`clamp`, `clamp_warn`, `clamp_parameter` in the mapping
-/// file). It is the temperature clamp: the warn, emitted only when the clamp changed the value,
-/// carries `requested_temperature` / `clamped_temperature` (and `parameter`, when `parameter`).
+/// The clamp a row applies on write (`clamp`, `clamp_warn`, `clamp_parameter` in the mapping file):
+/// the temperature clamp. The warn, emitted only when the clamp changed the value, carries
+/// `requested_temperature` / `clamped_temperature` (and `parameter`, when `parameter`).
 #[derive(Clone, Copy)]
 pub struct Clamp {
     pub min: f64,
@@ -298,9 +296,8 @@ impl Slot {
         }
     }
 
-    /// The slot's name: the IR field's. A dropped control's warn and audit row name the caller's
-    /// wire path for it ([`crate::codec::drops::wire_path`]), this name only when the caller's
-    /// dialect has no row for the slot.
+    /// The slot's name, the IR field's. A dropped control's warn and audit row use the caller's wire
+    /// path for it ([`crate::codec::drops::wire_path`]), this name only with no caller row.
     pub fn name(self) -> &'static str {
         match self {
             Slot::Metadata => "metadata",
@@ -446,7 +443,7 @@ fn put(out: &mut Map<String, Value>, path: &[&str], v: Value) {
     }
 }
 
-/// THE READ WALK. Fill every slot `table` names from the wire body `obj`, then park in `extra` each
+/// The read walk: fill every slot `table` names from the wire body `obj`, then park in `extra` each
 /// raw top-level member the filled slots do not write back identically (same-dialect fidelity).
 pub fn read_fields(table: Table, obj: &Map<String, Value>, ir: &mut IrRequest) {
     for f in rows(table) {
@@ -495,8 +492,7 @@ fn value_of(f: &Field, req: &IrRequest) -> Option<Value> {
     }
 }
 
-/// The warn of a row dropped under its condition. Its fields are the slot's own (a static field
-/// name per slot, as the writers always spelled them).
+/// The warn of a row dropped under its condition, with the slot's own static field name.
 fn warn_drop(d: &DropIf, slot: Slot, req: &IrRequest) {
     use crate::codec::drops::{member, writer_drop};
     let diag = &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS;
@@ -530,10 +526,9 @@ pub fn clamp(v: f64, min: f64, max: f64) -> (f64, bool) {
     (clamped, clamped != v)
 }
 
-/// THE WRITE WALK. Emit every slot of `table` that `req` carries into `out` at its wire path,
-/// through the row's modifiers: a row whose drop condition holds is omitted with its warn, a clamp
-/// is applied (warned when it changed the value), a list is capped. A neutral word the row's table
-/// has no wire word for is not written.
+/// The write walk: emit every slot of `table` that `req` carries into `out` at its wire path through
+/// the row's modifiers (a dropped row is omitted with its warn, a clamp applied and warned when it
+/// changed the value, a list capped). A neutral word with no wire word is not written.
 pub fn write_fields(table: Table, req: &IrRequest, egress: Egress, out: &mut Map<String, Value>) {
     for f in rows(table) {
         let Some(mut v) = value_of(f, req) else {
@@ -586,10 +581,9 @@ pub fn write_fields(table: Table, req: &IrRequest, egress: Egress, out: &mut Map
     }
 }
 
-/// THE DERIVED DROPS: the controls of [`CONTROL_ORDER`] that `req` carries and this dialect cannot
-/// write: no row names the slot (a hook row and a `prim` row carry it), or its word-table row has
-/// no word for the value — unless `controls` names the slot carried by code. The names
-/// are the ones the dialect's `dropped_egress_controls` reports and its warns carry.
+/// The derived drops: controls of [`CONTROL_ORDER`] that `req` carries and this dialect cannot write
+/// (no row names the slot, or its word-table row has no word for the value), unless `controls` names
+/// it carried by code. The names are those `dropped_egress_controls` reports and the warns carry.
 pub fn dropped<'a>(
     table: Table,
     controls: &'a [(Slot, Handled)],
@@ -619,8 +613,8 @@ fn handled(controls: &[(Slot, Handled)], slot: Slot) -> Option<Handled> {
     controls.iter().find(|(s, _)| *s == slot).map(|(_, h)| *h)
 }
 
-/// THE ONE DROP WARN: one warn per [`dropped`] control, in the dialect's own words — its
-/// `[controls]` text for the slot when it names one, else its `drop_warn`.
+/// The one drop warn: one per [`dropped`] control, in the dialect's words (its `[controls]` text for
+/// the slot, else its `drop_warn`).
 pub fn warn_drops(
     table: Table,
     controls: &[(Slot, Handled)],
@@ -712,12 +706,12 @@ pub fn crosses(table: Table, path: &[&str]) -> bool {
     rows(table).any(|f| f.path == path && !matches!(f.codec, ValueCodec::Prim(_)))
 }
 
-/// THE NAME RESOLVER's table half: the notation-A wire path at which `table` spells the IR name
-/// `name` (a slot's [`Slot::name`] or a `prim` row's name), `None` when no row names it. Slot rows
-/// win over `prim` rows. Of several rows, a member outside every list wins (a request control is a
-/// top-level knob, not a member of each turn); rows that all sit in lists name the path they share,
-/// each step they differ at left out (`messages[].content[].type=text.cache_control` and
-/// `...type=image.cache_control` are `messages[].content[].cache_control`).
+/// The name resolver's table half: the notation-A wire path at which `table` spells the IR name
+/// `name` (a slot's [`Slot::name`] or a `prim` row's name), `None` without a row. Slot rows win over
+/// `prim` rows. Of several rows, a member outside every list wins (a request control is a top-level
+/// knob); rows all in lists name their shared path with differing steps left out
+/// (`messages[].content[].type=text.cache_control` and `...type=image.cache_control` give
+/// `messages[].content[].cache_control`).
 pub fn wire_path(table: Table, name: &str) -> Option<String> {
     let slot_rows: Vec<&[&str]> = rows(table)
         .filter(|f| f.slot != Slot::Structure && f.slot.name() == name)
