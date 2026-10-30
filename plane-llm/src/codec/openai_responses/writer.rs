@@ -14,22 +14,20 @@ impl ProtocolWriter for ResponsesWriter {
         "/v1/responses"
     }
 
-    /// Latch the ORIGINAL ingress request body for this stream so `write_response_events` can answer
-    /// the spec's request-echo members (`temperature`/`top_p`/`instructions`/`metadata`/
-    /// `tool_choice`/`parallel_tool_calls`/`tools`) with the client's actual values. See
-    /// `ResponsesWriter::store_request_echo` / `fill_required_response_members`.
+    /// Latch the original ingress request body so `write_response_events` can answer the spec's
+    /// request-echo members with the client's values (see `ResponsesWriter::store_request_echo`).
     fn set_request_echo(&self, ingress_request_body: &serde_json::Value) {
         self.store_request_echo(ingress_request_body);
     }
 
-    /// Latch the stream's translation cap, the one its plane's settings carry.
+    /// Latch the stream's translation cap from the plane's settings.
     fn set_translate_cap(&self, cap: usize) {
         self.store_translate_cap(cap);
     }
 
     fn dropped_egress_controls(&self, req: &crate::codec::ir::IrRequest) -> Vec<&'static str> {
-        // Mirrors the `write_request` drop-warns: the controls the mapping file has no row for
-        // (`top_k`, `stop`, the penalties, `seed`, `n`) are derived from it.
+        // Mirrors the `write_request` drop-warns: controls the mapping file has no row for (`top_k`,
+        // `stop`, penalties, `seed`, `n`) are derived from it.
         let mut dropped: Vec<&'static str> =
             crate::codec::carry::dropped(super::map::REQUEST, super::map::CONTROLS, req)
                 .map(crate::codec::carry::Slot::name)
@@ -47,9 +45,8 @@ impl ProtocolWriter for ResponsesWriter {
         dropped
     }
 
-    /// The Responses API carries turns in `input`, which may be a LIST of items or a bare string
-    /// (one implicit user turn). Either is replaced by the EasyInputMessage list the reply renders
-    /// to; only an absent `input` is fail-safe-untouched.
+    /// `input` may be a list of items or a bare string (one implicit user turn); either is replaced
+    /// by the EasyInputMessage list. Only an absent `input` is left untouched.
     fn apply_rewrite_to_ingress_body(
         &self,
         obj: &mut serde_json::Map<String, serde_json::Value>,
@@ -103,9 +100,8 @@ impl ProtocolWriter for ResponsesWriter {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            // IR-14: a system prompt the caller wrote in the `developer` role goes back as a leading
-            // `developer` input item; any other (a `system` role, or unknown) keeps the role-less
-            // top-level `instructions` member.
+            // IR-14: a `developer`-role system prompt goes back as a leading `developer` input item;
+            // any other keeps the top-level `instructions`.
             if !instructions.is_empty() {
                 if req.system_role == Some(crate::codec::ir::IrSystemRole::Developer) {
                     input_arr.push(serde_json::json!({
@@ -131,14 +127,11 @@ impl ProtocolWriter for ResponsesWriter {
                     };
 
                     let mut content_arr: Vec<serde_json::Value> = Vec::new();
-                    // function_call / function_call_output items are flat top-level `input`
-                    // entries in the Responses API, NOT nested inside a message's `content`.
-                    // Collect them separately so the enclosing assistant `message` is emitted
-                    // FIRST (and only when it actually has content), with the tool items appended
-                    // after it in order — matching the conversation order the assistant produced.
+                    // `function_call` / `function_call_output` items are flat top-level `input`
+                    // entries, not nested in a message's `content`. Collected separately so the
+                    // assistant `message` comes first (only if it has content), tool items after it.
                     let mut tool_items: Vec<serde_json::Value> = Vec::new();
-                    // Prior-turn reasoning is re-emitted as top-level `reasoning` input items,
-                    // placed BEFORE the message they precede (matching how the model produced them).
+                    // Prior-turn reasoning becomes top-level `reasoning` input items before their message.
                     let mut reasoning_items: Vec<serde_json::Value> = Vec::new();
                     for block in &msg.content {
                         match block {
@@ -164,11 +157,8 @@ impl ProtocolWriter for ResponsesWriter {
                                 let mut part = serde_json::Map::new();
                                 part.insert(keys::TYPE.to_string(), serde_json::json!(type_str));
                                 part.insert(keys::TEXT.to_string(), serde_json::json!(text));
-                                // Re-emit the assistant `output_text` part's URL-citation
-                                // `annotations` when the IR carried any (an assistant turn replayed as
-                                // input keeps its grounding sources). `input_text` (user) carries no
-                                // annotations, so only emit for the assistant/output_text case, and
-                                // only when non-empty so a citation-less turn gains no spurious key.
+                                // Re-emit URL-citation `annotations` on an assistant `output_text`
+                                // part, only when non-empty (`input_text` carries none).
                                 if msg.role == crate::codec::ir::IrRole::Assistant
                                     && !citations.is_empty()
                                 {
@@ -188,11 +178,9 @@ impl ProtocolWriter for ResponsesWriter {
                             crate::codec::ir::IrBlock::Image { source, detail, .. } => {
                                 content_arr.extend(input_image_part(source, *detail));
                             }
-                            // The Responses input surface has ONE attachment part, `input_file`, and
-                            // no audio or video part — so a document projects natively (this is the
-                            // slot an Anthropic `document` or a Bedrock `document` lands in) and the
-                            // other kinds are dropped DELIBERATELY with a warn naming the construct,
-                            // never as the empty text part they used to become.
+                            // The input surface has one attachment part, `input_file`, and no audio
+                            // or video part: a document projects natively, other kinds are dropped
+                            // with a warn naming the construct, never as an empty text part.
                             crate::codec::ir::IrBlock::Media {
                                 kind, source, name, ..
                             } => {
@@ -200,14 +188,13 @@ impl ProtocolWriter for ResponsesWriter {
                             }
                             crate::codec::ir::IrBlock::Json(_)
                             | crate::codec::ir::IrBlock::HostedToolRecord { .. } => {
-                                // Structured-json (Bedrock tool-result content) has no Responses
-                                // input-content shape; dropped here.
+                                // Structured JSON (Bedrock tool-result content) has no input-content shape.
                             }
                             crate::codec::ir::IrBlock::ToolUse {
                                 id, name, input, ..
                             } => {
-                                // Emit a raw `Value::String` (unparseable/streaming-partial args) verbatim
-                                // rather than JSON-encoding it a second time — same as the Chat writer.
+                                // A raw `Value::String` (unparseable or partial args) goes verbatim,
+                                // not JSON-encoded twice, as in the Chat writer.
                                 let args_str =
                                     crate::codec::dialect::tool_arguments_to_string(input);
                                 tool_items.push(serde_json::json!({
@@ -222,8 +209,8 @@ impl ProtocolWriter for ResponsesWriter {
                                 content,
                                 ..
                             } => {
-                                // RSP-10: text, JSON, images and files all reach `output` — see
-                                // `function_call_output_value`.
+                                // RSP-10: text, JSON, images and files all reach `output`
+                                // (`function_call_output_value`).
                                 let output_value = function_call_output_value(content);
 
                                 tool_items.push(serde_json::json!({
@@ -232,20 +219,13 @@ impl ProtocolWriter for ResponsesWriter {
                                     (keys::OUTPUT): output_value
                                 }));
                             }
-                            // A prior-turn Thinking block re-emits as a top-level Responses
-                            // `reasoning` INPUT item (a sibling of the message, NOT a content block),
-                            // so a Responses->Responses round-trip preserves reasoning and a
-                            // reasoning block decoded from another protocol survives onto Responses
-                            // egress. Mirrors the `write_response` reasoning item shape: a REDACTED
-                            // reasoning block holds opaque encrypted bytes with no plaintext analog
-                            // on the Responses surface, so it is dropped rather than leaked.
-                            // ROLE GUARD: a `reasoning` input item asserts to the model "this is my
-                            // own prior reasoning". Only an Assistant message can truthfully carry
-                            // that — a Thinking block attached to a User message (possible from an
-                            // upstream reader that does not check role, e.g. the Gemini reader's
-                            // `thought: true` parts) must NOT be re-emitted as the model's own past
-                            // reasoning, or the caller's content is presented back to the model
-                            // with false provenance.
+                            // A prior-turn Thinking block re-emits as a top-level `reasoning` INPUT
+                            // item (a sibling of the message), mirroring `write_response`. A
+                            // redacted block has no plaintext analog here and is dropped.
+                            // ROLE GUARD: the item asserts "my own prior reasoning", so only an
+                            // Assistant message may carry it. A Thinking block on a User message
+                            // (e.g. Gemini `thought: true` parts) would present caller content to
+                            // the model with false provenance.
                             crate::codec::ir::IrBlock::Thinking {
                                 text,
                                 signature,
@@ -254,9 +234,8 @@ impl ProtocolWriter for ResponsesWriter {
                                 signature_origin,
                                 ..
                             } if !*redacted && msg.role == crate::codec::ir::IrRole::Assistant => {
-                                // RSP-13 (IR-18): only an OpenAI-minted blob (or one of unknown
-                                // origin) is sent as `encrypted_content`; a foreign vendor's
-                                // signature is a blob this backend cannot decrypt.
+                                // RSP-13 (IR-18): only an OpenAI-minted blob (or unknown origin) is
+                                // sent as `encrypted_content`; a foreign signature cannot be decrypted.
                                 let emit_sig = signature
                                     .as_deref()
                                     .filter(|_| super::slots::own_signature(*signature_origin));
@@ -268,8 +247,7 @@ impl ProtocolWriter for ResponsesWriter {
                                         "dropping a foreign reasoning signature on Responses egress: \
                                          `encrypted_content` accepts only an OpenAI-minted blob");
                                 }
-                                // A wholly-empty reasoning block (no text, no signature it may
-                                // send) emits no item — never a fabricated `rs_` item around nothing.
+                                // A wholly empty reasoning block emits no item.
                                 if !text.is_empty() || emit_sig.is_some() {
                                     let mut item = serde_json::Map::new();
                                     item.insert(
@@ -294,10 +272,8 @@ impl ProtocolWriter for ResponsesWriter {
                                     reasoning_items.push(serde_json::Value::Object(item));
                                 }
                             }
-                            // Non-Assistant Thinking (role guard above) — drop-with-warn, the
-                            // file's convention for a block with no analog on the target surface
-                            // (see the foreign-vendor-image and json-tool-result arms above), so
-                            // the loss is visible rather than silent.
+                            // Non-Assistant Thinking (role guard above): drop with a warn, as for
+                            // the other arms with no analog on this surface.
                             crate::codec::ir::IrBlock::Thinking { redacted, .. } if !*redacted => {
                                 crate::codec::drops::writer_drop!(
                                     crate::codec::drops::THINKING,
@@ -308,22 +284,17 @@ impl ProtocolWriter for ResponsesWriter {
                                      reasoning, which only an Assistant-role message can carry"
                                 );
                             }
-                            // A REDACTED reasoning block (Anthropic `redacted_thinking`, Bedrock
-                            // `redactedContent`: that vendor's opaque bytes, whatever its
-                            // `signature_origin`) has no Responses form — `encrypted_content` takes
-                            // only an OpenAI blob (RSP-13) — so it is dropped rather than leaked as
-                            // `reasoning_text` or sent as a foreign `encrypted_content`.
+                            // A redacted block (Anthropic `redacted_thinking`, Bedrock
+                            // `redactedContent`) has no Responses form: `encrypted_content` takes
+                            // only an OpenAI blob (RSP-13). Dropped, not leaked.
                             crate::codec::ir::IrBlock::Thinking { .. } => {}
                         }
                     }
 
-                    // Reasoning items come BEFORE the message they precede.
                     input_arr.extend(reasoning_items);
 
-                    // Emit the assistant/user `message` wrapper only when it carries content. A
-                    // turn that is purely a tool call must NOT produce a spurious
-                    // `{role, content: []}` item — the Responses API rejects empty-content
-                    // message items.
+                    // Emit the `message` wrapper only with content: a pure tool-call turn must not
+                    // produce `{role, content: []}`, which the API rejects.
                     if !content_arr.is_empty() {
                         let mut msg_obj = serde_json::Map::new();
                         msg_obj.insert(keys::ROLE.to_string(), serde_json::json!(role_str));
@@ -333,7 +304,6 @@ impl ProtocolWriter for ResponsesWriter {
                         );
                         input_arr.push(serde_json::Value::Object(msg_obj));
                     }
-                    // Then the flat tool items, in order, AFTER the message they belong to.
                     input_arr.extend(tool_items);
                 }
 
@@ -345,8 +315,6 @@ impl ProtocolWriter for ResponsesWriter {
                             ..
                         } = block
                         {
-                            // RSP-10: text, JSON, images and files all reach `output` — see
-                            // `function_call_output_value`.
                             let output_value = function_call_output_value(content);
 
                             input_arr.push(serde_json::json!({
@@ -366,8 +334,8 @@ impl ProtocolWriter for ResponsesWriter {
             out.insert(keys::INPUT.to_string(), serde_json::Value::Array(input_arr));
         }
 
-        // IR-11: the neutral hosted tools in the Responses spelling (a kind with no Responses tool
-        // is dropped with a warn and reported by `dropped_egress_controls`).
+        // IR-11: neutral hosted tools in Responses spelling (a kind with none is dropped with a warn
+        // and reported by `dropped_egress_controls`).
         let hosted_arr: Vec<serde_json::Value> = req
             .hosted_tools
             .iter()
@@ -377,13 +345,9 @@ impl ProtocolWriter for ResponsesWriter {
         if has_tools {
             let mut tools_arr: Vec<serde_json::Value> = Vec::new();
             for tool in &req.tools {
-                // HOSTED-TOOL PASSTHROUGH. A hosted/built-in Responses tool
-                // (`web_search`/`file_search`/`code_interpreter`/`computer_use_preview`/`mcp`/...) is a
-                // complete tool spec discriminated by its top-level `type`; it carries no
-                // `name`/`parameters` and has no function-tool equivalent. The reader stored its raw
-                // JSON in `hosted`, so re-emit it VERBATIM — wrapping it as a function tool (the prior
-                // behavior) produced an empty `{"type":"function","name":""}` that a Responses backend
-                // 400s on and is a detectable proxy tell.
+                // Hosted-tool passthrough: a hosted tool is a complete spec keyed by its top-level
+                // `type` with no `name`/`parameters`, so re-emit the raw JSON verbatim. Wrapping it as
+                // a function tool gives `{"type":"function","name":""}`, which the backend 400s.
                 if let Some(hosted) = &tool.hosted {
                     tools_arr.push(hosted.clone());
                     continue;
@@ -403,9 +367,8 @@ impl ProtocolWriter for ResponsesWriter {
                 };
                 tool_obj.insert(keys::PARAMETERS.to_string(), params);
 
-                // STRICT function calling, flat on a Responses tool (Chat nests it under
-                // `function`). Emitted only when the source stated it, so `None` never becomes an
-                // invented `strict: false`.
+                // Flat on a Responses tool (Chat nests it). Only when stated, so `None` never
+                // becomes `strict: false`.
                 if let Some(strict) = tool.strict {
                     tool_obj.insert(keys::STRICT.to_string(), serde_json::json!(strict));
                 }
@@ -416,13 +379,11 @@ impl ProtocolWriter for ResponsesWriter {
             out.insert(keys::TOOLS.to_string(), serde_json::Value::Array(tools_arr));
         }
 
-        // Emit `tool_choice` in the Responses native shape when present so a forced/targeted
-        // directive translated from another protocol does not silently degrade to `auto`.
-        // `/v1/responses` rejects it tool-less identically to Chat Completions — the reachable case
-        // is a cross-protocol request whose hosted tools `prepare_for_egress` stripped
-        // (`ir/variant.rs`) while the tool_choice directive survived.
-        // IR-10 (RSP-15): a restricted subset is the `allowed_tools` form, its mode taken from the
-        // Auto/Required directive beside it.
+        // Emit `tool_choice` natively so a forced directive from another protocol does not degrade
+        // to `auto`. `/v1/responses` rejects it tool-less, as Chat does; the reachable case is a
+        // cross-protocol request whose hosted tools `prepare_for_egress` stripped
+        // (`ir/variant.rs`). IR-10 (RSP-15): a restricted subset is the `allowed_tools` form, its
+        // mode from the Auto/Required directive beside it.
         if let Some(names) = &req.allowed_tools {
             if !has_tools {
                 crate::codec::drops::writer_drop!(
@@ -455,10 +416,8 @@ impl ProtocolWriter for ResponsesWriter {
                 );
             }
         }
-        // `parallel_tool_calls`: `/v1/responses` documents it the same way as
-        // Chat — meaningless (and, empirically, rejected) with no tools. The `is_some()` gate means
-        // this can only fire on a request that actually carried the flag, so it never fires as
-        // per-request noise on the common tool-less case.
+        // `parallel_tool_calls` is meaningless (and rejected) with no tools, as on Chat. The
+        // `is_some()` gate keeps it from firing on tool-less requests.
         if let Some(parallel) = req.parallel_tool_calls {
             if !has_tools {
                 crate::codec::drops::writer_drop!(
@@ -484,13 +443,10 @@ impl ProtocolWriter for ResponsesWriter {
             );
         }
 
-        // `temperature` / `top_p` are rows of the mapping file (written below). A cross-protocol
-        // source's top_k/stop have no Responses target and are dropped (documented in the reader).
+        // `temperature` / `top_p` are map-file rows (written below); top_k/stop have no target.
 
-        // LOGPROBS ask: the Responses create API models a top-level `top_logprobs` integer (0–20),
-        // so a Responses→Responses request round-trips it and a cross-protocol source's logprobs ask
-        // reaches this surface. (There is no top-level `logprobs` boolean on `/v1/responses`; the
-        // enabling flag is implicit in `top_logprobs`, and response-side logprobs ride `include`.)
+        // Logprobs ask: a top-level `top_logprobs` (0-20). There is no `logprobs` boolean on
+        // `/v1/responses`; response-side logprobs ride `include`.
         if let Some(top_logprobs) = req.top_logprobs {
             out.insert(
                 keys::TOP_LOGPROBS.to_string(),
@@ -498,7 +454,7 @@ impl ProtocolWriter for ResponsesWriter {
             );
         }
 
-        // RSP-06: the end-user id rides the Responses `user` member, as it does on Chat.
+        // RSP-06: the end-user id rides `user`, as on Chat.
         if let Some(user) = &req.user {
             out.insert(keys::USER.to_string(), serde_json::json!(user));
         }
@@ -513,22 +469,17 @@ impl ProtocolWriter for ResponsesWriter {
             );
         }
 
-        // The controls the Responses create API does not model (`top_k`, `stop`, the penalties,
-        // `seed`, `n`; verified against openai-python `ResponseCreateParamsBase`): emitting one would
-        // 400 a real `/v1/responses` call, so each is dropped, observably — warned in the mapping
-        // file's words and reported via `dropped_egress_controls` for the seam audit.
+        // Controls the create API does not model (`top_k`, `stop`, penalties, `seed`, `n`) would 400
+        // a real call, so each is dropped observably via the mapping file's words and
+        // `dropped_egress_controls`.
         crate::codec::carry::warn_drops(super::map::REQUEST, super::map::CONTROLS, None, req);
 
-        // response_format → Responses `text.format`. The Responses surface carries structured-output
-        // config under `text.format` (flat json_schema shape), NOT a top-level `response_format`. Build
-        // the `format` value from the canonical IR shape and MERGE it into any `text` object already
-        // forwarded via `extra` (e.g. one carrying `verbosity`), so a request that pairs a structured
-        // output with another `text` knob keeps both. `extra` is applied FIRST (below) so this merge
-        // sees the forwarded remainder; then this overwrites `text` with the merged object.
+        // response_format goes under `text.format` (flat json_schema), not a top-level member. It is
+        // merged into any `text` object forwarded via `extra` (e.g. `verbosity`) so both survive;
+        // `extra` is applied first (below) so the merge sees it.
         if let Some(rf) = &req.response_format {
             let format = write_text_format(rf);
-            // Start from any `text` object forwarded through extra (the format-stripped remainder the
-            // reader preserved), so non-`format` sub-keys like `verbosity` survive alongside `format`.
+            // Start from the `text` remainder the reader preserved, so `verbosity` etc. survive.
             let mut text_obj = req
                 .extra
                 .get(keys::TEXT)
@@ -537,12 +488,10 @@ impl ProtocolWriter for ResponsesWriter {
                 .unwrap_or_default();
             text_obj.insert(keys::FORMAT.to_string(), format);
             out.insert(keys::TEXT.to_string(), serde_json::Value::Object(text_obj));
-            // The extra-forwarding loop below SKIPS `text` when `response_format` is Some (see its
-            // guard), so the bare extra `text` cannot clobber this merged object back to format-less.
+            // The extra-forwarding loop below skips `text` when `response_format` is Some.
         }
-        // The flat request fields (`map.gen.rs`): IR-03..06 (the members Chat spells alike) and
-        // IR-07 `text.verbosity`, overlaid on the `text` written above. A same-protocol request's
-        // raw members in `extra` (overlaid below) win.
+        // Flat request fields (`map.gen.rs`): IR-03..06 and IR-07 `text.verbosity`, overlaid on the
+        // `text` above. A same-protocol request's raw members in `extra` (below) win.
         crate::codec::carry::write_fields(
             super::map::REQUEST,
             req,
@@ -550,21 +499,17 @@ impl ProtocolWriter for ResponsesWriter {
             &mut out,
         );
 
-        // `stream` is a modeled key (excluded from `extra`), so it must be emitted explicitly or it
-        // is silently dropped — a `stream: true` request would otherwise be answered non-streaming,
-        // stalling the SSE translation loop. Mirrors the OpenAI writer.
+        // `stream` is a modeled key excluded from `extra`; omitting it would answer a `stream: true`
+        // request non-streaming and stall the SSE loop.
         out.insert(keys::STREAM.to_string(), serde_json::json!(req.stream));
 
-        // The reasoning carry in the Responses spelling: `reasoning: {effort}`. A numeric budget
-        // (Anthropic/Gemini source) is bucketized through the effort table. Emitted from the typed
-        // field only when `extra` does not carry a verbatim native `reasoning` object (the extra
-        // overlay below would forward the original, and must win: it can carry `summary` too).
+        // Reasoning as `reasoning: {effort}`; a numeric budget is bucketized through the effort
+        // table. Emitted only when `extra` carries no native `reasoning` object (the overlay below
+        // wins, and can carry `summary`).
         //
-        // `Off` (IR-09) is matched FIRST: projected through the table it would read as the smallest
-        // ENABLE ask. `effort: "none"` is accepted only by the newest OpenAI reasoning models: a
-        // lane that declares it (`LaneCaps::reasoning_none`) gets it; on any other
-        // the ask is omitted (with a warn). A Responses-origin `"none"` still rides `extra`
-        // verbatim on a same-protocol write.
+        // `Off` (IR-09) is matched first: through the table it would read as the smallest enable
+        // ask. `effort: "none"` is only accepted by the newest reasoning models, so it is sent only
+        // for a lane declaring `LaneCaps::reasoning_none`, else omitted with a warn.
         if req.reasoning == Some(crate::codec::ir::IrReasoningAsk::Off) {
             if !req.extra.contains_key(keys::REASONING) {
                 if caps.reasoning_none {
@@ -595,8 +540,7 @@ impl ProtocolWriter for ResponsesWriter {
                             serde_json::json!({(keys::EFFORT): effort.as_three_word_str()}),
                         );
                     }
-                    // "The model decides" (`Off` is matched above) has no effort word: DROPPED,
-                    // never a word put in its place (design F3); the model runs at its default.
+                    // "The model decides" has no effort word: dropped, never substituted (design F3).
                     None => crate::codec::drops::writer_drop!(
                         crate::codec::drops::REASONING,
                         &crate::codec::diagnostics::IR_DROP_REASONING,
@@ -609,20 +553,17 @@ impl ProtocolWriter for ResponsesWriter {
         }
 
         for (key, value) in &req.extra {
-            // `text` from extra carries only the non-`format` remainder (verbosity, etc.). When the IR
-            // carried a `response_format`, the merged `text` (remainder + format) was already inserted
-            // above; do NOT let the bare extra `text` clobber it back to format-less. When the IR
-            // carried NO response_format, fall through and forward the extra `text` verbatim.
+            // `text` in extra holds only the non-`format` remainder. When the IR has a
+            // `response_format` the merged `text` was inserted above and must not be clobbered.
             if key == keys::TEXT && req.response_format.is_some() {
                 continue;
             }
             out.insert(key.clone(), value.clone());
         }
 
-        // RSP-07: the logprobs ASK. `top_logprobs` alone does not make a Responses backend return
-        // logprobs — the `output_text` parts carry them only when `include` names
-        // `message.output_text.logprobs`. Add the entry (after the `extra` overlay, so an `include`
-        // the caller already sent keeps its other entries and never gains a duplicate).
+        // RSP-07: `top_logprobs` alone does not return logprobs; `include` must name
+        // `message.output_text.logprobs`. Added after the `extra` overlay so the caller's `include`
+        // entries are kept without a duplicate.
         if req.logprobs == Some(true) {
             let include = out
                 .entry(INCLUDE.to_string())
@@ -645,11 +586,9 @@ impl ProtocolWriter for ResponsesWriter {
         host: &dyn busbar_contract::codec::CodecHost,
         ev: &IrStreamEvent,
     ) -> Option<(String, serde_json::Value)> {
-        // SINGULAR contract (one wire frame). The streaming seam drives emission through
-        // `write_response_events` (which can carry the multi-frame content-part bracket), so this
-        // method is now reached only for events that frame to a SINGLE wire event — notably
-        // `write_error_frame`, which passes an `Error` (always one frame) — and by tests that assert
-        // the single-frame arms directly. A multi-frame event yields only its FIRST frame here.
+        // Single-frame contract. The streaming seam uses `write_response_events`; this is reached
+        // only for events that frame to one wire event (e.g. `write_error_frame`) and by tests. A
+        // multi-frame event yields only its first frame.
         self.write_response_events(host, ev).into_iter().next()
     }
 
@@ -658,24 +597,19 @@ impl ProtocolWriter for ResponsesWriter {
         host: &dyn busbar_contract::codec::CodecHost,
         ev: &IrStreamEvent,
     ) -> Vec<(String, serde_json::Value)> {
-        // The stream's opening event resets the per-stream `sequence_number` counter so each stream's
-        // sequence starts at 0. Only the FIRST `MessageStart` is that opening event: the writer
-        // cannot rely on seeing exactly one, because the Anthropic reader emits `MessageStart` 1:1
-        // with the upstream frame rather than gating it. The latch makes the reset idempotent per
-        // stream, so a duplicate continues the stream instead of restarting it — and the same
-        // answer decides the `response.id` below, so the sequence and the identity are opened by
-        // one fact rather than two.
+        // The opening event resets the per-stream `sequence_number`. Only the first `MessageStart`
+        // is that event (the Anthropic reader emits one per upstream frame), so a duplicate
+        // continues the stream. The same latch decides the `response.id` below.
         let opening = matches!(ev, IrStreamEvent::MessageStart { .. })
             && !self.started.swap(true, Ordering::Relaxed);
         if opening {
             self.reset_sequence_number();
         }
 
-        // Build the ORDERED wire frames for this IR event. Most events yield 0 or 1 frame; a text
-        // `BlockStart`/`BlockStop` yields the multi-frame content-part bracket a strict Responses SDK
-        // requires (`output_item.added → content_part.added`, and
-        // `output_text.done → content_part.done → output_item.done`), which a single
-        // `(event_type, data)` cannot carry. Each frame is then numbered below.
+        // Build the ordered wire frames. Most events yield 0 or 1; a text `BlockStart`/`BlockStop`
+        // yields the multi-frame content-part bracket a strict SDK requires
+        // (`output_item.added`, `content_part.added`; `output_text.done`, `content_part.done`,
+        // `output_item.done`). Each frame is numbered below.
         let frames: Vec<(String, serde_json::Value)> = match ev {
             IrStreamEvent::MessageStart {
                 id,
@@ -684,31 +618,21 @@ impl ProtocolWriter for ResponsesWriter {
                 usage,
                 ..
             } => {
-                // The official OpenAI Responses SDK reads `response.id`/`created_at`/`model` from the
-                // opening `response.created` event to construct its Response object; a stub omitting
-                // them yields null identity fields and breaks event correlation. Forward the captured
-                // identity when present (same-protocol passthrough), otherwise synthesize a
-                // protocol-correct `resp_` id and the current unix time (cross-protocol, where
-                // `translate_event` strips these to None) so the event stays SDK-valid.
+                // The SDK reads `response.id`/`created_at`/`model` from `response.created`. Forward
+                // the captured identity (same-protocol), else synthesize a `resp_` id and the current
+                // time (cross-protocol, where `translate_event` strips them).
                 let mut resp_obj = serde_json::Map::new();
-                // A native stream never changes its id mid-flight — not between `response.created`
-                // and the terminal event, and not between two `response.created`s either. The
-                // opening-event latch above already knows which `MessageStart` is the first; only
-                // that one decides the id, so a DUPLICATE re-states the id the client already has
-                // instead of minting a fresh one and stranding the SDK's correlation. (The reset
-                // the latch guards deliberately does not clear the id cell, so a genuinely reused
-                // writer still takes its new stream's id from its own opening event.)
+                // A native stream never changes its id, even across two `response.created`s: only the
+                // first `MessageStart` decides it, so a duplicate restates the id. (The reset does not
+                // clear the id cell, so a reused writer takes its new id from its own opening event.)
                 let id = self
                     .carried_response_id()
                     .filter(|_| !opening)
                     .unwrap_or_else(|| id.clone().unwrap_or_else(|| synthesize_response_id(host)));
-                // Carry this stream's id forward so the terminal events (and any failure) replay
-                // the SAME `response.id`.
+                // Carry the id forward so terminal events replay it.
                 self.set_response_id(&id);
                 let created_at = created.unwrap_or_else(|| self.default_created_at(host));
-                // Carry this stream's `created_at` forward so the terminal events (and any failure)
-                // replay the SAME timestamp — a native stream's `created_at` is constant across
-                // every event.
+                // Carry `created_at` forward; it is constant across a native stream.
                 self.set_created_at(created_at);
                 resp_obj.insert(keys::ID.to_string(), serde_json::json!(id));
                 resp_obj.insert(keys::OBJECT.to_string(), serde_json::json!(OBJ_RESPONSE));
@@ -717,23 +641,15 @@ impl ProtocolWriter for ResponsesWriter {
                     keys::STATUS.to_string(),
                     serde_json::json!(STATUS_IN_PROGRESS),
                 );
-                // `Response.model` is a REQUIRED non-nullable string in the official SDK; emit it
-                // unconditionally with the DEFAULT_MODEL fallback when the IR carries none (a
-                // cross-protocol stream where `translate_event` strips the model to None) rather
-                // than omitting the key — omission breaks strict decoders and is a proxy tell.
+                // `Response.model` is required: emit it with the DEFAULT_MODEL fallback when the IR
+                // carries none (omission breaks strict decoders).
                 let model_name = model.as_deref().unwrap_or(DEFAULT_MODEL);
-                // Carry this stream's model forward so the terminal events (and any failure) replay
-                // the SAME `model` — a native stream's `model` is constant across every event.
+                // Carry the model forward; it is constant across a native stream.
                 self.set_model(model_name);
                 resp_obj.insert(keys::MODEL.to_string(), serde_json::json!(model_name));
-                // The native `response.created` carries the FULL Response skeleton, not just its
-                // identity: an official SDK constructs a `Response` object from this event and reads
-                // `usage`/`output`/`error` unconditionally. At stream start there is no output yet
-                // and no failure, so emit an empty `output` array and `error: null` —
-                // present-but-empty, NOT omitted. `usage` is typed as a non-nullable object by the
-                // pinned spec, so it is a zeroed usage object here (the opening event's own count
-                // when the source stream carried one, e.g. an Anthropic `message_start`), never
-                // `null`; a strict decoder rejects `usage: null` against `ResponseUsage`.
+                // `response.created` carries the full Response skeleton, which the SDK reads
+                // unconditionally: empty `output`, `error: null`, and a zeroed `usage` (the opening
+                // event's own count when the source carried one). `usage` is a non-nullable object.
                 resp_obj.insert(keys::OUTPUT.to_string(), serde_json::json!([]));
                 resp_obj.insert(keys::ERROR_WORD.to_string(), serde_json::Value::Null);
                 resp_obj.insert(
@@ -743,9 +659,8 @@ impl ProtocolWriter for ResponsesWriter {
                         .map(build_responses_usage)
                         .unwrap_or_else(zero_responses_usage),
                 );
-                // The spec requires the request-echo members (`instructions`, `tools`,
-                // `tool_choice`, `parallel_tool_calls`, `metadata`, `temperature`, `top_p`) and a
-                // nullable `incomplete_details` on EVERY Response object, including this skeleton.
+                // The request-echo members and nullable `incomplete_details` are required on every
+                // Response object, including this skeleton.
                 fill_required_response_members(&mut resp_obj, self.carried_request_echo().as_ref());
                 vec![event(
                     EVT_RESPONSE_CREATED,
@@ -759,28 +674,17 @@ impl ProtocolWriter for ResponsesWriter {
                 refusal,
             } => match block {
                 crate::codec::ir::IrBlockMeta::Text => {
-                    // A native /v1/responses stream brackets a text part inside a `message` output
-                    // item: `output_item.added(message)` opens the item, `content_part.added`
-                    // establishes the active `output_text` content part, the `output_text.delta`s
-                    // carry the body, then `output_text.done` → `content_part.done` →
-                    // `output_item.done` close it. The official SDK builds `response.output[]` from
-                    // the item lifecycle, and a STRICT client (Codex CLI) DROPS every delta that
-                    // arrives with no active content part ("OutputTextDelta without active item"),
-                    // so the `content_part.added` frame here is load-bearing on a cross-protocol
-                    // egress re-framed into the Responses dialect.
-                    //
-                    // `write_response_events` allows more than one wire frame per IR event, so this
-                    // single BlockStart emits BOTH the `output_item.added` that opens the message
-                    // item AND the `content_part.added` that opens its (empty) `output_text` part.
-                    // The matching BlockStop closes the part (`output_text.done`/`content_part.done`)
-                    // and then the item (`output_item.done`). Track the open text index (capped) so
-                    // BlockStop closes THIS index only.
+                    // A text part sits in a `message` item: `output_item.added(message)`,
+                    // `content_part.added`, `output_text.delta`s, then `output_text.done`,
+                    // `content_part.done`, `output_item.done`. A strict client (Codex CLI) drops
+                    // deltas with no active content part, so `content_part.added` is load-bearing.
+                    // This BlockStart emits both opening frames; BlockStop closes the part, then the
+                    // item. The open index is tracked (capped) so BlockStop closes this index only.
                     if !self.open_text_item(*index) {
                         return Vec::new();
                     }
                     let item_id = self.item_id_for(host, ITEM_ID_PREFIX_MSG, *index);
-                    // IR-02: a refusal block opens a `refusal` part instead of an `output_text`
-                    // part; its deltas and closing frames follow suit (`is_refusal`).
+                    // IR-02: a refusal block opens a `refusal` part; its deltas and closes follow (`is_refusal`).
                     if *refusal {
                         self.mark_refusal(*index);
                     }
@@ -814,57 +718,36 @@ impl ProtocolWriter for ResponsesWriter {
                             serde_json::json!({
                                 (OUTPUT_INDEX): index,
                                 (ITEM_ID): item_id,
-                                // The single text content part of the message item; the deltas and
-                                // the closing `output_text.done`/`content_part.done` all carry the
-                                // SAME `content_index: 0`.
+                                // Every frame of the item uses the single part's `content_index: 0`.
                                 (CONTENT_INDEX): 0,
-                                // A native `content_part.added` opens an EMPTY `output_text` part —
-                                // the text arrives via the deltas and is assembled onto the part at
-                                // `content_part.done`. Shape matches the closing part exactly
-                                // (`type`/`text`/`annotations`/`logprobs` — the spec requires all
-                                // four on an `output_text` part, so the empty part carries `[]`).
+                                // Opens an empty `output_text` part (text arrives via deltas), in the
+                                // closing part's shape: `type`/`text`/`annotations`/`logprobs`, all required.
                                 (PART): part
                             }),
                         ),
                     ]
                 }
                 crate::codec::ir::IrBlockMeta::ToolUse { id, name } => {
-                    // `item_id` (a stable per-output-item id, `fc_…` for a function-call item) is
-                    // carried on the native `output_item.added`/`.done` pair so a client correlates the
-                    // item's lifecycle. Synthesize it deterministically from the output index so the
-                    // matching `.done` (which sees only the index) reconstructs the same id.
-                    // Open the function-call index so the matching `BlockStop` emits
-                    // `output_item.done` for THIS index only — a text block's BlockStop (whose
-                    // BlockStart produced no `output_item.added`) must emit no `done`.
-                    //
-                    // A refused open (the cap is reached, or the index is already open) emits NO
-                    // frame, exactly as the text and reasoning arms above do. The frame and the
-                    // open have to be decided together: `take_tool_open` closes only indices that
-                    // are in the set, so an `output_item.added` written past the cap would be an
-                    // open the client never sees closed — and the item never lands in the terminal
-                    // `output[]` either, so it simply vanishes.
+                    // `item_id` (`fc_…`) rides the `output_item.added`/`.done` pair; deterministic
+                    // from the output index so the `.done`, which sees only the index, rebuilds it.
+                    // Opening the index lets `BlockStop` emit `done` for this index only. A refused
+                    // open (cap reached, index already open) emits no frame, as the text and reasoning
+                    // arms do: an `added` past the cap would never be closed and would vanish from
+                    // the terminal `output[]`.
                     if !self.mark_tool_open(*index) {
                         return Vec::new();
                     }
                     let item_id = self.item_id_for(host, ITEM_ID_PREFIX_FC, *index);
-                    // Capture call_id/name now so the matching `output_item.done` can emit the
-                    // fully finalized item (native `done` carries call_id/name/arguments; the IR
-                    // BlockStop carries only the index).
+                    // Capture call_id/name now: the native `done` carries them, `BlockStop` only the index.
                     self.record_tool_meta(*index, id, name);
                     vec![event(
                         EVT_OUTPUT_ITEM_ADDED,
                         serde_json::json!({
                             (OUTPUT_INDEX): index,
                             (ITEM_ID): item_id,
-                            // `arguments` is a REQUIRED member of the published `FunctionToolCall`
-                            // item (`required: ["type", "call_id", "name", "arguments"]`), so the
-                            // item carried on `output_item.added` must already have it: real OpenAI
-                            // OPENS the item with `"arguments": ""` and fills it through the
-                            // `response.function_call_arguments.delta` events that follow, with the
-                            // finalized string landing on the matching `output_item.done`. Omitting
-                            // it made the opening item fail the item schema, and left an SDK that
-                            // seeds its accumulator from the added item concatenating deltas onto
-                            // `undefined`.
+                            // `arguments` is required on `FunctionToolCall`. Real OpenAI opens the
+                            // item with `"arguments": ""` and fills it via the delta events; omitting
+                            // it fails the schema and makes an SDK concatenate onto `undefined`.
                             (ITEM): {
                                 (keys::TYPE): ITEM_TYPE_FUNCTION_CALL,
                                 (keys::ID): item_id,
@@ -875,25 +758,18 @@ impl ProtocolWriter for ResponsesWriter {
                         }),
                     )]
                 }
-                // A REDACTED thinking block has no Responses OUTPUT shape (the Responses writer drops
-                // redacted reasoning on both request and response paths — there is no encrypted-
-                // reasoning output item). Do NOT open a reasoning item: the following
-                // `RedactedReasoningDelta` is dropped (`Vec::new()`), and the matching `BlockStop`
-                // finds no open reasoning index and emits nothing — a clean, event-balanced drop.
+                // A redacted thinking block has no Responses output shape (redacted reasoning is
+                // dropped on both paths). No item is opened, so the following
+                // `RedactedReasoningDelta` and the `BlockStop` emit nothing: an event-balanced drop.
                 crate::codec::ir::IrBlockMeta::RedactedThinking => Vec::new(),
                 crate::codec::ir::IrBlockMeta::Thinking { kind } => {
-                    // REASONING (stream): open a native Responses `reasoning` output item. The IR
-                    // Thinking BlockStart carries only the index; emit `output_item.added` typed
-                    // "reasoning" with a stable `rs_…` item_id (so the matching `.done` reconstructs
-                    // it), tracking the open index so BlockStop closes it as a reasoning item. The
-                    // prior `None` DROPPED the reasoning lifecycle entirely.
+                    // Open a native `reasoning` output item: `output_item.added` typed "reasoning"
+                    // with a stable `rs_…` item_id, and track the index so BlockStop closes it.
                     if !self.open_reasoning_item(*index) {
                         return Vec::new();
                     }
                     let item_id = self.item_id_for(host, ITEM_ID_PREFIX_RS, *index);
-                    // IR-17: a SUMMARY block opens the item with its one
-                    // `summary_text` part (no `content[]`, as the buffered item has none); every
-                    // other block keeps the pre-slot `reasoning_text` shape.
+                    // IR-17: a summary block opens with its one `summary_text` part (no `content[]`).
                     if *kind == Some(crate::codec::ir::IrThinkingKind::Summary) {
                         self.mark_summary_reasoning(*index);
                         vec![
@@ -955,19 +831,12 @@ impl ProtocolWriter for ResponsesWriter {
                     )]
                 }
                 crate::codec::ir::IrDelta::TextDelta(text) if !text.is_empty() => {
-                    // Native `output_text.delta` carries `item_id` (the enclosing message item) and
-                    // `content_index` (the index of the text part within that item). The IR delta
-                    // carries only the output index; synthesize the message `item_id` deterministically
-                    // from it (matching the `msg_…` part), and emit `content_index: 0` — the single
-                    // text content part of the item.
-                    //
-                    // Accumulate the fragment so the matching `BlockStop` can assemble the message
-                    // item with its COMPLETE `output_text` for the terminal `response.output` array.
+                    // `output_text.delta` carries `item_id` (the `msg_…` item, deterministic from the
+                    // index) and `content_index: 0`. The fragment is accumulated so BlockStop can
+                    // assemble the complete text for the terminal `output`.
                     self.append_text(*index, text);
-                    // The spec requires `logprobs` on every `output_text.delta`. The IR delivers
-                    // token logprobs as a SEPARATE `LogprobsDelta` (buffered below and emitted on
-                    // `output_text.done` and the finalized part), so a text delta carries the
-                    // present-but-empty `[]` rather than omitting the member.
+                    // `logprobs` is required on every `output_text.delta`. The IR delivers them as a
+                    // separate `LogprobsDelta` (buffered), so a text delta carries `[]`.
                     vec![event(
                         EVT_OUTPUT_TEXT_DELTA,
                         serde_json::json!({
@@ -980,9 +849,7 @@ impl ProtocolWriter for ResponsesWriter {
                     )]
                 }
                 crate::codec::ir::IrDelta::InputJsonDelta(json_str) => {
-                    // Accumulate the arguments fragment so the matching `output_item.done` emits the
-                    // COMPLETE arguments string the native event (and the SDK's `event.item.arguments`)
-                    // carries.
+                    // Accumulate so `output_item.done` emits the complete arguments string.
                     self.append_tool_arguments(*index, json_str);
                     vec![event(
                         EVT_FUNCTION_CALL_ARGS_DELTA,
@@ -995,11 +862,8 @@ impl ProtocolWriter for ResponsesWriter {
                 }
                 &crate::codec::ir::IrDelta::TextDelta(_) => Vec::new(),
                 crate::codec::ir::IrDelta::ThinkingDelta(text) if !text.is_empty() => {
-                    // REASONING (stream): emit the native `response.reasoning_text.delta` for the
-                    // reasoning item at this index, accumulating the fragment so the matching
-                    // BlockStop assembles the complete reasoning item. The prior `None` DROPPED the
-                    // streamed chain-of-thought. `content_index: 0` — the single reasoning content
-                    // part of the item.
+                    // `response.reasoning_text.delta` for the item at this index, accumulated for
+                    // BlockStop. `content_index: 0`.
                     self.append_reasoning(*index, text);
                     let (event, part_key) = if self.is_summary_reasoning(*index) {
                         (EVT_REASONING_SUMMARY_TEXT_DELTA, SUMMARY_INDEX)
@@ -1017,36 +881,28 @@ impl ProtocolWriter for ResponsesWriter {
                         }),
                     )]
                 }
-                // RSP-01: a thinking `SignatureDelta` has no delta FRAME on Responses — the blob
-                // rides the finalized reasoning item's `encrypted_content`. So nothing is emitted
-                // HERE, but the signature is buffered for the reasoning item at this index and lands
-                // on its `output_item.done` (and the terminal `output[]`) at BlockStop, exactly as
-                // the buffered `write_response` puts `Thinking.signature` into `encrypted_content`.
-                // Dropping it broke multi-turn reasoning continuity on every streamed hop.
+                // RSP-01: a `SignatureDelta` has no Responses delta frame. It is buffered and lands
+                // as `encrypted_content` on the reasoning item's `output_item.done` and terminal
+                // `output[]`, as the buffered `write_response` does. Dropping it broke multi-turn
+                // reasoning continuity.
                 crate::codec::ir::IrDelta::SignatureDelta(sig) => {
                     self.append_reasoning_signature(*index, sig);
                     Vec::new()
                 }
-                // An empty ThinkingDelta carries no content (drop it). Redacted reasoning is dropped
-                // on BOTH Responses paths (`write_response` skips a redacted Thinking block and the
-                // RedactedThinking BlockStart opens no item), so the stream stays identical to the
-                // buffered body.
+                // An empty ThinkingDelta carries nothing. Redacted reasoning is dropped on both paths,
+                // so the stream matches the buffered body.
                 &crate::codec::ir::IrDelta::ThinkingDelta(_)
                 | crate::codec::ir::IrDelta::RedactedReasoningDelta(_) => Vec::new(),
                 // IR-21: no Responses stream event carries a generated media part.
                 crate::codec::ir::IrDelta::MediaDelta(_) => Vec::new(),
-                // Responses carries citations as `annotations` on the assembled `output_text`
-                // part, not as a standalone delta frame — so there is nothing to emit HERE, but the
-                // citations must survive until `BlockStop` builds that part. Buffer them; dropping
-                // them lost every grounding source on a cross-protocol stream into Responses.
+                // Citations ride as `annotations` on the assembled `output_text` part, not a delta
+                // frame; nothing is emitted here, but they are buffered for `BlockStop`.
                 crate::codec::ir::IrDelta::CitationsDelta(cits) => {
                     self.append_citations(*index, cits);
                     Vec::new()
                 }
-                // Responses carries streamed token logprobs on the `output_text.done` event and on
-                // the finalized `output_text` part (both built at `BlockStop`), not as a standalone
-                // frame — so nothing is emitted HERE, but the logprobs are buffered so they reach
-                // those frames instead of being dropped.
+                // Logprobs ride `output_text.done` and the finalized part (built at `BlockStop`), not a
+                // standalone frame; buffered here.
                 crate::codec::ir::IrDelta::LogprobsDelta(lps) => {
                     self.append_logprobs(*index, lps);
                     Vec::new()
@@ -1054,41 +910,23 @@ impl ProtocolWriter for ResponsesWriter {
             },
 
             IrStreamEvent::BlockStop { index } => {
-                // The IR `BlockStop` carries only the integer output index, not the block kind. A
-                // native Responses stream emits `response.output_item.done` ONLY for an item it
-                // previously `output_item.added`, and the `.done` type must match the `.added` type.
-                // This writer opens an `output_item.added` for both message (text) and function-call
-                // items, so each must close with a correctly-typed `output_item.done`. Emitting
-                // `output_item.done` with a hardcoded type — as a prior revision did, always typing
-                // it `type:"function_call"` — mis-typed every text item's close: an unmatched lifecycle
-                // event (a `done` with no prior `added`) AND a text response mis-typed as a
-                // function call, both of which break a typed Responses SDK and are deterministic
-                // distinguishability tells.
+                // `BlockStop` carries only the index. A native stream emits `output_item.done` only
+                // for an item it `added`, and the type must match, so consult the per-stream open
+                // sets: function-call closes typed "function_call", text typed "message", reasoning
+                // typed "reasoning", and a never-opened index emits nothing. Mistyping (the old
+                // hardcoded `function_call`) or an unmatched `done` breaks typed SDKs.
                 //
-                // So consult the per-stream open sets: a function-call index closes with an
-                // `output_item.done` typed "function_call"; a text index (opened by the Text
-                // BlockStart with `output_item.added` typed "message") closes with an
-                // `output_item.done` typed "message"; any other (never-opened) index emits NOTHING.
-                //
-                // NOTE: each branch YIELDS its `Vec` as the match value (never `return`s it), so the
-                // caller numbers each frame with the top-level `sequence_number` every native
-                // Responses event carries — an early `return` would skip that numbering. A text /
-                // reasoning close yields MULTIPLE ordered frames (the part's `.done` bracket THEN the
-                // item's `output_item.done`); a tool close and a never-opened index yield 0/1.
+                // Each branch yields its `Vec` as the match value, never `return`s, so the caller
+                // numbers every frame with `sequence_number`. Text and reasoning closes yield several
+                // ordered frames (the part's `.done` bracket, then the item's `output_item.done`).
                 if self.take_reasoning_open(*index) {
-                    // REASONING (stream): close the reasoning item opened by the Thinking
-                    // BlockStart. First `reasoning_text.done` closes the streamed `reasoning_text`
-                    // content part (the bracket the `reasoning_text.delta` run was missing — a native
-                    // stream always closes the part before the item), THEN `output_item.done` typed
-                    // "reasoning" with the SAME `rs_…` item_id and the assembled reasoning text under a
-                    // `content[]` `reasoning_text` part. Record the finalized item so the terminal
-                    // `response.completed` emits it in `output[]`. The prior writer dropped reasoning
-                    // entirely, so a reasoning stream reassembled to an OpenAI/Anthropic client lost
-                    // the chain-of-thought.
+                    // Close the reasoning item: `reasoning_text.done` closes the streamed part, then
+                    // `output_item.done` typed "reasoning" with the same `rs_…` id and the assembled
+                    // text under `content[]`. The finalized item is recorded for the terminal `output[]`.
                     let item_id = self.item_id_for(host, ITEM_ID_PREFIX_RS, *index);
                     let text = self.take_reasoning_accum(*index);
                     let summary = self.take_summary_reasoning(*index);
-                    // IR-17: the same `summary[]` / `content[]` placement the buffered item uses.
+                    // IR-17: the same `summary[]` / `content[]` placement as the buffered item.
                     let mut item_obj = serde_json::Map::new();
                     item_obj.insert(
                         keys::TYPE.to_string(),
@@ -1101,8 +939,7 @@ impl ProtocolWriter for ResponsesWriter {
                         summary.then_some(crate::codec::ir::IrThinkingKind::Summary),
                     );
                     let mut item = serde_json::Value::Object(item_obj);
-                    // RSP-01: the buffered signature becomes the item's `encrypted_content` — the
-                    // same member, on the same item shape, `write_response` emits.
+                    // RSP-01: the buffered signature becomes `encrypted_content`, as in `write_response`.
                     if let Some(sig) = self.take_reasoning_signature(*index) {
                         if let Some(obj) = item.as_object_mut() {
                             obj.insert(ENCRYPTED_CONTENT.to_string(), serde_json::json!(sig));
@@ -1160,15 +997,10 @@ impl ProtocolWriter for ResponsesWriter {
                         ]
                     }
                 } else if self.take_tool_open(*index) {
-                    // Native `response.output_item.done` carries the SAME stable `item_id` as the
-                    // matching `output_item.added` (so a client correlates the `added → done`
-                    // lifecycle) plus the FULLY finalized `item` object: a typed SDK reads
-                    // `event.item.call_id`/`.name`/`.arguments` off the done event to reconstruct the
-                    // tool invocation. Emit all three from the per-stream accumulator (call_id/name
-                    // captured on `output_item.added`, arguments concatenated from the delta frames).
-                    // The function-call `output_item.added` used `item_id_for("fc", index)`, so the
-                    // cached id reconstructs the matching pair here. A poisoned-lock-empty accumulator
-                    // degrades to empty-string fields rather than panicking.
+                    // `output_item.done` carries the same `item_id` as the `added` (`item_id_for("fc",
+                    // index)` is cached) plus the finalized `item`: `call_id`/`name` captured on `added`,
+                    // `arguments` concatenated from the deltas. A poisoned-lock-empty accumulator
+                    // degrades to empty-string fields.
                     let item_id = self.item_id_for(host, ITEM_ID_PREFIX_FC, *index);
                     let accum = self.take_tool_accum(*index).unwrap_or_default();
                     let item = serde_json::json!({
@@ -1178,9 +1010,7 @@ impl ProtocolWriter for ResponsesWriter {
                         (keys::NAME): accum.name,
                         (keys::ARGUMENTS): accum.arguments,
                     });
-                    // Record the finalized function-call item so the terminal `response.completed`/
-                    // `response.incomplete` event emits the fully assembled `output[]` array (the
-                    // SDK reads `event.response.output` to materialize `Response.output`).
+                    // Record the finalized item for the terminal `output[]`.
                     self.record_output_item(*index, item.clone());
                     vec![event(
                         EVT_OUTPUT_ITEM_DONE,
@@ -1191,9 +1021,9 @@ impl ProtocolWriter for ResponsesWriter {
                         }),
                     )]
                 } else if self.is_refusal(*index) && self.take_text_open(*index) {
-                    // IR-02: close a refusal item — `refusal.done` (the assembled refusal) →
-                    // `content_part.done` (the `refusal` part) → `output_item.done`. A refusal part
-                    // carries no annotations or logprobs, so any buffered for it are discarded.
+                    // IR-02: close a refusal item (`refusal.done`, `content_part.done`,
+                    // `output_item.done`). A refusal part carries no annotations or logprobs, so any
+                    // buffered are discarded.
                     self.take_refusal(*index);
                     let item_id = self.item_id_for(host, ITEM_ID_PREFIX_MSG, *index);
                     let text = self.take_text_accum(*index);
@@ -1238,16 +1068,9 @@ impl ProtocolWriter for ResponsesWriter {
                         ),
                     ]
                 } else if self.take_text_open(*index) {
-                    // Close the message item opened by the Text BlockStart. A native stream closes a
-                    // text part in THREE ordered frames before the item's `output_item.done`:
-                    // `output_text.done` (the assembled text of the part) → `content_part.done` (the
-                    // finalized `output_text` part) → `output_item.done` (the message item). The same
-                    // cached `msg_…` id (also carried on every `output_text.delta` and the opening
-                    // `content_part.added`) reconstructs the matching lifecycle the SDK uses to
-                    // finalize `response.output[]`, with the COMPLETE text the deltas delivered rather
-                    // than an empty content array. The `output_text.done`/`content_part.done` brackets
-                    // are what a strict Responses client (Codex CLI) needs to accept the streamed text
-                    // — without them it saw deltas against a part that was never opened/closed.
+                    // Close the message item: `output_text.done` (assembled text), `content_part.done`
+                    // (finalized part), `output_item.done`, with the cached `msg_…` id used on the
+                    // deltas. A strict client (Codex CLI) needs the brackets to accept the text.
                     let item_id = self.item_id_for(host, ITEM_ID_PREFIX_MSG, *index);
                     let text = self.take_text_accum(*index);
                     let annotations = super::super::url_citation_wire::url_annotations(
@@ -1255,10 +1078,8 @@ impl ProtocolWriter for ResponsesWriter {
                         0,
                         &self.take_citation_accum(*index),
                     );
-                    // The buffered token logprobs (if the source stream carried any) ride the
-                    // `output_text.done` event in the event shape and the finalized part in the
-                    // part shape; the spec requires the member on both, so an absent source yields
-                    // `[]` rather than an omitted key.
+                    // Buffered logprobs ride `output_text.done` and the finalized part; the spec
+                    // requires the member on both, so none yields `[]`.
                     let logprobs = self.take_logprob_accum(*index);
                     let part_logprobs = write_responses_part_logprobs(&logprobs);
                     let event_logprobs = write_responses_event_logprobs(&logprobs);
@@ -1276,8 +1097,7 @@ impl ProtocolWriter for ResponsesWriter {
                             }
                         ]
                     });
-                    // Record the finalized message item so the terminal event emits the fully
-                    // assembled `output[]` array.
+                    // Record the finalized message item for the terminal `output[]`.
                     self.record_output_item(*index, item.clone());
                     vec![
                         event(
@@ -1296,8 +1116,7 @@ impl ProtocolWriter for ResponsesWriter {
                                 (OUTPUT_INDEX): index,
                                 (ITEM_ID): item_id,
                                 (CONTENT_INDEX): 0,
-                                // The finalized `output_text` part: SAME shape as the message item's
-                                // single content part (assembled text + annotations + logprobs).
+                                // The finalized part, same shape as the message item's content part.
                                 (PART): {
                                     (keys::TYPE): CONTENT_TYPE_OUTPUT_TEXT,
                                     (keys::TEXT): text,
@@ -1316,8 +1135,7 @@ impl ProtocolWriter for ResponsesWriter {
                         ),
                     ]
                 } else {
-                    // Nothing open at this index (e.g. a repeated BlockStop, or an index whose
-                    // BlockStart was suppressed by the cardinality cap): emit no frame.
+                    // Nothing open here (repeated BlockStop, or a BlockStart the cap suppressed): no frame.
                     Vec::new()
                 }
             }
@@ -1328,23 +1146,16 @@ impl ProtocolWriter for ResponsesWriter {
                 stop_sequence: _,
                 stop_detail: _,
             } => {
-                // RSP-11: once this stream has written `response.failed` (an upstream `Error` event
-                // — a Cohere `ERROR` / Gemini `MALFORMED_FUNCTION_CALL` reader emits one right
-                // before its `MessageDelta{Error}`), the Responses stream is OVER: a second terminal
-                // event after it (the `response.completed` this arm used to write) is a shape real
-                // OpenAI never sends, and it told the client the failed turn completed.
+                // RSP-11: once `response.failed` was written (Cohere `ERROR` / Gemini
+                // `MALFORMED_FUNCTION_CALL` readers emit `Error` just before `MessageDelta{Error}`),
+                // the stream is over; a second terminal would tell the client the failed turn completed.
                 if self.failed.load(Ordering::Relaxed) {
                     return Vec::new();
                 }
-                // Map IR stop reasons to Responses statuses. An unknown/None reason defaults to
-                // `completed` (the safe choice) rather than `failed`: a future IR reason (e.g. a
-                // new `refusal`) that did NOT explicitly signal an error must not be misclassified
-                // as a failed response, which would trigger client-side error handling for a
-                // successful turn. Genuine failures arrive via IrStreamEvent::Error, not here.
-                //
-                // RSP-11: an `Error` stop reason (the upstream says the generation FAILED) is the
-                // Responses `failed` status, carried on a `response.failed` terminal with a
-                // `server_error` — never a `completed` turn.
+                // An unknown/None stop reason defaults to `completed`, not `failed`: a reason that
+                // did not signal an error must not trigger client error handling. Genuine failures
+                // arrive via `IrStreamEvent::Error`. RSP-11: an `Error` stop reason is the `failed`
+                // status, carried on `response.failed` with a `server_error`.
                 let generation_failed = *stop_reason == Some(crate::codec::ir::IrStopReason::Error);
                 let status = if generation_failed {
                     STATUS_FAILED
@@ -1355,40 +1166,24 @@ impl ProtocolWriter for ResponsesWriter {
                 };
 
                 let mut resp_obj = serde_json::Map::new();
-                // The native `response.completed`/`response.incomplete` terminal event ALWAYS
-                // carries `id` (a `resp_…` string) and `created_at` (unix seconds) in its inner
-                // `response` object; the official Python/Node SDK reads `event.response.id` on the
-                // terminal event to finalize the `Response`, and strict typed decoders raise on a
-                // missing `id`/`created_at`. A real OpenAI stream never sends a terminal event
-                // without an `id`, so omitting it is also a distinguishability tell. The IR
-                // `MessageDelta` carries no identity, so REPLAY the id captured on this stream's
-                // opening `MessageStart` (stored in `response_id`) so `response.completed`/
-                // `response.incomplete` carries the SAME `id` as `response.created` — a native
-                // stream never changes its id mid-flight, and the SDK reads `event.response.id` on
-                // the terminal event to finalize the `Response`. Only if the cell is unexpectedly
-                // empty (a malformed stream whose terminal event preceded `MessageStart`, or a
-                // poisoned lock) do we fall back to synthesizing a fresh id so the event stays
-                // structurally valid.
+                // The terminal event's inner `response` always carries `id` and `created_at`, which
+                // SDKs read to finalize the Response. Replay the id captured on `MessageStart` so it
+                // matches `response.created` (a native stream never changes its id). If the cell is
+                // empty (terminal before `MessageStart`, or poisoned lock), synthesize a fresh id.
                 let response_id = self
                     .carried_response_id()
                     .unwrap_or_else(|| synthesize_response_id(host));
                 resp_obj.insert(keys::ID.to_string(), serde_json::json!(response_id));
                 resp_obj.insert(keys::OBJECT.to_string(), serde_json::json!(OBJ_RESPONSE));
-                // Replay the `created_at` captured on this stream's opening `MessageStart` so the
-                // terminal event carries the SAME timestamp as `response.created`. The IR
-                // `MessageDelta` carries no identity, so stamping a fresh reading here would emit
-                // a later value than the opening event — a detectable proxy tell. Fall back to the
-                // caller's stamped reading only if the cell was never populated.
+                // Replay the captured `created_at` (a fresh reading would be later than the opening
+                // event, a proxy tell), falling back to the caller's stamped reading.
                 resp_obj.insert(
                     keys::CREATED_AT.to_string(),
                     serde_json::json!(self.carried_created_at(host)),
                 );
                 resp_obj.insert(keys::STATUS.to_string(), serde_json::json!(status));
-                // Replay the `model` captured on this stream's opening `MessageStart` so the
-                // terminal event's inner `response` carries the SAME required non-nullable `model`
-                // as `response.created`. The IR `MessageDelta` carries no model, and omitting it
-                // fails a strict SDK decoder and is a distinguishability tell; `carried_model`
-                // falls back to DEFAULT_MODEL only if the cell was never populated.
+                // Replay the captured `model` (required non-nullable); `carried_model` falls back to
+                // DEFAULT_MODEL.
                 resp_obj.insert(
                     keys::MODEL.to_string(),
                     serde_json::json!(self.carried_model()),
@@ -1406,23 +1201,11 @@ impl ProtocolWriter for ResponsesWriter {
                     );
                 }
 
-                // Build the SDK-required Responses `usage` object: the streaming terminal
-                // event's inner `response.usage` must carry the SAME complete shape as the non-stream
-                // body — `total_tokens` plus the required `input_tokens_details`/`output_tokens_details`
-                // objects — so the shared builder produces it (as 0 where nothing to report).
+                // The terminal `response.usage` has the same complete shape as the non-stream body.
                 resp_obj.insert(keys::USAGE.to_string(), build_responses_usage(usage));
-                // The native terminal `response.completed`/`response.incomplete` event carries the
-                // FULLY assembled inner `response` object: the official Python/Node SDK reads
-                // `event.response.output` to finalize the assembled `Response`, and `output` is a
-                // REQUIRED field a strict typed decoder raises on when absent. The writer recorded
-                // each finalized item (message text parts and function-call items) into
-                // `output_items` as the matching `BlockStop` fired, so drain that index-ordered
-                // buffer here — a `completed` response with nonzero `usage.output_tokens` but an
-                // EMPTY `output` is a shape real OpenAI never emits and breaks SDK consumers that
-                // read the assembled output off the completed event. The buffer is empty (yielding
-                // `[]`) only for a genuinely output-less turn or a poisoned lock. `error` is
-                // likewise REQUIRED and `null` on a non-failed terminal event (a genuine failure
-                // arrives via IrStreamEvent::Error → `response.failed`, never this arm).
+                // The terminal `response` carries the fully assembled `output` (required), drained
+                // from `output_items` in index order; empty only for an output-less turn or poisoned
+                // lock. `error` is required and `null` here (failures arrive as `response.failed`).
                 resp_obj.insert(
                     keys::OUTPUT.to_string(),
                     serde_json::Value::Array(self.drain_output_items()),
@@ -1444,22 +1227,13 @@ impl ProtocolWriter for ResponsesWriter {
                 {
                     resp_obj.insert(keys::SERVICE_TIER.to_string(), serde_json::json!(tier));
                 }
-                // Spec-required request-echo members plus `incomplete_details: null` on a completed
-                // response (the incomplete arm above already set the real object, which is kept).
+                // Request-echo members plus `incomplete_details: null` on a completed response (the
+                // incomplete arm already set the real object, which is kept).
                 fill_required_response_members(&mut resp_obj, self.carried_request_echo().as_ref());
 
-                // The terminal event's NAME and inner `type` MUST agree with the inner
-                // `response.status`: a native /v1/responses stream emits `response.completed` for a
-                // completed response and a DISTINCT `response.incomplete` for a truncated/safety-
-                // stopped one, and the official Python/Node SDKs dispatch on the event `type`
-                // (`ResponseCompletedEvent` vs `ResponseIncompleteEvent`). Emitting a
-                // `response.completed` envelope around an inner `status:"incomplete"` (plus
-                // `incomplete_details`) is a shape impossible from real OpenAI and mislabels a
-                // max_tokens-truncated or safety-stopped generation to the client. So select the
-                // envelope from `status`. `status` is only ever `completed`/`incomplete` here
-                // (genuine failures arrive via IrStreamEvent::Error → `response.failed`, never this
-                // arm); the match is over those two with a defensive fallback to `completed` for any
-                // future status string, never a `response.failed` (which would invent a failure).
+                // The envelope name and inner `type` must agree with `response.status`: SDKs dispatch
+                // on `response.completed` vs `response.incomplete`. `status` is only `completed` or
+                // `incomplete` here; the fallback is `completed`, never an invented `response.failed`.
                 let event_name = match status {
                     STATUS_FAILED => EVT_RESPONSE_FAILED,
                     STATUS_INCOMPLETE => EVT_RESPONSE_INCOMPLETE,
@@ -1474,67 +1248,47 @@ impl ProtocolWriter for ResponsesWriter {
             IrStreamEvent::MessageStop => Vec::new(),
 
             IrStreamEvent::Error(err) => {
-                // The native OpenAI Responses `response.failed` event wraps the error inside a
-                // `response` object (`{"response":{"id":...,"status":"failed","error":{...}}}`); the
-                // official Python/Node streaming decoder reads `event.response` to build the failed
-                // Response, NOT a top-level `error` key. Emitting `{"error":{...}}` would leave a
-                // native SDK unable to locate `event.response` and it would crash or silently
-                // swallow the failure. Synthesize a `resp_` id so the SDK can correlate the failed
-                // response.
+                // `response.failed` wraps the error in a `response` object
+                // (`{"response":{"id":...,"status":"failed","error":{...}}}`); SDKs read
+                // `event.response`, not a top-level `error`. A `resp_` id is synthesized for correlation.
                 //
-                // The in-band `response.error` object is the Responses-native `ResponseError` shape
-                // — `{"code": <non-null string enum>, "message": <str>}` — NOT the Chat-Completions
-                // `{message, type, code, param}` envelope. The official Python/Node SDK decodes
-                // `event.response.error` into a typed `ResponseError` whose `code` is a required
-                // non-null enum (default `"server_error"`); emitting a null `code` plus an extra
-                // `type`/`param` pair is an impossible-from-real-OpenAI shape and a deterministic
-                // indistinguishability tell. This protocol's OWN reader confirms the field choice:
-                // it reads `response.error.code` FIRST (canonical) and only falls back to `type`.
+                // `response.error` is the Responses `ResponseError` shape `{"code": <non-null enum>,
+                // "message": <str>}`, not the Chat `{message, type, code, param}` envelope. This
+                // protocol's own reader reads `response.error.code` first and falls back to `type`.
                 let message = err
                     .provider_signal
                     .clone()
                     .unwrap_or_else(|| keys::ERROR_WORD.to_string());
-                // `code` MUST be a valid Responses enum, never the free-form human `provider_signal`
-                // (a cross-protocol / transport-abort path carries a sentence like "The response
-                // stream was interrupted." there). A recognized code round-trips; otherwise it is
-                // derived from the error class. `message` keeps the human text.
+                // `code` must be a valid Responses enum, never the free-form `provider_signal` (a
+                // sentence on cross-protocol or transport-abort paths). `message` keeps the human text.
                 let code = responses_error_code(err);
-                // Replay the stream's captured `response.id` so `response.failed` correlates with
-                // the opening `response.created` (the SDK reads `event.response.id` on the failure
-                // event); fall back to a fresh id only if the cell is empty (failure before any
-                // `MessageStart`, or a poisoned lock).
+                // Replay the captured `response.id` so the failure correlates with `response.created`;
+                // fresh id only if the cell is empty.
                 let response_id = self
                     .carried_response_id()
                     .unwrap_or_else(|| synthesize_response_id(host));
                 let mut resp_obj = serde_json::Map::new();
                 resp_obj.insert(keys::ID.to_string(), serde_json::json!(response_id));
                 resp_obj.insert(keys::OBJECT.to_string(), serde_json::json!(OBJ_RESPONSE));
-                // Replay the captured `created_at` so `response.failed` carries the SAME timestamp
-                // as `response.created` (a native stream never changes it mid-flight); falls back
-                // to the current time only if the failure preceded any `MessageStart`.
+                // Replay the captured `created_at`; current time only if the failure preceded `MessageStart`.
                 resp_obj.insert(
                     keys::CREATED_AT.to_string(),
                     serde_json::json!(self.carried_created_at(host)),
                 );
-                // Replay the captured `model` so `response.failed`'s inner `response` carries the
-                // SAME required non-nullable `model` as `response.created`; falls back to
-                // DEFAULT_MODEL only if the failure preceded any `MessageStart`.
+                // Replay the captured `model`; DEFAULT_MODEL only if the failure preceded `MessageStart`.
                 resp_obj.insert(
                     keys::MODEL.to_string(),
                     serde_json::json!(self.carried_model()),
                 );
                 resp_obj.insert(keys::STATUS.to_string(), serde_json::json!(STATUS_FAILED));
-                // A native terminal event's inner `response` always carries `output` (REQUIRED by
-                // the SDK's typed `Response`); a failed response produced no assistant items, so
-                // emit a present-but-empty array — never omit it.
+                // `output` is required: a failed response gets a present-but-empty array.
                 resp_obj.insert(keys::OUTPUT.to_string(), serde_json::json!([]));
                 resp_obj.insert(
                     keys::ERROR_WORD.to_string(),
                     serde_json::json!({ (keys::CODE): code, (keys::MESSAGE): message }),
                 );
-                // The same spec-required members every Response object carries.
                 fill_required_response_members(&mut resp_obj, self.carried_request_echo().as_ref());
-                // RSP-11: this is the stream's terminal event; a later `MessageDelta` writes nothing.
+                // RSP-11: terminal event; a later `MessageDelta` writes nothing.
                 self.failed.store(true, Ordering::Relaxed);
                 vec![event(
                     EVT_RESPONSE_FAILED,
@@ -1543,13 +1297,9 @@ impl ProtocolWriter for ResponsesWriter {
             }
         };
 
-        // EVERY native `/v1/responses` SSE event carries a top-level `sequence_number` (monotonic
-        // from 0 per stream). Inject it uniformly here so no builder arm can forget it and so the
-        // counter advances exactly once per emitted frame. Events that produce no frame
-        // (`MessageStop`, empty text deltas, Image `BlockStart`) do NOT consume a sequence number,
-        // and a MULTI-frame event (text `BlockStart`/`BlockStop`) numbers each of its frames in
-        // emission order — only frames that actually go on the wire are numbered, matching the
-        // native stream where the integer counts emitted events.
+        // Every event carries a monotonic per-stream `sequence_number`, injected here so no arm can
+        // forget it. Events with no frame (`MessageStop`, empty text deltas, Image `BlockStart`) do
+        // not consume a number; a multi-frame event numbers each frame in emission order.
         frames
             .into_iter()
             .map(|(event_name, mut data)| {
@@ -1569,34 +1319,25 @@ impl ProtocolWriter for ResponsesWriter {
         host: &dyn busbar_contract::codec::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> serde_json::Value {
-        // Unknown/None stop reasons default to `completed` (not `failed`): a future IR reason that
-        // did not explicitly signal an error must not surface as a failed response to a Responses
-        // client. Only the explicitly-mapped incomplete reasons downgrade the status.
+        // Unknown/None stop reasons default to `completed`; only the explicitly mapped incomplete
+        // reasons downgrade the status.
         let status = resp
             .stop_reason
             .map(write_responses_status)
             .unwrap_or(STATUS_COMPLETED);
 
-        // Build the `output` array in IR ENCOUNTER order, emitting one native output item per block
-        // exactly as the streaming writer's `drain_output_items` does. The streaming path assigns each
-        // Text/ToolUse BlockStart its own `output_index` (in arrival order) and drains them in that
-        // order, so a response that interleaves text and tool blocks (e.g. text → tool → text) streams
-        // those items in that sequence. A prior revision collected text separately and `insert(0)`'d a
-        // single coalesced message item at the FRONT of the array — that forced text ahead of any tool
-        // item and broke the order for any non-text-first or interleaved content, so the non-stream
-        // body disagreed with the stream a client reassembling `response.output[]` would observe.
-        // Process in order with no hardcoded index: each block appends to `output_arr` where it occurs.
+        // Build `output` in IR encounter order, one native item per block, as the streaming writer's
+        // `drain_output_items` does. Collecting text separately and hoisting one coalesced message
+        // to the front broke order for interleaved content and disagreed with the stream.
         let mut output_arr: Vec<serde_json::Value> = Vec::new();
-        // The IR carries the response's token logprobs once, for the generated text as a whole
-        // (the Chat writer attaches them to the single choice). Responses carries them PER
-        // `output_text` part, so they are attached to the FIRST text part and every later part
-        // carries the spec-required present-but-empty `[]`.
+        // The IR carries response logprobs once for the whole text; Responses carries them per
+        // `output_text` part, so they go on the first text part and later parts get `[]`.
         let mut pending_logprobs: Option<&[crate::codec::ir::IrTokenLogprob]> =
             Some(&resp.logprobs);
         for block in &resp.content {
             match block {
-                // IR-02: a refusal is a message item whose one part is the `refusal` part, exactly
-                // what the stream's refusal item finalizes to.
+                // IR-02: a refusal is a message item whose one part is the `refusal` part (as the
+                // stream's refusal item finalizes).
                 crate::codec::ir::IrBlock::Text {
                     text,
                     refusal: true,
@@ -1624,13 +1365,10 @@ impl ProtocolWriter for ResponsesWriter {
                     annotations.extend(super::file_annotations(citations));
                     let logprobs =
                         write_responses_part_logprobs(pending_logprobs.take().unwrap_or(&[]));
-                    // Match the native message-item shape the STREAMING `output_item.done` emits: an
-                    // item-level `id` (`msg_…`), a `status`, and `annotations: []` on the `output_text`
-                    // content part. Omitting them is a proxy tell — a typed SDK reading `item.id` /
-                    // `item.status` / `content[0].annotations` sees missing fields on the non-stream
-                    // path. Each non-empty text block becomes its OWN message item at its encounter
-                    // position (mirroring the per-index message items the stream emits). The
-                    // spec requires `logprobs` on every `output_text` part.
+                    // Match the streaming `output_item.done` message shape: item `id` (`msg_…`),
+                    // `status`, and `annotations: []` on the part (missing fields are a proxy tell).
+                    // Each non-empty text block is its own message item at its encounter position.
+                    // `logprobs` is required on every `output_text` part.
                     output_arr.push(serde_json::json!({
                         (keys::TYPE): ITEM_TYPE_MESSAGE,
                         (keys::ID): synthesize_item_id(host, ITEM_ID_PREFIX_MSG),
@@ -1647,27 +1385,20 @@ impl ProtocolWriter for ResponsesWriter {
                 crate::codec::ir::IrBlock::ToolUse {
                     id, name, input, ..
                 } => {
-                    // Verbatim for a raw `Value::String` (avoid double-encoding), same as the Chat writer.
                     let args_str = crate::codec::dialect::tool_arguments_to_string(input);
                     output_arr.push(serde_json::json!({
                         (keys::TYPE): ITEM_TYPE_FUNCTION_CALL,
-                        // Native function_call items carry an item-level opaque `id` (`fc_…`) DISTINCT
-                        // from `call_id` — the streaming `output_item.done` emits it, so the non-stream
-                        // body must too or a typed SDK reading `item.id` sees a missing field (a proxy
-                        // tell). The IR has no per-item id, so synthesize one of the native shape.
+                        // Native function_call items carry an item `id` (`fc_…`) distinct from
+                        // `call_id`, as the streaming `done` emits; the IR has none, so synthesize one.
                         (keys::ID): synthesize_item_id(host, ITEM_ID_PREFIX_FC),
                         (CALL_ID): id,
                         (keys::NAME): name,
                         (keys::ARGUMENTS): args_str
                     }));
                 }
-                // REASONING: write an IR Thinking block back as a native Responses `reasoning`
-                // output item. The prior `_ => {}`-equivalent DROPPED it, so a thinking-carrying
-                // response translated from Anthropic/Bedrock lost its reasoning on the Responses
-                // surface. Emit the text under a `content[]` `reasoning_text` part (the full-reasoning
-                // location); when the IR carries a signature, round-trip it into Responses'
-                // `encrypted_content` slot (the opaque reasoning-reuse blob) so a same-protocol hop is
-                // lossless. A purely-empty Thinking block emits no item.
+                // REASONING: an IR Thinking block becomes a native `reasoning` output item with the
+                // text under a `content[]` `reasoning_text` part. A signature round-trips into
+                // `encrypted_content` so a same-protocol hop is lossless.
                 crate::codec::ir::IrBlock::Thinking {
                     text,
                     signature,
@@ -1675,14 +1406,12 @@ impl ProtocolWriter for ResponsesWriter {
                     kind,
                     ..
                 } => {
-                    // A REDACTED reasoning block (Bedrock `redactedContent`) holds opaque encrypted
-                    // bytes with no plaintext analog on the Responses surface — drop it entirely
-                    // rather than leak the bytes as visible `reasoning_text`.
+                    // A redacted block holds opaque bytes with no plaintext analog: dropped, not leaked.
                     if *redacted {
                         continue;
                     }
                     let emit_sig = signature.as_deref();
-                    // A purely-empty Thinking block (no text and no signature) emits no item.
+                    // A wholly empty block (no text, no signature) emits no item.
                     if text.is_empty() && emit_sig.is_none() {
                         continue;
                     }
@@ -1695,26 +1424,21 @@ impl ProtocolWriter for ResponsesWriter {
                         keys::ID.to_string(),
                         serde_json::json!(synthesize_item_id(host, ITEM_ID_PREFIX_RS)),
                     );
-                    // IR-17: the same `summary[]` / `content[]` placement the stream assembles (a
-                    // summary-kind thought is a `summary_text` part, else a `reasoning_text` one).
+                    // IR-17: the same `summary[]` / `content[]` placement as the stream.
                     super::slots::insert_reasoning_text(&mut item, text, *kind);
                     if let Some(sig) = emit_sig {
                         item.insert(ENCRYPTED_CONTENT.to_string(), serde_json::json!(sig));
                     }
                     output_arr.push(serde_json::Value::Object(item));
                 }
-                // ToolResult and Image have no representation in a Responses API `output` array
-                // (output carries assistant `message`/`function_call` items only), so they are
-                // intentionally dropped here. Enumerated explicitly rather than swallowed by a
-                // catch-all so a future IrBlock variant forces a compile error instead of silently
-                // vanishing from Responses output.
+                // `output` carries only assistant `message`/`function_call` items, so ToolResult and
+                // Image are dropped. Listed explicitly so a new IrBlock variant fails to compile.
                 crate::codec::ir::IrBlock::ToolResult { .. } => {}
-                // A model does not emit an attachment back on the response surface, so there is
-                // nothing to project here and nothing is lost by omitting these.
+                // A model does not emit an attachment on the response surface; nothing is lost.
                 crate::codec::ir::IrBlock::Image { .. }
                 | crate::codec::ir::IrBlock::Media { .. }
                 | crate::codec::ir::IrBlock::Json(_) => {}
-                // A provider-run web search (DF-MAP item 2) is a `web_search_call` output item.
+                // A provider-run web search is a `web_search_call` output item.
                 crate::codec::ir::IrBlock::HostedToolRecord {
                     call_id,
                     status,
@@ -1729,17 +1453,13 @@ impl ProtocolWriter for ResponsesWriter {
             }
         }
 
-        // Build the SDK-required Responses `usage` object: `total_tokens` plus the
-        // `input_tokens_details`/`output_tokens_details` objects are REQUIRED by the official SDKs, so
-        // the shared builder always emits them (as 0 when nothing to report) and reconstructs the
-        // cache-inclusive `input_tokens` TOTAL from the normalized IR.
+        // `total_tokens` and the `*_details` objects are required by the SDKs; the shared builder
+        // always emits them and rebuilds the cache-inclusive `input_tokens` from the IR.
         let usage_value = build_responses_usage(&resp.usage);
 
         let mut obj = serde_json::Map::new();
-        // Emit the SDK-required top-level identity. Same-protocol passthrough carries the captured
-        // upstream values verbatim; cross-protocol (backend supplied none) synthesizes a
-        // protocol-correct `resp_` id and the current unix time so the body stays SDK-valid.
-        // `created_at` is the Responses field name (the official SDK's `Response.created_at`).
+        // Top-level identity. Same-protocol carries upstream values; cross-protocol synthesizes a
+        // `resp_` id and the current unix time. `created_at` is the Responses field name.
         let id = resp
             .id
             .clone()
@@ -1751,10 +1471,8 @@ impl ProtocolWriter for ResponsesWriter {
         obj.insert(keys::OBJECT.to_string(), serde_json::json!(OBJ_RESPONSE));
         obj.insert(keys::CREATED_AT.to_string(), serde_json::json!(created_at));
         obj.insert(keys::STATUS.to_string(), serde_json::json!(status));
-        // model that served the response (preserved across cross-protocol translation). The
-        // official SDK types `Response.model` as a REQUIRED non-nullable string, so emit it
-        // unconditionally with the DEFAULT_MODEL fallback when the IR carries none rather than
-        // omitting the key — omission breaks strict decoders and is a distinguishability tell.
+        // The serving model (kept across cross-protocol translation); required, so DEFAULT_MODEL
+        // when the IR carries none.
         obj.insert(
             keys::MODEL.to_string(),
             serde_json::json!(resp.model.as_deref().unwrap_or(DEFAULT_MODEL)),
@@ -1763,16 +1481,12 @@ impl ProtocolWriter for ResponsesWriter {
             keys::OUTPUT.to_string(),
             serde_json::Value::Array(output_arr),
         );
-        // NOTE `output_text` is NOT emitted: it is an SDK-COMPUTED convenience property
-        // (`Response.output_text` aggregates the `output[]` message text parts), not a field a native
-        // `/v1/responses` HTTP body serializes. Emitting it would be an extra key real OpenAI never
-        // sends — a distinguishability tell, the same class of leak the `cache_write_tokens` removal
-        // fixed. Its DATA is carried losslessly by the assistant text in `output[]` above, from which
-        // any SDK reconstructs `output_text`; see `responses_response_output_and_output_text_emitted`.
+        // `output_text` is not emitted: it is an SDK-computed property, and a real body never
+        // carries the key. Its data is in the `output[]` message text.
+        // See `responses_response_output_and_output_text_emitted`.
         obj.insert(keys::USAGE.to_string(), usage_value);
-        // RSP-17: the tier that SERVED the response (Anthropic `usage.service_tier`, or a Responses
-        // backend's own), in the Responses vocabulary; omitted when the IR carries none or a tier
-        // this vocabulary has no word for.
+        // RSP-17: the tier that served the response, in Responses vocabulary; omitted when absent
+        // or unmappable.
         if let Some(tier) = resp
             .usage
             .detail
@@ -1782,14 +1496,8 @@ impl ProtocolWriter for ResponsesWriter {
         {
             obj.insert(keys::SERVICE_TIER.to_string(), serde_json::json!(tier));
         }
-        // The official SDK types `Response.error` as a REQUIRED nullable field present on EVERY
-        // Response object: `null` on success/incomplete, a populated object on failure. The
-        // streaming `response.created` skeleton already emits `error: null`; the non-streaming body
-        // must match. Omitting the key breaks strict SDK/Pydantic/Zod decoders that read
-        // `response.error` unconditionally and is a distinguishability tell (a real non-streaming
-        // `/v1/responses` body always carries `error`). A genuine upstream failure is surfaced as
-        // an error envelope via `write_error`, never through this success/incomplete body, so `null`
-        // is correct here.
+        // `Response.error` is required on every Response: `null` on success/incomplete, as the
+        // `response.created` skeleton emits. Failures arrive via `write_error`, not this body.
         obj.insert(keys::ERROR_WORD.to_string(), serde_json::Value::Null);
 
         if status == STATUS_INCOMPLETE {
@@ -1804,19 +1512,15 @@ impl ProtocolWriter for ResponsesWriter {
                 serde_json::Value::Object(incomplete_details),
             );
         }
-        // Spec-required request-echo members plus `incomplete_details: null` on a completed
-        // response (the incomplete branch above already set the real object, which is kept).
+        // Request-echo members plus `incomplete_details: null` on a completed response.
         fill_required_response_members(&mut obj, resp.request_echo.as_ref());
 
         serde_json::Value::Object(obj)
     }
 
-    /// Native OpenAI Responses error envelope. The Responses API shares the OpenAI error shape an
-    /// official SDK (`openai` Python / `openai-node`) decodes into a typed `APIError`:
-    /// `{"error":{"message":<msg>,"type":<type>,"code":<code|null>,"param":<param|null>}}`, served
-    /// as `application/json`. `code` and `param` are always present (null here — busbar's
-    /// router/auth/forward errors are not field-level validation errors). The generic `kind` is
-    /// mapped to the Responses `type` vocabulary where one exists.
+    /// Native Responses error envelope, the OpenAI shape SDKs decode into `APIError`:
+    /// `{"error":{"message","type","code":null,"param":null}}` as `application/json`. The generic
+    /// `kind` maps to the Responses `type` vocabulary where one exists.
     fn write_error(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -1824,12 +1528,10 @@ impl ProtocolWriter for ResponsesWriter {
         kind: &str,
         message: &str,
     ) -> serde_json::Value {
-        // Map busbar's generic error `kind` to the OpenAI/Responses `error.type` vocabulary. The
-        // canonical Responses/OpenAI types are `invalid_request_error`, `authentication_error`,
-        // `permission_error`, `not_found_error`, `rate_limit_error`, `server_error`, and
-        // `insufficient_quota`. Anything already in that vocabulary (or any unrecognized caller
-        // string) is passed through verbatim rather than swallowed by a catch-all, so a precise
-        // upstream type is never lost.
+        // Map the generic `kind` to the OpenAI `error.type` vocabulary (`invalid_request_error`,
+        // `authentication_error`, `permission_error`, `not_found_error`, `rate_limit_error`,
+        // `server_error`, `insufficient_quota`). Anything already in it, or unrecognized, passes
+        // through verbatim so a precise upstream type is not lost.
         let error_type = match kind {
             "invalid_request" | ERR_TYPE_INVALID_REQUEST => ERR_TYPE_INVALID_REQUEST,
             "authentication" | ERR_TYPE_AUTHENTICATION | "auth" => ERR_TYPE_AUTHENTICATION,
@@ -1837,34 +1539,23 @@ impl ProtocolWriter for ResponsesWriter {
             "not_found" | ERR_TYPE_NOT_FOUND => ERR_TYPE_NOT_FOUND,
             "rate_limit" | ERR_TYPE_RATE_LIMIT => ERR_TYPE_RATE_LIMIT,
             ERR_TYPE_SERVER_ERROR | "internal" | "internal_error" => ERR_TYPE_SERVER_ERROR,
-            // A 503 exhaustion/timeout is reported by proxy engine as kind `"overloaded"` (an
-            // Anthropic-vocabulary token). The OpenAI/Responses error vocabulary has no
-            // `overloaded` type — a 5xx is `server_error` — so without this arm `other => other`
-            // would leak `{"error":{"type":"overloaded",...}}` to an OpenAI-family client on every
-            // exhaustion/timeout, a non-native type and a deterministic cross-protocol tell. Map the
-            // overloaded/unavailable family onto the native `server_error`. Same class as the OpenAI
-            // writer's 5xx bucket.
+            // `overloaded` is Anthropic vocabulary; OpenAI reports a 5xx as `server_error`. Without
+            // this arm it would leak as a non-native type. Same bucket as the OpenAI writer's 5xx.
             busbar_contract::protocol::KIND_OVERLOADED
             | ERR_TYPE_OVERLOADED
             | "service_unavailable"
             | "unavailable" => ERR_TYPE_SERVER_ERROR,
-            // proxy engine emits these transient/upstream-failure kinds directly to every ingress
-            // writer (`timeout`/`network`/`connect` from the request-error path, `5xx`/`transient`
-            // from the canonical-signal mapping, `api_error` from the generic upstream-error path).
-            // None is an OpenAI/Responses error type — real OpenAI reports a transient upstream
-            // failure as `server_error` — so without these arms `other => other` would leak a
-            // non-native `type` such as `{"error":{"type":"timeout"}}` or `{"error":{"type":"5xx"}}`
-            // to a Responses-API client: a deterministic cross-protocol tell that breaks SDK
-            // consumers switching on `error.type`. Mirrors openai_chat.rs's `server_error` bucket.
+            // Transient/upstream-failure kinds the engine emits to every ingress writer
+            // (`timeout`/`network`/`connect`, `5xx`/`transient`, `api_error`) are not OpenAI types;
+            // real OpenAI reports them as `server_error`. Mirrors openai_chat.rs's bucket.
             crate::codec::framework::KIND_TIMEOUT
             | "network"
             | "connect"
             | "5xx"
             | "transient"
             | busbar_contract::protocol::KIND_API_ERROR => ERR_TYPE_SERVER_ERROR,
-            // A context-length overflow is surfaced by proxy engine as `context_length_exceeded`; the
-            // Responses vocabulary has no dedicated type for it (as openai_chat.rs also maps it), so it
-            // folds into `invalid_request_error`. `bad_request` is the same client-error class.
+            // No dedicated Responses type for context-length overflow (openai_chat.rs also folds it)
+            // so it becomes `invalid_request_error`, as does `bad_request`.
             crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH | "bad_request" => {
                 ERR_TYPE_INVALID_REQUEST
             }
@@ -1892,11 +1583,10 @@ impl ProtocolWriter for ResponsesWriter {
     }
 }
 
-/// One IR image → the Responses `input_image` part, or `None` when the source has no Responses
-/// form. Shared by message content and `function_call_output` content (RSP-10), so an image reaches
-/// both the same way.
+/// One IR image to a Responses `input_image` part, or `None` when the source has no Responses
+/// form. Shared by message content and `function_call_output` content (RSP-10).
 ///
-/// IR-08: the image's `detail` is written beside the source when the IR carries one.
+/// IR-08: `detail` is written beside the source when the IR carries one.
 fn input_image_part(
     source: &crate::codec::ir::IrImageSource,
     detail: Option<crate::codec::ir::IrImageDetail>,
@@ -1910,9 +1600,8 @@ fn input_image_part(
 
 /// The source half of [`input_image_part`].
 fn input_image_source_part(source: &crate::codec::ir::IrImageSource) -> Option<serde_json::Value> {
-    // SHR-03: an OpenAI Files id — this dialect's own `input_image.file_id` or a Chat `file_id`,
-    // one namespace — re-emits as the native `input_image.file_id` form (a data URI would corrupt
-    // it).
+    // SHR-03: an OpenAI Files id (this dialect's `input_image.file_id` or a Chat `file_id`, one
+    // namespace) re-emits as `file_id`; a data URI would corrupt it.
     if let Some(id) = super::super::url_citation_wire::files_api_id(source) {
         return Some(serde_json::json!({ (keys::TYPE): INPUT_IMAGE, (keys::FILE_ID): id }));
     }
@@ -1923,8 +1612,7 @@ fn input_image_source_part(source: &crate::codec::ir::IrImageSource) -> Option<s
                 .and_then(|i| i.as_str())
                 .map(|id| serde_json::json!({ (keys::TYPE): INPUT_IMAGE, (keys::FILE_ID): id }))
         }
-        // A foreign vendor reference (a Bedrock s3Location) has no Responses analog — drop with a
-        // warn rather than corrupt the block.
+        // A foreign vendor reference (a Bedrock s3Location) has no analog: drop with a warn.
         crate::codec::ir::IrImageSource::Vendor { .. } => {
             crate::codec::drops::writer_drop!(
                 crate::codec::drops::IMAGE,
@@ -1940,10 +1628,9 @@ fn input_image_source_part(source: &crate::codec::ir::IrImageSource) -> Option<s
     }
 }
 
-/// One IR attachment → the Responses `input_file` part, or `None` when it has no Responses form.
-/// The input surface has ONE attachment part, `input_file`, and no audio or video part, so only a
-/// document projects; the other kinds are dropped deliberately with a warn naming the construct.
-/// Shared by message content and `function_call_output` content (RSP-10).
+/// One IR attachment to a Responses `input_file` part, or `None` when it has no Responses form.
+/// Only a document projects (no audio or video part); other kinds are dropped with a warn naming
+/// the construct. Shared by message and `function_call_output` content (RSP-10).
 fn input_file_part(
     kind: crate::codec::ir::IrMediaKind,
     source: &crate::codec::ir::IrImageSource,
@@ -1971,16 +1658,16 @@ fn input_file_part(
         crate::codec::ir::IrImageSource::Url(url) => {
             part.insert(FILE_URL.to_string(), serde_json::json!(url));
         }
-        // SHR-03: an OpenAI Files id (this dialect's own `input_file.file_id` or a Chat
-        // `file.file_id` — one namespace) re-emits as `input_file.file_id`.
+        // SHR-03: an OpenAI Files id (this dialect's `input_file.file_id` or a Chat
+        // `file.file_id`) re-emits as `input_file.file_id`.
         crate::codec::ir::IrImageSource::Vendor { .. }
             if super::super::url_citation_wire::files_api_id(source).is_some() =>
         {
             let id = super::super::url_citation_wire::files_api_id(source)?;
             part.insert(keys::FILE_ID.to_string(), serde_json::json!(id));
         }
-        // This protocol's OWN uploads handle round-trips verbatim; a FOREIGN handle (a Bedrock
-        // s3Location, an Anthropic Files-API id) is unresolvable here.
+        // This protocol's own uploads handle round-trips verbatim; a foreign one (Bedrock
+        // s3Location, Anthropic Files id) is unresolvable here.
         crate::codec::ir::IrImageSource::Vendor { vendor, value } if *vendor == VENDOR_NAME => {
             let id = value.get(keys::FILE_ID).and_then(|i| i.as_str())?;
             part.insert(keys::FILE_ID.to_string(), serde_json::json!(id));
@@ -2001,15 +1688,11 @@ fn input_file_part(
     Some(serde_json::Value::Object(part))
 }
 
-/// A `ToolResult`'s content → the `function_call_output.output` value (RSP-10).
-///
-/// `output` is a string OR an array of `input_text` / `input_image` / `input_file` parts (the reader
-/// already reads the array). An all-text result keeps the string form — adjacent text concatenated
-/// WITHOUT a separator (a space corrupts base64 / split JSON payloads; mirrors the Chat writer). A
-/// structured-JSON block (a Bedrock `{"json":...}` tool result) is the tool's output as JSON text,
-/// so it is serialized into that text rather than dropped. Only when an image or attachment is
-/// present does the output become the part array, so the image/file reaches the model instead of
-/// vanishing.
+/// A `ToolResult`'s content as the `function_call_output.output` value (RSP-10): a string, or an
+/// array of `input_text` / `input_image` / `input_file` parts. An all-text result stays a string,
+/// adjacent text joined without a separator (a space corrupts base64 or split JSON, as in the Chat
+/// writer). A structured-JSON block is serialized into that text. The part array is used only when
+/// an image or attachment is present.
 fn function_call_output_value(content: &[crate::codec::ir::IrBlock]) -> serde_json::Value {
     let text_of = |b: &crate::codec::ir::IrBlock| -> Option<String> {
         match b {
@@ -2045,8 +1728,7 @@ fn function_call_output_value(content: &[crate::codec::ir::IrBlock]) -> serde_js
         }
     }
     if parts.is_empty() {
-        // Every attachment was unrepresentable (warned above) and there was no text: the empty
-        // string the all-text form yields, not an empty part array.
+        // Every attachment was unrepresentable (warned above) and no text: the empty string.
         return serde_json::json!("");
     }
     serde_json::Value::Array(parts)
