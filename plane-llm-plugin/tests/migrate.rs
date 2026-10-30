@@ -86,10 +86,13 @@ fn the_door_raises_every_provider_host_for_core_to_judge_both_ways() {
             if_private("gateway.example.com"),
             if_private("10.9.8.7"),
             if_private("169.254.169.254"),
-            if_private("[fd00::5]"),
+            if_private("fd00::5"),
         ];
         want.sort_by_key(|n| format!("{n:?}"));
-        assert_eq!(needs, want, "one need per host, base_url and token_url alike");
+        assert_eq!(
+            needs, want,
+            "one need per host, base_url and token_url alike"
+        );
     }
 }
 
