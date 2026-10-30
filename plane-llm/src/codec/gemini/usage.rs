@@ -3,29 +3,25 @@
 use super::*;
 use crate::codec::usage_count::{read_usage, CountRead, CountSlot, UsageCount};
 
-/// Gemini's usage counts, as data. Cache tokens: `cachedContentTokenCount` is a slice inside
-/// `promptTokenCount`, so it is subtracted (saturating) there and carried as the IR's
-/// `cache_read_input_tokens` — the same field Bedrock's `cacheReadInputTokens` and Anthropic's
-/// `cache_read_input_tokens` populate. `toolUsePromptTokenCount` is ADDITIVE beside the prompt (see
-/// [`GEMINI_USAGE_ADDITIVE_TERMS`] for the recording that settles it: 32 tool-use tokens against an
-/// 18-token prompt) and Google counts it at the input rate, so it is added to `input_tokens` and also
-/// recorded as attribution. Thinking tokens are output tokens: `candidatesTokenCount` counts only the
-/// visible answer and the 2.5-series reasoning arrives in the separate, additive `thoughtsTokenCount`
-/// (Google's own `totalTokenCount` is prompt + candidates + thoughts), so it is added to
-/// `output_tokens` — what `output_tokens` means for every other provider — and recorded as the
-/// reasoning sub-bucket; the Gemini writer writes the whole output as `candidatesTokenCount`. The audio entries of
-/// the per-modality lists are attribution slices.
+/// Gemini's usage counts, as data. `cachedContentTokenCount` is a slice inside `promptTokenCount`, so
+/// it is subtracted (saturating) there and carried as `cache_read_input_tokens`, as Bedrock's and
+/// Anthropic's cache reads are. `toolUsePromptTokenCount` is additive beside the prompt (see
+/// [`GEMINI_USAGE_ADDITIVE_TERMS`]: 32 tool-use tokens against an 18-token prompt) and counted at the
+/// input rate, so it is added to `input_tokens` and recorded as attribution. Thinking tokens are
+/// output: `candidatesTokenCount` counts only the visible answer and 2.5-series reasoning arrives in
+/// the additive `thoughtsTokenCount` (Google's `totalTokenCount` is prompt + candidates + thoughts),
+/// so it is added to `output_tokens` (what it means for every other provider) and recorded as the
+/// reasoning sub-bucket; the writer writes the whole output as `candidatesTokenCount`. Audio entries
+/// of the per-modality lists are attribution slices.
 ///
-/// The ledger records exactly what Google reports. Every count the pinned wire lock
-/// (`testing/llm-conformance/wire/gemini.wire.json`) declares under `usageMetadata` is itemized
-/// into an EXISTING meter class by what Google's protocol says the count is: prompt -> input,
-/// `cachedContentTokenCount` -> cache read (out of the prompt), `toolUsePromptTokenCount` -> input,
-/// candidates -> output, `thoughtsTokenCount` -> output. `totalTokenCount` is Google's sum, not a
-/// unit of its own and changes no itemized count. A total above the itemized parts is the open
-/// class `unitemized_tokens`; `gemini_usage_identity_note` WARNs naming it.
-/// The plane decides units only; the rate card prices what the ledger holds. The streaming
-/// frames, the buffered response and a truncated-body recovery all read this one table, so a
-/// truncated or streamed turn counts the same as a complete one.
+/// The ledger records what Google reports. Every count the pinned wire lock
+/// (`testing/llm-conformance/wire/gemini.wire.json`) declares under `usageMetadata` is itemized into
+/// an existing meter class: prompt to input, `cachedContentTokenCount` to cache read (out of the
+/// prompt), `toolUsePromptTokenCount` to input, candidates and `thoughtsTokenCount` to output.
+/// `totalTokenCount` is Google's sum, not a unit, and changes no itemized count; a total above the
+/// parts is the open class `unitemized_tokens`, which `gemini_usage_identity_note` WARNs naming. The
+/// plane decides units only; the rate card prices them. Streaming frames, the buffered response and
+/// truncated-body recovery read this one table, so all count alike.
 pub(super) const USAGE: &[UsageCount] = &[
     (
         CountSlot::Input,
@@ -79,10 +75,10 @@ pub(super) const USAGE: &[UsageCount] = &[
     ),
 ];
 
-/// A Gemini response (or stream frame) → the IR usage: its `usageMetadata` through [`USAGE`], plus
-/// what rides beside the counts — the identity cross-check against Google's own `totalTokenCount`
-/// (`None` when they agree), `usageMetadata.trafficType` (informational, ON_DEMAND vs PROVISIONED)
-/// and the top-level `createTime` (a sibling of `usageMetadata`).
+/// A Gemini response (or stream frame) to IR usage: `usageMetadata` through [`USAGE`], plus what
+/// rides beside the counts: the identity cross-check against Google's `totalTokenCount` (`None` when
+/// they agree), `usageMetadata.trafficType` (informational, ON_DEMAND vs PROVISIONED) and the
+/// top-level `createTime` (a sibling of `usageMetadata`).
 pub(super) fn read_gemini_usage(
     data: &serde_json::Value,
 ) -> Result<crate::codec::ir::IrUsage, IrError> {

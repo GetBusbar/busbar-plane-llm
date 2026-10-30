@@ -3,17 +3,16 @@
 
 //! IR-18 signature-provenance envelope (architect ruling).
 //!
-//! A reasoning signature is only valid for the model family that minted it
-//! ([`IrSignatureOrigin`]). Inside busbar the IR carries the origin beside the bytes; on the CLIENT
-//! wire it has nowhere to live — Responses `encrypted_content`, Gemini `thoughtSignature`,
-//! Anthropic/Bedrock `signature` are bare strings. A client that received a Claude signature
-//! through a Responses stream sends it back as `encrypted_content`; read as that dialect's own
-//! blob, the Anthropic egress then drops it as foreign and Claude thinking continuity breaks.
+//! A reasoning signature is valid only for the model family that minted it ([`IrSignatureOrigin`]).
+//! The IR carries the origin beside the bytes; on the client wire it has nowhere to live (Responses
+//! `encrypted_content`, Gemini `thoughtSignature`, Anthropic/Bedrock `signature` are bare strings). A
+//! Claude signature sent back through a Responses stream's `encrypted_content` would be read as that
+//! dialect's own blob, and the Anthropic egress would drop it as foreign, breaking Claude thinking continuity.
 //!
-//! So when a FOREIGN-origin signature is written into a client carrier, it is wrapped in an
-//! opaque busbar envelope `bbsig1:<origin>:<base64url(signature)>`, and every reader unwraps it,
-//! restoring the original bytes AND their origin. A genuine vendor blob never carries the prefix,
-//! so an un-prefixed carrier is read as that vendor's own, exactly as before.
+//! So a foreign-origin signature written into a client carrier is wrapped in an opaque envelope
+//! `bbsig1:<origin>:<base64url(signature)>`, and every reader unwraps it, restoring the bytes and
+//! origin. A genuine vendor blob never carries the prefix, so an un-prefixed carrier is read as the
+//! vendor's own, as before.
 
 use super::IrSignatureOrigin;
 
@@ -43,9 +42,9 @@ impl IrSignatureOrigin {
     }
 }
 
-/// Wrap `signature` (minted by `origin`) for a carrier that has no provenance field. Idempotent:
-/// a value that is already an envelope is returned unchanged, so a pass that runs twice (the
-/// buffered prep and then the buffered-to-stream synthesis) never nests envelopes.
+/// Wrap `signature` (minted by `origin`) for a carrier with no provenance field. Idempotent: an
+/// existing envelope is returned unchanged, so a pass that runs twice (buffered prep, then
+/// buffered-to-stream synthesis) never nests envelopes.
 pub fn wrap(origin: IrSignatureOrigin, signature: &str) -> String {
     if unwrap(signature).is_some() {
         return signature.to_string();
@@ -93,9 +92,9 @@ pub fn read_carried_opt(
     }
 }
 
-/// CLIENT-WRITER helper: the string to put in a client carrier for a signature minted by `origin`,
-/// where `accepts` says which origins the carrier's own family reads as its own. A foreign origin
-/// is wrapped; an own or unknown origin (the pre-slot behaviour) is written as is.
+/// Client-writer helper: the string for a client carrier for a signature minted by `origin`, where
+/// `accepts` says which origins the carrier's family reads as its own. A foreign origin is wrapped;
+/// an own or unknown origin (the pre-slot behaviour) is written as is.
 pub fn for_client(
     signature: &str,
     origin: Option<IrSignatureOrigin>,

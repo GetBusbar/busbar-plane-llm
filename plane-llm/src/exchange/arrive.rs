@@ -1,14 +1,12 @@
 //! `arrive`, sans I/O: which dialect an arrival speaks, which operation it asks for, which model it
 //! names, and the bytes a unit forwards; or the refusal answered instead.
 //!
-//! This is the reading, in its order, and nothing else: the router's detection fold and its one operation check (`protocol_dispatch`), the two
-//! convenience surfaces that name a model in the path (`/{name}/v1/messages` and
-//! `/{provider}/{model}/v1/messages`), the path-model dialects' own URL parses, and the body-model
-//! arrival and decode steps. Every refusal carries the envelope dialect, the kind, the status and the
-//! message; the plane renders it through the dialect's own error
-//! writer when the kernel asks (`refusal`, keyed by the unit).
-//!
-//! The caller's credential is not read here: the kernel's authenticate step owns it.
+//! The reading, in order: the router's detection fold and its one operation check
+//! (`protocol_dispatch`), the two convenience surfaces naming a model in the path
+//! (`/{name}/v1/messages`, `/{provider}/{model}/v1/messages`), the path-model dialects' URL parses,
+//! and the body-model arrival and decode steps. Every refusal carries the envelope dialect, kind,
+//! status and message; the plane renders it through the dialect's error writer when the kernel asks
+//! (`refusal`, keyed by the unit). The caller's credential is the kernel's authenticate step, not read here.
 
 use std::borrow::Cow;
 
@@ -58,10 +56,10 @@ impl Decline {
     }
 
     /// The arrival names an action its dialect has that this plane does not serve: a resolved
-    /// operation with no handler, or a path-model URL naming no model and action this plane
-    /// serves (`REFUSED_UNSUPPORTED_ACTION`, which the root counts as a refusal of a read request,
-    /// as an unsupported-action and a malformed-path answer). A path no
-    /// dialect claims, or a verb a dialect path does not take, is none.
+    /// operation with no handler, or a path-model URL naming no served model and action
+    /// (`REFUSED_UNSUPPORTED_ACTION`, counted by the root as a refusal of a read request, like an
+    /// unsupported action or malformed path). A path no dialect claims, or a verb a dialect path does
+    /// not take, is none.
     #[must_use]
     pub const fn unsupported_action(self) -> bool {
         matches!(self, Decline::UnsupportedOperation | Decline::PathNotFound)
@@ -81,11 +79,10 @@ pub struct Declined {
     pub kind: &'static str,
     /// The message.
     pub message: Cow<'static, str>,
-    /// THE ENTRY THIS REFUSAL CONCERNS, when it is about one (abi/plane "A refused arrival", rule
-    /// 6): the ad-hoc route's model whose provider the path misnames. The door names it on the
-    /// refused `arrive`, so the kernel judges the caller's identity and grant over it first and
-    /// renders this refusal before admission, the ad-hoc route's governance guard running before the
-    /// mismatch is answered.
+    /// The entry this refusal concerns, when about one (abi/plane "A refused arrival", rule 6): the
+    /// ad-hoc route's model whose provider the path misnames. The door names it on the refused
+    /// `arrive`, so the kernel judges the caller's identity and grant over it first and renders this
+    /// refusal before admission (the ad-hoc route's governance guard runs before the mismatch is answered).
     pub entry: Option<String>,
 }
 
@@ -261,9 +258,8 @@ fn convenience(path: &str) -> Option<Convenience> {
     }
 }
 
-/// READ ONE ARRIVAL. `method` is the request method, `target` the request target (path and query),
+/// Read one arrival. `method` is the request method, `target` the request target (path and query),
 /// `fields` its head fields, `body` the whole body. Every dialect path takes POST only.
-///
 /// # Errors
 ///
 /// The refusal answered, with its envelope, kind, status and message.
@@ -570,10 +566,10 @@ fn bedrock_arrival(
     Err(no_resource(path))
 }
 
-/// THE PATH-MODEL CARRY: the URL's facts (the `model`, the `stream` flag and, when asked, the
-/// array-stream shim key) spliced into the caller's object as byte-level member edits. Every byte of
-/// the caller's own stays where it was, so the relay's governed removals of the same members give
-/// the far end the caller's bytes back (DIALECT FIDELITY). `None` when the body is not an object.
+/// The path-model carry: the URL's facts (`model`, `stream`, and when asked the array-stream shim key)
+/// spliced into the caller's object as byte-level member edits. Every byte of the caller's own stays,
+/// so the relay's governed removals of the same members give the far end the caller's bytes back
+/// (dialect fidelity). `None` when the body is not an object.
 #[must_use]
 pub fn splice_path_facts(
     body: &[u8],

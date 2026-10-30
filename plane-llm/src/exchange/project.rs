@@ -1,17 +1,16 @@
 //! The hook projection, sans I/O: what a hook is shown of an arrival, and a request-stage hook's
 //! rewrite applied to the arrival in its own dialect.
 //!
-//! One read, through the operation's own reader: the size signals (turns, characters, tools), the end user the dialect spells, and the prompt view
-//! (the system field and one `(role, text)` entry per wire turn, an in-band system turn at its wire
-//! position, a turn with nothing readable still an entry). A body the reader refuses is projected
-//! off its raw JSON (`project_raw.rs`): the projection never fails, and the request goes on. A
-//! body there is no reader for projects
-//! the zeroed shape.
+//! One read through the operation's own reader: the size signals (turns, characters, tools), the end
+//! user the dialect spells, and the prompt view (the system field and one `(role, text)` entry per wire
+//! turn, an in-band system turn at its wire position, a turn with nothing readable still an entry). A
+//! body the reader refuses is projected off its raw JSON (`project_raw.rs`): the projection never fails
+//! and the request goes on. A body with no reader projects the zeroed shape.
 //!
-//! The output-cap signal (`max_tokens_for`): the
-//! dialect's cap key off the caller's body, an out-of-range cap saturated to `u32::MAX`, never
-//! dropped; a Bedrock body's nested `inferenceConfig.maxTokens` is read where that key is absent. The IR's cap is the far end's, and a reader drops a cap it cannot carry; the hook
-//! signal is the caller's ask.
+//! The output-cap signal (`max_tokens_for`) is the dialect's cap key off the caller's body, an
+//! out-of-range cap saturated to `u32::MAX`, never dropped; a Bedrock body's nested
+//! `inferenceConfig.maxTokens` is read where that key is absent. The IR's cap is the far end's and a
+//! reader drops a cap it cannot carry; the hook signal is the caller's ask.
 
 use busbar_contract::abi::plane::PROJECT_REWRITE_NOT_APPLICABLE;
 use busbar_contract::hooks::RewriteReply;
@@ -59,12 +58,10 @@ struct Unreadable;
 const BEDROCK: &str = "bedrock";
 const BEDROCK_CAP: &str = "/inferenceConfig/maxTokens";
 
-/// The output-cap signal: the dialect's cap key (`max_output_tokens` for the
-/// responses dialect, `max_tokens` for every other) off the caller's body, saturated.
-///
-/// A Bedrock Converse body spells its cap `inferenceConfig.maxTokens`; the driver
-/// proof `max_tokens_signal_reads_the_bedrock_inference_config` pins it. It is read when the
-/// top-level key is absent.
+/// The output-cap signal: the dialect's cap key (`max_output_tokens` for responses, `max_tokens` for
+/// every other) off the caller's body, saturated. A Bedrock Converse body spells it
+/// `inferenceConfig.maxTokens` (pinned by driver proof `max_tokens_signal_reads_the_bedrock_inference_config`),
+/// read when the top-level key is absent.
 #[must_use]
 pub fn max_tokens_for(v: &Value, dialect: &str) -> Option<u32> {
     let key = if dialect == RESPONSES {
@@ -212,13 +209,12 @@ fn read_rewrite(rewrite: &[u8]) -> Option<RewriteReply> {
 }
 
 /// Apply a request-stage hook's rewrite to `arrived` in its own dialect: the dialect frames the
-/// rewrite's messages (and tools) into its conversation container. Answers the rewritten body when
-/// it applied; `None` leaves the arrival untouched (a rewrite that cannot be
-/// applied leaves the request unmodified).
+/// rewrite's messages (and tools) into its conversation container. Answers the rewritten body when it
+/// applied; `None` leaves the arrival unmodified.
 ///
-/// THE REWRITE IS SPLICED, NEVER RE-SERIALIZED ("hook `rw` edits, spliced per changed block. Never parse-edit-reserialize"):
-/// only the top-level members the dialect's framing changed are written into the caller's own
-/// bytes ([`spans::apply_top`]); every member it did not touch reaches the far end byte for
+/// The rewrite is spliced, never re-serialized ("hook `rw` edits, spliced per changed block. Never
+/// parse-edit-reserialize"): only the top-level members the dialect's framing changed are written into
+/// the caller's bytes ([`spans::apply_top`]); every untouched member reaches the far end byte for
 /// byte, in the caller's order, spacing and number spelling.
 pub fn apply_rewrite(arrived: &mut Arrived, rewrite: &[u8]) -> Option<Vec<u8>> {
     let reply = read_rewrite(rewrite)?;
@@ -261,20 +257,17 @@ pub fn apply_rewrite(arrived: &mut Arrived, rewrite: &[u8]) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-/// THE PLANE'S WORD ON A REWRITE IT DID NOT APPLY, in the `project` answer's view flags:
-/// [`PROJECT_REWRITE_NOT_APPLICABLE`] when the call carried a rewrite (`rewrite` non-empty), none
-/// was applied (`applied` false), and the arrival's operation has no conversation to frame one
-/// into. Only a chat frames its turns in a conversation container (`messages`, `contents`, the
-/// responses `input`) a hook's messages can be spliced into; a rerank's query and documents, an
-/// embedding's input, a moderation's input, an image's prompt, a speech's text and a
-/// transcription's upload are projected for the gates to screen, but no rewrite has anywhere to go
-/// in them (`apply_rewrite_to_ingress_body` finds no messages container). The kernel forwards such
-/// a unit unmodified and audits it.
+/// The plane's word on a rewrite it did not apply, in the `project` answer's view flags:
+/// [`PROJECT_REWRITE_NOT_APPLICABLE`] when the call carried a rewrite (`rewrite` non-empty), none was
+/// applied (`applied` false), and the arrival's operation has no conversation to frame one into. Only
+/// a chat has a conversation container (`messages`, `contents`, the responses `input`) to splice a
+/// hook's messages into; rerank, embedding, moderation, image, speech and transcription inputs are
+/// projected for the gates to screen but a rewrite has nowhere to go (`apply_rewrite_to_ingress_body`
+/// finds no messages container). The kernel forwards such a unit unmodified and audits it.
 ///
-/// NEVER FOR A CHAT, whatever kept its rewrite from applying (a body the splice cannot place it in,
-/// a container the body lacks, a rewrite that does not read): the mark clear, the kernel refuses
-/// the unit rather than forward its body un-rewritten. `0` when nothing was carried or the rewrite
-/// applied.
+/// Never for a chat, whatever kept its rewrite from applying (a body the splice cannot place it in,
+/// a missing container, an unreadable rewrite): the mark stays clear and the kernel refuses the unit
+/// rather than forward it un-rewritten. `0` when nothing was carried or the rewrite applied.
 #[must_use]
 pub fn rewrite_flags(arrived: &Arrived, rewrite: &[u8], applied: bool) -> u32 {
     if rewrite.is_empty() || applied || arrived.operation == OpVerb::CHAT {

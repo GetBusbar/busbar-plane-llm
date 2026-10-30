@@ -1,14 +1,12 @@
 //! A far end's success answer taken whole: a non-stream answer from a far end of another dialect
-//! (written as the caller's own stream when the caller asked for one). The whole body is read by
-//! the far end's dialect and written by the caller's, and the caller reads exactly one of four
-//! ends.
+//! (written as the caller's own stream when the caller asked for one). The whole body is read by the
+//! far end's dialect and written by the caller's, and the caller reads exactly one of four ends.
 //!
-//! The previous release's decision tree, in its order: an opaque body (speech audio) bridges at
-//! the byte level; a JSON body is translated (and, for a caller that asked to stream, written as
-//! the caller's own stream frames); a translated chat answer whose far end reported the generation
-//! failed is an error that still carries the usage the far end reported; the caller's dialect
-//! serving no such operation is a 404; and anything the caller's dialect cannot be written from is
-//! a 500, never the far end's native bytes.
+//! The decision tree, in order: an opaque body (speech audio) bridges at the byte level; a JSON body
+//! is translated (and, for a caller that asked to stream, written as the caller's own stream frames);
+//! a translated chat answer whose far end reported the generation failed is an error that still
+//! carries the reported usage; the caller's dialect serving no such operation is a 404; and anything
+//! the caller's dialect cannot be written from is a 500, never the far end's native bytes.
 
 use busbar_contract::billing::Billing;
 use busbar_contract::codec::{OperationHandler, TranslatedResponse};
@@ -63,10 +61,10 @@ pub struct Whole {
     pub answer: Rendered,
     /// Why the far end's dialect refused the body, when it did (for the operator's log).
     pub refused: Option<Refusal>,
-    /// The wire paths of the far end's answer that did not cross to the caller's dialect, on a
-    /// delivered TRANSLATE (design F3 "Drops"): each already warned through the one drop path; the
-    /// host records one audit row per path (`egress.control_unrepresentable`,
-    /// `<path> from <dialect>`, degraded). Empty on a relay and on every end that delivers nothing.
+    /// Wire paths of the far end's answer that did not cross to the caller's dialect on a delivered
+    /// TRANSLATE (design F3 "Drops"), already warned through the one drop path; the host records one
+    /// audit row per path (`egress.control_unrepresentable`, `<path> from <dialect>`, degraded). Empty
+    /// on a relay and on every end that delivers nothing.
     pub dropped: Vec<String>,
     /// The caller asked for a stream and reads one synthesised from this one whole body (OWNER
     /// 2026-10-27: busbar answers in the caller's dialect AND mode). `usage` is this body's own.

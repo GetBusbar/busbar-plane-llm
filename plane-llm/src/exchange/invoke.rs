@@ -1,26 +1,24 @@
-//! THE INVOKE-MODEL ENVELOPE, sans I/O: an Anthropic Messages exchange carried over Amazon
-//! Bedrock's `InvokeModel` / `InvokeModelWithResponseStream` operations.
+//! The invoke-model envelope, sans I/O: an Anthropic Messages exchange carried over Amazon Bedrock's
+//! `InvokeModel` / `InvokeModelWithResponseStream`.
 //!
-//! WHAT IT IS. Bedrock serves Anthropic's models over two APIs. Its unified Converse API is the
-//! plane's `bedrock` dialect. Its model-native `InvokeModel` API takes the Anthropic Messages body
-//! itself, so this is not a dialect of its own: the request body, the answer body, the stream's
-//! events and the usage they carry are the Anthropic dialect's, read and written by that dialect,
-//! and only the envelope around them is Bedrock's. A model selects it with
-//! `models.<m>.protocol: bedrock-invoke` ([`PROTOCOL`]); a provider never defaults to it, because
-//! the name is no codec protocol the kernel knows, so the provider sweep refuses it in the previous
-//! release's words. The kernel names none of this.
+//! Bedrock serves Anthropic's models over two APIs. Converse is the plane's `bedrock` dialect.
+//! `InvokeModel` takes the Anthropic Messages body itself, so it is not a dialect: the request body,
+//! answer body, stream events and usage are the Anthropic dialect's, read and written by it, and only
+//! the envelope is Bedrock's. A model selects it with `models.<m>.protocol: bedrock-invoke`
+//! ([`PROTOCOL`]); a provider never defaults to it (the name is no codec protocol the kernel knows, so
+//! the provider sweep refuses it in the previous release's words). The kernel names none of this.
 //!
-//! THE ENVELOPE, both ways:
+//! The envelope, both ways:
 //! - the target is `/model/{model}/invoke`, or `/model/{model}/invoke-with-response-stream` for a
 //!   streamed answer ([`path`]);
-//! - the body loses `model` (it rides the target) and `stream` (the operation says it), and states
+//! - the body loses `model` (it rides the target) and `stream` (the operation says it) and states
 //!   `anthropic_version: bedrock-2023-05-31`; the caller's `anthropic-beta` field becomes the body's
-//!   `anthropic_beta` list and the `anthropic-version` field is not sent ([`body`], [`fields`]);
-//! - a streamed answer arrives as AWS event-stream frames, each `chunk` carrying one Anthropic
-//!   stream event base64-encoded in `bytes`; it is re-framed as the Anthropic dialect's own
-//!   server-sent events, the event JSON byte for byte ([`Transcoder`]);
+//!   `anthropic_beta` list and `anthropic-version` is not sent ([`body`], [`fields`]);
+//! - a streamed answer arrives as AWS event-stream frames, each `chunk` carrying one Anthropic stream
+//!   event base64-encoded in `bytes`, re-framed as the Anthropic dialect's own server-sent events, the
+//!   event JSON byte for byte ([`Transcoder`]);
 //! - a refusal arrives as `{"message": …}` beside an `x-amzn-ErrorType` field (or, mid-stream, an
-//!   exception frame); it is re-stated as the Anthropic dialect's error envelope ([`error_body`]).
+//!   exception frame), re-stated as the Anthropic dialect's error envelope ([`error_body`]).
 //!
 //! The credential is the provider's: a Bedrock provider's SigV4 style, which the composition root
 //! falls back to when the model's own protocol states no default style.
@@ -93,9 +91,8 @@ pub fn fields(fields: Vec<HeadField>, stream: bool) -> (Vec<HeadField>, Vec<Vec<
 }
 
 /// The far request's body over the envelope, a byte-level edit of the Messages body (never a
-/// re-serialization): `model` and `stream` removed, `anthropic_version` stated, and the caller's
-/// beta flags (each field's comma-separated list, in order) as `anthropic_beta`. `None` when the body
-/// is not a JSON object.
+/// re-serialization): `model` and `stream` removed, `anthropic_version` stated, and the caller's beta
+/// flags (each field's comma-separated list, in order) as `anthropic_beta`. `None` for a non-object body.
 #[must_use]
 pub fn body(messages: &[u8], beta: &[Vec<u8>]) -> Option<Vec<u8>> {
     let flags: Vec<Value> = beta
@@ -177,7 +174,7 @@ pub fn error_body(head: HeadFields<'_>, body: &[u8]) -> Vec<u8> {
     envelope(kind_of(&exception), &message)
 }
 
-/// ONE STREAMED ANSWER'S RE-FRAMING: AWS event-stream frames in, the Anthropic dialect's own
+/// One streamed answer's re-framing: AWS event-stream frames in, the Anthropic dialect's own
 /// server-sent events out. Each `chunk` frame's base64 `bytes` decode to one Anthropic stream event,
 /// written as `event: <its type>` and `data: <its bytes>`; an exception frame becomes the dialect's
 /// `error` event; a malformed frame ends the stream with one. Bytes of a frame not yet whole wait.

@@ -1,13 +1,12 @@
-//! A far end's success answer relayed as it arrives: a stream (server-sent events or a binary event
-//! stream), or a same-dialect whole body relayed verbatim. Each far-end piece becomes the caller's
-//! bytes as soon as it completes a frame; the far end's usage is read as the bytes go by.
+//! A far end's success answer relayed as it arrives: a stream (SSE or binary event stream), or a
+//! same-dialect whole body relayed verbatim. Each far-end piece becomes the caller's bytes as soon as
+//! it completes a frame; the far end's usage is read as the bytes go by.
 //!
-//! The streamed-answer steps, in their order: the translator the pair of
-//! dialects names reframes (and, within one dialect, re-emits byte-exact while it reads usage),
-//! the JSON-array framer wraps the frames for a caller that asked for an array, a same-dialect
-//! whole body relays untouched while a bounded tail-anchored copy is kept for its usage and its
-//! stop reason is located incrementally, the end emits the caller's terminator and reads the
-//! usage, and a cut ends the caller's stream on an in-band error in its own framing.
+//! Steps, in order: the translator for the dialect pair reframes (within one dialect, re-emits
+//! byte-exact while reading usage); the JSON-array framer wraps frames for a caller that asked for an
+//! array; a same-dialect whole body relays untouched while a bounded tail-anchored copy is kept for
+//! usage and its stop reason is located incrementally; the end emits the caller's terminator and reads
+//! the usage; a cut ends the caller's stream on an in-band error in its own framing.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -167,12 +166,10 @@ pub struct RelayCtx<'a> {
 /// A relay's translator and JSON-array framer, before the relay is opened over them.
 pub type Parts = (Option<StreamTranslate>, Option<Box<dyn ArrayStreamFramer>>);
 
-/// The translator the pair of dialects names for a far end's answer (a stream reframed across
-/// dialects, or re-emitted byte-exact within one),
-/// told the caller's usage opt-in and request; and the JSON-array framer for a caller that asked
-/// for its stream as an array.
-/// A stream the translator times (a Bedrock caller's `metrics.latencyMs`) is timed on the host's
-/// one clock, the codec host each `feed` is handed, never on a clock of the plane's own.
+/// The translator for the dialect pair of a far end's answer (a stream reframed across dialects, or
+/// re-emitted byte-exact within one), told the caller's usage opt-in and request; and the JSON-array
+/// framer for a caller that asked for its stream as an array. A stream the translator times (a Bedrock
+/// caller's `metrics.latencyMs`) is timed on the host's one clock (the codec host each `feed` gets).
 #[must_use]
 pub fn parts(ctx: &RelayCtx<'_>) -> Parts {
     let translate = crate::codec::proto_stream::new_stream_translator_on(
@@ -375,15 +372,13 @@ impl Relay {
                             open_billing = read.billing();
                             None
                         }
-                        // A JSON body that stops short of its end is one the far end CUT (its
-                        // transfer failed before its last byte): it bills only the usage the far
-                        // end reported in the bytes in hand, never the floor
-                        // (oracle cell `route.failover|fo|primary-cut-body`).
+                        // A JSON body stopping short of its end is one the far end cut (its transfer
+                        // failed before the last byte): it bills only the usage reported in the bytes in
+                        // hand, never the floor (oracle cell `route.failover|fo|primary-cut-body`).
                         Err(_) if cut_short(&buf) => wire::reported_usage(self.ingress, &buf),
-                        // A body whose dialect reads it as a failure the far end reported (a
-                        // Responses `status: "failed"`) bills no tokens: its usage tap reads
-                        // nothing from a body its reader refused (`read_response` failed -> 0
-                        // tokens), and its streamed twin bills none either.
+                        // A body its dialect reads as a reported failure (a Responses `status: "failed"`)
+                        // bills no tokens: its usage tap reads nothing from a body its reader refused
+                        // (`read_response` failed, 0 tokens), and its streamed twin bills none.
                         Err(_) if far_reported_failure(host, self.ingress, &buf) => None,
                         Err(_) => {
                             fault_unreadable(self.ingress, buf.len());
@@ -466,11 +461,10 @@ impl Relay {
                 .is_some_and(|t| t.aborted() || t.terminal_error().is_some())
     }
 
-    /// Whether the stream's terminal error is its far end's failed generation: the far dialect's
-    /// own stop token that reads as a failed generation (a Gemini `MALFORMED_FUNCTION_CALL`, a
-    /// Cohere `ERROR`), which its reader surfaces as an error beside the usage it reports. The
-    /// usage the stream reported is billed. Every other terminal error bills no tokens. `far` is
-    /// the far end's dialect.
+    /// Whether the stream's terminal error is its far end's failed generation: the far dialect's own
+    /// stop token that reads as one (a Gemini `MALFORMED_FUNCTION_CALL`, a Cohere `ERROR`), which its
+    /// reader surfaces as an error beside the reported usage, which is billed. Every other terminal
+    /// error bills no tokens. `far` is the far end's dialect.
     #[must_use]
     pub fn failed_generation(&self, far: &str) -> bool {
         self.translate
@@ -492,11 +486,10 @@ impl Relay {
             .and_then(|t| t.usage().map(|u| u.to_token_usage()))
     }
 
-    /// The usage an answer that ended early had incurred: what a stream's readers accumulated;
-    /// for a same-dialect whole body the FAR END cut, only the usage the bytes in hand report
-    /// (never a floor). A same-dialect whole body that ended early any other way (its caller left
-    /// mid-body) incurred none: no tokens are billed on a mid-buffer drop, and no floor is added
-    /// for it.
+    /// The usage an answer that ended early had incurred: what a stream's readers accumulated; for a
+    /// same-dialect whole body the far end cut, only the usage the bytes in hand report (never a
+    /// floor). A same-dialect whole body ending early any other way (caller left mid-body) incurred
+    /// none: no tokens bill on a mid-buffer drop and no floor is added.
     #[must_use]
     pub fn incurred_usage(&self) -> Option<TokenUsage> {
         match self.translate.as_ref() {
