@@ -380,6 +380,7 @@ dependencies = [
  "busbar-plane-llm",
  "busbar-plugin-loader",
  "busbar-test-kit",
+ "serde_json",
 ]
 
 [[package]]
