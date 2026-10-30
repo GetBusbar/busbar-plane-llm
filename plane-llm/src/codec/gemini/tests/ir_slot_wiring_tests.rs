@@ -361,14 +361,23 @@ fn ir09_thinking_budget_zero_carries_no_ask() {
         "models/gemini-2.5-flash-lite-preview-06-17",
     ] {
         assert_eq!(
-            gw().write_request_for_model(crate::codec::test_host::HOST, &ir, model)
-                ["generationConfig"]["thinkingConfig"],
+            gw().write_request_for_lane(
+                crate::codec::test_host::HOST,
+                &ir,
+                model,
+                &Default::default()
+            )["generationConfig"]["thinkingConfig"],
             json!({"thinkingBudget": 0}),
             "{model}"
         );
     }
     for model in ["gemini-2.5-pro", "gemini-3-pro-preview", "gemini-2.0-flash"] {
-        let out = gw().write_request_for_model(crate::codec::test_host::HOST, &ir, model);
+        let out = gw().write_request_for_lane(
+            crate::codec::test_host::HOST,
+            &ir,
+            model,
+            &Default::default(),
+        );
         assert!(out.get("generationConfig").is_none(), "{model}: {out}");
     }
     assert!(gw()
@@ -386,14 +395,23 @@ fn ir09_anthropic_thinking_disabled_reaches_gemini_as_off() {
         "messages": [{"role": "user", "content": "hi"}]});
     let ir = read_then_seam_from("anthropic", &body);
     assert_eq!(ir.reasoning, Some(IrReasoningAsk::Off));
-    let flash =
-        gw().write_request_for_model(crate::codec::test_host::HOST, &ir, "gemini-2.5-flash");
+    let flash = gw().write_request_for_lane(
+        crate::codec::test_host::HOST,
+        &ir,
+        "gemini-2.5-flash",
+        &Default::default(),
+    );
     assert_eq!(
         flash["generationConfig"]["thinkingConfig"],
         json!({"thinkingBudget": 0}),
         "{flash}"
     );
-    let pro = gw().write_request_for_model(crate::codec::test_host::HOST, &ir, "gemini-2.5-pro");
+    let pro = gw().write_request_for_lane(
+        crate::codec::test_host::HOST,
+        &ir,
+        "gemini-2.5-pro",
+        &Default::default(),
+    );
     assert!(
         pro["generationConfig"].get("thinkingConfig").is_none(),
         "{pro}"
@@ -411,7 +429,12 @@ fn ir11_anthropic_hosted_tools_reach_gemini() {
         {"type": "code_execution_20250825", "name": "code_execution"}
     ]});
     let ir = read_then_seam_from("anthropic", &body);
-    let out = gw().write_request_for_model(crate::codec::test_host::HOST, &ir, "gemini-2.5-flash");
+    let out = gw().write_request_for_lane(
+        crate::codec::test_host::HOST,
+        &ir,
+        "gemini-2.5-flash",
+        &Default::default(),
+    );
     assert_eq!(
         out["tools"],
         json!([{"googleSearch": {}}, {"codeExecution": {}}]),
