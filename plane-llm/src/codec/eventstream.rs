@@ -1,32 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE LLM PLANE'S OWN COPY of the AWS event-stream framing codec (#83a SD-3: dialect machinery —
-//! only the Bedrock dialect and its stream translator speak it). The CRC32 it frames with is
-//! `crc32fast` (CRC-32/ISO-HDLC); the
-//! drift test beside this module holds every encoded frame byte-identical to the frames the host's
-//! copy wrote (the host's copy is deleted: no host code frames event streams).
+//! The LLM plane's own AWS event-stream (`application/vnd.amazon.eventstream`) frame codec (#83a
+//! SD-3): only the Bedrock dialect and its stream translator speak it. CRC32 is `crc32fast`
+//! (CRC-32/ISO-HDLC); the drift test beside this module holds every encoded frame byte-identical to
+//! the frames the host's (now deleted) copy wrote.
 //!
-//! AWS event-stream (`application/vnd.amazon.eventstream`) frame codec.
+//! [`drain_frames_checked`](crate::codec::eventstream::drain_frames_checked) is the production
+//! decoder: it pulls `(event_type, payload)` pairs out of ConverseStream responses for the Bedrock
+//! reader's `read_response_events`. Incremental (a trailing partial frame stays buffered); CRCs are
+//! not validated on decode (a client consuming well-formed AWS frames). `drain_frames` is a
+//! test-only wrapper that discards the consumed-byte count.
 //!
-//! [`drain_frames_checked`](crate::codec::eventstream::drain_frames_checked) is the production DECODER — just enough to pull `(event_type, payload)`
-//! pairs out of Bedrock ConverseStream responses so they can feed the Bedrock reader's existing
-//! `read_response_events`. Incremental: leaves a trailing partial frame in the buffer. CRCs are not
-//! validated on decode (we are a client decoder consuming well-formed AWS frames). (`drain_frames`
-//! is a test-only thin wrapper that discards the consumed-byte count.)
+//! The `event_type` is normally the `:event-type` header. A mid-stream modeled exception instead
+//! carries `:message-type: exception` and `:exception-type: <Name>` with no `:event-type`; for those
+//! the exception name is normalized to the Smithy union-member form (first letter lowercased, e.g.
+//! `internalServerException`) so it matches the reader's exception arms and surfaces as an error
+//! rather than a dropped typeless frame.
 //!
-//! The returned `event_type` is normally the frame's `:event-type` header. AWS, however, signals a
-//! mid-stream MODELED EXCEPTION with a frame that carries `:message-type: exception` plus an
-//! `:exception-type: <ExceptionName>` header and NO `:event-type` (e.g. a `ThrottlingException` or
-//! `InternalServerException` mid ConverseStream). For those frames [`drain_frames_checked`](crate::codec::eventstream::drain_frames_checked) returns the
-//! exception name normalized to the Smithy union-member form (leading letter lowercased, e.g.
-//! `internalServerException`) so it matches the `read_response_events` exception arms and is surfaced
-//! as an error event rather than being silently dropped as a typeless no-op frame.
-//!
-//! [`encode_frame`](crate::codec::eventstream::encode_frame) is the production ENCODER (the exact inverse of [`drain_frames_checked`](crate::codec::eventstream::drain_frames_checked)) used for
-//! Bedrock *ingress* streaming: a native AWS SDK Bedrock client consumes the binary framing, so the
-//! frames must be byte-exact with VALID CRC32 (AWS clients reject malformed/zero CRCs).
-//!
+//! [`encode_frame`](crate::codec::eventstream::encode_frame) is the production encoder (exact
+//! inverse of the decoder) for Bedrock ingress streaming: a native AWS SDK client needs byte-exact
+//! frames with valid CRC32.
 //! Frame layout:
 //! ```text
 //!   [total_len: u32 BE][headers_len: u32 BE][prelude_crc: u32 BE]
@@ -37,16 +31,11 @@
 //! Header: `[name_len: u8][name][value_type: u8][value]`. Bedrock uses string headers (type 7):
 //! `[value_len: u16 BE][value]`.
 
-/// Upper bound on a single event-stream frame. Bedrock ConverseStream frames are small JSON deltas
-/// (well under this), so a declared `total_len` above this cap can only be a malformed or hostile
-/// prelude. Bounding it stops a single frame's declared length from driving unbounded buffering.
-///
-/// NOTE on the effective per-frame ceiling: the egress reassembly path in
-/// `StreamTranslate::feed` aborts a stream once its reassembly buffer exceeds
-/// `StreamTranslate::MAX_BUF`. The two caps are deliberately kept equal so that any frame the decoder
-/// here is willing to assemble can also be buffered to completion upstream — otherwise a frame
-/// between the two caps would be aborted before `drain_frames_checked` ever saw it. Keep `MAX_FRAME_BYTES`
-/// and `StreamTranslate::MAX_BUF` in sync.
+/// Upper bound on one event-stream frame. ConverseStream frames are small JSON deltas, so a larger
+/// declared `total_len` is a malformed or hostile prelude; the cap stops it driving unbounded
+/// buffering. Keep equal to `StreamTranslate::MAX_BUF` (the reassembly abort threshold) so any frame
+/// the decoder will assemble can also be buffered to completion upstream; between the two caps a
+/// frame would be aborted before `drain_frames_checked` saw it.
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
 use crate::codec::diagnostics::{
@@ -55,43 +44,30 @@ use crate::codec::diagnostics::{
 };
 use busbar_contract::diag_debug;
 
-/// Outcome of a [`drain_frames_checked`] pass: WHY the decoder stopped pulling frames from the
-/// buffer. This is the DISTINCT abandonment signal the egress reassembler (`StreamTranslate::feed`)
-/// must key off — previously it inferred a malformed-prelude abort by observing that `drain_frames`
-/// had emptied the buffer, which is fragile: a normal pass that happens to consume every buffered
-/// byte ALSO leaves an empty buffer, so length alone cannot tell a clean full-drain apart from an
-/// unrecoverable abort. Making the abort an explicit variant removes that ambiguity entirely.
+/// Why a [`drain_frames_checked`] pass stopped. The egress reassembler (`StreamTranslate::feed`)
+/// keys off this explicit abandonment signal; inferring an abort from an emptied buffer is fragile,
+/// since a clean full drain also leaves it empty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrainStatus {
-    /// The decoder consumed every COMPLETE frame and stopped cleanly: either the buffer is now empty
-    /// or it holds only a trailing PARTIAL frame awaiting more bytes. The buffer is intact and the
-    /// stream is healthy — feed more bytes and call again.
+    /// Every complete frame was consumed and the decoder stopped cleanly (buffer empty or holding a
+    /// trailing partial frame). The stream is healthy; feed more bytes and call again.
     Ok,
-    /// A malformed prelude (out-of-range `total_len`, or `headers_len` larger than the frame can
-    /// hold) was encountered. The stream is UNRECOVERABLE: the buffer has been cleared and the caller
-    /// must abandon the stream rather than continue feeding it. This is the propagated abort signal
-    /// (no longer length-inferred).
+    /// A malformed prelude (out-of-range `total_len`, or `headers_len` too large for the frame). The
+    /// stream is unrecoverable: the buffer is cleared and the caller must abandon it.
     MalformedPrelude,
 }
 
-/// Drain every COMPLETE frame from `buf`, returning the `(event_type, payload_bytes)` pairs AND a
-/// [`DrainStatus`] saying why the pass stopped. [`DrainStatus::MalformedPrelude`] is the EXPLICIT,
-/// propagated abort signal: on a malformed prelude the buffer is cleared (the stream is
-/// unrecoverable) and the status reflects it, so the caller no longer has to infer abandonment from
-/// the (ambiguous) post-pass buffer length. A clean pass — buffer emptied or a trailing partial
-/// frame left buffered — returns [`DrainStatus::Ok`]. The third tuple element is the count of bytes
-/// consumed as COMPLETE VALID frames from the front of `buf` (excluding any malformed-prelude
-/// remainder that was cleared), available to callers needing a byte-accurate count of bytes consumed
-/// as complete valid frames (excluding any malformed-prelude remainder); the same-protocol verbatim
-/// re-emit path uses the `consumed_sink` parameter instead and discards this count.
-/// `consumed_sink`, when `Some`, receives the VERBATIM bytes of each complete valid frame as it is
-/// drained (in frame order). The same-protocol bedrock→bedrock re-emit path uses this to forward the
-/// original frame bytes unchanged WITHOUT cloning the whole reassembly buffer on every chunk: that
-/// per-chunk `buf.clone()` was O(buf) each call, so a large frame arriving as many small chunks cost
-/// O(chunks × buf) cumulative allocation (a memory-pressure DoS). The sink collects only the bytes
-/// actually consumed — nothing on a chunk that completes no frame — and never the cleared
-/// malformed-prelude remainder (the malformed branch breaks before the push). Pass `None` on the
-/// cross-protocol path, which re-encodes and needs no verbatim copy.
+/// Drain every complete frame from `buf`, returning `(event_type, payload_bytes)` pairs and a
+/// [`DrainStatus`]. [`DrainStatus::MalformedPrelude`] is the explicit abort signal: the buffer is
+/// cleared (unrecoverable). A clean pass (emptied, or a trailing partial frame left) is
+/// [`DrainStatus::Ok`]. The third element counts bytes consumed as complete valid frames from the
+/// front of `buf`, excluding any cleared malformed remainder; the same-protocol verbatim path uses
+/// `consumed_sink` instead and discards it.
+/// `consumed_sink`, when `Some`, receives the verbatim bytes of each complete valid frame in order.
+/// The same-protocol bedrock-to-bedrock re-emit uses it to forward the original frames without
+/// cloning the whole reassembly buffer per chunk (O(chunks x buf) cumulative allocation, a memory
+/// DoS). It collects only consumed bytes (nothing on a chunk completing no frame) and never the
+/// malformed remainder. Pass `None` cross-protocol, which re-encodes.
 pub fn drain_frames_checked(
     buf: &mut Vec<u8>,
     consumed_sink: Option<&mut Vec<u8>>,
@@ -99,15 +75,13 @@ pub fn drain_frames_checked(
     drain_frames_counted(buf, consumed_sink, &mut DrainWork::default())
 }
 
-/// The work one drain pass did on its buffer, counted where it is done — the measure the
-/// complexity test holds the drain to, instead of wall-clock time (Law 8: a measurement under a
-/// shared load must count work units, not time).
+/// The work one drain pass did on its buffer, counted where done: the measure the complexity test
+/// holds the drain to, instead of wall-clock time (Law 8: count work units, not time).
 ///
-/// `scanned` is the bytes walked as complete frames; `edits` the buffer edits; `shifted` the bytes
-/// those edits moved (a front `drain` memmoves the whole remaining tail). EVERY edit of the drained
-/// buffer goes through [`consume_front`] / [`clear_all`], which count it, so a pass that edits per
-/// frame shows up as `edits == frames` and a `shifted` quadratic in the frame count.
-// Production passes discard the count; only the complexity test reads it.
+/// `scanned` is bytes walked as complete frames; `edits` buffer edits; `shifted` bytes those edits
+/// moved (a front `drain` memmoves the tail). Every edit goes through [`consume_front`] /
+/// [`clear_all`], so a per-frame editor shows `edits == frames` and `shifted` quadratic in frames.
+// Production discards the count; only the complexity test reads it.
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct DrainWork {
@@ -118,7 +92,7 @@ pub(crate) struct DrainWork {
 }
 
 impl DrainWork {
-    /// Every byte the pass touched: walked as frames, plus moved by an edit.
+    /// Every byte the pass touched: walked as frames plus moved by an edit.
     #[cfg(test)]
     pub(crate) fn total(&self) -> usize {
         self.scanned + self.shifted
@@ -146,11 +120,10 @@ pub(crate) fn drain_frames_counted(
 ) -> (Vec<(String, Vec<u8>)>, DrainStatus, usize) {
     let mut out = Vec::new();
     let mut status = DrainStatus::Ok;
-    // Index into `buf` marking how much of the FRONT has been consumed as complete, valid frames.
-    // ONE buffer edit for the whole pass, not one per frame: `Vec::drain` from the front memmoves
-    // the entire remaining tail, so draining per frame cost O(frames × bytes) on a chunk carrying
-    // many small deltas. Nothing else observes `buf` mid-loop (this function holds the only `&mut`),
-    // so tracking a position and applying ONE `drain`/`clear` at the end is behavior-identical.
+    // Index marking how much of the front is consumed as complete valid frames. One buffer edit per
+    // pass, not per frame: a front `Vec::drain` memmoves the tail, costing O(frames x bytes) on a
+    // chunk of many small deltas. Nothing else observes `buf` mid-loop, so one `drain`/`clear` at the
+    // end is behavior-identical.
     let mut pos = 0usize;
     loop {
         let rem = &buf[pos..];
@@ -159,11 +132,10 @@ pub(crate) fn drain_frames_counted(
         }
         let total_len = u32::from_be_bytes([rem[0], rem[1], rem[2], rem[3]]) as usize;
         let headers_len = u32::from_be_bytes([rem[4], rem[5], rem[6], rem[7]]) as usize;
-        // `total_len` is attacker/upstream-controlled (up to ~4 GiB). Reject any frame larger than
-        // MAX_FRAME_BYTES BEFORE waiting for `rem.len() >= total_len`, otherwise a crafted prelude
-        // declaring an enormous internally-consistent length would force the caller to buffer
-        // unbounded bytes toward a frame that never arrives (memory-exhaustion DoS). An oversized
-        // length is treated like any other malformed prelude: abandon the (unrecoverable) stream.
+        // `total_len` is upstream-controlled (up to ~4 GiB). Reject a frame above MAX_FRAME_BYTES
+        // before waiting for `rem.len() >= total_len`, or a crafted prelude declaring an enormous
+        // consistent length would make the caller buffer toward a frame that never arrives (DoS).
+        // Treated like any malformed prelude: abandon the stream.
         if !(MIN_FRAME_BYTES..=MAX_FRAME_BYTES).contains(&total_len)
             || headers_len > total_len - MIN_FRAME_BYTES
         {
@@ -173,9 +145,8 @@ pub(crate) fn drain_frames_counted(
         if rem.len() < total_len {
             break; // partial frame — wait for more bytes
         }
-        // Read the frame in place via slices into `rem` (one payload copy) and advance `pos` —
-        // rather than `drain(..total_len).collect()` into a throwaway per-frame Vec (which was a
-        // SECOND heap allocation per frame on the hot streaming-decode path).
+        // Read the frame in place via slices into `rem` (one payload copy) and advance `pos`, not a
+        // per-frame throwaway Vec (a second allocation per frame on the hot path).
         let headers = &rem[PRELUDE_LEN..PRELUDE_LEN + headers_len];
         let event_type = event_type_for_frame(headers);
         let payload = rem[PRELUDE_LEN + headers_len..total_len - CRC_BYTES].to_vec();
@@ -188,8 +159,8 @@ pub(crate) fn drain_frames_counted(
         work.frames += 1;
         work.scanned += total_len;
     }
-    // Malformed: the stream is unrecoverable, so the valid prefix AND the remainder both go —
-    // `valid_consumed` still reports only the prefix, exactly as before.
+    // Malformed: the stream is unrecoverable, so the valid prefix and the remainder both go;
+    // `valid_consumed` reports only the prefix.
     match status {
         DrainStatus::Ok => consume_front(buf, pos, work),
         DrainStatus::MalformedPrelude => clear_all(buf, work),
@@ -197,24 +168,17 @@ pub(crate) fn drain_frames_counted(
     (out, status, pos)
 }
 
-/// Drain every COMPLETE frame from `buf`, returning `(event_type, payload_bytes)` per frame and
-/// leaving any trailing partial frame buffered. A malformed prelude clears the buffer (the stream
-/// is unrecoverable) rather than looping.
-///
-/// Thin wrapper over [`drain_frames_checked`] that DISCARDS the [`DrainStatus`], used by the route /
-/// proto tests that only need the decoded frames. Production code (the egress reassembler) calls
-/// [`drain_frames_checked`] directly for the explicit malformed-prelude signal; after the byte-scanner's
-/// `feed_eventstream` was removed, this convenience wrapper has only test callers, so it is
-/// gated to this crate's test builds (the Bedrock dialect's tests are its callers) to avoid an
-/// unused-function warning in a shipped binary.
+/// Drain every complete frame from `buf`, returning `(event_type, payload_bytes)` per frame and
+/// leaving a trailing partial frame buffered. A malformed prelude clears the buffer rather than
+/// looping. Thin wrapper over [`drain_frames_checked`] that discards the [`DrainStatus`]; only
+/// tests call it (production uses the checked form), so it is test-gated to avoid a dead-code warning.
 #[cfg(test)]
 pub fn drain_frames(buf: &mut Vec<u8>) -> Vec<(String, Vec<u8>)> {
     drain_frames_checked(buf, None).0
 }
 
-/// The framing headers `drain_frames_checked` cares about: the normal `:event-type`, plus the
-/// `:message-type` discriminator and `:exception-type` name that an AWS mid-stream modeled-exception
-/// frame carries INSTEAD of an `:event-type`. All three are optional string headers.
+/// The framing headers `drain_frames_checked` reads: `:event-type`, plus `:message-type` and
+/// `:exception-type` that a modeled-exception frame carries instead. All optional strings.
 #[derive(Default)]
 struct FrameHeaders {
     event_type: Option<String>,
@@ -223,27 +187,20 @@ struct FrameHeaders {
     error_code: Option<String>,
 }
 
-/// Resolve the event-type token `drain_frames_checked` returns for one frame.
-///
-/// For a normal `event`-typed frame this is the `:event-type` header verbatim. For an AWS modeled
-/// EXCEPTION frame (`:message-type: exception`, which carries `:exception-type: <ExceptionName>` and
-/// NO `:event-type`), it is the exception name normalized to the Smithy union-member form (leading
-/// letter lowercased) — `InternalServerException` → `internalServerException` — so it matches the
-/// `read_response_events` exception arms instead of being dropped as a typeless no-op frame. Falls
-/// back to the empty string when neither header is present (a genuinely typeless / malformed frame),
-/// preserving the previous `unwrap_or_default()` behavior for that case.
+/// Resolve the event-type token `drain_frames_checked` returns for a frame: `:event-type` verbatim
+/// for a normal event; for a modeled exception frame (`:message-type: exception`, `:exception-type`,
+/// no `:event-type`) the name with the first letter lowercased (`InternalServerException` to
+/// `internalServerException`) so it matches the reader's exception arms. Empty when neither header
+/// is present (a typeless or malformed frame).
 fn event_type_for_frame(headers: &[u8]) -> String {
     let parsed = parse_frame_headers(headers);
-    // An exception frame is identified by `:message-type: exception`. Prefer its `:exception-type`
-    // (AWS does not set `:event-type` on these), normalized to the union-member token the reader
-    // matches. This is what was previously lost: such a frame yielded `""` and was silently dropped.
-    // An UNMODELED mid-stream failure arrives as `:message-type: error` carrying `:error-code` and
-    // `:error-message` and NO `:event-type` — the same "typeless frame" shape the exception arm
-    // above was written for, one discriminator value over. Without this arm such a frame resolved to
-    // `""` and was silently dropped, so a stream that FAILED mid-flight looked to the reader like a
-    // stream that simply stopped. Normalize the code through the SAME namespace-strip + first-letter
-    // lowercase walk, so `internalFailure` reaches the reader's error arms exactly as an exception
-    // name does.
+    // An exception frame (`:message-type: exception`): AWS sets no `:event-type`, so use its
+    // `:exception-type` normalized to the reader's union-member token (such frames once yielded `""`
+    // and were dropped). An unmodeled failure arrives as `:message-type: error` with `:error-code` /
+    // `:error-message` and no `:event-type`, the same typeless shape; without this arm a mid-flight
+    // failure looked like a stream that simply stopped. Its code goes through the same
+    // namespace-strip and first-letter lowercase, so `internalFailure` reaches the error arms like
+    // an exception name.
     if parsed.message_type.as_deref() == Some(MSG_TYPE_ERROR) {
         if let Some(code) = parsed.error_code {
             return normalize_error_token(&code);
@@ -251,35 +208,25 @@ fn event_type_for_frame(headers: &[u8]) -> String {
     }
     if parsed.message_type.as_deref() == Some(MSG_TYPE_EXCEPTION) {
         if let Some(exc) = parsed.exception_type {
-            // AWS may qualify the `:exception-type` with a Smithy namespace / shape ARN prefix
-            // (e.g. `com.amazon.coral.service#ThrottlingException`). Keep only the trailing bare
-            // exception name before lowercasing — mirroring `extract_error`'s
-            // `rsplit(['#', '/'])` in proto/bedrock.rs — so the normalized token matches the
-            // `read_response_events` exception arms rather than being a no-op long namespaced string.
-            //
-            // Use the last NON-EMPTY token, not `.next()`: a value that ENDS with a delimiter
-            // (e.g. `ThrottlingException#` or `aws.bedrock/`) makes `rsplit` yield an empty leading
-            // token, which `.next()` would return verbatim — dropping the classification to `""`
-            // and re-sinking the mid-stream error into the no-op arm. `.find(|s| !s.is_empty())`
-            // skips that trailing-delimiter empty and recovers the bare name. The `unwrap_or(&exc)`
-            // guards the all-delimiter case (e.g. `"#"`/`"/"`), where every token is empty: fall
-            // back to the raw value rather than panicking or yielding `""`.
+            // AWS may qualify `:exception-type` with a Smithy namespace / shape ARN prefix (e.g.
+            // `com.amazon.coral.service#ThrottlingException`). Keep only the trailing bare name,
+            // mirroring `extract_error`'s `rsplit(['#', '/'])` in proto/bedrock.rs, so it matches the
+            // reader's exception arms. Use the last non-empty token, not `.next()`: a value ending in
+            // a delimiter (`ThrottlingException#`) makes `rsplit` yield an empty first token, dropping
+            // the classification to `""`. `unwrap_or(&exc)` covers the all-delimiter case (`"#"`).
             return normalize_error_token(&exc);
         }
     }
     parsed.event_type.unwrap_or_default()
 }
 
-/// Normalize an AWS failure-name header (`:exception-type` on an exception frame, `:error-code` on
-/// an error frame) to the Smithy union-member token the reader's error arms key off: drop any
-/// namespace / shape-ARN qualification, then lowercase the first letter.
+/// Normalize an AWS failure-name header (`:exception-type` or `:error-code`) to the reader's
+/// union-member token: drop namespace / shape-ARN qualification, lowercase the first letter.
 ///
-/// Use the last NON-EMPTY token, not `.next()`: a value that ENDS with a delimiter (e.g.
-/// `ThrottlingException#` or `aws.bedrock/`) makes `rsplit` yield an empty leading token, which
-/// `.next()` would return verbatim — dropping the classification to `""` and re-sinking the
-/// mid-stream error into the no-op arm. `.find(|s| !s.is_empty())` skips that trailing-delimiter
-/// empty and recovers the bare name. The `unwrap_or(raw)` guards the all-delimiter case (e.g.
-/// `"#"`/`"/"`), where every token is empty: fall back to the raw value rather than yielding `""`.
+/// Uses the last non-empty token, not `.next()`: a value ending in a delimiter
+/// (`ThrottlingException#`, `aws.bedrock/`) makes `rsplit` yield an empty first token, dropping the
+/// classification to `""` and sinking the error into the no-op arm. `unwrap_or(raw)` covers the
+/// all-delimiter case (`"#"`), falling back to the raw value.
 fn normalize_error_token(raw: &str) -> String {
     let bare = raw
         .rsplit(['#', '/'])
@@ -288,10 +235,9 @@ fn normalize_error_token(raw: &str) -> String {
     lowercase_first(bare)
 }
 
-/// Lowercase only the FIRST character of an exception name (`InternalServerException` →
-/// `internalServerException`), mapping the AWS PascalCase `:exception-type` header to the Smithy
-/// union-member token the `read_response_events` exception arms key off. ASCII-only by construction
-/// (Converse exception names are ASCII identifiers); leaves the remainder untouched.
+/// Lowercase only the first character (`InternalServerException` to `internalServerException`),
+/// mapping the PascalCase `:exception-type` to the Smithy union-member token the reader keys on.
+/// ASCII-only (Converse exception names are ASCII identifiers).
 fn lowercase_first(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
@@ -300,14 +246,12 @@ fn lowercase_first(s: &str) -> String {
     }
 }
 
-/// Scan the header block for the `:event-type`, `:message-type` and `:exception-type` string headers.
-/// Handles the u16-length-prefixed string/bytes value types (string = 7, bytes = 6) by reading their
-/// value, and the AWS-spec fixed-width types (bool/byte/short/int/long/timestamp/uuid) by SKIPPING
-/// the correct number of bytes so a non-string header appearing before the ones we want no longer
-/// aborts the scan. Stops early (returning whatever was found) only when the header block is
-/// truncated or carries a value-type byte with no defined width (a genuinely malformed frame), so a
-/// future AWS framing header (e.g. a timestamp correlation header) does not silently drop the
-/// recognized headers that preceded it.
+/// Scan the header block for the `:event-type`, `:message-type` and `:exception-type` string
+/// headers. String/bytes values (types 7/6) are read; the AWS-spec fixed-width types
+/// (bool/byte/short/int/long/timestamp/uuid) are skipped by their width, so a non-string header
+/// before the wanted ones does not abort the scan. It stops early only on a truncated block or a
+/// value-type byte with no defined width, so a future AWS framing header does not drop the
+/// recognized ones before it.
 fn parse_frame_headers(mut h: &[u8]) -> FrameHeaders {
     let mut found = FrameHeaders::default();
     while !h.is_empty() {
@@ -321,8 +265,8 @@ fn parse_frame_headers(mut h: &[u8]) -> FrameHeaders {
         let name = &h[1..1 + name_len];
         let value_type = h[1 + name_len];
         let mut p = 1 + name_len + 1;
-        // AWS event-stream value types. Fixed-width types carry no length prefix and are skipped by
-        // advancing `p`; the variable-width string/bytes types (6/7) carry a u16 length prefix.
+        // Fixed-width types have no length prefix and are skipped by advancing `p`; string/bytes
+        // (6/7) carry a u16 length prefix.
         let fixed_width: Option<usize> = match value_type {
             0 | 1 => Some(0), // bool true / bool false — value is encoded in the type byte itself
             2 => Some(1),     // byte
@@ -355,12 +299,11 @@ fn parse_frame_headers(mut h: &[u8]) -> FrameHeaders {
                     p += w;
                     None
                 }
-                // Unknown value-type byte with no defined width: the frame is malformed, bail.
+                // Unknown value-type byte with no defined width: malformed, bail.
                 None => break,
             },
         };
-        // These framing headers are always type-7 strings in AWS framing; capture each value when it
-        // is one. A fixed-width-typed value carries no string to record.
+        // These framing headers are always type-7 strings; a fixed-width value has none to record.
         if let Some(v) = value.and_then(|v| std::str::from_utf8(v).ok()) {
             match name {
                 n if n == HDR_EVENT_TYPE.as_bytes() => found.event_type = Some(v.to_string()),
@@ -377,18 +320,15 @@ fn parse_frame_headers(mut h: &[u8]) -> FrameHeaders {
     found
 }
 
-/// Append one `[name_len:u8][name][value_type:u8 = 7 string][value_len:u16 BE][value]` string
-/// header to `headers`. The AWS event-stream spec caps a header name at 255 bytes (u8 length) and a
-/// type-7 string value at 65535 bytes (u16 length). All current callers pass fixed short ASCII
-/// labels and short event-type/exception names, so the limits never fire in practice.
+/// Append one `[name_len:u8][name][value_type:u8 = 7][value_len:u16 BE][value]` string header. The
+/// spec caps a name at 255 bytes and a string value at 65535; current callers pass short ASCII, so
+/// the limits never fire in practice.
 ///
-/// Returns `false` (and pushes NOTHING) when `name` or `value` exceeds its length limit, rather than
-/// silently byte-truncating: a truncation could split a multi-byte UTF-8 sequence, emitting a
-/// CRC-valid frame carrying an invalid-UTF-8 type-7 string header that a strict AWS SDK rejects —
-/// the exact "CRC-valid but corrupt" outcome `encode_with_headers` deliberately avoids for payloads.
-/// The encoder treats a `false` return as a reason to DROP the whole frame (consistent with the
-/// oversized-payload policy) — a graceful, no-panic outcome safe on the streaming request path in
-/// every build profile (we do NOT `debug_assert`, which would panic a debug build on the hot path).
+/// Returns `false` and pushes nothing when `name` or `value` exceeds its limit, rather than
+/// byte-truncating: a cut could split a multibyte UTF-8 sequence and emit a CRC-valid frame with an
+/// invalid-UTF-8 header a strict SDK rejects (the outcome `encode_with_headers` avoids for
+/// payloads). The encoder drops the whole frame on `false`, as for an oversized payload: graceful
+/// and panic-free on the streaming path in every build profile (no `debug_assert`).
 #[must_use]
 fn push_string_header(headers: &mut Vec<u8>, name: &str, value: &str) -> bool {
     if name.len() > u8::MAX as usize || value.len() > u16::MAX as usize {
@@ -402,8 +342,8 @@ fn push_string_header(headers: &mut Vec<u8>, name: &str, value: &str) -> bool {
     true
 }
 
-/// Encode one AWS `application/vnd.amazon.eventstream` message — the exact inverse of one
-/// [`drain_frames_checked`] iteration, with REAL CRC32 (AWS SDK clients validate both CRCs).
+/// Encode one AWS event-stream message, the exact inverse of one [`drain_frames_checked`]
+/// iteration, with real CRC32 (SDK clients validate both CRCs).
 ///
 /// Wire layout:
 /// ```text
@@ -411,19 +351,15 @@ fn push_string_header(headers: &mut Vec<u8>, name: &str, value: &str) -> bool {
 ///   [headers][payload]
 ///   [message_crc:u32 BE = CRC32(byte 0 .. end of payload)]
 /// ```
-/// A Bedrock ConverseStream frame carries three string headers — `:event-type` (the event name),
-/// `:content-type` (`application/json`) and `:message-type` (`event`). Runs in the streaming hot
-/// path: all arithmetic is `u64`-widened and the result is bounded by `MAX_FRAME_BYTES`, so no cast
-/// can wrap (frame lengths are bounded and this never panics on the request path).
+/// A ConverseStream frame carries three string headers: `:event-type`, `:content-type`
+/// (`application/json`) and `:message-type` (`event`). On the streaming hot path: arithmetic is
+/// `u64`-widened and bounded by `MAX_FRAME_BYTES`, so no cast wraps and it never panics.
 pub fn encode_frame(event_type: &str, payload: &[u8]) -> Vec<u8> {
-    // Build the header block DIRECTLY into the frame buffer (after a 12-byte prelude placeholder)
-    // rather than into a throwaway `headers` Vec that `encode_with_headers` would then copy — that
-    // copy was a second heap allocation per frame on the Bedrock streaming hot path. `frame_open`
-    // returns the single buffer with the prelude reserved; we append headers, then `frame_close`
-    // backfills the prelude + CRCs. Byte output is identical to the prior two-buffer path.
+    // Build headers directly into the frame buffer after a 12-byte prelude placeholder, avoiding a
+    // second per-frame allocation on the hot path. `frame_close` backfills the prelude and CRCs.
     let mut frame = frame_open();
-    // Drop the frame if any header is oversized rather than emit a corrupt/truncated header (see
-    // push_string_header). `:event-type` is the only caller-supplied value; the others are literals.
+    // Drop the frame if a header is oversized rather than emit a corrupt one (see
+    // push_string_header). `:event-type` is the only caller-supplied value.
     if !push_string_header(&mut frame, HDR_EVENT_TYPE, event_type)
         || !push_string_header(
             &mut frame,
@@ -432,10 +368,8 @@ pub fn encode_frame(event_type: &str, payload: &[u8]) -> Vec<u8> {
         )
         || !push_string_header(&mut frame, HDR_MESSAGE_TYPE, MSG_TYPE_EVENT)
     {
-        // An oversized header dropped the frame. This is unreachable for any real Bedrock event name
-        // but must be OBSERVABLE rather than a silent empty-Vec: log it so a dropped streaming frame
-        // is diagnosable. `:event-type` is the only caller-supplied (and thus possibly oversized)
-        // value, so name it; the other two are fixed literals well under the cap.
+        // An oversized header dropped the frame. Unreachable for a real Bedrock event name but
+        // logged, not silent. `:event-type` is the only caller-supplied value; the others are literals.
         diag_debug!(
             EVENTSTREAM_EVENTTYPE_HEADER_OVERSIZE,
             event_type_len = event_type.len(),
@@ -446,26 +380,24 @@ pub fn encode_frame(event_type: &str, payload: &[u8]) -> Vec<u8> {
     frame_close(frame, payload)
 }
 
-/// Encode a modeled-exception event-stream message for a native AWS SDK Bedrock client. AWS signals
-/// a mid-stream error with `:message-type: exception` and an `:exception-type` header naming the
-/// Converse exception (e.g. `InternalServerException`, `ModelStreamErrorException`); the payload is
-/// the JSON `{"message": ...}` body the SDK surfaces. This is what a Bedrock-ingress stream must emit
-/// on a mid-stream upstream failure instead of an SSE `event: error` text frame — writing SSE text
-/// into a binary eventstream body produces an undecodable prelude/CRC for the SDK's decoder.
+/// Encode a modeled-exception event-stream message for a native Bedrock SDK client: AWS signals a
+/// mid-stream error with `:message-type: exception` and an `:exception-type` naming the Converse
+/// exception (e.g. `InternalServerException`, `ModelStreamErrorException`); the payload is the JSON
+/// `{"message": ...}` body. A Bedrock-ingress stream must emit this on a mid-stream upstream failure,
+/// not SSE `event: error` text, which makes an undecodable prelude/CRC for the SDK.
 pub fn encode_exception_frame(exception_type: &str, message: &str) -> Vec<u8> {
-    // Fallback only if serializing `{"message": <string>}` somehow fails (effectively unreachable
-    // for a plain string). Use AWS's own generic phrasing rather than any busbar-internal routing
-    // vocabulary like "upstream" — a native Bedrock exception frame would never carry that word, so
-    // leaking it here would be a protocol-indistinguishability tell (mirrors the scrub already done
-    // for the Gemini truncation path in proto::gemini::GeminiJsonArrayFramer::finish_with_error).
+    // Fallback only if serializing `{"message": <string>}` fails (effectively unreachable). Uses
+    // AWS's generic phrasing, not busbar vocabulary like "upstream", which a native exception frame
+    // would never carry (a protocol tell; mirrors the scrub in
+    // proto::gemini::GeminiJsonArrayFramer::finish_with_error).
     let payload = crate::codec::json::to_vec(&serde_json::json!({ "message": message }))
         .unwrap_or_else(|_| b"{\"message\":\"An internal server error occurred.\"}".to_vec());
-    // Build headers straight into the single frame buffer (see `encode_frame`) — one allocation.
+    // Headers go straight into the single frame buffer (see `encode_frame`).
     //
-    // `:exception-type` names a MEMBER of the ConverseStreamOutput union (botocore bedrock-runtime
-    // service-2.json), and the members are lowerCamel (`internalServerException`): the PascalCase
-    // shape name a caller may hand in is spelled as the member on the wire (owner-approved fidelity
-    // fix, 2026-10-26; v1.5.5 sent the shape name). Idempotent: already-lowerCamel names are unchanged.
+    // `:exception-type` names a member of the ConverseStreamOutput union (botocore bedrock-runtime
+    // service-2.json), which is lowerCamel (`internalServerException`), so a PascalCase shape name
+    // is spelled as the member on the wire (owner-approved fidelity fix, 2026-10-26; v1.5.5 sent the
+    // shape name). Idempotent for already-lowerCamel names.
     let exception_type = lowercase_first(exception_type);
     let exception_type = exception_type.as_str();
     let mut frame = frame_open();
@@ -477,8 +409,8 @@ pub fn encode_exception_frame(exception_type: &str, message: &str) -> Vec<u8> {
         )
         || !push_string_header(&mut frame, HDR_MESSAGE_TYPE, MSG_TYPE_EXCEPTION)
     {
-        // `:exception-type` is the caller-supplied value; an oversized one drops the frame. Log so a
-        // dropped exception frame (a swallowed mid-stream error signal) is observable, not silent.
+        // `:exception-type` is caller-supplied; an oversized one drops the frame. Logged so a swallowed
+        // mid-stream error signal is observable.
         diag_debug!(
             EVENTSTREAM_EXCEPTIONTYPE_HEADER_OVERSIZE,
             exception_type_len = exception_type.len(),
@@ -527,37 +459,29 @@ const HDR_ERROR_CODE: &str = ":error-code";
 /// AWS event-stream value-type byte for a UTF-8 string header (type 7 per the spec).
 const HDR_TYPE_STRING: u8 = 7;
 
-/// Open a single frame buffer with the 12-byte prelude (`total_len`, `headers_len`, `prelude_crc`)
-/// reserved as a zeroed placeholder. Callers append their header block directly after it, then hand
-/// the buffer to [`frame_close`], which backfills the prelude. This keeps the WHOLE frame — prelude,
-/// headers, payload and both CRCs — in ONE allocation (the prior `encode_with_headers` built headers
-/// in a separate Vec and copied them in, a second per-frame allocation on the streaming hot path).
+/// Open a frame buffer with the 12-byte prelude (`total_len`, `headers_len`, `prelude_crc`) reserved
+/// as a zeroed placeholder. Callers append headers after it, then call [`frame_close`], keeping the
+/// whole frame in one allocation.
 fn frame_open() -> Vec<u8> {
     vec![0u8; PRELUDE_LEN]
 }
 
-/// Close a frame opened by [`frame_open`] whose header block has been appended: backfill the prelude
+/// Close a frame from [`frame_open`] after its headers are appended: backfill the prelude
 /// (`total_len`, `headers_len`, real `prelude_crc`), append `payload`, then the real `message_crc`.
-/// Shared by [`encode_frame`] and [`encode_exception_frame`]. The produced bytes are identical to the
-/// prior two-buffer `encode_with_headers` path.
+/// Shared by [`encode_frame`] and [`encode_exception_frame`].
 ///
-/// A frame this encoder builds is always well under `MAX_FRAME_BYTES` (small JSON bodies). If the
-/// header+payload would exceed the cap, the frame is DROPPED (empty `Vec` returned) rather than
-/// byte-truncating the payload: a truncated JSON payload is syntactically invalid and a CRC-valid
-/// frame carrying unparseable JSON is worse for a native SDK than no frame at all. The caller appends
-/// the result to its output buffer, so an empty return simply emits nothing for this event.
+/// Frames are always well under `MAX_FRAME_BYTES`. If header+payload would exceed it, the frame is
+/// dropped (empty `Vec`) rather than truncating the payload: a CRC-valid frame with unparseable JSON
+/// is worse for an SDK than none. The caller appends the result, so an empty return emits nothing.
 fn frame_close(mut frame: Vec<u8>, payload: &[u8]) -> Vec<u8> {
-    // At entry `frame` is [12-byte prelude placeholder][headers]; everything past the prelude is the
-    // header block.
+    // At entry `frame` is [12-byte prelude placeholder][headers].
     let headers_len = (frame.len() - PRELUDE_LEN) as u64;
-    // total_len = prelude(12) + headers + payload + message_crc(4). Widen to u64 so the sum cannot
-    // overflow `usize` arithmetic, then bound it against MAX_FRAME_BYTES.
+    // total_len = prelude(12) + headers + payload + message_crc(4), widened to u64 so it cannot
+    // overflow, then bounded by MAX_FRAME_BYTES.
     let total_len = PRELUDE_LEN as u64 + headers_len + payload.len() as u64 + CRC_BYTES as u64;
     if total_len > MAX_FRAME_BYTES as u64 {
-        // Oversized: drop the frame rather than emit corrupt (truncated) JSON. Unreachable for any
-        // real Bedrock ConverseStream delta; this only guards a pathological multi-MiB single event.
-        // Dropping a frame is graceful (the caller appends the empty result and emits nothing for
-        // this event); a CRC-valid frame carrying truncated, unparseable JSON would be worse.
+        // Oversized: drop the frame rather than emit truncated JSON. Unreachable for a real
+        // ConverseStream delta; guards a pathological multi-MiB event.
         diag_debug!(
             EVENTSTREAM_FRAME_OVERSIZE,
             total_len,
@@ -567,11 +491,10 @@ fn frame_close(mut frame: Vec<u8>, payload: &[u8]) -> Vec<u8> {
         return Vec::new();
     }
 
-    // Reserve the payload + CRC trailer up front so appending them does not reallocate.
+    // Reserve payload + CRC trailer up front.
     frame.reserve(payload.len() + CRC_BYTES);
 
-    // Backfill the prelude in place: total_len + headers_len (both u32 BE). Bounded above, so the
-    // casts are exact.
+    // Backfill total_len + headers_len (u32 BE); bounded above, so the casts are exact.
     frame[0..4].copy_from_slice(&(total_len as u32).to_be_bytes());
     frame[4..8].copy_from_slice(&(headers_len as u32).to_be_bytes());
 
@@ -581,8 +504,7 @@ fn frame_close(mut frame: Vec<u8>, payload: &[u8]) -> Vec<u8> {
 
     frame.extend_from_slice(payload);
 
-    // message_crc = CRC32 of everything from byte 0 through the end of the payload (i.e. the whole
-    // frame written so far, which is prelude + prelude_crc + headers + payload).
+    // message_crc = CRC32 of the whole frame so far (prelude, prelude_crc, headers, payload).
     let message_crc = crc32fast::hash(&frame);
     frame.extend_from_slice(&message_crc.to_be_bytes());
 

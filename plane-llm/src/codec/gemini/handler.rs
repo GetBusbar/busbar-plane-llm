@@ -34,8 +34,8 @@ use bytes::Bytes;
 use serde_json::{json, Value};
 
 pub struct GeminiRequestHandler;
-/// This protocol's OWN chat instance — delete this line (and the registry arm) and this
-/// protocol's chat 404s via the standard no-handler path; everything else keeps working.
+/// This protocol's own chat instance; remove it and the registry arm and chat 404s via the
+/// standard no-handler path.
 static CHAT: super::super::chat_handle::ChatOperation =
     super::super::chat_handle::ChatOperation(COUNT_LABEL);
 static EMB: GeminiEmbeddings = GeminiEmbeddings;
@@ -43,8 +43,8 @@ static IMG: GeminiImage = GeminiImage;
 static TRANSCRIPTION: GeminiTranscription = GeminiTranscription;
 static SPEECH: GeminiSpeech = GeminiSpeech;
 
-/// GEMINI'S ROW OF THE SUPPORT MATRIX — the verbs this protocol speaks, as data. A verb absent from
-/// it is the standard no-handler 404: Gemini has no moderation/rerank surface.
+/// Gemini's row of the support matrix, as data. A verb absent from it is the standard no-handler
+/// 404: Gemini has no moderation/rerank surface.
 static CELLS: &[busbar_contract::codec::Cell] = &[
     (OpVerb::CHAT, &CHAT),
     (OpVerb::EMBEDDINGS, &EMB),
@@ -53,9 +53,9 @@ static CELLS: &[busbar_contract::codec::Cell] = &[
     (OpVerb::SPEECH, &SPEECH),
 ];
 
-/// The `:verb` suffix each verb's egress URL ends in — this protocol's own vocabulary, keyed by
-/// this protocol's own verb constants. The three that ride `generateContent` are absent because
-/// that is the fallback below; the two stream-aware ones are decided there too.
+/// The `:verb` suffix of each verb's egress URL, keyed by this protocol's verb constants. The three
+/// that ride `generateContent` are absent (that is the fallback below, which also decides the two
+/// stream-aware ones).
 static ACTIONS: &[(OpVerb, &str)] = &[
     (OpVerb::EMBEDDINGS, "embedContent"),
     (OpVerb::IMAGE, "predict"),
@@ -65,16 +65,15 @@ impl RequestHandler for GeminiRequestHandler {
     dialect_identity!(COUNT_LABEL);
     fn upstream_path(&self, ctx: &EgressCtx) -> String {
         let m = ctx.model;
-        // The base segment before `/{model}:verb`. Native Gemini is `/v1beta/models`; a provider may
-        // override it via `path_base` (e.g. Vertex AI's `/v1/projects/{p}/locations/{l}/publishers/
-        // google/models`). The `:verb` suffix and streaming selection are unchanged.
+        // Base segment before `/{model}:verb`: native `/v1beta/models`, overridable via `path_base`
+        // (e.g. Vertex AI's `/v1/projects/{p}/locations/{l}/publishers/google/models`).
         let base = ctx.path_base.unwrap_or("/v1beta/models");
         if let Some(action) = crate::codec::framework::path_of(ACTIONS, ctx.operation) {
             return format!("{base}/{m}:{action}");
         }
-        // Chat + audio understanding/TTS ride generateContent, stream-aware. Every other verb with
-        // no action above (moderation, rerank: no Gemini cell) answers `:generateContent` whatever
-        // `stream` says (only Chat | Transcription | Speech are stream-aware).
+        // Chat and audio understanding/TTS ride generateContent, stream-aware (only Chat |
+        // Transcription | Speech). Other verbs with no action above (moderation, rerank) answer
+        // `:generateContent` whatever `stream` says.
         let stream_aware =
             [OpVerb::CHAT, OpVerb::TRANSCRIPTION, OpVerb::SPEECH].contains(&ctx.operation);
         let action = if stream_aware && ctx.stream {
@@ -85,10 +84,10 @@ impl RequestHandler for GeminiRequestHandler {
         format!("{base}/{m}:{action}")
     }
     fn resolve_operation(&self, path: &str, body: &[u8]) -> Option<OpVerb> {
-        // Gemini multiplexes: the ACTION names embeddings/image; `generateContent` serves chat AND
-        // audio, split by BODY — `responseModalities:["AUDIO"]` ⇒ speech, an `inline_data` part with
-        // an audio mime ⇒ transcription, an inline IMAGE part is multimodal CHAT. The byte-scan is a
-        // cheap pre-filter so plain chat never pays the JSON parse.
+        // Gemini multiplexes: the action names embeddings/image; `generateContent` serves chat and
+        // audio, split by body: `responseModalities:["AUDIO"]` is speech, an audio `inline_data` part is
+        // transcription, an inline image part is multimodal chat. The byte-scan is a cheap pre-filter
+        // so plain chat never pays the JSON parse.
         if path.contains(":embedContent") || path.contains(":batchEmbedContents") {
             return Some(OpVerb::EMBEDDINGS);
         }
@@ -98,16 +97,9 @@ impl RequestHandler for GeminiRequestHandler {
         if !(path.contains(":generateContent") || path.contains(":streamGenerateContent")) {
             return None;
         }
-        // Single pass over the body for all three markers instead of three independent
-        // `.windows().any()` scans (each a full traversal on its own): the old code, for
-        // `false || false || false` (the common plain-chat case, where none of the markers are
-        // present), always paid for three full scans before concluding "chat" — `||` cannot
-        // short-circuit when every operand is false. Only the disjunction is ever consulted
-        // downstream, so one pass that stops at the FIRST marker found (of any of the three) is
-        // both a correct drop-in (same presence/absence result as the old `has(a) || has(b) ||
-        // has(c)`) and strictly cheaper on every input: chat still degrades to one full scan
-        // (not three), and any input that does carry a marker returns as soon as it's seen
-        // instead of scanning per-pattern first.
+        // One pass over the body for all three markers, stopping at the first found, rather than three
+        // `.windows().any()` scans: plain chat (no markers) would otherwise pay all three, as `||`
+        // cannot short-circuit when every operand is false.
         let hit = (0..body.len()).any(|i| {
             let rest = &body[i..];
             rest.starts_with(FIELD_RESPONSE_MODALITIES.as_bytes())
@@ -146,18 +138,16 @@ impl RequestHandler for GeminiRequestHandler {
         Some(OpVerb::CHAT)
     }
     fn path_model(&self, path: &str) -> Option<String> {
-        // `/{v1,v1beta}/models/{model}:{action}` — model is the last segment up to the LAST colon.
+        // `/{v1,v1beta}/models/{model}:{action}`: the model is the last segment up to the last colon.
         let rest = path.split("/models/").nth(1)?;
         let (model, _action) = rest.rsplit_once(':')?;
         (!model.is_empty()).then(|| model.to_string())
     }
 }
 
-/// Gemini transcription — audio understood via `models/{id}:generateContent` with inline audio data.
-/// Egress-only (openai→gemini): audio IR → generateContent request; candidates text → transcription.
-///
-/// gemini `generateContent`-with-audio wire → IR (gemini as INGRESS): `inline_data` part is the
-/// audio, a text part (if any) is the instruction/prompt. Model rides the PATH.
+/// Gemini transcription: audio understood via `models/{id}:generateContent` with inline audio.
+/// Egress-only (openai to gemini). As ingress, the `inline_data` part is the audio and a text part
+/// (if any) the prompt. The model rides the path.
 struct GeminiTranscription;
 
 leaf_op! {
@@ -166,14 +156,13 @@ leaf_op! {
     TranscriptionRespHandle = read_transcription_response;
 }
 
-/// The two synthetic directive texts the transcription writer prepends. Kept as named constants so the
-/// reader can recognize and skip them when recovering the caller's own `prompt` text (see
-/// `read_transcription_request`) — otherwise a round-trip would mistake the directive for the prompt.
+/// The two synthetic directive texts the transcription writer prepends, named so the reader can
+/// skip them when recovering the caller's own `prompt` (`read_transcription_request`); otherwise a
+/// round trip would mistake the directive for the prompt.
 const TRANSCRIBE_INSTRUCTION: &str = "Transcribe the following audio verbatim.";
 const TRANSLATE_INSTRUCTION: &str = "Translate the following audio to text.";
 
-/// IR → gemini candidates transcription request wire (the body of [`GeminiTranscription::write_request`],
-/// moved behind the `(transcription, gemini)` key). Byte-identical to the inline write.
+/// IR to Gemini transcription request wire ([`GeminiTranscription::write_request`]).
 pub fn write_transcription_request(r: &crate::codec::ir::audio::TranscriptionReq) -> Bytes {
     let (mime, data) = match &r.audio {
         Some(blob) => {
@@ -185,18 +174,16 @@ pub fn write_transcription_request(r: &crate::codec::ir::audio::TranscriptionReq
         }
         None => (String::new(), String::new()),
     };
-    // `target_language` set ⇒ translate (folds /audio/translations); else transcribe.
+    // `target_language` set means translate (folds /audio/translations); else transcribe.
     let instruction = if r.target_language.is_some() {
         TRANSLATE_INSTRUCTION
     } else {
         TRANSCRIBE_INSTRUCTION
     };
     let mut parts = vec![json!({ (keys::TEXT): instruction })];
-    // Carry the caller's transcription `prompt` as its OWN text part. The IR projects `prompt` to a
-    // forwarded ContentItem::Text (it is screened as sent upstream), but the old writer emitted only
-    // the fixed instruction and dropped the caller's text — the screening gate said "forwarded" while
-    // the wire silently discarded it. A distinct part keeps the instruction and the caller hint both
-    // recoverable on read (the reader skips the known instruction literals).
+    // The caller's transcription `prompt` goes as its own text part. The IR screens it as forwarded
+    // text, so a writer dropping it would mean the gate said "forwarded" while the wire discarded it.
+    // A distinct part keeps instruction and hint recoverable (the reader skips the known literals).
     if let Some(prompt) = &r.prompt {
         if !prompt.is_empty() {
             parts.push(json!({ (keys::TEXT): prompt }));
@@ -207,16 +194,14 @@ pub fn write_transcription_request(r: &crate::codec::ir::audio::TranscriptionReq
     );
     let mut body =
         json!({ (FIELD_CONTENTS): [{ (keys::ROLE): keys::USER, (FIELD_PARTS): parts }] });
-    // Carry `temperature` — Gemini exposes it natively via generationConfig; dropping it silently
-    // changed sampling behavior on a cross-protocol transcription hop.
+    // `temperature` is native in generationConfig; dropping it changed sampling cross-protocol.
     if let Some(t) = r.temperature {
         body[FIELD_GENERATION_CONFIG] = json!({ "temperature": t });
     }
     Bytes::from(serde_json::to_vec(&body).unwrap_or_default())
 }
 
-/// IR → gemini candidates transcription response wire (the body of
-/// [`GeminiTranscription::write_response`], moved behind the `(transcription, gemini)` key). Byte-identical to the pre-cutover inline write.
+/// IR to Gemini transcription response wire ([`GeminiTranscription::write_response`]).
 pub fn write_transcription_response(r: &crate::codec::ir::audio::TranscriptionResp) -> WireBody {
     let mut body = json!({
         (FIELD_CANDIDATES): [{
@@ -224,11 +209,9 @@ pub fn write_transcription_response(r: &crate::codec::ir::audio::TranscriptionRe
             (FIELD_FINISH_REASON): GEMINI_FINISH_STOP,
         }],
     });
-    // Only a token-billed answer writes `usageMetadata`. A duration-billed answer (whisper-1's
-    // `Billing::Duration`, an openai->gemini hop) has no member in Gemini's token-shaped
-    // `usageMetadata`: it is written without one (`usageMetadata` is written only for
-    // `Billing::Tokens`). The billed seconds are read off the EGRESS reader, never off these bytes,
-    // so nothing billed is lost; an invented `audioDurationSeconds` member is not Gemini's wire.
+    // Only a token-billed answer writes `usageMetadata`. A duration-billed one (whisper-1
+    // `Billing::Duration`) has no member in the token-shaped object; the billed seconds are read off
+    // the egress reader, so nothing billed is lost, and an invented `audioDurationSeconds` is not Gemini's wire.
     if let Some(busbar_contract::billing::Billing::Tokens(t)) = &r.usage {
         body[FIELD_USAGE_METADATA] = json!({
             (FIELD_PROMPT_TOKEN_COUNT): t.input,
@@ -241,10 +224,9 @@ pub fn write_transcription_response(r: &crate::codec::ir::audio::TranscriptionRe
     ))
 }
 
-/// Gemini speech (TTS) — `models/{id}:generateContent` with `responseModalities: [AUDIO]`.
-/// Gemini returns inline base64 PCM; a raw-binary body (mock/other) is wrapped verbatim.
-///
-/// gemini TTS wire → IR (gemini as INGRESS): text part is the input; voice from speechConfig.
+/// Gemini speech (TTS): `models/{id}:generateContent` with `responseModalities: [AUDIO]`. It returns
+/// inline base64 PCM; a raw-binary body (mock/other) is wrapped verbatim. As ingress, the text
+/// part is the input and the voice comes from speechConfig.
 struct GeminiSpeech;
 
 leaf_op! {
@@ -273,13 +255,11 @@ fn prebuilt_speaker(name: &str) -> Value {
     json!({ "voiceConfig": { "prebuiltVoiceConfig": { "voiceName": name } } })
 }
 
-/// IR → gemini TTS request wire (the body of [`GeminiSpeech::write_request`], moved behind the
-/// `(speech, gemini)` key). Byte-identical to the pre-cutover inline write.
+/// IR to Gemini TTS request wire ([`GeminiSpeech::write_request`]).
 pub fn write_speech_request(r: &crate::codec::ir::audio::SpeechReq) -> Bytes {
-    // Gemini multi-speaker TTS: when the request names per-speaker voices, emit
-    // `multiSpeakerVoiceConfig.speakerVoiceConfigs[]` (the native shape) instead of the single
-    // `voiceConfig`. The old writer never read `SpeechReq::speakers`, so a two-speaker request was
-    // silently collapsed to one voice on a same-/cross-protocol hop.
+    // Multi-speaker TTS: per-speaker voices emit `multiSpeakerVoiceConfig.speakerVoiceConfigs[]`
+    // instead of the single `voiceConfig`; reading `SpeechReq::speakers` was once skipped, collapsing
+    // two speakers to one voice.
     let speech_config = if r.speakers.is_empty() {
         prebuilt_speaker(&r.timbre)
     } else {
@@ -294,10 +274,8 @@ pub fn write_speech_request(r: &crate::codec::ir::audio::SpeechReq) -> Bytes {
             .collect();
         json!({ "multiSpeakerVoiceConfig": { "speakerVoiceConfigs": configs } })
     };
-    // OpenAI's `instructions` is FREE-TEXT style guidance ("speak cheerfully"), not a locale.
-    // The old code put it into `speechConfig.languageCode` (a BCP-47 field), producing an
-    // invalid Gemini request. Gemini steers TTS style through the PROMPT itself, so prefix the
-    // text (its documented style-control mechanism) instead of corrupting languageCode.
+    // OpenAI's `instructions` is free-text style guidance, not a locale; in `speechConfig.languageCode`
+    // (BCP-47) it made an invalid request. Gemini steers TTS style through the prompt, so prefix the text.
     let text = match &r.instructions {
         Some(instr) if !instr.trim().is_empty() => format!("{}: {}", instr.trim(), r.input),
         _ => r.input.clone(),
@@ -309,8 +287,7 @@ pub fn write_speech_request(r: &crate::codec::ir::audio::SpeechReq) -> Bytes {
     Bytes::from(serde_json::to_vec(&body).unwrap_or_default())
 }
 
-/// IR → gemini TTS response wire (the body of [`GeminiSpeech::write_response`], moved behind the
-/// `(speech, gemini)` key). Byte-identical to the pre-cutover inline write.
+/// IR to Gemini TTS response wire ([`GeminiSpeech::write_response`]).
 pub fn write_speech_response(r: &SpeechResp) -> WireBody {
     let (data, mime) = match &r.audio {
         Some(blob) => {
@@ -333,9 +310,8 @@ pub fn write_speech_response(r: &SpeechResp) -> WireBody {
     ))
 }
 
-/// Gemini/Imagen image generation (`models/{id}:predict`). prompt in → `predictions[].bytesBase64Encoded` out.
-///
-/// Imagen `:predict` wire → IR (gemini as INGRESS): `instances[].prompt` + `parameters`.
+/// Gemini/Imagen image generation (`models/{id}:predict`): prompt in, `predictions[].bytesBase64Encoded`
+/// out. As ingress, `instances[].prompt` + `parameters`.
 struct GeminiImage;
 
 leaf_op! {
@@ -344,28 +320,24 @@ leaf_op! {
     ImageRespHandle = read_image_response;
     // Buffer the same-protocol non-stream 2xx body so the default `extract_usage` runs this op's
     // reader: a token-reporting image model's `usageMetadata` is recorded (never billed; see
-    // `ImageResp::billing`), and an Imagen `:predict` per-image answer bills its
-    // `images` count.
+    // `ImageResp::billing`) and an Imagen per-image answer bills its `images` count.
     fn taps_usage(&self) -> bool {
         true
     }
 }
 
-/// IR → Imagen `:predict` request wire (the body of [`GeminiImage::write_request`], moved behind the
-/// `(image, gemini)` key). Byte-identical to the pre-cutover inline write.
+/// IR to Imagen `:predict` request wire ([`GeminiImage::write_request`]).
 pub fn write_image_request(r: &crate::codec::ir::image::ImageReq) -> Bytes {
     let mut params = json!({ (FIELD_SAMPLE_COUNT): r.n.unwrap_or(1) });
-    // Carry the Imagen generation controls the reader captures; dropping them fell back to
-    // Imagen's defaults (1:1 aspect, default person-generation policy) instead of the request.
+    // Carry the Imagen controls the reader captures; dropping them fell back to Imagen's defaults.
     if let Some(a) = &r.aspect_ratio {
         params[FIELD_ASPECT_RATIO] = json!(a);
     }
     if let Some(p) = &r.person_generation {
         params[FIELD_PERSON_GENERATION] = json!(p);
     }
-    // Carry the Imagen sampling/guidance controls the reader captures, in Imagen's native parameter
-    // names. Dropping them lost the negative prompt, determinism seed, guidance strength, and size
-    // tier on a cross-protocol image hop (e.g. bedrock->gemini), silently falling back to defaults.
+    // Carry the Imagen sampling/guidance controls in Imagen's native names (negative prompt, seed,
+    // guidance strength, size tier); dropping them cross-protocol silently fell back to defaults.
     if let Some(neg) = &r.negative_prompt {
         params[FIELD_NEGATIVE_PROMPT] = json!(neg);
     }
@@ -385,8 +357,7 @@ pub fn write_image_request(r: &crate::codec::ir::image::ImageReq) -> Bytes {
     Bytes::from(serde_json::to_vec(&body).unwrap_or_default())
 }
 
-/// IR → Imagen `:predict` response wire (the body of [`GeminiImage::write_response`], moved behind
-/// the `(image, gemini)` key). Byte-identical to the pre-cutover inline write.
+/// IR to Imagen `:predict` response wire ([`GeminiImage::write_response`]).
 pub fn write_image_response(r: &crate::codec::ir::image::ImageResp) -> WireBody {
     let predictions: Vec<Value> = r
         .images
@@ -400,9 +371,7 @@ pub fn write_image_response(r: &crate::codec::ir::image::ImageResp) -> WireBody 
             p
         })
         .collect();
-    // Imagen's `:predict` response is `{predictions}` alone: its `PredictResponse` has no
-    // `usageMetadata` member, so none is written. A foreign answer's token usage has no Imagen
-    // member to map to.
+    // `PredictResponse` is `{predictions}` alone with no `usageMetadata`, so none is written.
     let body = json!({ (FIELD_PREDICTIONS): predictions });
     WireBody::json(SlabBytes::from(
         serde_json::to_vec(&body).unwrap_or_default(),
@@ -410,33 +379,28 @@ pub fn write_image_response(r: &crate::codec::ir::image::ImageResp) -> WireBody 
 }
 
 /// Gemini embeddings (`models/{id}:embedContent`). Single content in, `embedding.values` out.
-// Gemini `:embedContent` embeds a single input. A cross-protocol request carrying N > 1 inputs
-// (e.g. an OpenAI-family embeddings batch) is not rejected: the egress writer embeds the first
-// input, warns how many were dropped, and returns HTTP 200 with one vector. Representability is
-// the leaf handle's default (`EmbeddingsReqHandle`), so no override is needed.
+// `:embedContent` embeds one input. A cross-protocol request with N > 1 inputs is not rejected: the
+// writer embeds the first, warns how many were dropped, and returns 200 with one vector.
+// Representability is the leaf handle's default (`EmbeddingsReqHandle`), so no override is needed.
 struct GeminiEmbeddings;
 
 leaf_op! {
     GeminiEmbeddings: COUNT_LABEL,
     EmbeddingsReqHandle = read_embeddings_request,
     EmbeddingsRespHandle = read_embeddings_response;
-    // Token-metered: buffer the same-protocol non-stream 2xx body so the default
-    // `extract_usage` can read the `usage` object and bill the virtual key's TPM/spend
-    // (the cross-protocol path already bills; this closes the same-protocol gap).
+    // Token-metered: buffer the same-protocol non-stream 2xx body so the default `extract_usage`
+    // reads `usage` and bills the key's TPM/spend.
     fn taps_usage(&self) -> bool {
         true
     }
 }
 
-/// IR → gemini `:embedContent` request wire (the body of the gemini embeddings
-/// `OperationHandler::write_request`, moved behind the `(embeddings, gemini)` key).
-/// Byte-identical to the pre-cutover inline write.
+/// IR to Gemini `:embedContent` request wire (the embeddings `OperationHandler::write_request`).
 pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
     let text = match &r.input {
         EmbInput::Text(v) => {
-            // Gemini `:embedContent` embeds a SINGLE content; a multi-input request can only
-            // embed the first here (batch would need `:batchEmbedContents`, a 1.3 item). Warn
-            // rather than silently drop the rest.
+            // `:embedContent` embeds a single content; a multi-input request embeds only the first
+            // (batch would need `:batchEmbedContents`, a 1.3 item). Warn rather than drop silently.
             if v.len() > 1 {
                 crate::codec::drops::writer_drop!(
                     crate::codec::drops::member(keys::INPUT),
@@ -459,9 +423,8 @@ pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
             String::new()
         }
     };
-    // Carry the retrieval/shape controls the reader captures — Gemini `:embedContent` supports
-    // them natively. Dropping `outputDimensionality` returned full-width vectors instead of the
-    // requested size (a wrong-length response); `taskType`/`title` steer retrieval quality.
+    // Carry the retrieval/shape controls (native to `:embedContent`). Dropping
+    // `outputDimensionality` returned full-width vectors; `taskType`/`title` steer retrieval.
     let mut body = json!({ (keys::CONTENT): { (FIELD_PARTS): [{ (keys::TEXT): text }] } });
     if let Some(d) = r.dimensions {
         body[FIELD_OUTPUT_DIMENSIONALITY] = json!(d);
@@ -475,8 +438,7 @@ pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
     Bytes::from(serde_json::to_vec(&body).unwrap_or_default())
 }
 
-/// IR → gemini `:embedContent` response wire (the body of the gemini embeddings
-/// `OperationHandler::write_response`, moved behind the `(embeddings, gemini)` key). Byte-identical to the pre-cutover inline write.
+/// IR to Gemini `:embedContent` response wire (the embeddings `OperationHandler::write_response`).
 pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
     let values: Vec<f32> = r
         .embeddings
@@ -496,8 +458,7 @@ pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
 #[path = "tests/handler_tests.rs"]
 mod tests;
 
-/// Wire -> concrete `TranscriptionReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+/// Wire to concrete `TranscriptionReq`, shared by the leaf-op handle and the `leaf_codec` read dispatch.
 pub fn read_transcription_request(
     body: &[u8],
     _content_type: &str,
@@ -537,14 +498,12 @@ pub fn read_transcription_request(
                     pcm: None,
                 });
             } else if let Some(t) = p.get(keys::TEXT).and_then(Value::as_str) {
-                // Skip the writer's synthetic directive texts; only a caller-supplied prompt part is
-                // the real `prompt`. The last such text wins (a request carries at most one).
+                // Skip the writer's synthetic directive texts; only a caller-supplied text is the real
+                // `prompt`. The last such text wins (a request carries at most one).
                 if t == TRANSLATE_INSTRUCTION {
-                    // The writer emits TRANSLATE_INSTRUCTION iff `target_language` was set (translate
-                    // mode); recognizing it reconstructs that mode so a gemini-ingress TRANSLATE
-                    // request reads back AS translate instead of silently downgrading to transcribe
-                    // on re-emit. The writer only checks `target_language.is_some()`; OpenAI
-                    // `/audio/translations` targets English, so "en" is the faithful reconstruction.
+                    // The writer emits TRANSLATE_INSTRUCTION iff `target_language` was set; recognizing
+                    // it reads a translate request back as translate, not a downgrade to transcribe.
+                    // OpenAI `/audio/translations` targets English, so "en" is the faithful reconstruction.
                     target_language = Some("en".to_string());
                 } else if t != TRANSCRIBE_INSTRUCTION {
                     prompt = Some(t.to_string());
@@ -570,21 +529,19 @@ pub fn read_transcription_request(
     })
 }
 
-/// The `usageMetadata` counts a transcription answer reports beside the two it bills. The chat table
-/// (`gemini::usage::USAGE`) itemizes them into meter classes, but a transcription bills only the
-/// prompt and candidates counts, so these are recorded as residual units, keyed by
-/// Google's own count name and never billed (a reported unit is never left unledgered; the billed
-/// figures do not move).
+/// `usageMetadata` counts a transcription answer reports beside the two it bills. The chat table
+/// (`gemini::usage::USAGE`) itemizes them into meter classes, but transcription bills only the
+/// prompt and candidates counts, so these are residual units keyed by Google's count name, never
+/// billed (a reported unit is never left unledgered; billed figures do not move).
 const TRANSCRIPTION_RESIDUAL_COUNTS: [&str; 3] = [
     FIELD_THOUGHTS_TOKEN_COUNT,
     FIELD_CACHED_CONTENT_TOKEN_COUNT,
     FIELD_TOOL_USE_PROMPT_TOKEN_COUNT,
 ];
 
-/// The residual units of a transcription answer's `usageMetadata` ([`TRANSCRIPTION_RESIDUAL_COUNTS`]).
-/// Each is read through the one count seam (`usage_count::recorded_count`): an absent or zero count
-/// is left off (sparse, as `TokenUsage::residual_units` is), and an unreadable one is UNKNOWN, left
-/// off and named in a warning log line, never recorded as 0 and never a refusal.
+/// Residual units of a transcription answer's `usageMetadata` ([`TRANSCRIPTION_RESIDUAL_COUNTS`]),
+/// read through `usage_count::recorded_count`: absent or zero is left off (sparse), and an unreadable
+/// one is unknown, left off and warned in the log, never 0 and never a refusal.
 fn transcription_residual_units(usage: &Value) -> std::collections::BTreeMap<String, u64> {
     let mut warnings = Vec::new();
     TRANSCRIPTION_RESIDUAL_COUNTS
@@ -597,8 +554,7 @@ fn transcription_residual_units(usage: &Value) -> std::collections::BTreeMap<Str
         .collect()
 }
 
-/// Wire -> concrete `TranscriptionResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+/// Wire to concrete `TranscriptionResp`, shared by the leaf-op handle and the `leaf_codec` read dispatch.
 pub fn read_transcription_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::audio::TranscriptionResp, CodecError> {
@@ -606,12 +562,10 @@ pub fn read_transcription_response(
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
     let text = joined_text(&v, "/candidates/0/content/parts");
     let usage = v.get(FIELD_USAGE_METADATA).map(|u| {
-        // Only the token fields are billed: an upstream cannot pick the duration
-        // meter (`audio_ms`) by sending an `audioDurationSeconds` member Gemini's `UsageMetadata`
-        // does not define. A real Gemini upstream sends only token counts.
-        // Billed counts, each judged on its own: absent is zero; an unreadable one is refused
-        // ([`refused_count`]): it bills nothing, and the transcript and the readable count are
-        // served and billed.
+        // Only the token fields are billed: an upstream cannot pick the duration meter (`audio_ms`)
+        // with an `audioDurationSeconds` member that Gemini's `UsageMetadata` does not define. Each
+        // billed count is judged alone: absent is zero; an unreadable one is refused
+        // ([`refused_count`]) and bills nothing, while the transcript and readable count are served.
         let billed = |field: &'static str| {
             crate::codec::usage_count::billed_count(u, field).unwrap_or_else(|unreadable| {
                 crate::codec::usage_count::refused_count(COUNT_LABEL, &unreadable);
@@ -632,8 +586,7 @@ pub fn read_transcription_response(
     })
 }
 
-/// Wire -> concrete `SpeechReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+/// Wire to concrete `SpeechReq`, shared by the leaf-op handle and the `leaf_codec` read dispatch.
 pub fn read_speech_request(
     body: &[u8],
     _content_type: &str,
@@ -651,8 +604,7 @@ pub fn read_speech_request(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    // Multi-speaker: recover each (speaker, voiceName) pair so a two-speaker request survives the
-    // hop (the writer re-emits `multiSpeakerVoiceConfig` when this is non-empty).
+    // Multi-speaker: recover each (speaker, voiceName) pair so the writer re-emits `multiSpeakerVoiceConfig`.
     let speakers = wire
         .pointer("/generationConfig/speechConfig/multiSpeakerVoiceConfig/speakerVoiceConfigs")
         .and_then(Value::as_array)
@@ -677,21 +629,17 @@ pub fn read_speech_request(
     })
 }
 
-/// Wire -> concrete `SpeechResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+/// Wire to concrete `SpeechResp`, shared by the leaf-op handle and the `leaf_codec` read dispatch.
 pub fn read_speech_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::audio::SpeechResp, CodecError> {
-    // Real Gemini → JSON with inline base64 audio; mock/raw → binary body. Try JSON, fall back.
+    // Real Gemini sends JSON with inline base64 audio; mock/raw sends a binary body. Try JSON, fall back.
     //
-    // WHICH BODY THE RAW FALLBACK IS FOR: a body that is NOT JSON at all. A body that DOES parse as
-    // JSON claims to be a Gemini response, and the only Gemini response shape that carries synthesis
-    // is the `inlineData` one — so a JSON body without it is a response this parse cannot read, not
-    // an audio container. Handing those bytes back as `audio/mpeg` served a JSON object to a client
-    // that asked for audio: an error envelope, a safety block, or a candidate with no audio part all
-    // arrived as a 200 whose body a player cannot open, with the upstream's own explanation buried
-    // inside bytes labelled as an MP3. It is refused here instead, and the buffered seam turns that
-    // refusal into the upstream-shaped error the caller can actually read.
+    // The raw fallback is only for a body that is not JSON at all. A JSON body claims to be a Gemini
+    // response, whose only synthesis shape is `inlineData`; one without it (an error envelope, safety
+    // block, or audio-less candidate) is unreadable, not an audio container. Returning it as
+    // `audio/mpeg` served a JSON object to a client wanting audio, so it is refused and the buffered
+    // seam turns that into the upstream-shaped error.
     if let Ok(v) = serde_json::from_slice::<Value>(wire) {
         let Some(data) = v
             .pointer("/candidates/0/content/parts/0/inlineData/data")
@@ -714,10 +662,9 @@ pub fn read_speech_response(
                 channels: 1,
                 bit_depth: 16,
             });
-        // Validate the backend's base64 at this trust boundary: a corrupt payload must fail
-        // loud here (CodecError) rather than reach the egress writer, where a decode failure
-        // would silently become an empty 200 audio body. This is the response-side twin of
-        // the ingress inline_data validation.
+        // Validate the backend's base64 at this trust boundary: a corrupt payload fails loud here
+        // (CodecError) rather than becoming an empty 200 audio body at the writer. Response-side twin
+        // of the ingress inline_data validation.
         if busbar_contract::media::base64_decode(data).is_none() {
             return Err(CodecError::Malformed(
                 "gemini speech inlineData.data is not valid base64".into(),
@@ -734,25 +681,22 @@ pub fn read_speech_response(
             ..Default::default()
         });
     }
-    // NOT JSON at all — a raw audio container, which is what the mock and a direct-passthrough
-    // upstream deliver. These bytes really are the audio.
+    // Not JSON at all: a raw audio container (the mock, or a direct-passthrough upstream).
     Ok(SpeechResp {
         audio: Some(MediaBlob {
             payload: MediaPayload::Bytes(SlabBytes::from(wire)),
             mime_type: keys::AUDIO_MPEG.into(),
             pcm: None,
         }),
-        // TTS carries no usage object in its audio body; without a marker `billing()` returned
-        // `None` and the request was billed nothing. The true per-character unit needs the request
-        // `input` and is resolved at the request seam by `crate::codec::ir::audio::SpeechReq::billing`;
-        // this `Flat` marker only records that a request was delivered.
+        // TTS has no usage object; without a marker `billing()` was `None` and the request billed
+        // nothing. The per-character unit needs the request `input` and is resolved at the request seam
+        // (`crate::codec::ir::audio::SpeechReq::billing`); `Flat` only records that a request was delivered.
         usage: Some(busbar_contract::billing::Billing::Flat),
         ..Default::default()
     })
 }
 
-/// Wire -> concrete `ImageReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+/// Wire to concrete `ImageReq`, shared by the leaf-op handle and the `leaf_codec` read dispatch.
 pub fn read_image_request(
     body: &[u8],
     _content_type: &str,
@@ -777,7 +721,7 @@ pub fn read_image_request(
             .get(FIELD_PERSON_GENERATION)
             .and_then(Value::as_str)
             .map(str::to_string),
-        // Imagen sampling/guidance controls — carried through so egress re-emits them.
+        // Imagen sampling/guidance controls, carried so egress re-emits them.
         negative_prompt: params
             .get(FIELD_NEGATIVE_PROMPT)
             .and_then(Value::as_str)
@@ -795,8 +739,7 @@ pub fn read_image_request(
     })
 }
 
-/// Wire -> concrete `ImageResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+/// Wire to concrete `ImageResp`, shared by the leaf-op handle and the `leaf_codec` read dispatch.
 pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::ImageResp, CodecError> {
     let v: Value =
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
@@ -819,13 +762,11 @@ pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::Image
                 .collect()
         })
         .unwrap_or_default();
-    // Token-reporting image models (gemini `generateContent`-shaped) carry a `usageMetadata` token
-    // object; Imagen `:predict` per-image responses carry none. The tokens are RECORDED, never
-    // billed (`ImageResp::billing`).
-    // A recorded count is still a ledger row, so it is read through the one count seam
-    // (`usage_count::recorded_count`): absent is zero; a present count this build cannot read is
-    // UNKNOWN, left out of the record and named on `warnings` and in the log. It is never a 0
-    // and never a refusal: the answer is served whatever its usage said.
+    // Token-reporting image models (`generateContent`-shaped) carry a `usageMetadata` object; Imagen
+    // `:predict` answers carry none. Tokens are recorded, never billed (`ImageResp::billing`). A
+    // recorded count is a ledger row, read through `usage_count::recorded_count`: absent is zero; an
+    // unreadable one is unknown, left out and named on `warnings` and in the log, never 0 and never a
+    // refusal (the answer is served regardless).
     let mut warnings = Vec::new();
     let usage = v
         .get(FIELD_USAGE_METADATA)
@@ -841,10 +782,9 @@ pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::Image
                 &mut warnings,
             ),
         });
-    // Per-image (Imagen `:predict`) responses carry no `usageMetadata` — record the per-image cost
-    // basis so the op bills as `Billing::Images` rather than nothing. The billable COUNT is
-    // recoverable from the response itself (one image per `predictions` entry). Size/quality tiers
-    // live on the request params, which this response-only reader cannot see, so they stay `None`.
+    // Imagen `:predict` answers carry no `usageMetadata`: record the per-image cost basis (one image
+    // per `predictions` entry) so the op bills as `Billing::Images`. Size/quality live on the request,
+    // which this reader cannot see, so they stay `None`.
     let cost_basis = if usage.is_none() {
         Some(crate::codec::ir::image::CostBasis {
             count: u32::try_from(images.len()).unwrap_or(u32::MAX),
@@ -862,14 +802,13 @@ pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::Image
     })
 }
 
-/// Wire -> concrete `EmbeddingsReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+/// Wire to concrete `EmbeddingsReq`, shared by the leaf-op handle and the `leaf_codec` read dispatch.
 pub fn read_embeddings_request(
     body: &[u8],
     _content_type: &str,
 ) -> Result<crate::codec::ir::embeddings::EmbeddingsReq, IngressReject> {
-    // gemini `:embedContent` wire → IR (gemini as INGRESS). Model rides the PATH (routing fills
-    // it via `IrReq::set_model`); the body carries `content.parts[].text`.
+    // `:embedContent` wire to IR. The model rides the path (routing fills it via `IrReq::set_model`);
+    // the body carries `content.parts[].text`.
     let wire: Value =
         serde_json::from_slice(body).map_err(|e| IngressReject::BadRequest(e.to_string()))?;
     let text = joined_text(&wire, "/content/parts");
@@ -897,8 +836,7 @@ pub fn read_embeddings_request(
     })
 }
 
-/// Wire -> concrete `EmbeddingsResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+/// Wire to concrete `EmbeddingsResp`, shared by the leaf-op handle and the `leaf_codec` read dispatch.
 pub fn read_embeddings_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::embeddings::EmbeddingsResp, CodecError> {
@@ -919,8 +857,8 @@ pub fn read_embeddings_response(
             ),
         );
     }
-    // Billed count: absent or `null` is no usage; an unreadable one is refused on its own
-    // ([`refused_count`]): it bills nothing and the vectors are served.
+    // Billed count: absent or `null` is no usage; an unreadable one is refused alone
+    // ([`refused_count`]) and bills nothing, while the vectors are served.
     let usage = crate::codec::usage_count::billed_count_opt(
         v.get(FIELD_USAGE_METADATA),
         FIELD_PROMPT_TOKEN_COUNT,
