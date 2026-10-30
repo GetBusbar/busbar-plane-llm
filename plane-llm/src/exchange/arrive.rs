@@ -581,9 +581,9 @@ pub fn splice_path_facts(
     stream: bool,
     shim_key: Option<&str>,
 ) -> Option<Vec<u8>> {
-    use crate::codec::json_splice::{self, Edit};
+    use busbar_contract::spans::{self, Edit};
     use std::borrow::Cow;
-    let obj = json_splice::object_at(body, 0)?;
+    let obj = spans::members(body, 0)?;
     let model = serde_json::to_vec(model).ok()?;
     let flag: &[u8] = if stream { b"true" } else { b"false" };
     let mut edits = vec![
@@ -593,7 +593,7 @@ pub fn splice_path_facts(
     if let Some(key) = shim_key {
         edits.push(Edit::Set(key, Cow::Borrowed(b"true")));
     }
-    Some(json_splice::apply(body, &obj, &edits).unwrap_or_else(|| body.to_vec()))
+    Some(spans::apply(body, &obj, &edits).unwrap_or_else(|| body.to_vec()))
 }
 
 /// A path-model arrival's arrival step (the model and the stream flag spliced into the caller's

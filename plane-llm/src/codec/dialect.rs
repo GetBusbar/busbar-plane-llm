@@ -406,7 +406,7 @@ pub(crate) fn top_level_usage_cut(json: &str) -> Option<(usize, usize)> {
                 // A string. At depth 0 with `expect_key`, this is a member KEY - capture its span and
                 // check whether it is exactly `usage`. Otherwise skip the string body.
                 let key_start = i;
-                let str_end = scan_json_string_end(bytes, i)?; // one past the closing quote
+                let str_end = busbar_contract::spans::string_end(bytes, i)?; // one past the closing quote
                 if depth == 0 && expect_key {
                     let is_usage = &bytes[key_start..str_end] == b"\"usage\"";
                     // Advance past the string, then whitespace, then the mandatory `:`.
@@ -419,7 +419,7 @@ pub(crate) fn top_level_usage_cut(json: &str) -> Option<(usize, usize)> {
                     }
                     j += 1;
                     // Find the end of this member's value (a full scan that respects nesting/strings).
-                    let value_end = scan_json_value_end(bytes, j)?;
+                    let value_end = busbar_contract::spans::value_end(bytes, j)?;
                     if is_usage {
                         if usage_range.is_some() {
                             return None; // duplicate top-level usage - refuse to guess
@@ -493,79 +493,6 @@ pub(crate) fn top_level_usage_cut(json: &str) -> Option<(usize, usize)> {
         // leaves `{}` (with whatever interior whitespace remained), which is still valid.
     }
     Some((cut_start, cut_end))
-}
-
-/// Given `bytes` and the index of an opening `"`, return the index ONE PAST the matching closing
-/// quote, honoring `\`-escapes. `None` if the string is unterminated.
-pub(crate) fn scan_json_string_end(bytes: &[u8], open_quote: usize) -> Option<usize> {
-    debug_assert_eq!(bytes[open_quote], b'"');
-    let n = bytes.len();
-    let mut i = open_quote + 1;
-    while i < n {
-        match bytes[i] {
-            b'\\' => i += 2, // skip the escaped byte
-            b'"' => return Some(i + 1),
-            _ => i += 1,
-        }
-    }
-    None
-}
-
-/// Given `bytes` and the index of the first byte of a JSON value (after any whitespace), return the
-/// index ONE PAST the value, respecting nested objects/arrays and strings. `None` if the value is
-/// malformed/unterminated. Leading whitespace before the value is tolerated.
-pub(crate) fn scan_json_value_end(bytes: &[u8], start: usize) -> Option<usize> {
-    let n = bytes.len();
-    let mut i = start;
-    while i < n && bytes[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    if i >= n {
-        return None;
-    }
-    match bytes[i] {
-        b'"' => scan_json_string_end(bytes, i),
-        b'{' | b'[' => {
-            // Balanced-nesting scan that skips over strings so a `}`/`]` inside a string never closes
-            // the structure.
-            let mut depth = 0usize;
-            while i < n {
-                match bytes[i] {
-                    b'"' => i = scan_json_string_end(bytes, i)?,
-                    b'{' | b'[' => {
-                        depth += 1;
-                        i += 1;
-                    }
-                    b'}' | b']' => {
-                        depth -= 1;
-                        i += 1;
-                        if depth == 0 {
-                            return Some(i);
-                        }
-                    }
-                    _ => i += 1,
-                }
-            }
-            None
-        }
-        _ => {
-            // A scalar: number / true / false / null. It ends at the next structural byte
-            // (`,`, `}`, `]`) or whitespace at this level.
-            let value_start = i;
-            while i < n {
-                match bytes[i] {
-                    b',' | b'}' | b']' => break,
-                    c if c.is_ascii_whitespace() => break,
-                    _ => i += 1,
-                }
-            }
-            if i == value_start {
-                None
-            } else {
-                Some(i)
-            }
-        }
-    }
 }
 
 /// Drop the RESPONSE-side provider metadata that an egress dialect carries and no ingress dialect

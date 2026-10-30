@@ -31,7 +31,7 @@ use busbar_contract::protocol::HeadFields;
 use serde_json::Value;
 
 use crate::codec::eventstream::{drain_frames_checked, DrainStatus};
-use crate::codec::json_splice::{self, Edit};
+use busbar_contract::spans::{self, Edit};
 
 /// The protocol a model names to be served over the envelope.
 pub const PROTOCOL: &str = "bedrock-invoke";
@@ -121,7 +121,7 @@ pub fn body(messages: &[u8], beta: &[Vec<u8>]) -> Option<Vec<u8>> {
             Cow::Owned(serde_json::to_vec(&Value::Array(flags)).ok()?),
         ));
     }
-    json_splice::apply_top(messages, &edits)
+    spans::apply_top(messages, &edits)
 }
 
 /// The Anthropic dialect's error kind for a Bedrock exception name (`ValidationException`, or the
