@@ -16,10 +16,8 @@ use crate::codec::keys;
 /// (`finish` emits `]`, or `[]` when no chunk was seen) so a client that buffers and `JSON.parse`s
 /// the whole body still succeeds.
 pub struct GeminiJsonArrayFramer {
-    buf: Vec<u8>,
-    /// How far into `buf` the SSE terminator scan has already advanced (keeps `feed` linear; mirrors
-    /// `StreamTranslate::scanned`).
-    scanned: usize,
+    /// The SSE frame reassembler the upstream bytes accumulate in.
+    frames: SseFrames,
     /// Whether the opening `[` (and, for every object after the first, the separating `,`) has been
     /// emitted yet.
     started: bool,
@@ -42,8 +40,7 @@ impl GeminiJsonArrayFramer {
 
     pub fn new() -> Self {
         Self {
-            buf: Vec::new(),
-            scanned: 0,
+            frames: SseFrames::new(),
             started: false,
             finished: false,
             aborted: false,
@@ -57,61 +54,30 @@ impl GeminiJsonArrayFramer {
         if self.aborted || self.finished {
             return Vec::new();
         }
-        self.buf.extend_from_slice(chunk);
+        self.frames.push(chunk);
         let mut out: Vec<u8> = Vec::new();
-        // FRONT cursor (mirrors `StreamTranslate::feed`): advance `consumed` per complete frame and
-        // reclaim the prefix in ONE shift after the loop, instead of `drain(..end)` per frame (which
-        // shifted the whole tail once per frame → O(n^2) on a buffer of many small frames). The search
-        // floor is `consumed` — never below it, or the just-consumed terminator is re-found (infinite
-        // loop); the 3-byte straddle backup and the `scanned` skip apply only above that floor.
-        let mut consumed = 0usize;
-        loop {
-            let search_from = self
-                .scanned
-                .saturating_sub(3)
-                .max(consumed)
-                .min(self.buf.len());
-            match find_frame_terminator(&self.buf[search_from..]) {
-                Some((rel, term_len)) => {
-                    let end = search_from + rel + term_len;
-                    let frame = &self.buf[consumed..end];
-                    consumed = end;
-                    self.scanned = end;
-                    let Some((_event_type, data_str)) = parse_sse_frame(frame) else {
-                        continue; // no data: line — keepalive/comment frame
-                    };
-                    if data_str.is_empty() || data_str == crate::codec::dialect::SSE_DONE_SENTINEL {
-                        continue; // egress terminator/keepalive — the array close is finish()'s job
-                    }
-                    // Validate the payload is JSON before forwarding so a malformed frame cannot
-                    // corrupt the array; re-serialize from the parsed Value to normalize whitespace.
-                    let Ok(data) = crate::codec::json::parse_str::<serde_json::Value>(&data_str)
-                    else {
-                        continue;
-                    };
-                    if self.started {
-                        out.push(b',');
-                    } else {
-                        out.push(b'[');
-                        self.started = true;
-                    }
-                    out.extend_from_slice(data.to_string().as_bytes());
-                }
-                None => {
-                    self.scanned = self.buf.len();
-                    break;
-                }
+        while let Some(frame) = self.frames.next_frame() {
+            let Some((_event_type, data_str)) = parse_sse_frame(frame) else {
+                continue; // no data: line — keepalive/comment frame
+            };
+            if data_str.is_empty() || data_str == crate::codec::dialect::SSE_DONE_SENTINEL {
+                continue; // egress terminator/keepalive — the array close is finish()'s job
             }
+            let Ok(data) = crate::codec::json::parse_str::<serde_json::Value>(&data_str) else {
+                continue;
+            };
+            if self.started {
+                out.push(b',');
+            } else {
+                out.push(b'[');
+                self.started = true;
+            }
+            out.extend_from_slice(data.to_string().as_bytes());
         }
-        if consumed > 0 {
-            self.buf.drain(..consumed);
-            self.scanned = self.buf.len();
-        }
-        if self.buf.len() > Self::MAX_BUF {
+        // Abandon the stream once the bytes no frame yielded pass the cap.
+        if self.frames.pending() > Self::MAX_BUF {
             self.aborted = true;
-            self.buf.clear();
-            self.buf.shrink_to_fit();
-            self.scanned = 0;
+            self.frames = SseFrames::new();
         }
         out
     }
