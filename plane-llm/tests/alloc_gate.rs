@@ -6,50 +6,17 @@
 //! thrown away, and no wall-clock test catches it reliably on a shared runner. An allocation COUNT
 //! does — it is the same number on every machine, so it can be pinned.
 //!
-//! The instrument is a counting wrapper around the system allocator, counting per thread so a
+//! The instrument is busbar-test-kit's counting allocator, counting per thread so a
 //! concurrently-running test never inflates the measured count. The bound is exact, not an upper
 //! bound: the measured call is a pure synchronous function over bytes, with no I/O and no clock, so
 //! its count does not vary run to run. If an intentional change moves it, run with `--nocapture`,
 //! read the printed count, and move the constant in the same commit — a raise IS the regression
 //! unless the commit says in words why the extra allocation is the cheaper of two evils.
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
-
-thread_local! {
-    /// Allocations made by THIS thread since the counter was last read.
-    static ALLOCS: Cell<u64> = const { Cell::new(0) };
-}
-
-/// The system allocator, counting.
-struct Counting;
-
-// SAFETY: every call is forwarded verbatim to the system allocator; the counter is a thread-local
-// `Cell` of a plain integer, touched only on the allocating thread, and never reads or writes the
-// memory being handed out.
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let _ = ALLOCS.try_with(|c| c.set(c.get() + 1));
-        unsafe { System.alloc(layout) }
-    }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { System.dealloc(ptr, layout) }
-    }
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let _ = ALLOCS.try_with(|c| c.set(c.get() + 1));
-        unsafe { System.realloc(ptr, layout, new_size) }
-    }
-}
+use busbar_test_kit::alloc_counter::{allocations_of, Counting};
 
 #[global_allocator]
-static ALLOC: Counting = Counting;
-
-/// How many allocations one call made on this thread.
-fn allocations_of(f: impl FnOnce()) -> u64 {
-    let before = ALLOCS.with(Cell::get);
-    f();
-    ALLOCS.with(Cell::get) - before
-}
+static ALLOC: Counting = Counting::new();
 
 // ── the whole forward the served door runs, bounded ─────────────────
 
