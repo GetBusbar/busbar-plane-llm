@@ -1,25 +1,22 @@
-//! THE OPENAI RESPONSES WEBHOOK RECEIVER, sans I/O: the plane's inbound leg for a background
+//! The OpenAI Responses webhook receiver, sans I/O: the plane's inbound leg for a background
 //! Responses turn's completion webhook.
 //!
-//! A client that creates a Responses turn with `background: true` gets a `resp_…` id at once; when
-//! the turn finishes, the provider delivers a SIGNED webhook to a URL the operator registered. This
-//! module reads that delivery's body and answers its acknowledgement.
+//! A client creating a Responses turn with `background: true` gets a `resp_…` id at once; when the
+//! turn finishes, the provider delivers a signed webhook to a URL the operator registered. This module
+//! reads that delivery's body and answers its acknowledgement.
 //!
 //! Who decides what:
 //! - On or off is the plugin's own setting, never a kernel or core switch: the plane owns the
 //!   top-level `webhooks:` section ([`SECTION`]) and claims [`PATH`] only when it says
-//!   `openai_responses: true`. A config without the key answers on that path as it does for any
-//!   unclaimed path.
-//! - The signature is the auth kind's: the
-//!   operator's `auth.chain` names an auth step of the webhook-signature kind (the Standard Webhooks
-//!   scheme), which verifies the HMAC over the body and refuses a replayed
-//!   `webhook-id` through the claim record. A request carrying none of its headers is all-PASS, so
-//!   401 end to end. This plane never sees the signing secret, and its unit requires a principal.
-//! - THE UNIT is the plane's own to answer (`ROUTE_LOCAL`): no walk, no far end, nothing billed.
+//!   `openai_responses: true`. Without the key the path answers as any unclaimed path.
+//! - The signature is the auth kind's: the operator's `auth.chain` names a webhook-signature auth
+//!   step (the Standard Webhooks scheme), which verifies the HMAC over the body and refuses a replayed
+//!   `webhook-id` through the claim record. A request with none of its headers is all-PASS, so 401 end
+//!   to end. This plane never sees the signing secret, and its unit requires a principal.
+//! - The unit is the plane's own to answer (`ROUTE_LOCAL`): no walk, no far end, nothing billed.
 //!
 //! Busbar is a translator, not a conversation-state store: the receiver authenticates (through the
 //! auth kind) and acknowledges the event, echoing its correlation id. It does not resume the turn.
-
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -40,13 +37,13 @@ pub struct Webhooks {
     pub openai_responses: bool,
 }
 
-/// The receivers the plane's OWNED sections switch on (`PlaneOpenIn::owned`: one JSON object keyed
-/// by section name, empty when the document writes none of them).
+/// The receivers the plane's owned sections switch on (`PlaneOpenIn::owned`: one JSON object keyed by
+/// section name, empty when the document writes none of them).
 ///
 /// # Errors
 ///
-/// The section's own words for a `webhooks:` block that does not read: an unknown key, or a value
-/// of the wrong type. A boot refusal names it; a receiver silently left off would not.
+/// The section's own words for a `webhooks:` block that does not read (an unknown key, or a value of
+/// the wrong type). A boot refusal names it; a receiver silently left off would not.
 pub fn from_owned(owned: &[u8]) -> Result<Webhooks, String> {
     if owned.is_empty() {
         return Ok(Webhooks::default());
@@ -79,10 +76,8 @@ pub const MALFORMED: &str =
     "malformed OpenAI Responses webhook event: expected a JSON object with a \
      non-empty string `type` and a `data` object carrying a non-empty string `id`";
 
-/// READ a delivery's body. The two load-bearing fields, `type` and `data.id`, are required non-empty
-/// strings; the optional `id` (the event id) and `created_at` are refused only when present and
-/// wrong-typed, as the receiver this ports refused them.
-///
+/// Read a delivery's body. `type` and `data.id` are required non-empty strings; the optional `id`
+/// (event id) and `created_at` are refused only when present and wrong-typed, as the ported receiver did.
 /// # Errors
 ///
 /// [`MALFORMED`], for any body that does not read.

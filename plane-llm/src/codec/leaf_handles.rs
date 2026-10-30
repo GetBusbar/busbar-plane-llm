@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! The six leaf-op `IrHandle`s (G6 A4b dissolve): embeddings / image / rerank / moderation /
-//! transcription / speech. Each wraps its concrete `crate::codec::ir::*` request/response and writes itself
-//! onto the peer dialect by protocol string via the `(op, protocol)` `leaf_codec` dispatchers
-//! (option-a). The prep arms are all no-ops (leaf ops carry no cross-protocol reshape); `set_model`
-//! stamps the model; billing projects each op's own usage. Uniform: the write methods reproduce the
-//! former default `write_request_value`/`write_response_value` (JSON-parse the leaf bytes, else the
-//! opaque `Bytes`/`Typed` fall-through) — byte-identical to the dissolved `IrReq`/`IrResp` arms.
+//! The six leaf-op `IrHandle`s: embeddings / image / rerank / moderation / transcription / speech.
+//! Each wraps its concrete `crate::codec::ir::*` request/response and writes itself onto the peer
+//! dialect by protocol string via the `(op, protocol)` `leaf_codec` dispatchers. The prep arms are
+//! no-ops (leaf ops carry no cross-protocol reshape); `set_model` stamps the model; billing projects
+//! each op's own usage. The write methods JSON-parse the leaf bytes, else fall through to the opaque
+//! `Bytes`/`Typed` form, byte-identical to the dissolved `IrReq`/`IrResp` arms.
 
 use crate::codec::ir::audio::{SpeechReq, SpeechResp, TranscriptionReq, TranscriptionResp};
 use crate::codec::ir::embeddings::{EmbeddingsReq, EmbeddingsResp};
@@ -29,10 +28,9 @@ fn slab(body: Bytes) -> SlabBytes {
     SlabBytes::from(&body[..])
 }
 
-/// The refusal a transcription writer's empty write becomes: a transcription request always
-/// carries its model, so a writer that wrote NOTHING refused the request (an audio part carrying
-/// its form's delimiter). It is refused at the seam, never sent upstream as an empty body in the
-/// caller's name.
+/// The refusal a transcription writer's empty write becomes: a request always carries its model, so
+/// a writer that wrote nothing refused it (an audio part carrying its form's delimiter). Refused at
+/// the seam, never sent upstream as an empty body.
 fn unwritable(egress_proto: &str) -> String {
     format!(
         "this request cannot be written onto {egress_proto}: its audio carries the delimiter of \
@@ -41,8 +39,8 @@ fn unwritable(egress_proto: &str) -> String {
 }
 
 /// One leaf operation's request and response handles over its `leaf_codec` writers. The request
-/// writes the egress dialect's JSON (else, with the model stamped, its opaque bytes); the response
-/// writes the ingress dialect's answer (JSON, else the typed bytes).
+/// writes the egress dialect's JSON (else, with the model stamped, opaque bytes); the response writes
+/// the ingress dialect's answer (JSON, else the typed bytes).
 macro_rules! leaf_handles {
     ($req:ident($req_ir:ty), $resp:ident($resp_ir:ty), $verb:ident, $write_req:ident, $write_resp:ident,
      stream: $stream:tt, req_billing: $req_billing:tt, resp_billing: $resp_billing:tt, refuse_empty: $refuse:tt) => {

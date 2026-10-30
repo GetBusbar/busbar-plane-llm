@@ -1,6 +1,5 @@
-//! The Gemini spelling of the typed IR request slots: hosted tools,
-//! `labels`, `allowedFunctionNames`, `responseModalities`, and the
-//! slots Gemini has no form for, which the writer drops with a warn and reports.
+//! The Gemini spelling of the typed IR request slots: hosted tools, `labels`, `allowedFunctionNames`,
+//! `responseModalities`, and the slots Gemini has no form for (dropped with a warn and reported).
 
 use super::{
     FIELD_ALLOWED_FUNCTION_NAMES, FIELD_FUNCTION_CALLING_CONFIG, FIELD_FUNCTION_DECLARATIONS,
@@ -14,14 +13,12 @@ const GEMINI_GOOGLE_SEARCH: &str = "googleSearch";
 const GEMINI_CODE_EXECUTION: &str = "codeExecution";
 const GEMINI_URL_CONTEXT: &str = "urlContext";
 
-/// The tool entries Gemini carries beside `functionDeclarations` in one `tools[]` entry (GEM-10).
-///
-/// A kind with a neutral IR form (`googleSearch` → WebSearch, `codeExecution` → CodeExecution,
-/// `urlContext` → WebFetch) goes into the typed hosted-tool slot, which crosses the seam (IR-11);
-/// any sub-config it carries (e.g. `googleSearch.timeRangeFilter`) has no neutral member and is
-/// dropped with a warn — the tool itself is kept. Any OTHER key (`googleSearchRetrieval`,
-/// `fileSearch`, …) has no neutral kind and stays a raw hosted [`IrTool`], which the seam drops by
-/// name on a cross-protocol hop.
+/// The tool entries Gemini carries beside `functionDeclarations` in one `tools[]` entry (GEM-10). A
+/// kind with a neutral form (`googleSearch` to WebSearch, `codeExecution` to CodeExecution,
+/// `urlContext` to WebFetch) goes into the typed hosted-tool slot, which crosses the seam (IR-11); a
+/// sub-config with no neutral member (e.g. `googleSearch.timeRangeFilter`) is dropped with a warn and
+/// the tool kept. Any other key (`googleSearchRetrieval`, `fileSearch`, ...) stays a raw hosted
+/// [`IrTool`], dropped by name on a cross-protocol hop.
 pub(super) fn read_gemini_hosted_tools(
     tool_val: &serde_json::Value,
 ) -> (Vec<IrHostedTool>, Vec<IrTool>) {
@@ -78,10 +75,9 @@ pub(super) fn read_gemini_hosted_tools(
     (typed, raw_tools)
 }
 
-/// One Gemini `tools[]` entry per IR hosted tool (IR-11). Gemini's three hosted tools take no
-/// neutral parameter, so a parameter the source set (Anthropic `max_uses`/`allowed_domains`/
-/// `blocked_domains`/`user_location`, Responses `search_context_size`) is dropped with a warn and the
-/// tool is kept.
+/// One Gemini `tools[]` entry per IR hosted tool (IR-11). Gemini's three hosted tools take no neutral
+/// parameter, so a source parameter (Anthropic `max_uses`/`allowed_domains`/`blocked_domains`/
+/// `user_location`, Responses `search_context_size`) is dropped with a warn and the tool kept.
 pub(super) fn write_gemini_hosted_tools(hosted: &[IrHostedTool]) -> Vec<serde_json::Value> {
     hosted
         .iter()
@@ -128,9 +124,8 @@ pub(super) fn write_gemini_hosted_tools(hosted: &[IrHostedTool]) -> Vec<serde_js
         .collect()
 }
 
-/// Gemini `labels` → the IR caller-metadata map (IR-03), in the caller's key order. Read only when
-/// it is an object of string values (the only shape Gemini accepts); anything else stays raw in
-/// `extra` and maps to nothing.
+/// Gemini `labels` to the IR caller-metadata map (IR-03), in key order. Read only as an object of
+/// string values (the only shape Gemini accepts); anything else stays raw in `extra` and maps to nothing.
 pub(super) fn read_gemini_labels(
     labels: Option<&serde_json::Value>,
 ) -> Option<Vec<(String, String)>> {
@@ -168,10 +163,9 @@ fn gemini_label_ok(key: &str, value: &str) -> bool {
         && value.chars().all(gemini_label_char_ok)
 }
 
-/// The IR caller-metadata map → Gemini `labels` (IR-03). An entry that breaks Gemini's label syntax
-/// (e.g. an upper-case key, a space in a value) would 400 the whole request, so THAT entry is
-/// dropped with a warn and the rest are kept, up to Gemini's cap of 64. An empty object when every
-/// entry was dropped or the caller sent `{}`.
+/// The IR caller-metadata map to Gemini `labels` (IR-03). An entry breaking Gemini's label syntax (an
+/// upper-case key, a space in a value) would 400 the request, so that entry is dropped with a warn
+/// and the rest kept, up to Gemini's cap of 64. An empty object if all were dropped or the caller sent `{}`.
 pub(super) fn write_gemini_labels(metadata: &[(String, String)]) -> serde_json::Value {
     let mut out = serde_json::Map::new();
     let mut dropped = 0usize;
@@ -193,10 +187,10 @@ pub(super) fn write_gemini_labels(metadata: &[(String, String)]) -> serde_json::
     serde_json::Value::Object(out)
 }
 
-/// `toolConfig.functionCallingConfig.allowedFunctionNames` → the IR tool subset (IR-10). Read when
-/// the subset is a real restriction the single-tool `tool_choice` cannot say: mode `ANY` with more
-/// than one name (`tool_choice` = Required), or mode `AUTO` with any names (`tool_choice` = Auto).
-/// `ANY` with exactly one name is the targeted `Tool{name}` and carries no subset.
+/// `toolConfig.functionCallingConfig.allowedFunctionNames` to the IR tool subset (IR-10). Read when it
+/// is a real restriction single-tool `tool_choice` cannot say: mode `ANY` with more than one name
+/// (`tool_choice` Required), or mode `AUTO` with any names (Auto). `ANY` with one name is the
+/// targeted `Tool{name}` and carries no subset.
 pub(super) fn read_gemini_allowed_tools(
     tool_config: Option<&serde_json::Value>,
 ) -> Option<Vec<String>> {
@@ -246,10 +240,10 @@ pub(super) fn write_gemini_response_modalities(modalities: &[IrModality]) -> ser
     )
 }
 
-/// Whether a Gemini model accepts `thinkingBudget: 0` — reasoning switched off (IR-09). Only the
+/// Whether a Gemini model accepts `thinkingBudget: 0` (reasoning off, IR-09). Only the
 /// gemini-2.5-flash family (flash and flash-lite, any version or preview suffix) can stop thinking;
-/// gemini-2.5-pro rejects a budget under 128, and the Gemini 3 models cannot switch thinking off. A
-/// `models/` or publisher path prefix is ignored.
+/// gemini-2.5-pro rejects a budget under 128 and the Gemini 3 models cannot switch it off. A `models/`
+/// or publisher path prefix is ignored.
 pub(super) fn gemini_model_accepts_thinking_off(model: &str) -> bool {
     let name = model.rsplit('/').next().unwrap_or(model);
     name.starts_with("gemini-2.5-flash")

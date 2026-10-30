@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! Audio IRs — two structurally-opposite operations in one module:
+//! Audio IRs, two opposite operations in one module:
 //!
-//! - **Transcription** (STT): multipart audio IN → text OUT. `target_language` folds translation in
-//!   (not a third op). Billing is model-dependent: `Duration` (whisper-1) | `Tokens` (gpt-4o-transcribe).
-//! - **Speech** (TTS): text IN → binary audio OUT. Billing: `Characters` (tts-1) | `Tokens` (gpt-4o-mini-tts).
+//! - **Transcription** (STT): multipart audio in, text out. `target_language` folds translation in
+//!   (not a third op). Billing is per model: `Duration` (whisper-1) or `Tokens` (gpt-4o-transcribe).
+//! - **Speech** (TTS): text in, binary audio out. Billing: `Characters` (tts-1) or `Tokens` (gpt-4o-mini-tts).
 //!
-//! Both share the [`crate::codec::framework::MediaBlob`] payload (audio in / audio out). Split request/response
-//! per. Because audio billing is polymorphic per model, the response stores `Option<Billing>`
-//! directly rather than a token struct.
+//! Both share the [`crate::codec::framework::MediaBlob`] payload. Because audio billing is
+//! polymorphic per model, the response stores `Option<Billing>` directly, not a token struct.
 
 use crate::codec::framework::MediaBlob;
 use busbar_contract::billing::Billing;
@@ -54,12 +53,12 @@ pub struct TranscriptionReq {
     pub extra: SourceScopedExtra,
 }
 
-/// THE TRANSCRIPTION FAMILY'S WALK — this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. The audio
-/// blob is BINARY and unscreenable → one [`busbar_contract::ir::facts::ContentItem::Opaque`]
-/// (present-but-unscreenable, never silently empty). The `prompt` is caller free-text forwarded
-/// upstream — reachable ONLY through the byte-aware hook seam (a multipart body never reaches the
-/// `&Value` path) → [`busbar_contract::ir::facts::ContentItem::Text`]. `source_language`/
-/// `target_language`/`response_format` are enum roles, not content.
+/// The transcription family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. The
+/// audio blob is binary and unscreenable: one [`busbar_contract::ir::facts::ContentItem::Opaque`]
+/// (present, never silently empty). The `prompt` is caller free text forwarded upstream, reachable
+/// only through the byte-aware hook seam (a multipart body never reaches the `&Value` path), as
+/// [`busbar_contract::ir::facts::ContentItem::Text`]. `source_language`/`target_language`/
+/// `response_format` are enum roles, not content.
 impl busbar_contract::ir::facts::IrFacts for TranscriptionReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::TRANSCRIPTION
@@ -108,10 +107,10 @@ pub struct TranscriptionResp {
     pub duration_seconds: Option<f64>,
     pub segments: Vec<Segment>,
     pub words: Vec<Word>,
-    /// The response format the body was delivered in, so a writer can reproduce the wire SHAPE the
-    /// caller asked for. OpenAI serves `text`/`srt`/`vtt` as a raw `text/plain` body (not JSON), so a
-    /// reader that parsed a non-JSON body records the plain shape here and the writer re-emits
-    /// `text/plain` instead of JSON-wrapping. `None`/`json`/`verbose_json` → the JSON envelope.
+    /// The response format the body was delivered in, so a writer reproduces the wire shape the caller
+    /// asked for. OpenAI serves `text`/`srt`/`vtt` as a raw `text/plain` body, so a reader that parsed
+    /// a non-JSON body records it here and the writer re-emits `text/plain` instead of JSON-wrapping.
+    /// `None`/`json`/`verbose_json` mean the JSON envelope.
     pub response_format: Option<String>,
     /// `Duration{seconds}` (whisper-1) | `Tokens` (gpt-4o-transcribe) — model-dependent.
     pub usage: Option<Billing>,
@@ -142,14 +141,11 @@ pub struct SpeechReq {
 }
 
 impl SpeechReq {
-    /// THE TTS REQUEST-SEAM METER. TTS is billed by the SIZE OF THE INPUT (tts-1/-hd: characters),
-    /// and that quantity is knowable ONLY here — the response is opaque audio with no usage object, so
-    /// the response reader can only mark the synthesis `Billing::Flat` ("a request happened"), never
-    /// the true unit (the `SpeechResp::billing` degrade the readers document). This method resolves the
-    /// exact character count from the request `input` (the one place it exists), the faithful
-    /// request-seam representation of the billable quantity. Token-metered TTS models
-    /// (`gpt-4o-mini-tts`) re-derive tokens at pricing time; the exact character count carried here is
-    /// strictly more information than the former response-side `Flat`.
+    /// The TTS request-seam meter. TTS bills by input size (tts-1/-hd: characters), knowable only here:
+    /// the response is opaque audio with no usage, so the response reader can only mark the synthesis
+    /// `Billing::Flat` (see the `SpeechResp::billing` degrade). This resolves the exact character count
+    /// from the request `input`. Token-metered TTS (`gpt-4o-mini-tts`) re-derives tokens at pricing
+    /// time; the count carried here is strictly more than the response-side `Flat`.
     pub fn billing(&self) -> Option<Billing> {
         Some(Billing::Characters {
             count: self.input.chars().count() as u64,
@@ -157,11 +153,10 @@ impl SpeechReq {
     }
 }
 
-/// THE SPEECH FAMILY'S WALK — this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. Every caller
-/// free-text field is projected to [`busbar_contract::ir::facts::ContentItem::Text`]: the `input` to
-/// synthesize, the `instructions` style prompt when present (forwarded verbatim by both
-/// writers), and each multi-speaker NAME. The speaker VOICE and `response_format`/`speed` are
-/// provider knobs (voice ids, format enums), not caller free-text, and stay out.
+/// The speech family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. Every caller
+/// free-text field is a [`busbar_contract::ir::facts::ContentItem::Text`]: the `input`, the
+/// `instructions` style prompt (forwarded verbatim by both writers), and each multi-speaker name.
+/// Voice, `response_format` and `speed` are provider knobs, not free text.
 impl busbar_contract::ir::facts::IrFacts for SpeechReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::SPEECH

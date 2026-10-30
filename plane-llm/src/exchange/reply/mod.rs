@@ -1,21 +1,20 @@
-//! The far end's answer, sans I/O: what the caller reads for the status, head fields and body the
-//! far end answered an attempt with, the units the far end reported, and what the answer means for
-//! the walk.
+//! The far end's answer, sans I/O: the status, head fields and body the far end answered an attempt
+//! with, the units it reported, and what the answer means for the walk.
 //!
-//! [`Reply`] is one attempt's answer as a state machine over the far end's pieces. It is opened on
-//! the far end's status and head, and fed the far end's body piece by piece; each [`Piece`] it
-//! answers carries the caller's head (on the first piece that carries anything for the caller),
-//! the caller's bytes, the far end's CUMULATIVE reported units, a [`Verdict`] and, when the answer
-//! failed, the [`Fault`] the far end's standing records. Three shapes:
+//! [`Reply`] is one attempt's answer as a state machine over the far end's pieces: opened on the far
+//! end's status and head, fed its body piece by piece. Each [`Piece`] it answers carries the caller's
+//! head (on the first piece with anything for the caller), the caller's bytes, the far end's
+//! cumulative reported units, a [`Verdict`] and, when the answer failed, the [`Fault`] the far end's
+//! standing records. Three shapes:
 //!
-//! * a far-end ERROR (any status outside 2xx) is read whole and judged ([`failure`]);
-//! * a far-end success taken WHOLE (across dialects without a stream, or asked to stream from a far
-//!   end that answered one body) is read whole and translated ([`whole`]);
-//! * any other success is RELAYED as it arrives ([`relay`]).
+//! * a far-end error (any status outside 2xx) is read whole and judged ([`failure`]);
+//! * a success taken whole (across dialects without a stream, or asked to stream from a far end that
+//!   answered one body) is read whole and translated ([`whole`]);
+//! * any other success is relayed as it arrives ([`relay`]).
 //!
-//! It is pure: no clock (the wall-clock seconds and the elapsed milliseconds arrive in [`At`]), no
-//! I/O, and no decision that is the kernel's — the breaker, the failover, the money, the timing and
-//! the credentials are the kernel's; the plane reports and the kernel acts.
+//! Pure: no clock (wall-clock seconds and elapsed milliseconds arrive in [`At`]), no I/O, and no
+//! decision that is the kernel's (breaker, failover, money, timing, credentials); the plane reports
+//! and the kernel acts.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -49,10 +48,9 @@ pub struct ReplyCtx<'a> {
     /// The far end was reached with the caller's own credential (the kernel's fact): its 401 and
     /// 403 are the caller's own, relayed unjudged.
     pub passthrough: bool,
-    /// The TRANSLATION CAP the plane enforces, the one its settings carry
-    /// ([`super::shaping::Shaping::translate_cap`]): a whole answer past it is refused, a
-    /// same-dialect copy kept for usage keeps its tail within it, and a writer bounds what it
-    /// accumulates there.
+    /// The translation cap the plane enforces ([`super::shaping::Shaping::translate_cap`]): a whole
+    /// answer past it is refused, a same-dialect copy kept for usage keeps its tail within it, and a
+    /// writer bounds what it accumulates there.
     pub translate_cap: usize,
 }
 
@@ -160,10 +158,9 @@ pub struct Piece<'a> {
     pub fault: Option<Fault>,
     /// The caller's answer is complete.
     pub done: bool,
-    /// The wire paths of a delivered TRANSLATE answer that did not cross to the caller's dialect
-    /// already warned: the door reports one `egress.control_unrepresentable`
-    /// audit row per path (`<path> from <dialect>`). Empty on a relay of the caller's
-    /// own dialect and on every end that delivers nothing.
+    /// Wire paths of a delivered TRANSLATE answer that did not cross to the caller's dialect, already
+    /// warned: the door reports one `egress.control_unrepresentable` audit row per path
+    /// (`<path> from <dialect>`). Empty on a same-dialect relay and on every end that delivers nothing.
     pub dropped: Vec<String>,
     /// The caller asked for a stream and the far end answered whole: the stream the caller reads
     /// was synthesised from that one body (busbar answers in the caller's dialect and mode). The door audits it; the units are the far end's real body's.
@@ -196,13 +193,12 @@ enum State {
 /// ONE ATTEMPT'S ANSWER.
 pub struct Reply {
     state: State,
-    /// The relayed answer ended a usable success the caller was reading (its first byte reached
-    /// the caller and its stream ended clean): a caller that leaves while its last window is still
-    /// being written bills the units it stated, as one that left mid-relay does (L1#5). A relayed
-    /// end that failed after the caller's first byte yet bills what the far end reported (a failed
-    /// generation, an aborted translation) sets it too, and so does a whole answer handed to the
-    /// caller (a delivery, or a failed generation that keeps its usage): its body may span several
-    /// windows, and its units bill however many the caller read.
+    /// The relayed answer ended a usable success the caller was reading (first byte reached it, stream
+    /// ended clean): a caller leaving while its last window is still being written bills the units
+    /// stated, as one leaving mid-relay does (L1#5). A relayed end that failed after the caller's first
+    /// byte yet bills what the far end reported (a failed generation, an aborted translation) sets it
+    /// too, as does a whole answer handed to the caller (a delivery, or a failed generation keeping its
+    /// usage): its body may span several windows and its units bill however many the caller read.
     ended_partial: bool,
     /// A streamed answer over the invoke envelope, re-framed into its carried dialect's events
     /// before it is read ([`invoke::Transcoder`]).
@@ -431,12 +427,10 @@ impl Reply {
                     .map(|(n, v)| (n.as_slice(), v.as_slice()))
                     .collect();
                 let piece = whole_piece(host, ctx, status, &body, &far_head, at);
-                // A whole answer that reaches the caller bills what it reported, whether or not
-                // the caller stays for its last window: a buffered translated answer is billed
-                // before a byte of it is written, so a caller that leaves while a body larger
-                // than one window is still being written bills its units: the delivered answer
-                // and the failed generation that keeps its usage. An end that delivers nothing
-                // bills nothing.
+                // A whole answer that reaches the caller bills what it reported whether or not the
+                // caller stays for its last window: a buffered translated answer is billed before a
+                // byte is written, so a caller leaving mid-body bills its units (the delivered answer
+                // and the failed generation keeping its usage). An end that delivers nothing bills nothing.
                 self.ended_partial = piece.verdict == Verdict::Ok
                     || piece.fault == Some(Fault::Transient(FAILED_GENERATION));
                 piece
@@ -450,9 +444,8 @@ impl Reply {
                 let head = head.take();
                 if !last {
                     // What a stream's readers have read so far. A same-dialect whole body states
-                    // nothing while it relays: a caller that leaves mid-body bills no tokens (a
-                    // partially buffered same-protocol body is not billed on a mid-buffer drop),
-                    // and the kernel adds no floor.
+                    // nothing while relaying: a caller leaving mid-body bills no tokens (a partially
+                    // buffered same-protocol body is not billed on a mid-buffer drop) and the kernel adds no floor.
                     if let Some(u) = relay.streamed_usage() {
                         *units = Units::of(Some(&u), BTreeMap::new());
                     }
@@ -481,13 +474,12 @@ impl Reply {
                 let fault = end.stream_fault.map(Fault::Transient).or(end
                     .generation_failed
                     .then_some(Fault::Transient(FAILED_GENERATION)));
-                // The end's report replaces a floor stated while relaying, even when it is zero.
-                // A stream the far end itself ended as failed (its in-band terminal error)
-                // delivered no completed generation and bills no tokens; its buffered twin (a
-                // `failed` status) reports none either. A failed generation is not one of those:
-                // it bills what it reported ([`Relay::failed_generation`]). A translation that
-                // aborted after the first byte is a mid-stream cut, not a refund: it bills what
-                // the far end reported before it, as a caller that leaves after it does.
+                // The end's report replaces a floor stated while relaying, even zero. A stream the far
+                // end ended as failed (in-band terminal error) delivered no completed generation and
+                // bills no tokens, as its buffered twin (a `failed` status) reports none. A failed
+                // generation is different: it bills what it reported ([`Relay::failed_generation`]). A
+                // translation that aborted after the first byte is a mid-stream cut, not a refund: it
+                // bills what the far end reported before it, as a caller leaving after it does.
                 let translate_aborted = end.stream_fault == Some("stream-translate-abort");
                 let bills = end.stream_fault.is_none() || failed_generation || translate_aborted;
                 let units = if bills {
@@ -498,11 +490,10 @@ impl Reply {
                 } else {
                     Units::default()
                 };
-                // An end that bills its units bills them whether or not the caller stays for its
-                // last window, as a whole answer's does: a clean end the caller had a usable part
-                // of, and an end that failed after the caller's first byte yet still bills what
-                // the far end reported (a failed generation; a translation that aborted). A caller that leaves while that end is still being written
-                // bills the same units the end states. An end that bills nothing bills nothing.
+                // An end that bills its units bills them whether or not the caller stays for its last
+                // window, as a whole answer does: a clean end the caller had a usable part of, and an end
+                // that failed after the first byte yet bills what the far end reported (a failed
+                // generation; an aborted translation). An end that bills nothing bills nothing.
                 self.ended_partial = if fault.is_none() {
                     partial
                 } else {

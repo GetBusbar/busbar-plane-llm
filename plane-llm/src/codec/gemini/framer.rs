@@ -3,23 +3,19 @@
 use super::*;
 use crate::codec::keys;
 
-/// Re-frame a Gemini SSE response stream as the JSON-ARRAY streaming format a native
-/// `:streamGenerateContent` request WITHOUT `?alt=sse` expects: a leading `[`, the per-chunk
-/// `GenerateContentResponse` JSON objects separated by `,`, and a trailing `]`. (The SSE variant —
-/// `?alt=sse` — emits `data:`-framed chunks instead; busbar always requests `?alt=sse` UPSTREAM, so
-/// the bytes reaching this framer are Gemini SSE frames either way, whether the egress is gemini
-/// same-protocol passthrough or a cross-protocol `StreamTranslate` whose ingress writer is gemini.)
+/// Re-frame a Gemini SSE response stream as the JSON-array format a native `:streamGenerateContent`
+/// request without `?alt=sse` expects: a leading `[`, the per-chunk `GenerateContentResponse` objects
+/// separated by `,`, a trailing `]`. Busbar always requests `?alt=sse` upstream, so the bytes reaching
+/// this framer are Gemini SSE frames either way (same-protocol passthrough, or a cross-protocol
+/// `StreamTranslate` whose ingress writer is gemini).
 ///
-/// This framer is the JSON-array sibling of [`StreamTranslate`]'s SSE path: it consumes the SSE
-/// bytes (already in the gemini ingress wire shape), strips the `data:` framing, and re-emits the
-/// payloads as one streaming JSON array. The output is ALWAYS a syntactically valid JSON array
-/// (`finish` emits `]`, or `[]` when no chunk was seen) so a client that buffers and `JSON.parse`s
-/// the whole body still succeeds.
+/// The JSON-array sibling of [`StreamTranslate`]'s SSE path: it strips the `data:` framing and
+/// re-emits the payloads as one array. The output is always a valid JSON array (`finish` emits `]`,
+/// or `[]` with no chunk), so a client that buffers and `JSON.parse`s the body succeeds.
 pub struct GeminiJsonArrayFramer {
     /// The SSE frame reassembler the upstream bytes accumulate in.
     frames: SseFrames,
-    /// Whether the opening `[` (and, for every object after the first, the separating `,`) has been
-    /// emitted yet.
+    /// Whether the opening `[` (and, for each later object, the separating `,`) has been emitted.
     started: bool,
     /// Set once `finish` has emitted the closing `]`, so a second `finish` is a no-op.
     finished: bool,
@@ -34,8 +30,7 @@ impl Default for GeminiJsonArrayFramer {
 }
 
 impl GeminiJsonArrayFramer {
-    // `pub(crate)` so the framer's tests in `mod.rs` (which exercise the buffer-overflow abort path)
-    // can size a payload off the cap; it stays an internal cap, not part of the wire surface.
+    // `pub(crate)` so the framer's tests can size a payload off the cap (the overflow abort path); not wire surface.
     pub const MAX_BUF: usize = crate::codec::eventstream::MAX_FRAME_BYTES;
 
     pub fn new() -> Self {
@@ -47,9 +42,9 @@ impl GeminiJsonArrayFramer {
         }
     }
 
-    /// Feed a chunk of GEMINI SSE bytes; return JSON-array bytes for whatever complete SSE frames are
-    /// now available (empty if only a partial frame is buffered, or if the buffered frames carried no
-    /// data payload yet). Each emitted object is preceded by `[` (first) or `,` (subsequent).
+    /// Feed a chunk of Gemini SSE bytes; return JSON-array bytes for the complete frames now available
+    /// (empty for a partial frame, or frames with no data payload yet). Each object is preceded by
+    /// `[` (first) or `,` (subsequent).
     pub fn feed(&mut self, chunk: &[u8]) -> Vec<u8> {
         if self.aborted || self.finished {
             return Vec::new();
@@ -82,12 +77,10 @@ impl GeminiJsonArrayFramer {
         out
     }
 
-    /// Call once at end-of-stream. Emits the closing `]` (and the opening `[` too, as `[]`, when the
-    /// stream carried no chunk) so the body is always a complete, parseable JSON array. When the
-    /// framer ABORTED (the reassembly buffer overran `MAX_BUF` without a frame terminator), the
-    /// stream was silently truncated — so instead of a bare `]` that would make the partial array
-    /// look complete, append a Gemini-shaped `google.rpc.Status` error element so a parsing client
-    /// can see the stream ended abnormally (then close the array).
+    /// Call once at end-of-stream. Emits the closing `]` (and the opening `[` too, as `[]`, if no
+    /// chunk was seen) so the body is always a parseable array. After an abort (the buffer overran
+    /// `MAX_BUF` with no frame terminator) a bare `]` would make the truncated array look complete, so
+    /// a Gemini-shaped `google.rpc.Status` error element is appended first.
     pub fn finish(&mut self) -> Vec<u8> {
         if self.finished {
             return Vec::new();
@@ -96,12 +89,9 @@ impl GeminiJsonArrayFramer {
             return self.finish_with_error(
                 500,
                 GRPC_INTERNAL,
-                // Client-facing wire body: must carry NO product/internal vocabulary (the
-                // protocol-indistinguishability promise). "upstream" is busbar-internal routing
-                // vocabulary no real Gemini API ever emits — a fingerprintable tell. Mirror Gemini's
-                // own canonical 500 status message text instead (the `google.rpc.Status.message` a
-                // real Generative Language API 500 carries), so substring-matching clients can't
-                // distinguish the proxy.
+                // Client-facing body must carry no product/internal vocabulary (the
+                // indistinguishability promise): "upstream" is busbar-internal and a fingerprintable
+                // tell. Use Gemini's own canonical 500 `google.rpc.Status.message` instead.
                 "Internal error encountered.",
             );
         }
@@ -113,23 +103,20 @@ impl GeminiJsonArrayFramer {
         }
     }
 
-    /// Close the array at end-of-stream when this framer sits DOWNSTREAM of a cross-protocol
-    /// [`StreamTranslate`] (gemini ingress, non-gemini egress). Identical to [`finish`] except it ALSO
-    /// surfaces an abort that happened on the TRANSLATE side: when the translate's reassembly buffer
-    /// overflowed `MAX_BUF` it stopped feeding this framer and its SSE terminal-error frame is NOT fed
-    /// through (an SSE error cannot ride inside a JSON-array body), so this framer's own `aborted` flag
-    /// stays clear and a plain [`finish`] would emit a bare `]` — a SILENT truncation indistinguishable
-    /// from a successful short completion. Pass `translate_aborted = StreamTranslate::aborted()`; when
-    /// EITHER side aborted, emit the Gemini-shaped error element + `]` (mirroring the SSE-ingress
-    /// terminal-error path in `StreamTranslate::finish`) instead of the bare close. Idempotent via the
-    /// shared `finished` flag.
+    /// Close the array when this framer sits downstream of a cross-protocol [`StreamTranslate`]
+    /// (gemini ingress, non-gemini egress). Like [`finish`] but it also surfaces a translate-side
+    /// abort: when the translate's buffer overflowed `MAX_BUF` it stopped feeding this framer and its
+    /// SSE error frame is not fed through (an SSE error cannot ride in a JSON-array body), so this
+    /// framer's `aborted` stays clear and plain [`finish`] would emit a bare `]`, a silent truncation.
+    /// Pass `translate_aborted = StreamTranslate::aborted()`; if either side aborted, the error element
+    /// plus `]` is emitted (mirroring `StreamTranslate::finish`). Idempotent via `finished`.
     ///
     /// [`finish`]: Self::finish
     ///
-    /// Production wiring lives in `proxy engine`: on a NORMAL close the `FirstByteBody`
-    /// `Poll::Ready(None)` JSON-array arm FEEDS `translate.finish()`'s tail through [`Self::feed`] (so the
-    /// terminal usage frame becomes a trailing array element) and then calls this with
-    /// `translate.aborted()`; on an ABORT it skips feeding the tail and relies on this error-close.
+    /// Production wiring is in `proxy engine`: on a normal close the `FirstByteBody` `Poll::Ready(None)`
+    /// JSON-array arm feeds `translate.finish()`'s tail through [`Self::feed`] (the terminal usage
+    /// frame becomes a trailing array element) then calls this with `translate.aborted()`; on an abort
+    /// it skips the tail and relies on this error-close.
     pub fn finish_for_translate(&mut self, translate_aborted: bool) -> Vec<u8> {
         if self.finished {
             return Vec::new();
@@ -138,22 +125,18 @@ impl GeminiJsonArrayFramer {
             return self.finish_with_error(
                 500,
                 GRPC_INTERNAL,
-                // Same client-facing wire body as the framer-side abort in `finish`: a native
-                // Gemini 500 `google.rpc.Status.message`, carrying no busbar-internal vocabulary
-                // (the protocol-indistinguishability promise).
+                // Same client-facing body as the abort in `finish`: a native Gemini 500 message with no busbar vocabulary.
                 "Internal error encountered.",
             );
         }
         self.finish()
     }
 
-    /// Terminate the array with a trailing Gemini-shaped error element, then the closing `]`. Used on
-    /// a mid-stream upstream transport failure (and on internal abort): a native Gemini JSON-array
-    /// body is `application/json`, so the in-band error MUST itself be a valid array element — a
-    /// `{"error":{"code","message","status"}}` object matching Gemini's `google.rpc.Status` envelope
-    /// (the same shape `GeminiWriter::write_error` emits). Emitting raw SSE `event:`/`data:` text here
-    /// (the bug this replaces) spliced non-JSON into the array, yielding an unparseable body and a
-    /// protocol tell (a native Gemini JSON-array stream never contains SSE framing). Idempotent.
+    /// Terminate the array with a trailing Gemini-shaped error element, then `]`. Used on a mid-stream
+    /// transport failure (and internal abort): the in-band error must itself be a valid array element,
+    /// a `{"error":{"code","message","status"}}` object matching `google.rpc.Status` (as
+    /// `GeminiWriter::write_error` emits). Raw SSE `event:`/`data:` text here once spliced non-JSON
+    /// into the array (an unparseable body and a protocol tell). Idempotent.
     pub fn finish_with_error(&mut self, code: u16, status: &str, message: &str) -> Vec<u8> {
         if self.finished {
             return Vec::new();
@@ -185,8 +168,8 @@ impl busbar_contract::protocol::ArrayStreamFramer for GeminiJsonArrayFramer {
     }
 
     fn finish_with_server_error(&mut self, message: &str) -> Vec<u8> {
-        // The implementor owns the wire shape: a native Gemini server error is HTTP 500 / gRPC
-        // `INTERNAL`. The agnostic caller passes only the message, so proxy engine names no Gemini value.
+        // The implementor owns the wire shape: a native Gemini server error is HTTP 500 / gRPC `INTERNAL`.
+        // The agnostic caller passes only the message, so proxy engine names no Gemini value.
         GeminiJsonArrayFramer::finish_with_error(self, 500, GRPC_INTERNAL, message)
     }
 }

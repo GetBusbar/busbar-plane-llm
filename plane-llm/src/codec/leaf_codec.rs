@@ -1,25 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! **The per-`(operation, egress-protocol)` LEAF-OP writer dispatch.**
+//! The per-`(operation, egress-protocol)` leaf-op writer dispatch.
 //!
-//! The chat operation already selects its writer by egress-protocol string
-//! (`proto_codec::protocol_for(proto).writer()`); the six non-chat leaf ops
-//! (embeddings/image/rerank/transcription/speech/moderation) did not — each dialect's write body
-//! lived inline in its `OperationHandler::{write_request,write_response}`, reachable only by holding
-//! that dialect's handler instance. That is exactly the coupling the dissolve cannot cross without
-//! a `Box<dyn Any>` downcast (owner-forbidden): once `IrReq`/`IrResp` dissolve onto `Box<dyn IrHandle>`
-//! a leaf-op handle cannot pattern-match its way back to `&EmbeddingsReq` to feed the egress writer.
+//! Chat selects its writer by egress-protocol string (`proto_codec::protocol_for(proto).writer()`);
+//! the six leaf ops (embeddings/image/rerank/transcription/speech/moderation) had each dialect's
+//! write body inline in its `OperationHandler::{write_request,write_response}`, reachable only by
+//! holding that handler. A leaf-op `IrHandle` cannot downcast (owner-forbidden) back to
+//! `&EmbeddingsReq` to feed that writer.
 //!
-//! So — mirroring chat — each leaf op gets a writer selected by `(operation, egress-protocol)` KEY:
-//! the per-dialect write body is a free fn in that dialect's `handler` module, and the dialect
-//! DECLARES which ops it speaks as data — its [`LeafCodecs`] row, carried on its registration
-//! ([`crate::codec::proto_codec::DialectEntry::leaf`]). The dispatchers below find the egress
-//! dialect's row by name and call the fn it declared; no dispatcher names a dialect (design F3
-//! SELF-CONTAINED: central name-`match` registries become per-dialect registration). Today the dialect `OperationHandler`s
-//! route their own writes through these (byte-identical — same bytes out, same order); the
-//! leaf-op `IrHandle::write_egress_request` calls the SAME dispatcher keyed by the egress protocol, so
-//! the write no longer needs the concrete enum. Prep only: names no `IrReq`/`IrResp`, moves no bytes.
+//! So each leaf op gets a writer selected by `(operation, egress-protocol)`: the per-dialect body is
+//! a free fn in that dialect's `handler` module, and the dialect declares which ops it speaks as data,
+//! its [`LeafCodecs`] row on its registration ([`crate::codec::proto_codec::DialectEntry::leaf`]). The
+//! dispatchers find the egress dialect's row by name and call the fn it declared; none names a dialect
+//! (design F3 self-contained). The dialect `OperationHandler`s route their own writes through these
+//! (byte-identical), and the leaf-op `IrHandle::write_egress_request` calls the same dispatcher. Names
+//! no `IrReq`/`IrResp`, moves no bytes.
 
 use crate::codec::ir::audio::{SpeechReq, SpeechResp, TranscriptionReq, TranscriptionResp};
 use crate::codec::ir::embeddings::{EmbeddingsReq, EmbeddingsResp};
@@ -29,9 +25,9 @@ use crate::codec::ir::rerank::{RerankReq, RerankResp};
 use busbar_contract::codec::{CodecError, IngressReject, WireBody};
 use bytes::Bytes;
 
-/// ONE LEAF OPERATION'S FOUR CODEC FNS in one dialect: the egress request writer, the ingress
-/// response writer, and the two concrete reads (the reads the dialect's `OperationHandler` wraps in
-/// a leaf handle; the `(op, protocol)` read dispatch below reaches them in test builds).
+/// One leaf operation's four codec fns in one dialect: the egress request writer, the ingress response
+/// writer, and the two concrete reads (which the dialect's `OperationHandler` wraps in a leaf handle;
+/// the `(op, protocol)` read dispatch below reaches them in test builds).
 pub struct LeafCodec<Q: 'static, A: 'static> {
     pub write_request: fn(&Q) -> Bytes,
     pub write_response: fn(&A) -> WireBody,
@@ -71,10 +67,9 @@ fn cell<Q, A>(
     crate::codec::proto_codec::entry_of(proto).and_then(|d| pick(d.leaf))
 }
 
-/// The write cell for `proto`. Unknown protocol (or one that does not speak the op) =>
-/// `unreachable!` — every caller (dialect handler, leaf-op handle) passes a real egress protocol for
-/// an op it routed there; a protocol added without declaring the op fails LOUDLY here rather than
-/// emitting a malformed empty body.
+/// The write cell for `proto`. An unknown protocol, or one not speaking the op, is `unreachable!`:
+/// every caller passes a real egress protocol for an op routed there, so a protocol added without
+/// declaring the op fails loudly rather than emitting a malformed empty body.
 fn write_cell<Q, A>(
     proto: &str,
     pick: fn(&'static LeafCodecs) -> Option<&'static LeafCodec<Q, A>>,
