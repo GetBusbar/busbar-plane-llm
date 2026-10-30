@@ -24,11 +24,11 @@ use super::arrive::Arrived;
 use super::decl;
 use super::invoke::HeadField;
 use super::shaping::{FarShape, Lane, Shaping};
-use crate::codec::json_splice::{self, Edit};
 use crate::codec::translate::{TranslateCodec as _, TranslateReqInput, TranslateReqReject};
 use crate::codec::DECLS;
 use crate::dialect::DIALECTS;
 use crate::options::{Place, Precedence, SetOption};
+use busbar_contract::spans::{self, Edit};
 
 /// A refusal the attempt answers the caller with instead of reaching the far end.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -187,7 +187,7 @@ fn needs_no_splice(lane: FarShape<'_>, hop_bytes: &[u8]) -> bool {
     let plain = !wire.iter().any(|c| *c == b'"' || *c == b'\\' || *c < 0x20);
     let mut router_key = false;
     let mut model_is_wire = false;
-    let scanned = json_splice::scan_object(hop_bytes, 0, |m| {
+    let scanned = spans::scan(hop_bytes, 0, |m| {
         if DECLS
             .iter()
             .filter_map(|d| d.array_stream_shim_key)
@@ -208,7 +208,7 @@ fn needs_no_splice(lane: FarShape<'_>, hop_bytes: &[u8]) -> bool {
 }
 
 /// The relay of one same-dialect body: the caller's bytes with the governed splices only, each a
-/// byte-level member edit (`json_splice`), never a re-serialization (dialect fidelity). The
+/// byte-level member edit (`busbar_contract::spans`), never a re-serialization (dialect fidelity). The
 /// governed members: busbar's own router keys (never a
 /// far end's); for a path-model far end the `model` and `stream` the arrival spliced in (both ride
 /// the URL); for a body-model far end the mapped `model`, and a `path_base` far end's reshape.
@@ -255,7 +255,7 @@ pub fn relay_request<'a>(
             None => Edit::Remove(k),
         });
     }
-    match json_splice::apply_top(hop_bytes, &edits) {
+    match spans::apply_top(hop_bytes, &edits) {
         Some(bytes) => Translated {
             bytes: Cow::Owned(bytes),
             pristine: false,
@@ -925,7 +925,7 @@ const INCLUDE_USAGE: &str = "include_usage";
 ///
 /// The payload, verbatim, when its `stream_options` is not an object.
 pub fn try_inject_stream_include_usage(payload: Vec<u8>) -> Result<Vec<u8>, Vec<u8>> {
-    let Some(top) = json_splice::object_at(&payload, 0) else {
+    let Some(top) = spans::members(&payload, 0) else {
         return Ok(payload);
     };
     let value: Cow<'_, [u8]> = match top.last(STREAM_OPTIONS) {
@@ -934,18 +934,18 @@ pub fn try_inject_stream_include_usage(payload: Vec<u8>) -> Result<Vec<u8>, Vec<
             Cow::Borrowed(br#"{"include_usage":true}"#)
         }
         Some(m) => {
-            let Some(inner) = json_splice::object_at(&payload[..m.value_end], m.value_start) else {
+            let Some(inner) = spans::members(&payload[..m.value_end], m.value_start) else {
                 return Err(payload);
             };
             let set = [Edit::Set(INCLUDE_USAGE, Cow::Borrowed(b"true"))];
-            match json_splice::apply(&payload[..m.value_end], &inner, &set) {
+            match spans::apply(&payload[..m.value_end], &inner, &set) {
                 Some(edited) => Cow::Owned(edited[m.value_start..].to_vec()),
                 None => Cow::Borrowed(&payload[m.value_start..m.value_end]),
             }
         }
     };
     let set = [Edit::Set(STREAM_OPTIONS, value)];
-    let out = json_splice::apply(&payload, &top, &set);
+    let out = spans::apply(&payload, &top, &set);
     drop(set);
     Ok(out.unwrap_or(payload))
 }

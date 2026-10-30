@@ -11,6 +11,7 @@
 use busbar_contract::abi::mechanism::check::check_needs;
 use busbar_contract::abi::plane::check::{check_refusal_statuses, check_sections, check_tail};
 use busbar_contract::abi::plane::{TAIL_FALLBACK, TAIL_PROBES, UNITS_REPORTED};
+use busbar_contract::abi::sdk::plane::UnitCancel;
 use busbar_plane_llm::dialect::DIALECTS;
 use busbar_plane_llm::exchange::reply::Units;
 use busbar_plane_llm::plane_door::{
@@ -690,7 +691,13 @@ fn every_way_a_unit_ends_leaves_nothing_in_the_doors_book() {
     let unit = book.take(9).expect("arrived");
     book.bind(t(3), 9);
     book.hold(9, unit);
-    assert_eq!(book.cancel(t(3), 0), Some("cancelled"));
+    assert_eq!(
+        book.cancel(UnitCancel {
+            ticket: t(3),
+            unit: 0
+        }),
+        Some("cancelled")
+    );
     assert_eq!(book.held(), (0, 0), "a cancelled unit keeps nothing");
 
     // A unit whose pieces move to another ticket is bound by that one alone.
@@ -698,7 +705,13 @@ fn every_way_a_unit_ends_leaves_nothing_in_the_doors_book() {
     book.bind(t(4), 10);
     book.bind(t(5), 10);
     assert_eq!(book.held(), (1, 1), "the old ticket is unbound");
-    assert_eq!(book.cancel(t(4), 0), None);
+    assert_eq!(
+        book.cancel(UnitCancel {
+            ticket: t(4),
+            unit: 0
+        }),
+        None
+    );
     book.ends(10);
     assert_eq!(book.held(), (0, 0));
 
@@ -706,7 +719,13 @@ fn every_way_a_unit_ends_leaves_nothing_in_the_doors_book() {
     // hooks) is bound to no ticket; the cancel names it by its key, and it leaves nothing. RED: a
     // cancel read only the ticket, so the arrived unit (its whole body and parsed JSON) stayed.
     book.hold(11, "unbound");
-    assert_eq!(book.cancel(t(6), 11), Some("unbound"));
+    assert_eq!(
+        book.cancel(UnitCancel {
+            ticket: t(6),
+            unit: 11
+        }),
+        Some("unbound")
+    );
     assert_eq!(
         book.held(),
         (0, 0),
@@ -718,7 +737,13 @@ fn every_way_a_unit_ends_leaves_nothing_in_the_doors_book() {
     let unit = book.take(12).expect("arrived");
     book.bind(t(7), 12);
     book.hold(12, unit);
-    assert_eq!(book.cancel(t(8), 12), Some("bound"));
+    assert_eq!(
+        book.cancel(UnitCancel {
+            ticket: t(8),
+            unit: 12
+        }),
+        Some("bound")
+    );
     assert_eq!(book.held(), (0, 0), "its ticket goes with it");
 }
 
