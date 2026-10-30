@@ -200,40 +200,26 @@ pub trait ProtocolWriter: Send + Sync {
         false
     }
 
-    /// Write an IR request to wire JSON.
-    fn write_request(
-        &self,
-        host: &dyn busbar_contract::codec::CodecHost,
-        req: &crate::codec::ir::IrRequest,
-    ) -> serde_json::Value;
-
-    /// The production request write: an IR request for a known egress lane (resolved wire `model`
-    /// and declared [`LaneCaps`]). Both request seams (`ChatReqHandle::write_egress_request`, the
-    /// plane's `encode_egress`) call it. A dialect independent of the capabilities keeps the default,
-    /// [`Self::write_request_for_model`]; `write_request` is the default-capabilities, model-blind write.
+    /// THE REQUEST WRITE: an IR request for a known egress lane, its resolved wire `model` (`""`
+    /// when unknown) and its declared [`LaneCaps`]. Both request seams
+    /// (`ChatReqHandle::write_egress_request`, the plane's `encode_egress`) call it. A dialect whose
+    /// spelling depends on the model family behind one wire (Bedrock, Gemini) or on the
+    /// capabilities reads them; the others ignore them.
     fn write_request_for_lane(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
         req: &crate::codec::ir::IrRequest,
         model: &str,
         caps: &LaneCaps,
-    ) -> serde_json::Value {
-        let _ = caps;
-        self.write_request_for_model(host, req, model)
-    }
+    ) -> serde_json::Value;
 
-    /// Write an IR request for a known egress model (the cross-protocol seam's production write,
-    /// with the lane wire model in hand). A dialect whose spelling depends on the model family behind
-    /// one wire (Bedrock: Claude's `thinking` vs Nova's `reasoningConfig` in
-    /// `additionalModelRequestFields`) overrides this per family; others write what
-    /// [`Self::write_request`] writes. Default: `write_request`, model ignored.
-    fn write_request_for_model(
+    /// The model-blind, default-capabilities write.
+    fn write_request(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
         req: &crate::codec::ir::IrRequest,
-        _model: &str,
     ) -> serde_json::Value {
-        self.write_request(host, req)
+        self.write_request_for_lane(host, req, "", &LaneCaps::default())
     }
 
     /// Apply a hook's `rewrite` reply to an ingress body of this dialect, in place. Returns whether

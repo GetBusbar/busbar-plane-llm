@@ -67,19 +67,6 @@ impl ProtocolWriter for ResponsesWriter {
         true
     }
 
-    fn write_request(
-        &self,
-        host: &dyn busbar_contract::codec::CodecHost,
-        req: &crate::codec::ir::IrRequest,
-    ) -> serde_json::Value {
-        self.write_request_for_lane(
-            host,
-            req,
-            "",
-            &busbar_contract::ir::egress_prep::LaneCaps::default(),
-        )
-    }
-
     fn write_request_for_lane(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,

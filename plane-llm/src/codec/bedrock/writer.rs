@@ -121,14 +121,6 @@ impl ProtocolWriter for BedrockWriter {
         self.write_request_with(req, caps)
     }
 
-    fn write_request(
-        &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
-        req: &crate::codec::ir::IrRequest,
-    ) -> serde_json::Value {
-        self.write_request_with(req, &LaneCaps::default())
-    }
-
     fn write_response_event(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,

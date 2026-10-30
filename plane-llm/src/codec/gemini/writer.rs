@@ -101,23 +101,15 @@ impl ProtocolWriter for GeminiWriter {
         true
     }
 
-    fn write_request(
-        &self,
-        host: &dyn busbar_contract::codec::CodecHost,
-        req: &crate::codec::ir::IrRequest,
-    ) -> serde_json::Value {
-        // The model-blind write: `""` is "model unknown".
-        self.write_request_for_model(host, req, "")
-    }
-
     /// The production write: the lane model is known, so a reasoning-OFF ask is written only where
     /// that model accepts it (IR-09, [`gemini_model_accepts_thinking_off`]). `model` is empty from
     /// the model-blind [`ProtocolWriter::write_request`]; nothing else here depends on it.
-    fn write_request_for_model(
+    fn write_request_for_lane(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
         req: &crate::codec::ir::IrRequest,
         model: &str,
+        _caps: &busbar_contract::ir::egress_prep::LaneCaps,
     ) -> serde_json::Value {
         let mut out = serde_json::Map::new();
 

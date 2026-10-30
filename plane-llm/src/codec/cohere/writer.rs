@@ -16,10 +16,12 @@ impl ProtocolWriter for CohereWriter {
             .collect()
     }
 
-    fn write_request(
+    fn write_request_for_lane(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
         req: &crate::codec::ir::IrRequest,
+        _model: &str,
+        _caps: &busbar_contract::ir::egress_prep::LaneCaps,
     ) -> serde_json::Value {
         let mut out = serde_json::Map::new();
         let mut messages_arr: Vec<serde_json::Value> = Vec::new();
