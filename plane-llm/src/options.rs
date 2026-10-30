@@ -1,6 +1,5 @@
-//! The provider options: every value a dialect's far end takes in a
-//! request head field or a query parameter that an operator may set once, statically, for a
-//! provider.
+//! The provider options: every value a dialect's far end takes in a request head field or a query
+//! parameter that an operator may set once, statically, for a provider.
 //!
 //! Each dialect declares its list ([`catalogue`]). The operator writes an option under the provider's
 //! own name for it, directly in the provider's block, beside busbar's own provider keys:
@@ -19,20 +18,19 @@
 //!     api-version: 2024-10-21
 //! ```
 //!
-//! THE RULE AT LOAD ([`read`]). Every key of a provider's block is either a busbar provider key
+//! The rule at load ([`read`]). Every key of a provider's block is either a busbar provider key
 //! ([`BUSBAR_KEYS`]) or a name on the list of the dialect the provider speaks. Anything else is
-//! refused, so the plane's `validate` and `open` both fail. The refusal names the key and lists
-//! the names that dialect accepts. Head-field names match without regard to case and are echoed
-//! in the provider's documented spelling. Query names match exactly. A credential or auth field
-//! is on no list, and naming one is refused with that reason, as is a hop-by-hop or
-//! connection-level field. A value of the wrong type is refused, saying what the name takes.
+//! refused, so the plane's `validate` and `open` both fail, naming the key and listing the names that
+//! dialect accepts. Head-field names match without regard to case and are echoed in the provider's
+//! documented spelling; query names match exactly. A credential or auth field is on no list and
+//! naming one is refused with that reason, as is a hop-by-hop or connection-level field. A value of
+//! the wrong type is refused, saying what the name takes.
 //!
-//! THE PRECEDENCE ([`Precedence`]). A static option is the operator's DEFAULT. A same-dialect caller
-//! that sends the same head field or query parameter on its own request keeps its own value, and
-//! the static one is not sent. The exception is an option the dialect marks [`Precedence::Forced`]:
-//! the operator's tenant or billing selectors. busbar governs those, so a caller's value of one
-//! never passes and the operator's goes out on every request. A translated route forwards no
-//! caller field, so every set option goes out on it.
+//! The precedence ([`Precedence`]). A static option is the operator's default. A same-dialect caller
+//! sending the same head field or query parameter keeps its own value and the static one is not sent.
+//! The exception is an option the dialect marks [`Precedence::Forced`] (the operator's tenant or
+//! billing selectors): busbar governs those, so a caller's value never passes and the operator's goes
+//! out on every request. A translated route forwards no caller field, so every set option goes out.
 
 use std::fmt::Write as _;
 
@@ -84,9 +82,8 @@ pub struct WireOption {
     pub check: Check,
     /// Whose value wins.
     pub precedence: Precedence,
-    /// Sent only to a model served over Bedrock's `InvokeModel` envelope
-    /// (`models.<m>.protocol: bedrock-invoke`). Bedrock's Converse operation takes the same
-    /// settings in its body, and an option never writes a body.
+    /// Sent only to a model served over Bedrock's `InvokeModel` envelope (`models.<m>.protocol:
+    /// bedrock-invoke`). Converse takes the same settings in its body, and an option never writes a body.
     pub invoke_only: bool,
 }
 
@@ -121,11 +118,10 @@ const fn query(name: &'static str, check: Check) -> WireOption {
     }
 }
 
-/// Anthropic Messages API, `anthropic-version: 2023-06-01`.
-/// Docs: <https://docs.anthropic.com/en/api/versioning> (`anthropic-version`, its two versions),
-/// <https://docs.anthropic.com/en/api/beta-headers> (`anthropic-beta`, comma-separated),
-/// <https://docs.anthropic.com/en/api/messages> (the request headers). `x-api-key` and
-/// `authorization` are credentials and on no list.
+/// Anthropic Messages API, `anthropic-version: 2023-06-01`. Docs: <https://docs.anthropic.com/en/api/versioning>
+/// (`anthropic-version`), <https://docs.anthropic.com/en/api/beta-headers> (`anthropic-beta`,
+/// comma-separated), <https://docs.anthropic.com/en/api/messages>. `x-api-key` and `authorization`
+/// are credentials and on no list.
 pub const ANTHROPIC: &[WireOption] = &[
     header(
         "anthropic-version",
@@ -134,26 +130,23 @@ pub const ANTHROPIC: &[WireOption] = &[
     header("anthropic-beta", Check::TokenList),
 ];
 
-/// OpenAI Chat Completions and Responses, and Azure OpenAI, which serves both.
-/// Docs: <https://platform.openai.com/docs/api-reference/authentication> (`OpenAI-Organization`,
-/// `OpenAI-Project`), <https://learn.microsoft.com/azure/ai-foundry/openai/reference> (the
-/// `api-version` query parameter of an Azure OpenAI deployment).
-/// The two selectors are the operator's tenant, so they are forced. `authorization` and `api-key`
-/// are credentials.
+/// OpenAI Chat Completions and Responses, and Azure OpenAI, which serves both. Docs:
+/// <https://platform.openai.com/docs/api-reference/authentication> (`OpenAI-Organization`,
+/// `OpenAI-Project`), <https://learn.microsoft.com/azure/ai-foundry/openai/reference> (the Azure
+/// `api-version` query parameter). The two selectors are the operator's tenant, so they are forced.
+/// `authorization` and `api-key` are credentials.
 pub const OPENAI: &[WireOption] = &[
     forced_header("OpenAI-Organization", Check::Token),
     forced_header("OpenAI-Project", Check::Token),
     query("api-version", Check::Token),
 ];
 
-/// Gemini API (`generativelanguage.googleapis.com` v1beta) and Vertex AI, through Google's API
-/// system parameters.
-/// Docs: <https://cloud.google.com/apis/docs/system-parameters> (`X-Goog-User-Project`,
-/// `X-Goog-Quota-User`, `X-Goog-Request-Reason`, `X-Server-Timeout`).
-/// `X-Goog-User-Project` names the project the operator is billed under, so it is forced. `key`,
-/// `x-goog-api-key` and `authorization` are credentials. The response-shaping parameters (`alt`,
-/// `fields`, `prettyPrint`, `callback`) are on no list, because busbar reads the answer in the shape
-/// it asked for.
+/// Gemini API (`generativelanguage.googleapis.com` v1beta) and Vertex AI, through Google's API system
+/// parameters. Docs: <https://cloud.google.com/apis/docs/system-parameters> (`X-Goog-User-Project`,
+/// `X-Goog-Quota-User`, `X-Goog-Request-Reason`, `X-Server-Timeout`). `X-Goog-User-Project` names the
+/// project the operator is billed under, so it is forced. `key`, `x-goog-api-key` and `authorization`
+/// are credentials. The response-shaping parameters (`alt`, `fields`, `prettyPrint`, `callback`) are on
+/// no list: busbar reads the answer in the shape it asked for.
 pub const GEMINI: &[WireOption] = &[
     forced_header("X-Goog-User-Project", Check::Token),
     header("X-Goog-Quota-User", Check::Text),
@@ -161,12 +154,11 @@ pub const GEMINI: &[WireOption] = &[
     header("X-Server-Timeout", Check::Seconds),
 ];
 
-/// Amazon Bedrock runtime. These are the `InvokeModel` / `InvokeModelWithResponseStream` request
-/// headers, which reach a model served over the invoke envelope. The Converse API takes the same
-/// settings in its body (`guardrailConfig`, `performanceConfig`, `serviceTier`).
-/// Docs: <https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html>.
-/// The SigV4 fields (`authorization`, `x-amz-date`, `x-amz-content-sha256`,
-/// `x-amz-security-token`) are credentials.
+/// Amazon Bedrock runtime: the `InvokeModel` / `InvokeModelWithResponseStream` request headers, which
+/// reach a model served over the invoke envelope (Converse takes the same settings in its body:
+/// `guardrailConfig`, `performanceConfig`, `serviceTier`). Docs:
+/// <https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html>. The SigV4
+/// fields (`authorization`, `x-amz-date`, `x-amz-content-sha256`, `x-amz-security-token`) are credentials.
 pub const BEDROCK: &[WireOption] = &[
     invoke_header(
         "X-Amzn-Bedrock-Trace",
@@ -184,9 +176,8 @@ pub const BEDROCK: &[WireOption] = &[
     ),
 ];
 
-/// Cohere v2 Chat.
-/// Docs: <https://docs.cohere.com/reference/chat> (`X-Client-Name`). `authorization` is the
-/// credential.
+/// Cohere v2 Chat. Docs: <https://docs.cohere.com/reference/chat> (`X-Client-Name`). `authorization`
+/// is the credential.
 pub const COHERE: &[WireOption] = &[header("X-Client-Name", Check::Text)];
 
 /// The options the far end of `dialect` accepts; none for a dialect the plane does not speak.
