@@ -1931,6 +1931,7 @@ busbar_contract::plugin_door! {
     ops: busbar_contract::abi::plane::Ops,
     statement: STATEMENT,
     lifecycle: plane_life(LlmDoor),
+    migrate: busbar_contract::abi::sdk::migrate::Migrator<crate::migrate::LlmMigration>,
     kind_ops: {
         arrive: Safe<Arrive>, on_piece: Safe<OnPiece>, refusal: Safe<RefusalSlot>,
         serve: Safe<Serve>, hydrate: Safe<Hydrate>, start: Safe<Start>, project: Safe<Project>,
