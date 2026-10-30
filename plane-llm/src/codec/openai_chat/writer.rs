@@ -34,14 +34,6 @@ impl ProtocolWriter for OpenAiWriter {
         body.get(W_N).and_then(|v| v.as_u64()).filter(|&k| k > 1)
     }
 
-    fn write_request(
-        &self,
-        host: &dyn busbar_contract::codec::CodecHost,
-        req: &crate::codec::ir::IrRequest,
-    ) -> serde_json::Value {
-        self.write_request_for_lane(host, req, "", &LaneCaps::default())
-    }
-
     /// A hosted tool Chat has no built-in for (code execution, web fetch) is dropped by the writer;
     /// the seam records each as a dropped control.
     fn dropped_egress_controls(&self, req: &crate::codec::ir::IrRequest) -> Vec<&'static str> {

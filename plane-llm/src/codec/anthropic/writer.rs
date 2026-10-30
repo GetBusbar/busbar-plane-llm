@@ -164,14 +164,6 @@ impl ProtocolWriter for AnthropicWriter {
         dropped
     }
 
-    fn write_request(
-        &self,
-        host: &dyn busbar_contract::codec::CodecHost,
-        req: &crate::codec::ir::IrRequest,
-    ) -> serde_json::Value {
-        self.write_request_for_lane(host, req, "", &LaneCaps::default())
-    }
-
     fn write_request_for_lane(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
