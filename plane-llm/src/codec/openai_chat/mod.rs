@@ -1036,7 +1036,7 @@ impl StreamFraming for OpenAiStreamFraming {
         }
         // The value of the LAST `usage` / `choices` member, as the frame's parse reads it.
         let (mut usage, mut choices): (Option<&[u8]>, Option<&[u8]>) = (None, None);
-        let read = crate::codec::json_splice::scan_object(payload, 0, |m| {
+        let read = busbar_contract::spans::scan(payload, 0, |m| {
             let value = &payload[m.value_start..m.value_end];
             if m.is(keys::USAGE) {
                 usage = Some(value);
