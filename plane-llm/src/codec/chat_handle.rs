@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! The CHAT `IrHandle` — the request/response handle `ChatOperation` yields once `IrReq`/`IrResp`
-//! dissolved. Wraps the concrete `crate::codec::ir::{IrRequest,IrResponse}` (relocated here) and
-//! carries chat's cross-protocol prep + write, keyed by the peer PROTOCOL STRING: the handle writes
-//! ITSELF onto the target dialect via `super::proto_codec::protocol_for(proto).writer()` — no
-//! downcast. The `prepare_for_egress`/`prepare_for_ingress` bodies are lifted VERBATIM from the
-//! former `IrReq::Chat`/`IrResp::Chat` arms (only `crate::codec::` -> core re-pathing); the
-//! warn strings and their order are unchanged.
+//! The chat `IrHandle`: the request/response handle `ChatOperation` yields. Wraps the concrete
+//! `crate::codec::ir::{IrRequest,IrResponse}` and carries chat's cross-protocol prep and write,
+//! keyed by the peer protocol string: the handle writes itself onto the target dialect via
+//! `super::proto_codec::protocol_for(proto).writer()`, with no downcast.
 
 use crate::codec::drops::{self, Dropped};
 use crate::codec::ir::{IrReasoningAsk, IrRequest, IrResponse};
@@ -25,12 +22,11 @@ use serde_json::Value;
 /// Gemini's server-side context-cache reference: a request member no other dialect can carry.
 const CACHED_CONTENT: &str = "cachedContent";
 
-/// Google's documented dummy `thoughtSignature` sentinel — relocated with chat from `ir::variant`.
+/// Google's documented dummy `thoughtSignature` sentinel.
 pub const GEMINI_SKIP_THOUGHT_SIGNATURE: &str = "skip_thought_signature_validator";
 
-/// 1.5.5's operator warning, restored (TODO 585): an image's requested fidelity a dialect has no
-/// slot for is dropped with a warn, once per image, naming the word. `auto` (the default) loses
-/// nothing and logs nothing.
+/// 1.5.5's operator warning, restored (TODO 585): an image's requested fidelity a dialect has no slot
+/// for is dropped with a warn, once per image, naming the word. `auto` (the default) logs nothing.
 pub fn warn_dropped_image_details(ir: &IrRequest) {
     fn walk(blocks: &[crate::codec::ir::IrBlock]) {
         for block in blocks {
@@ -56,7 +52,7 @@ pub fn warn_dropped_image_details(ir: &IrRequest) {
     }
 }
 
-/// Chat cross-protocol EGRESS preparation (verbatim from the former `IrReq::Chat` arm).
+/// Chat cross-protocol egress preparation.
 pub fn chat_prepare_for_egress(ir: &mut IrRequest, prep: &EgressPrep) {
     if ir.max_tokens.is_none() && prep.egress_requires_max_tokens {
         ir.max_tokens = Some(
@@ -65,16 +61,10 @@ pub fn chat_prepare_for_egress(ir: &mut IrRequest, prep: &EgressPrep) {
         );
     }
     super::proto_codec::decode_request_tool_ids(prep.ingress_protocol, &mut ir.messages);
-    // n>1 clamp on the cross-protocol seam. `n` asks the backend for N candidate
-    // completions, but the neutral `IrResponse` models exactly ONE candidate (`role` +
-    // one `content` vec) — there is no place to carry choices 1..N. Forwarding `n>1` to a
-    // cross-protocol backend made it generate (and BILL for) N candidates while the
-    // translation kept only choice 0 and silently discarded the rest: wasted spend plus a
-    // response that does not match the request. IR cannot round-trip multiple choices, so
-    // the honest behavior is to clamp `n` to 1 before the egress writer emits it, so the
-    // backend generates exactly the one candidate the translated response can carry. A
-    // SAME-protocol passthrough never reaches here (the body is forwarded verbatim), so
-    // `n>1` still works end-to-end where the response is not funneled through the IR.
+    // n>1 clamp. `n` asks for N candidates but `IrResponse` carries one, so forwarding `n>1` made
+    // the backend generate and bill N candidates while translation kept only choice 0: wasted spend
+    // and a response not matching the request. Clamp `n` to 1 before the egress writer emits it. A
+    // same-protocol passthrough never reaches here (verbatim body), so `n>1` still works there.
     if ir.n.is_some_and(|n| n > 1) {
         drops::note(Dropped::slot(
             "n",
@@ -85,15 +75,13 @@ pub fn chat_prepare_for_egress(ir: &mut IrRequest, prep: &EgressPrep) {
         ));
         ir.n = Some(1);
     }
-    // The reasoning gate. A lane that did not claim the capability never receives a
-    // thinking param (a non-reasoning model would 400 on it); the request still
-    // proceeds, thinking at the backend's default level.
+    // The reasoning gate. A lane that did not claim the capability never receives a thinking param
+    // (a non-reasoning model would 400); the request proceeds, thinking at the backend's default.
     if ir.reasoning.is_some() {
         if prep.reasoning_allowed {
             ir.reasoning_budgets = Some(prep.reasoning_budgets);
         } else {
-            // Named by the caller's member the ask came from: an effort word by the effort rows,
-            // a token budget by the budget rows.
+            // Named by the caller's member the ask came from: effort rows for a word, budget rows for a token budget.
             let rows: &'static [&'static str] = match ir.reasoning {
                 Some(IrReasoningAsk::Budget(_) | IrReasoningAsk::Dynamic) => &["thinking_budget"],
                 _ => &["reasoning_effort", "reasoning"],
@@ -111,11 +99,10 @@ pub fn chat_prepare_for_egress(ir: &mut IrRequest, prep: &EgressPrep) {
             ir.reasoning = None;
         }
     }
-    // The prompt-cache gate — the cache twin of the reasoning gate above. Fires only
-    // when the EGRESS writer's cache marker is model-gated (Bedrock `cachePoint`) and
-    // the lane did not assert `prompt_caching`: the breakpoints are cleared so the
-    // writer emits no marker a model like Amazon Nova would 400 on. The request still
-    // proceeds, uncached — fail-safe over fail-hard.
+    // The prompt-cache gate, twin of the reasoning gate. Fires when the egress writer's cache marker
+    // is model-gated (Bedrock `cachePoint`) and the lane did not assert `prompt_caching`: breakpoints
+    // are cleared so the writer emits no marker a model like Amazon Nova would 400 on. The request
+    // proceeds uncached (fail-safe over fail-hard).
     if !prep.prompt_caching_allowed {
         let mut cleared = false;
         let mut clear_blocks = |blocks: &mut [crate::codec::ir::IrBlock]| {
@@ -152,13 +139,10 @@ pub fn chat_prepare_for_egress(ir: &mut IrRequest, prep: &EgressPrep) {
             ));
         }
     }
-    // Anthropic cache_control CAP: "A maximum of 4 blocks with
-    // cache_control may be provided". Reachable ONLY cross-protocol — same-protocol
-    // Anthropic is a verbatim byte passthrough that never reaches a writer, so this
-    // can never clamp a request that is legal for its own backend. Walk in Anthropic's
-    // own prefix order (system -> every message's content -> every tool), `.take()`ing
-    // every breakpoint past the cap so the writer emits at most `cap` of them, and warn
-    // once with the count actually dropped.
+    // Anthropic cache_control cap: "A maximum of 4 blocks with cache_control may be provided".
+    // Reachable only cross-protocol (same-protocol is a verbatim passthrough, so it never clamps a
+    // request legal for its own backend). Walk Anthropic's prefix order (system, every message's
+    // content, every tool), `.take()`ing breakpoints past the cap, and warn once with the dropped count.
     if let Some(cap) = prep.cache_control_cap {
         let mut seen = 0usize;
         let mut dropped = 0usize;
@@ -210,18 +194,14 @@ pub fn chat_prepare_for_egress(ir: &mut IrRequest, prep: &EgressPrep) {
             ));
         }
     }
-    // HOSTED-TOOL cross-protocol drop — of the RAW, same-protocol-only `IrTool::hosted` object.
-    // A hosted tool whose KIND a reader recognises crosses the seam untouched in the typed
-    // `IrRequest::hosted_tools` slot (IR-11); what is dropped here is only the verbatim Responses
-    // object no other writer can emit. A Responses hosted tool
-    // (`{"type":"web_search"}` → `IrTool{ name:"", hosted:Some(..) }`) has NO function-tool
-    // analog: ONLY the Responses writer honors `hosted`; every other egress writer projects
-    // an `IrTool` as a function tool keyed on `name`, so a hosted tool becomes a malformed
-    // empty-name `{"type":"function","name":""}` the backend 400s on. `prepare_for_egress`
-    // runs ONLY on the cross-protocol seam (a same-protocol Responses->Responses passthrough
-    // never reaches here - its body is forwarded verbatim, so hosted tools pass through
-    // intact), so DROPPING every hosted tool here is exactly the "keep same-proto, drop
-    // cross-proto" contract. Retain the count for the warn before draining.
+    // Hosted-tool cross-protocol drop of the raw, same-protocol-only `IrTool::hosted` object. A hosted
+    // tool whose kind a reader recognises crosses in the typed `IrRequest::hosted_tools` slot (IR-11);
+    // only the verbatim Responses object no other writer can emit is dropped here. A Responses hosted
+    // tool (`{"type":"web_search"}` as `IrTool{ name:"", hosted:Some(..) }`) has no function-tool
+    // analog and only the Responses writer honors `hosted`; others would emit a malformed
+    // `{"type":"function","name":""}` the backend 400s. This runs only cross-protocol (Responses to
+    // Responses is verbatim), so dropping every hosted tool keeps same-proto and drops cross-proto.
+    // The count is kept for the warn before draining.
     for hosted in ir.tools.iter().filter_map(|t| t.hosted.as_ref()) {
         let kind = hosted
             .get(crate::codec::keys::TYPE)
@@ -237,27 +217,18 @@ pub fn chat_prepare_for_egress(ir: &mut IrRequest, prep: &EgressPrep) {
         ));
     }
     ir.tools.retain(|t| t.hosted.is_none());
-    // Gemini `cachedContent` references a server-side context cache at
-    // Google that busbar cannot project into `contents` — it has no handle on the
-    // cached turns' text. `extra` is about to be wiped wholesale below (this is the
-    // cross-protocol-only seam; same-protocol Gemini->Gemini never reaches here), so a
-    // `cachedContent` key silently disappears with TWO invisible consequences: the
-    // backend answers on the VISIBLE history only (the cached turns are ABSENT, not
-    // summarized), and the caller is billed FULL UNCACHED input. Fail-closed here would
-    // be TERMINAL (both `proxy/wire.rs` callers do `Err => return`, pre-empting
-    // failover to a same-pool Gemini lane later), so — matching the two warns just
-    // above that already guard this same clear — degrade with a LOUD warn naming both
-    // consequences; that is the contract this codebase already applies at this seam.
-    // Gemini 3 thoughtSignature sentinel fill. Real production outage: an
-    // OpenAI/Anthropic/etc. client's tool-call history, replayed cross-protocol against a
-    // Gemini 3 AI-Studio backend, carries `ToolUse` blocks whose `thought_signature` is
-    // `None` (no foreign protocol has this concept to read). Gemini 3 REQUIRES a
-    // `thoughtSignature` echoed on every `functionCall` part or the backend 400s
-    // ("missing a thought_signature"). `thought_signature_fill` is resolved by the caller
-    // (true only for a Gemini AI-Studio egress lane, never Vertex — see the field's doc)
-    // so this stays the one place the gate lives, matching `reasoning_allowed` /
-    // `prompt_caching_allowed` above. A real signature (e.g. same-protocol-shaped history
-    // that genuinely carries one) is NEVER overwritten — only a `None` gets the sentinel.
+    // Gemini `cachedContent` references a server-side context cache busbar cannot project into
+    // `contents`. `extra` is wiped below (cross-protocol only), so the key vanishes with two
+    // invisible consequences: the backend answers on the visible history only (cached turns absent)
+    // and the caller is billed full uncached input. Failing closed would be terminal (both
+    // `proxy/wire.rs` callers `Err => return`, pre-empting failover to a same-pool Gemini lane), so
+    // degrade with a loud warn naming both consequences, as the two warns above do.
+    // Gemini 3 thoughtSignature sentinel fill. A foreign client's tool-call history replayed against
+    // a Gemini 3 AI-Studio backend has `ToolUse` blocks with `thought_signature: None`, but Gemini 3
+    // requires one on every `functionCall` part or 400s ("missing a thought_signature").
+    // `thought_signature_fill` is resolved by the caller (true only for a Gemini AI-Studio lane,
+    // never Vertex; see the field's doc), so the gate stays here with `reasoning_allowed` /
+    // `prompt_caching_allowed`. A real signature is never overwritten; only a `None` gets the sentinel.
     if prep.thought_signature_fill {
         let fill_blocks = |blocks: &mut [crate::codec::ir::IrBlock]| {
             for b in blocks {
@@ -278,23 +249,16 @@ pub fn chat_prepare_for_egress(ir: &mut IrRequest, prep: &EgressPrep) {
     drop_request_extra(ir, prep.ingress_protocol);
 }
 
-/// The members the caller's request holds in `extra` do not cross a TRANSLATE attempt: each is
+/// The members the caller's request holds in `extra` do not cross a translate attempt: each is
 /// dropped through the one drop path, named by its wire path, and `extra` is emptied. Both hosts
 /// (the exchange seam and the plane's own crossing, design F7) call this one function.
 pub fn drop_request_extra(ir: &mut IrRequest, ingress_protocol: &str) {
-    // OpenAI `messages[].name` — the per-message participant name, parked by the OpenAI
-    // Chat reader under its own sentinel (see `MESSAGE_NAMES_SENTINEL`). No other
-    // protocol in the matrix models a participant name at all: Anthropic, Gemini,
-    // Bedrock, Cohere and Responses each frame a turn as (role, content) and nothing
-    // else. So this is a genuine target-protocol limit rather than an unmodelled IR gap
-    // — but it was crossing SILENTLY, and a multi-speaker transcript losing its speaker
-    // labels changes what the model is being asked. The generic dropped-keys warn below
-    // would name it only as an opaque `__busbar_…` key; name it in the caller's own
-    // vocabulary here, exactly as `cachedContent` is named just below.
-    // Keyed off the OpenAI module's OWN const, not a copy of its string: a rename that
-    // did not update a duplicated literal here would silently switch this warn off, and a
-    // signal that can stop signalling without failing to compile is the failure class
-    // this whole section exists to remove.
+    // OpenAI `messages[].name` (participant name), parked by the OpenAI Chat reader under
+    // `MESSAGE_NAMES_SENTINEL`. No other protocol models it, so this is a target-protocol limit, but
+    // it crossed silently and a multi-speaker transcript losing speaker labels changes what the model
+    // is asked. The generic dropped-keys warn would name it only as an opaque `__busbar_…` key, so name
+    // it in the caller's vocabulary, as `cachedContent` below. Keyed off the OpenAI module's own
+    // const, not a copy: a rename that missed a duplicated literal would silently switch the warn off.
     if ir
         .extra
         .contains_key(crate::codec::dialect::MESSAGE_NAMES_SENTINEL)
@@ -320,10 +284,9 @@ pub fn drop_request_extra(ir: &mut IrRequest, ingress_protocol: &str) {
              lane.",
         ));
     }
-    // EVERY remaining member `extra` holds dies here: the source dialect's members its map file
-    // does not model, and the ones its reader parks, named as the reader declares them (a spelling
-    // hint or a member its own code carries names nothing). Only paths are logged, never values
-    // (they carry caller payload).
+    // Every remaining member `extra` holds dies here: the source dialect's members its map file does
+    // not model, and those its reader parks, named as the reader declares them (a spelling hint or a
+    // member its own code carries names nothing). Only paths are logged, never values (caller payload).
     let paths = super::proto_codec::with_reader(ingress_protocol, |r| {
         drops::extra_paths(&ir.extra, r.grammar().parked, |path| {
             crate::codec::carry::crosses(r.grammar().request_map, path)
@@ -343,10 +306,9 @@ pub fn drop_request_extra(ir: &mut IrRequest, ingress_protocol: &str) {
     ir.extra.clear();
 }
 
-/// What a TRANSLATE attempt's ANSWER drops: the far end's vendor-scoped response metadata, its
-/// content blocks the far end's reader does not model, and every other member the far end's dialect
-/// does not carry (the answer walk), each named by its wire path. Both hosts
-/// call this one function inside a [`drops::scope`].
+/// What a translate attempt's answer drops: the far end's vendor-scoped response metadata, content
+/// blocks its reader does not model, and every other member its dialect does not carry (the answer
+/// walk), each named by wire path. Both hosts call it inside a [`drops::scope`].
 pub fn drop_untranslatable_response(egress_protocol: &str, body: &Value) {
     crate::codec::dialect::drop_untranslatable_response_metadata(egress_protocol, body);
     super::proto_codec::with_reader(egress_protocol, |r| {
@@ -355,27 +317,23 @@ pub fn drop_untranslatable_response(egress_protocol: &str, body: &Value) {
             body,
             drops::UNMODELLED_ANSWER_BLOCK,
         );
-        // Every other member of the answer the caller's dialect does not get (DF-MAP-IR-GAPS
-        // section E: no extra bucket), walked against what the far end's dialect carries.
+        // Every other answer member the caller's dialect does not get (DF-MAP-IR-GAPS section E: no
+        // extra bucket), walked against what the far end's dialect carries.
         if let Some(carried) = r.grammar().response_carried {
             drops::note_unmapped(&carried, "", body);
         }
     });
 }
 
-/// Chat cross-protocol INGRESS preparation (from the former `IrResp::Chat` arm).
+/// Chat cross-protocol ingress preparation. Clears, as normalizations not drops:
+/// - `id`: every dialect's id is a format (`chatcmpl-…`, `msg_…`, `resp_…`); the ingress writer mints
+///   its own (the synthesized-ID contract on [`IrResponse::id`]). The stream path clears it on `MessageStart`.
+/// - `system_fingerprint`: only the OpenAI Chat reader sets it and only its writer emits it, and a
+///   cross-protocol response never has Chat on both ends.
 ///
-/// What it clears, and why each is a normalization rather than a drop:
-/// - `id` — every dialect's id is a FORMAT (`chatcmpl-…`, `msg_…`, `resp_…`); the ingress writer
-///   mints its own native one (the synthesized-ID contract on [`IrResponse::id`]). The stream path
-///   clears the same field on `MessageStart`.
-/// - `system_fingerprint` — only the OpenAI Chat reader sets it and only the Chat writer emits it,
-///   and a cross-protocol response never has Chat on both ends; no target can carry it.
-///
-/// What it does NOT clear: `stop_sequence`, the matched stop string. The Anthropic writer emits it,
-/// and a Bedrock Converse body carries it (`additionalModelResponseFields.stop_sequence`) — the
-/// same fact, so it maps. Clearing it here nulled it for a Bedrock -> Anthropic buffered answer
-/// while the stream path (`MessageDelta.stop_sequence`) kept it: buffered and stream disagreed.
+/// Not cleared: `stop_sequence`, the matched stop string. The Anthropic writer emits it and Bedrock
+/// carries it (`additionalModelResponseFields.stop_sequence`), so it maps. Clearing it nulled it for
+/// a Bedrock to Anthropic buffered answer while the stream path kept it.
 pub fn chat_prepare_for_ingress(ir: &mut IrResponse, ingress_protocol: &str, now_epoch: u64) {
     ir.id = None;
     ir.system_fingerprint = None;
@@ -386,10 +344,10 @@ pub fn chat_prepare_for_ingress(ir: &mut IrResponse, ingress_protocol: &str, now
     envelope_foreign_signatures(ir, ingress_protocol);
 }
 
-/// IR-18: a reasoning signature another family minted is
-/// wrapped in the busbar provenance envelope before the ingress writer places it in a client
-/// carrier that has no origin field, so the client's next turn brings back the original bytes AND
-/// their origin (the ingress reader unwraps it) instead of a blob its own family would reject.
+/// IR-18: a reasoning signature another family minted is wrapped in the busbar provenance envelope
+/// before the ingress writer places it in a client carrier with no origin field, so the next turn
+/// brings back the original bytes and origin (the ingress reader unwraps it), not a blob its own
+/// family would reject.
 fn envelope_foreign_signatures(ir: &mut IrResponse, ingress_protocol: &str) {
     let Some(p) = super::proto_codec::protocol_for(ingress_protocol) else {
         return;
@@ -409,28 +367,22 @@ fn envelope_foreign_signatures(ir: &mut IrResponse, ingress_protocol: &str) {
     }
 }
 
-/// Chat token-usage billing projection (from the former `IrResp::Chat` `usage()` arm).
-///
-/// ONE PROJECTION: this delegates to [`crate::codec::ir::IrUsage::to_token_usage`], the same function the
-/// streaming A-tap and the same-protocol usage tap below already ledger through. It used to build
-/// its own `TokenUsage`, a second projection that could drift from the one the stream ledgers: one
-/// completion must bill one figure whatever the caller's `stream` flag.
+/// Chat token-usage billing projection. It delegates to [`crate::codec::ir::IrUsage::to_token_usage`],
+/// the function the streaming A-tap and same-protocol usage tap ledger through, so one completion
+/// bills one figure whatever the caller's `stream` flag (a separate projection once could drift).
 pub fn chat_usage(r: &IrResponse) -> Option<Billing> {
     Some(Billing::Tokens(r.usage.to_token_usage()))
 }
 
-// ─────────────────────────────── the handles ───────────────────────────────
-
-/// The chat REQUEST handle: the request, plus the egress lane's declared capabilities, which the
-/// seam hands over in the [`EgressPrep`] (`prepare_for_egress`) and the egress write hands to the writer.
+/// The chat request handle: the request, plus the egress lane's declared capabilities, which the
+/// seam hands over in the [`EgressPrep`] and the egress write passes to the writer.
 pub struct ChatReqHandle(
     pub IrRequest,
     pub busbar_contract::ir::egress_prep::LaneCaps,
 );
-/// The chat RESPONSE handle: the response, and the TRANSLATION CAP its plane enforces
+/// The chat response handle: the response, and the translation cap its plane enforces
 /// ([`IrHandle::apply_translate_cap`]; [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`]
-/// until the plane hands one), which bounds what a writer accumulates when the response is
-/// re-emitted as a stream.
+/// until set), which bounds what a writer accumulates when re-emitting the response as a stream.
 pub struct ChatRespHandle(pub IrResponse, pub usize);
 
 impl Sealed for ChatReqHandle {}
@@ -464,10 +416,9 @@ impl IrHandle for ChatReqHandle {
         egress_proto: &str,
         model: &str,
     ) -> EgressWire {
-        // Chat is always a JSON body the router post-shapes (write_request_value == Some). The lane
-        // model rides along for the dialects whose spelling depends on the model family, and the
-        // lane's declared capabilities (recorded at `prepare_for_egress`) for the dialects whose
-        // spelling depends on what that model accepts.
+        // Chat is always a JSON body the router post-shapes. The lane model rides along for dialects
+        // whose spelling depends on the model family, and the lane's capabilities (recorded at
+        // `prepare_for_egress`) for dialects whose spelling depends on what it accepts.
         super::proto_codec::protocol_for(egress_proto)
             .map(|p| {
                 let writer = p.writer();
@@ -487,18 +438,16 @@ impl IrHandle for ChatRespHandle {
     fn billing(&self) -> Option<Billing> {
         chat_usage(&self.0)
     }
-    // `fill_response_model_if_absent` is deliberately NOT overridden (the trait default is a no-op):
-    // a cross-protocol response whose upstream body carried no model reaches the ingress writer
-    // with `model = None`, and each writer renders its own native shape for that (anthropic `""`,
-    // openai/responses their default model name, cohere/gemini omit the key). Stamping the routed
-    // lane's config name here changed the client-visible body against the published wire.
+    // `fill_response_model_if_absent` is deliberately not overridden (the default is a no-op): a
+    // cross-protocol response with no upstream model reaches the ingress writer with `model = None`
+    // and each writer renders its own native shape (anthropic `""`, openai/responses a default name,
+    // cohere/gemini omit the key). Stamping the lane's config name changed the body against the wire.
     fn prepare_for_ingress(&mut self, ingress_protocol: &str, now_epoch: u64) {
         chat_prepare_for_ingress(&mut self.0, ingress_protocol, now_epoch);
     }
-    // Stash the ORIGINAL ingress request body verbatim. Which members (if any) it echoes onto the
-    // wire is the WRITER's own business (`ResponsesWriter::write_response` reads specific keys off
-    // it; every non-Responses writer ignores the field entirely), so this is dialect-agnostic: no
-    // `match ingress_protocol` here, just carrying the fact forward for whichever writer wants it.
+    // Stash the original ingress request body verbatim. Which members a writer echoes is its own
+    // business (`ResponsesWriter::write_response` reads specific keys; others ignore it), so no
+    // `match ingress_protocol` here.
     fn apply_request_echo(&mut self, ingress_request_body: &Value) {
         self.0.request_echo = Some(ingress_request_body.clone());
     }
@@ -512,9 +461,8 @@ impl IrHandle for ChatRespHandle {
         elapsed_ms: Option<u64>,
     ) -> Option<Vec<u8>> {
         // A client that asked to stream must get its dialect's stream even when the upstream answered
-        // with one buffered JSON body. The writer gets first say (Bedrock synthesizes its own binary
-        // eventstream frames); every SSE-framed dialect falls through to the shared synthesizer, which
-        // drives the buffered response through the same translator the live stream path uses.
+        // with one buffered body. The writer gets first say (Bedrock synthesizes binary eventstream);
+        // SSE dialects use the shared synthesizer, which drives the response through the live translator.
         super::proto_codec::protocol_for(ingress_protocol)
             .and_then(|p| {
                 p.writer()
@@ -538,7 +486,7 @@ impl IrHandle for ChatRespHandle {
         if !ingress_serves_op {
             return TranslatedResponse::IngressUnsupported;
         }
-        // Chat write_response_value == Some(Value) => Json.
+        // Chat `write_response_value == Some(Value)` is Json.
         match super::proto_codec::protocol_for(ingress_protocol) {
             Some(p) => TranslatedResponse::Json(p.writer().write_response(host, &self.0)),
             None => TranslatedResponse::IngressUnsupported,
@@ -546,13 +494,10 @@ impl IrHandle for ChatRespHandle {
     }
 }
 
-// ─────────────────────────── the chat OperationHandler ───────────────────────────
-
-/// A protocol's chat operation — RELOCATED from `busbar-core/src/handlers/chat.rs`. The field names the protocol whose `proto_codec` reader/writer are this
-/// instance's codec; `read_request`/`read_response` now yield `Box<dyn IrHandle>` (a
-/// `ChatReqHandle`/`ChatRespHandle`), and the WRITE half inverted onto those handles (they write
-/// themselves by egress-protocol string). One TYPE, six per-protocol instances registered by each
-/// dialect's `operation_handler(Operation::CHAT)`.
+/// A protocol's chat operation. The field names the protocol whose `proto_codec` reader/writer are
+/// this instance's codec; `read_request`/`read_response` yield `Box<dyn IrHandle>` (a
+/// `ChatReqHandle`/`ChatRespHandle`) and the write half runs on those handles by egress-protocol
+/// string. One type, six per-protocol instances registered by each dialect's `operation_handler(Operation::CHAT)`.
 pub struct ChatOperation(pub &'static str);
 
 impl ChatOperation {
@@ -593,10 +538,9 @@ impl OperationHandler for ChatOperation {
         body: &[u8],
     ) -> Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault>
     {
-        // Same-protocol usage tap (verbatim from the former `ChatOperation`; `crate::codec::` re-pathed).
-        // Each way the tap cannot read the body is RETURNED as its fault: the door carries it out on
-        // its answer and the kernel counts it and warns once per (protocol, reason). The
-        // codec's own line is the per-request detail, at debug.
+        // Same-protocol usage tap. Each way the tap cannot read the body is returned as its fault: the
+        // door carries it on its answer and the kernel counts it and warns once per (protocol, reason);
+        // the codec's own line is per-request detail, at debug.
         use busbar_contract::codec::UsageTapFault;
         let Some(p) = super::proto_codec::protocol_for(ingress_protocol) else {
             ::tracing::debug!(diag = %crate::codec::diagnostics::USAGE_TAP_UNKNOWN_PROTOCOL.banner(),

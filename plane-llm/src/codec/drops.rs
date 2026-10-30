@@ -1,27 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE ONE DROP PATH (design F3 "Drops"; spec Part 2 #76: "Cross-protocol no-equivalent = drop +
-//! warn + covered by a test"; the LLM DIALECT FIDELITY rule: "translate what maps, drop what
-//! cannot").
+//! The one drop path (design F3 "Drops"; spec Part 2 #76: cross-protocol no-equivalent is drop +
+//! warn + covered by a test; the LLM dialect fidelity rule: translate what maps, drop what cannot).
 //!
-//! A TRANSLATE attempt (the caller's dialect is not the far end's) carries what maps and drops what
-//! does not. Every drop, in either direction and from every dialect, goes through [`note`] inside
-//! the attempt's [`scope`]: ONE warn naming the wire path that did not cross (wire-lock notation A,
-//! e.g. `messages[].content[].type=document`), once per path per attempt, and the path kept for the
-//! seam, which records one audit row per path (`egress.control_unrepresentable`,
-//! `<path> on <dialect>`, degraded). Nothing is substituted for a dropped member, and a clamp or a
-//! cap keeps its behaviour but always warns. Wrong-typed input to a MAPPED field stays the
-//! dialect's native error envelope (the readers' refusals), never a drop.
+//! A translate attempt (caller's dialect differs from the far end's) carries what maps and drops the
+//! rest. Every drop, in either direction and from every dialect, goes through [`note`] inside the
+//! attempt's [`scope`]: one warn naming the wire path that did not cross (wire-lock notation A, e.g.
+//! `messages[].content[].type=document`), once per path per attempt, and the path kept for the seam,
+//! which records one audit row per path (`egress.control_unrepresentable`, `<path> on <dialect>`,
+//! degraded). Nothing is substituted for a dropped member, and a clamp or cap keeps its behaviour but
+//! always warns. Wrong-typed input to a mapped field stays the dialect's native error envelope, never a drop.
 //!
-//! WHAT IS UNMAPPED is computed at runtime by walking the input against what the dialect declares:
+//! What is unmapped is computed at runtime by walking the input against what the dialect declares:
 //! its map file's modelled top-level members (the reader parks every other one in `extra`,
 //! [`crate::codec::carry::keep_unmodelled`]), the members its reader parks or carries by code
 //! ([`Parked`]) and its content-block grammar ([`Blocks`]).
 //!
-//! A same-dialect RELAY carries every member by construction and never opens a scope, so a reader
-//! running there as the relay's tap drops nothing and says nothing: [`note`] outside a scope is a
-//! no-op.
+//! A same-dialect relay carries every member and never opens a scope, so a reader running there as
+//! the relay's tap drops nothing: [`note`] outside a scope is a no-op.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -241,11 +238,11 @@ pub fn is_open() -> bool {
     OPEN.with(|o| o.borrow().is_some())
 }
 
-/// THE WRITER DROP (and a reader's, by [`wire`]): a member or block that does not cross. Inside a
-/// TRANSLATE attempt it is [`note`]d (one warn per path naming the source dialect's wire path, and
-/// the audit); outside one (a same-dialect write, a direct writer call, a relay's tap) the
-/// writer's own warn is emitted unchanged and nothing is audited. `fields` are the writer warn's own fields (each followed by a comma).
-///
+/// The writer drop (and a reader's, via [`wire`]): a member or block that does not cross. Inside a
+/// translate attempt it is [`note`]d (one warn per path naming the source dialect's wire path, plus
+/// the audit); outside one (same-dialect write, direct writer call, relay tap) the writer's own warn
+/// is emitted unchanged and nothing is audited. `fields` are the writer warn's own fields (each
+/// followed by a comma).
 /// `writer_drop!(member("tool_choice"), &DIAG, [count = n,], "dropping ... {x}", x = 1)`
 macro_rules! writer_drop {
     ($member:expr, $diag:expr, [$($field:tt)*], $($msg:tt)+) => {{
@@ -262,10 +259,10 @@ macro_rules! writer_drop {
 }
 pub(crate) use writer_drop;
 
-/// THE NAME RESOLVER: the wire path (notation A, as its map file's rows spell it) at which the
-/// request dialect `dialect` carries the IR name `name` ([`crate::codec::carry::wire_path`]; the
-/// first of `rows` it has a row for, when `rows` lists any), else `name` itself. Gemini's `n` is
-/// `generationConfig.candidateCount`, OpenAI's `n` is `n`.
+/// The name resolver: the wire path (notation A, as its map file's rows spell it) at which request
+/// dialect `dialect` carries the IR name `name` ([`crate::codec::carry::wire_path`]; the first of
+/// `rows` it has a row for, when any), else `name`. Gemini's `n` is `generationConfig.candidateCount`,
+/// OpenAI's is `n`.
 pub fn wire_path(dialect: &str, name: &str, rows: &[&str]) -> String {
     resolve(dialect, name, rows).unwrap_or_else(|| name.to_string())
 }
@@ -338,32 +335,26 @@ struct Open {
 }
 
 thread_local! {
-    /// THE OPEN TRANSLATE ATTEMPT, a dynamic scope for one SYNCHRONOUS call (a plane may hold a
-    /// `thread_local` that never carries state between units).
-    /// It is set only by a [`ScopeGuard`] and holds a value only while that guard lives: a guard
-    /// never spans an `await` or a yield, a ticket boundary or a return to the driver — every
-    /// [`scope`] / [`scope_more`] runs its closure to completion on the calling thread and closes
-    /// before it returns — so nothing written here outlives the call that wrote it, and no unit
-    /// reads another unit's drops.
+    /// The open translate attempt: a dynamic scope for one synchronous call. Set only by a
+    /// [`ScopeGuard`] and held only while it lives; a guard never spans an `await`, a yield, a
+    /// ticket boundary or a return to the driver (every [`scope`] / [`scope_more`] runs its closure to
+    /// completion on the calling thread), so nothing written here outlives the call or crosses units.
     static OPEN: RefCell<Option<Open>> = const { RefCell::new(None) };
 }
 
-/// One open TRANSLATE attempt. Opening it installs the attempt on this thread and keeps the
-/// enclosing one (scopes nest); closing it — [`ScopeGuard::close`], or `Drop` on any early return
-/// or unwind — puts the enclosing attempt back, so a scope can never be left open and its drop log
-/// never leaks into the next call.
+/// One open translate attempt. Opening installs it on this thread and keeps the enclosing one
+/// (scopes nest); closing it ([`ScopeGuard::close`], or `Drop` on early return or unwind) restores
+/// the enclosing one, so a scope is never left open and its log never leaks into the next call.
 ///
-/// It must be closed on the thread that opened it (the scope is synchronous). A guard dropped on
-/// another thread is a defect, and a debug build panics on it rather than restoring that other
-/// thread's slot.
+/// It must be closed on the thread that opened it; a guard dropped elsewhere is a defect, and a
+/// debug build panics rather than restore another thread's slot.
 pub(crate) struct ScopeGuard {
     outer: Option<Option<Open>>,
     thread: std::thread::ThreadId,
 }
 
 impl ScopeGuard {
-    /// Open an attempt for `seam`, with the paths it has already dropped (a stream's earlier
-    /// frames; empty for a fresh attempt).
+    /// Open an attempt for `seam`, with the paths already dropped (a stream's earlier frames; empty if fresh).
     pub(crate) fn open(seam: Seam<'_>, paths: Vec<String>) -> ScopeGuard {
         let open = Open {
             direction: seam.direction,
@@ -387,7 +378,7 @@ impl ScopeGuard {
     }
 
     /// A guard is closed on the thread that opened it; a debug build panics otherwise (not while
-    /// already unwinding, where a second panic would abort).
+    /// unwinding, where a second panic would abort).
     fn check_thread(&self) {
         if cfg!(debug_assertions) && !std::thread::panicking() {
             assert_eq!(
@@ -409,9 +400,8 @@ impl std::ops::Drop for ScopeGuard {
     }
 }
 
-/// Run `f` as one TRANSLATE attempt: every [`note`] inside it warns once per path, and the paths
-/// come back in the order they were first dropped, for the seam's audit. `f` runs to completion on
-/// this thread; the attempt closes when it returns or unwinds.
+/// Run `f` as one translate attempt: every [`note`] inside warns once per path, and the paths come
+/// back in first-dropped order for the seam's audit. `f` runs to completion on this thread.
 pub fn scope<T>(seam: Seam<'_>, f: impl FnOnce() -> T) -> (T, Vec<String>) {
     let guard = ScopeGuard::open(seam, Vec::new());
     let out = f();
@@ -419,9 +409,8 @@ pub fn scope<T>(seam: Seam<'_>, f: impl FnOnce() -> T) -> (T, Vec<String>) {
     (out, paths)
 }
 
-/// Drop one member on the open TRANSLATE attempt: one warn naming its wire path (the first time
-/// the attempt drops that path) and the path kept for the attempt's audit. Outside an attempt
-/// nothing is dropped, so nothing is said.
+/// Drop one member on the open attempt: one warn naming its wire path (first time that path drops)
+/// and the path kept for the audit. Outside an attempt nothing is dropped or said.
 pub fn note(d: Dropped) {
     OPEN.with(|o| {
         let mut o = o.borrow_mut();
@@ -651,10 +640,9 @@ pub fn note_unmodelled_blocks(grammar: &[Blocks], body: &Value, message: &'stati
     }
 }
 
-/// Run `f` as one more piece of a TRANSLATE attempt that spans calls (a stream, one frame per
-/// call): a path in `seen` was already dropped and warned on this attempt, so it is not warned
-/// again; a path `f` drops for the first time is warned and appended to `seen`, for the audit at
-/// the attempt's end.
+/// Run `f` as one more piece of a translate attempt spanning calls (a stream, one frame per call): a
+/// path in `seen` was already warned and is not warned again; a newly dropped path is warned and
+/// appended to `seen` for the audit at the attempt's end.
 pub fn scope_more<T>(seam: Seam<'_>, seen: &mut Vec<String>, f: impl FnOnce() -> T) -> T {
     let guard = ScopeGuard::open(seam, std::mem::take(seen));
     let out = f();
@@ -663,27 +651,24 @@ pub fn scope_more<T>(seam: Seam<'_>, seen: &mut Vec<String>, f: impl FnOnce() ->
 }
 
 /// What a dialect's answers carry in one direction (design F3 "Drops", DF-MAP-IR-GAPS section E):
-/// the wire paths its map file lists (`map`, generated) and the ones its code carries that no row
-/// names (`code`: a structural member, a keepalive, a terminal error). A member of an answer that
-/// is neither, nor under one, does not cross a TRANSLATE attempt, and the walk names it.
+/// the paths its map file lists (`map`, generated) and those its code carries that no row names
+/// (`code`: a structural member, keepalive, terminal error). Any other answer member does not cross
+/// a translate attempt, and the walk names it.
 #[derive(Clone, Copy, Debug)]
 pub struct Carried {
     pub map: &'static [&'static str],
     pub code: &'static [&'static str],
-    /// Paths INSIDE a carried subtree that the dialect's code does not carry (a member of a block
-    /// the dialect models, a vendor detail under a member it reads): named like any other drop.
-    /// Sorted ascending: the walk asks it of every member of every stream frame, so it is searched,
-    /// never scanned (test `every_drop_list_is_sorted_for_the_walks_search`). A path under a
-    /// `reroot` prefix is listed as its re-rooted spelling.
+    /// Paths inside a carried subtree that the code does not carry (a member of a modelled block, a
+    /// vendor detail under a member it reads), named like any drop. Sorted ascending: the walk asks
+    /// it of every member of every stream frame, so it is searched, not scanned (test
+    /// `every_drop_list_is_sorted_for_the_walks_search`). A path under a `reroot` prefix is listed re-rooted.
     pub drops: &'static [&'static str],
     /// Stream frames whose member restates an answer's (a Responses `output_item` frame's `item`
     /// is an `output[]` element): such paths are read in the answer's list, which is stated once.
     pub reroot: Option<Reroot>,
-    /// The request defaults the far end ECHOES in its answer, each a member's key and its default
-    /// as JSON text (`("tool_choice", "\"auto\"")`). A member equal to its default carries nothing
-    /// the caller set, so its drop is no unrepresentable control and the walk does not name it;
-    /// any other value of it is named like every drop (a dropped value
-    /// equal to the protocol default, or an echoed default, writes no audit row).
+    /// Request defaults the far end echoes in its answer, each a member's key and its default as
+    /// JSON text (`("tool_choice", "\"auto\"")`). A member equal to its default carries nothing the
+    /// caller set, so the walk does not name it; any other value is named like every drop.
     pub defaults: &'static [(&'static str, &'static str)],
 }
 
@@ -696,13 +681,12 @@ pub struct Reroot {
     pub answer_drops: &'static [&'static str],
 }
 
-/// What a TRANSLATE attempt walks for one dialect, declared as data: its request field table (its
-/// map file), the members its reader parks in `extra`, its request and answer content-block
-/// grammars, what its buffered answers and stream frames carry (`None` walks nothing), whether its
-/// stream frames are keyed by their event name (the event is the root of their wire paths:
-/// Bedrock's `contentBlockDelta.delta...`), how it spells each IR content-block kind for a
-/// dropped block's warn, and the request members its reader carries by code from a wire path no
-/// map row names (`("response_format", "output_config.format")`).
+/// What a translate attempt walks for one dialect, as data: its request field table (map file), the
+/// members its reader parks in `extra`, its request and answer content-block grammars, what its
+/// buffered answers and stream frames carry (`None` walks nothing), whether stream frames are keyed
+/// by event name (the event roots their paths: Bedrock's `contentBlockDelta.delta...`), how it
+/// spells each IR block kind for a dropped block's warn, and the request members its reader carries
+/// by code from a path no map row names (`("response_format", "output_config.format")`).
 #[derive(Clone, Copy)]
 pub struct Grammar {
     pub request_map: crate::codec::carry::Table,
@@ -957,10 +941,10 @@ pub fn note_unmapped(carried: &Carried, root: &str, body: &Value) {
     }
 }
 
-/// Read ONE far-end stream frame on a TRANSLATE attempt, for either host (the engine's stream
-/// translator, the plane's own crossing; design F7): the far end's `reader` decodes it, and the
-/// drop walk names what the caller's dialect will not get, once per path per STREAM (the paths
-/// already dropped ride `state.dropped`, read for the audit at the stream's end).
+/// Read one far-end stream frame on a translate attempt, for either host (the engine's stream
+/// translator, the plane's own crossing; design F7): the far end's `reader` decodes it and the drop
+/// walk names what the caller's dialect will not get, once per path per stream (paths already
+/// dropped ride `state.dropped`, read for the audit at stream end).
 pub fn read_stream_frame(
     host: &dyn busbar_contract::codec::CodecHost,
     seam: Seam<'_>,

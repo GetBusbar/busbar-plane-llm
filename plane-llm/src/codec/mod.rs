@@ -1,65 +1,52 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE LLM WIRE CODECS — six dialects, one IR, and nothing that opens anything.
+//! The LLM wire codecs: six dialects (Anthropic Messages, OpenAI Chat Completions, Google Gemini,
+//! AWS Bedrock Converse, OpenAI Responses, Cohere v2) translated between any pair through one
+//! neutral IR. This module holds the readers, writers, IR, stream translator and the
+//! answer-normalization pass every ingress runs between reading and writing an answer.
 //!
-//! Anthropic Messages, OpenAI Chat Completions, Google Gemini, AWS Bedrock Converse, OpenAI
-//! Responses and Cohere v2 are six ways of saying the same thing, and busbar translates between any
-//! pair of them through one neutral IR. That translation is what lives here: the readers, the
-//! writers, the IR, the stream translator and the answer-normalization pass every ingress runs
-//! between reading an answer and writing it.
+//! It lives in `busbar-plane-llm`, a pure plane kind: the crate carries no `hyper`, `reqwest` or
+//! socket-capable `tokio`. Its door (`plane_door`) and request exchange (`exchange`) sit beside this
+//! module and drive these codecs; the network engine stays in the host.
 //!
-//! WHAT IS NOT HERE. The engine that carries these codecs over the network — attempt, exhaustion,
-//! lane select, native ingress, the path-model arrivals, the plane declaration, the inbound webhook
-//! receiver — stayed in `busbar-llm`, which depends on this crate. That split is the whole point:
-//! the LLM PLANE (`busbar-plane-llm`) is a pure kind, and a pure kind may not carry `hyper`,
-//! `reqwest` or a socket-capable `tokio` in its transitive closure. It names this crate and gets the
-//! codecs without the stack.
+//! Each dialect module owns its `ProtocolDecl`, its wire codec (`reader.rs`/`writer.rs`), its
+//! `RequestHandler` and operation cells (`handler.rs`), its wire constants and its tests. A seventh
+//! dialect is a seventh module plus one registration line in [`DIALECTS`].
 //!
-//! WHAT EACH DIALECT MODULE OWNS: its `ProtocolDecl`, its wire codec (`reader.rs`/`writer.rs`), its
-//! `RequestHandler` and operation cells (`handler.rs`), its own wire constant bank, and its tests.
-//! A seventh dialect is a seventh module here — not a seventh crate and not a seventh feature flag.
+//! Shared vocabulary lives in two places. What both sides of the plane seam must spell alike (the
+//! declaration a dialect fills, the codec-cell traits, IR shapes, the error-`type` bank, billing and
+//! wire carriers) is the contract's (`busbar_contract::...`). Machinery only this plane's dialects
+//! speak (event-stream framing, the JSON seam, SSE and OpenAI-family wire helpers, the translate
+//! pipeline, coded diagnostics) is in the modules below. Nothing here names the host crate: entropy,
+//! the wall clock, the translation cap and the usage-tap count come through the host services the
+//! contract carries.
 //!
-//! What the dialects share, and where it lives. Two kinds of shared name, two homes.
-//! The vocabulary BOTH sides of the plane seam must spell alike — the declaration a dialect fills,
-//! the codec-cell traits, the IR shapes, the error-`type` bank, the billing and wire carriers — is
-//! the contract's (`busbar_contract::…`), and the crate names it there. The machinery only this
-//! plane's dialects speak — the event-stream framing, the JSON seam, the SSE and OpenAI-family wire
-//! helpers, the cross-dialect translate pipeline and the plane's coded diagnostics — is the plane's
-//! own, in the modules below. Nothing here names the host crate: what the plane needs from its host
-//! (entropy, the wall clock, the translation cap, the usage-tap count) it reaches through the
-//! host services the contract carries, which the host installs where it installs the protocols.
-//!
-//! A DIALECT NEVER NAMES A SIBLING DIALECT (design F3 SELF-CONTAINED). What two dialects share
-//! is a wire mechanism, and it lives in a shared module named for the mechanism (`rerank_wire`,
-//! `logprob_wire`, the bearer-envelope helpers in `dialect`), never in one dialect for another to
-//! import. A seventh dialect is a seventh module plus its one registration line.
+//! A dialect never names a sibling dialect (design F3 self-contained). What two share is a wire
+//! mechanism, kept in a module named for it (`rerank_wire`, `logprob_wire`, the bearer-envelope
+//! helpers in `dialect`), never in one dialect for another to import.
 
-/// The concrete chat IR + leaf-op IR. The substrate keeps the neutral `ir::facts` trait /
-/// `ir::handle` / `ir::invoke` / `ir::subscribe`; the concrete shapes are here.
+/// The concrete chat IR and leaf-op IR (the substrate keeps the neutral `ir::facts`, `ir::handle`,
+/// `ir::invoke`, `ir::subscribe` traits).
 pub mod ir;
 
-/// The chat `IrHandle` (`ChatReqHandle`/`ChatRespHandle`) + its `prepare_for_egress`/`_ingress`/
+/// The chat `IrHandle` (`ChatReqHandle`/`ChatRespHandle`) and its `prepare_for_egress`/`_ingress`/
 /// `usage` bodies; the handle writes itself onto the egress dialect by protocol string.
 ///
-/// THIS IS THE ANSWER-NORMALIZATION PASS the LLM plane needs to reproduce a reference answer
-/// byte-for-byte: [`chat_handle::chat_prepare_for_ingress`], [`chat_handle::chat_prepare_for_egress`]
-/// and [`chat_handle::chat_usage`] are the cross-protocol pass the forward path runs between reading
-/// an answer and writing it. They were `pub(crate)` while the plane and the codecs shared a crate;
-/// they are public here because the plane is a different crate and cannot otherwise name them.
+/// [`chat_handle::chat_prepare_for_ingress`], [`chat_handle::chat_prepare_for_egress`] and
+/// [`chat_handle::chat_usage`] are the answer-normalization pass the forward path runs between
+/// reading an answer and writing it. They are public because the plane is a different crate.
 pub mod chat_handle;
 
 /// The six leaf-op `IrHandle`s (embeddings/image/rerank/moderation/transcription/speech), writing
 /// themselves onto the peer dialect via the `leaf_codec` `(op,proto)` dispatchers.
 pub mod leaf_handles;
 
-/// ONE LEAF OPERATION'S `OperationHandler`, written once for every dialect.
-///
-/// Every leaf cell answers the same three things the same way: its error envelope is its
-/// protocol's (the same vocabulary the chat cell reports, read from the same upstream), and its
-/// reads wrap the dialect's own `read_<op>_request`/`read_<op>_response` in the op's leaf handle.
-/// Only the dialect label and the two reads differ per cell; anything else a cell says (a usage
-/// tap, an egress content type) follows the `;` verbatim.
+/// One leaf operation's `OperationHandler`, written once for every dialect. Every leaf cell answers
+/// the same way: its error envelope is its protocol's, and its reads wrap the dialect's
+/// `read_<op>_request`/`read_<op>_response` in the op's leaf handle. Only the dialect label and the
+/// two reads differ per cell; anything else a cell says (a usage tap, an egress content type)
+/// follows the `;` verbatim.
 macro_rules! leaf_op {
     ($op:ident: $dialect:expr, $req:ident = $read_req:ident, $resp:ident = $read_resp:ident; $($extra:tt)*) => {
         impl busbar_contract::codec::OperationHandler for $op {
@@ -90,8 +77,8 @@ macro_rules! leaf_op {
     };
 }
 
-/// A dialect's neutral codec facade as a STATIC, so its `DECL` hands out a `&'static dyn` borrow
-/// (pure memory, zero alloc per `dialect()` call) — the seam's perf contract.
+/// A dialect's neutral codec facade as a static, so its `DECL` hands out a `&'static dyn` borrow
+/// (pure memory, zero alloc per `dialect()` call).
 macro_rules! dialect_codec {
     ($name:expr) => {{
         static CODEC: $crate::codec::proto_codec::DialectRef =
@@ -156,11 +143,11 @@ pub mod json_splice;
 /// The cross-dialect translate pipeline (`TranslateCodec`).
 pub mod translate;
 
-/// The dialect-neutral tail-usage isolation helper shared by every reader's
-/// `recover_truncated_usage` override. PUBLIC: the plane's metering locators name the same
-/// isolation the reference path performs.
+/// The one seam every usage/billing count read goes through (see the module doc).
 pub mod usage_count;
 
+/// Dialect-neutral tail-usage isolation, shared by every reader's `recover_truncated_usage`. Public
+/// because the plane's metering locators name the same isolation.
 pub mod usage_tail;
 
 /// The `url_citation` annotations wire mapping the Chat and Responses codecs share.
@@ -193,11 +180,10 @@ pub mod proto_stream;
 /// suites that pin them are codec suites.
 pub mod wire_shim;
 
-/// THIS PLANE'S OWN DECLARATION OF `name`, read off [`DECLS`]. Every fact the codecs look up about a
-/// dialect by name — the path-model shape, the array-stream shim key, the native tool-id prefix, the
-/// provider-metadata reporter — is a fact about one of THESE six dialects, so the lookup reads this
-/// plane's own table, never the host's registry. `None` for a name this plane does not
-/// declare.
+/// This plane's own declaration of `name`, read off [`DECLS`]. Every codec lookup by dialect name
+/// (path-model shape, array-stream shim key, native tool-id prefix, provider-metadata reporter) is a
+/// fact about one of these six dialects, so it reads this table, never the host's registry. `None`
+/// for a name this plane does not declare.
 #[must_use]
 pub fn decl_of(name: &str) -> Option<&'static busbar_contract::protocol::ProtocolDecl> {
     DECLS.iter().copied().find(|d| d.name == name)
@@ -209,9 +195,8 @@ mod codec_host_tests;
 #[cfg(test)]
 #[path = "tests/dialect_classify.rs"]
 pub(crate) mod dialect_classify;
-/// This crate's test host (the test host and the classifier are dev-only): the codec
-/// host a shipped binary's host hands the codec, provided for this crate's test binary by the test
-/// itself, so the codec's tests prove the codec's own seam and never reach the host crate.
+/// This crate's test host (the host and the classifier are dev-only): the codec host a shipped
+/// binary's host provides, supplied by the test so the codec tests never reach the host crate.
 #[cfg(test)]
 #[path = "tests/test_host.rs"]
 pub(crate) mod test_host;
@@ -219,20 +204,18 @@ pub(crate) mod test_host;
 #[path = "tests/usage_census.rs"]
 pub(crate) mod usage_census;
 
-/// Every dialect this plugin declares, in the order an operator sees.
+/// Every dialect this plugin declares, in operator-visible order.
 ///
-/// The order is load-bearing and it is not alphabetical. The composition root hands this slice to
-/// the registry's `install_protocols`, which folds it ahead of whatever built-in declarations core
-/// still carries; the resulting sequence is what `known_protocols()` reports (the "must be one of:"
-/// tail an operator reads on a bad `protocol:`) and what `telemetry` banks its per-protocol metric
-/// families against — it finds a family again by position in that list. So this order is
-/// `anthropic, openai, gemini, bedrock, responses, cohere` (pinned by shadow-oracle
-/// `boot.refusal|BOOT-020|validate`). A dialect appended here rather than inserted keeps every
-/// existing family's index; inserting one silently renumbers all of them.
+/// The order is load-bearing, not alphabetical. The composition root hands this slice to the
+/// registry's `install_protocols`, which folds it ahead of core's built-in declarations; the result
+/// is what `known_protocols()` reports (the "must be one of:" tail on a bad `protocol:`) and what
+/// `telemetry` banks per-protocol metric families against, finding a family by list position. So the
+/// order is `anthropic, openai, gemini, bedrock, responses, cohere` (pinned by shadow-oracle
+/// `boot.refusal|BOOT-020|validate`). A dialect appended keeps every family's index; inserting one
+/// renumbers them all.
 ///
-/// One registration line per dialect: each dialect
-/// declares its own [`proto_codec::DialectEntry`] in its module, and this list is the only place the
-/// plane names it. [`DECLS`] is read off this list, in this order.
+/// One registration line per dialect: each declares its own [`proto_codec::DialectEntry`] in its
+/// module and this list is the only place the plane names it. [`DECLS`] is read off it.
 pub(crate) const DIALECTS: &[&proto_codec::DialectEntry] = &[
     &anthropic::ENTRY,
     &openai_chat::ENTRY,
@@ -269,10 +252,9 @@ mod decode_native_tool_id_tests;
 #[path = "tests/leaf_write_dispatch_tests.rs"]
 mod leaf_write_dispatch_tests;
 
-/// The cache-tier read tests, anchored to the real recorded upstream bodies committed under
+/// The cache-tier read tests, anchored to real recorded upstream bodies under
 /// `testing/shadow-oracle/golden/1.5.5/cells/` and `testing/llm-conformance/fixtures/`. Crate-level
-/// rather than per-dialect because the four providers share one loader for that recorded evidence,
-/// and the point of the suite is that the four are the SAME defect.
+/// because the four providers share one loader for that evidence and the four are the same defect.
 #[cfg(test)]
 #[path = "tests/cache_tier_capture_tests.rs"]
 mod cache_tier_capture_tests;
@@ -282,15 +264,15 @@ mod cache_tier_capture_tests;
 #[path = "tests/image_detail_warn_tests.rs"]
 mod image_detail_warn_tests;
 
-/// THE CODEC/IR TEST SUITES: the detection, translate-parity, streaming, round-trip and IR goldens
-/// that name the dialects and the concrete wire codecs. See the module header for the `super::*`
-/// prelude reconstruction.
+/// The codec/IR test suites: the detection, translate-parity, streaming, round-trip and IR goldens
+/// that name the dialects and the concrete wire codecs (see the module header for the `super::*`
+/// prelude reconstruction).
 #[cfg(test)]
 #[path = "tests/proto/mod.rs"]
 mod relocated_proto_tests;
 
-/// The bedrock buffered-response → native ConverseStream eventstream synthesis suite: it drives
-/// `bedrock::bedrock_response_to_eventstream`, a witnessed codec fn.
+/// The bedrock buffered-response to ConverseStream eventstream synthesis suite, driving the
+/// witnessed `bedrock::bedrock_response_to_eventstream`.
 #[cfg(test)]
 #[path = "tests/bedrock_eventstream_tests.rs"]
 mod bedrock_eventstream_tests;
@@ -314,8 +296,8 @@ mod parked_rows_cross_dialect_tests;
 #[path = "tests/carry_probe_tests.rs"]
 mod carry_probe_tests;
 
-/// The usage-tap count pin: every same-protocol tap fault counts once on the
-/// host's counter, under its reason, whichever cell or direct call raised it.
+/// The usage-tap count pin: every same-protocol tap fault counts once on the host's counter, under
+/// its reason, whichever cell or direct call raised it.
 #[cfg(test)]
 #[path = "tests/usage_tap_count_tests.rs"]
 mod usage_tap_count_tests;
