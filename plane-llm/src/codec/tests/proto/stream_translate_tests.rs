@@ -5403,3 +5403,43 @@ fn an_anthropic_tool_call_id_reaches_an_openai_client_remapped_and_unleaked() {
         Some("toolu_origRAW123")
     );
 }
+
+/// The native tap preserves provider bytes while both paths retain the terminal failure.
+#[test]
+fn a_top_level_responses_error_is_terminal_on_native_and_translated_streams() {
+    let host = crate::codec::test_host::HOST;
+    let created = b"event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_error\",\"model\":\"m\",\"status\":\"in_progress\"}}\n\n";
+    let failed = b"event: error\ndata: {\"type\":\"error\",\"code\":\"server_error\",\"message\":\"boom\"}\n\n";
+    let mut same = StreamTranslate::new_same_proto("responses").expect("native tap");
+    let mut output = same.feed(host, created);
+    output.extend(same.feed(host, failed));
+    output.extend(same.finish(host));
+    let mut expected = created.to_vec();
+    expected.extend_from_slice(failed);
+    assert_eq!(output, expected, "native error bytes must pass unchanged");
+    assert!(
+        same.terminal_error().is_some(),
+        "the native tap must observe the error"
+    );
+    assert!(
+        same.usage().is_none(),
+        "an error without usage cannot invent counts"
+    );
+    let mut cross = StreamTranslate::new("anthropic", "responses").expect("translated stream");
+    let mut output = cross.feed(host, created);
+    output.extend(cross.feed(host, failed));
+    output.extend(cross.finish(host));
+    assert!(
+        cross.terminal_error().is_some(),
+        "translation must retain the error"
+    );
+    assert!(
+        cross.usage().is_none(),
+        "an error without usage cannot invent counts"
+    );
+    assert!(
+        String::from_utf8_lossy(&output).contains("event: error"),
+        "{}",
+        String::from_utf8_lossy(&output)
+    );
+}

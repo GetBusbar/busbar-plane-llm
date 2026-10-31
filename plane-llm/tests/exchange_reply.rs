@@ -3370,14 +3370,10 @@ fn a_responses_stream_that_fails_bills_no_tokens_and_agrees_with_its_buffered_tw
     );
 }
 
-/// A RESPONSES STREAM'S TOP-LEVEL `error` EVENT ENDS NOTHING AND FAILS NOTHING, as in 1.5.5 (`$`): v1.5.5's Responses reader had no arm for
-/// it (proto/openai_responses/reader.rs:542-1103, `_ => {}`), so the reader emitted no `Error`,
-/// `terminal_error` stayed clear and the stream billed at its end as a clean one
-/// (proxy/response_body.rs:550-575, `if !billing_failed`). The frames after it are relayed and the
-/// usage its `response.completed` states (5 in, 2 out) is billed. RED: the event read as a terminal
-/// failure, which ends the stream there, faults the far end and bills nothing.
+/// A top-level upstream error keeps native frames byte-identical while marking the exchange
+/// failed. A later completed frame does not turn that failed exchange into a billable success.
 #[test]
-fn a_responses_streams_top_level_error_event_is_neither_terminal_nor_a_failure() {
+fn a_responses_streams_top_level_error_event_fails_the_exchange_without_changing_native_bytes() {
     let mut arrived = arrival("responses", true);
     arrived.path = "/v1/responses".to_string();
     let body = serde_json::json!({"model": "p", "stream": true, "input": "hi"});
@@ -3405,18 +3401,10 @@ fn a_responses_streams_top_level_error_event_is_neither_terminal_nor_a_failure()
     let mut reply = Reply::new(HOST, &ctx, 200, head);
     let end = reply.feed(HOST, &ctx, stream.as_bytes(), true, AT);
     assert!(end.done, "{end:?}");
-    assert!(end.fault.is_none(), "no far-end fault: {end:?}");
-    assert_eq!(end.verdict, Verdict::Ok, "{end:?}");
-    assert!(
-        String::from_utf8_lossy(&end.bytes).contains("response.completed"),
-        "the frames after the event reach the caller: {end:?}"
-    );
-    assert_eq!(
-        (end.units.tokens_in, end.units.tokens_out),
-        (5, 2),
-        "billed as a clean stream: {:?}",
-        end.units
-    );
+    assert_eq!(end.fault, Some(Fault::Transient("stream-terminal-error")));
+    assert_eq!(end.verdict, Verdict::Hard);
+    assert_eq!(end.bytes.as_ref(), stream.as_bytes());
+    assert_eq!((end.units.tokens_in, end.units.tokens_out), (0, 0));
 }
 
 // ── rehomed: the engine's metered-answer tests on the served reply ──
