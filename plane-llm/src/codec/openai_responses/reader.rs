@@ -2,6 +2,29 @@ use super::*;
 use crate::codec::dialect::ir_parse_error;
 use crate::codec::ir_encode::{synth_response_tool_call_id, tool_input_from_arguments};
 
+fn close_open_blocks(
+    out: &mut Vec<IrStreamEvent>,
+    state: &mut crate::codec::ir::StreamDecodeState,
+) {
+    let mut indices: Vec<usize> = state
+        .open_tools
+        .iter()
+        .map(|&key| {
+            if key >= TEXT_INDEX_KEY_OFFSET {
+                key - TEXT_INDEX_KEY_OFFSET
+            } else {
+                key
+            }
+        })
+        .collect();
+    state.open_tools.clear();
+    indices.sort_unstable();
+    indices.dedup();
+    for index in indices {
+        out.push(IrStreamEvent::BlockStop { index });
+    }
+}
+
 /// What a translate attempt cannot carry from this dialect (`codec::drops`).
 static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
     request_map: super::map::REQUEST,
@@ -965,34 +988,6 @@ impl ProtocolReader for ResponsesReader {
                 // before MessageStop, converting text keys back to IR indices; otherwise a strict SDK
                 // rejects the unbalanced stream. Invoked on every terminal path, including the failed
                 // early-return.
-                let close_open_blocks =
-                    |out: &mut Vec<IrStreamEvent>,
-                     state: &mut crate::codec::ir::StreamDecodeState| {
-                        // Drain into a sorted Vec so BlockStops are in ascending IR-index order.
-                        let mut indices: Vec<usize> = state
-                            .open_tools
-                            .iter()
-                            .map(|&key| {
-                                if key >= TEXT_INDEX_KEY_OFFSET {
-                                    key - TEXT_INDEX_KEY_OFFSET
-                                } else {
-                                    key
-                                }
-                            })
-                            .collect();
-                        state.open_tools.clear();
-                        // Dedup after sorting: a tool key `N` and a text key `N + TEXT_INDEX_KEY_OFFSET`
-                        // map to the same IR index, so one index opened as both would emit two
-                        // BlockStop{N}. One BlockStop per distinct IR index.
-                        // it. (The output_item.added / output_text.delta guards below also prevent the
-                        // double-open in the first place; this dedup is the second, defensive layer.)
-                        indices.sort_unstable();
-                        indices.dedup();
-                        for index in indices {
-                            out.push(IrStreamEvent::BlockStop { index });
-                        }
-                    };
-
                 if let Some(response_obj) = data.get(keys::RESPONSE) {
                     let status = response_obj
                         .get(keys::STATUS)
@@ -1227,8 +1222,19 @@ impl ProtocolReader for ResponsesReader {
                 }
             }
 
-            // The top-level `error` stream event (`{"type":"error",...}`) has no arm: it ends and
-            // fails nothing, so the stream bills and closes normally.
+            "error" => {
+                let signal = data
+                    .get(keys::CODE)
+                    .and_then(|code| code.as_str())
+                    .unwrap_or(SIGNAL_RESPONSE_FAILED);
+                out.push(IrStreamEvent::Error(IrError {
+                    class: class_for_response_failed(signal),
+                    provider_signal: Some(signal.to_string()),
+                    retry_after: None,
+                }));
+                close_open_blocks(&mut out, state);
+                out.push(IrStreamEvent::MessageStop);
+            }
             _ => {}
         }
 
@@ -1556,12 +1562,12 @@ impl ProtocolReader for ResponsesReader {
         Some(crate::codec::ir::IrSignatureOrigin::OpenAi)
     }
 
-    /// Usage and the terminal failure ride only the three terminal events; the reader reads the
+    /// Usage and terminal failures ride the terminal and error events; the reader reads the
     /// event name, never the payload's `type`.
     fn same_proto_reads(&self, event_type: &str, _payload: &[u8]) -> bool {
         matches!(
             event_type,
-            EVT_RESPONSE_COMPLETED | EVT_RESPONSE_FAILED | EVT_RESPONSE_INCOMPLETE
+            EVT_RESPONSE_COMPLETED | EVT_RESPONSE_FAILED | EVT_RESPONSE_INCOMPLETE | "error"
         )
     }
 
