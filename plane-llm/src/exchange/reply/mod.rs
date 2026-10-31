@@ -308,9 +308,15 @@ impl Reply {
                 invoke: None,
             };
         };
-        // Only a translated answer is taken whole, and a translated answer relays no far head; a
+        // A translated answer, or one a stream-asking caller reads as its synthesised stream, is
+        // taken whole (its far head is relayed within one dialect at the end); any other
         // same-dialect answer takes the relay path below, which carries the far head.
-        if relay::takes_whole(ingress, egress, far_is_stream) {
+        if relay::takes_whole(
+            ingress,
+            egress,
+            far_is_stream,
+            ctx.intent.wants_stream && !json_array(ctx),
+        ) {
             return Reply {
                 ended_partial: false,
                 state: State::Whole {
