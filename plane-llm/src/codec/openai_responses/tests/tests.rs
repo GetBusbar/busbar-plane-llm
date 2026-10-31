@@ -8123,3 +8123,41 @@ fn status_word_golden() {
         assert_eq!(responses_error_code(&err), word, "class={class:?}");
     }
 }
+
+/// A top-level Responses error is terminal, including when the provider omits its code.
+#[test]
+fn a_top_level_error_closes_open_blocks_and_fails_the_stream() {
+    use crate::codec::ir::IrStreamEvent;
+    for data in [
+        serde_json::json!({"type":"error", "code":"server_error", "message":"boom"}),
+        serde_json::json!({"type":"error", "code":null, "message":"boom"}),
+        serde_json::json!({"type":"error", "message":"boom"}),
+    ] {
+        let mut state = crate::codec::ir::StreamDecodeState::default();
+        state.open_tools.insert(2);
+        let events = reader_read_response_events("error", &data, &mut state);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, IrStreamEvent::Error(_))),
+            "{events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, IrStreamEvent::BlockStop { index: 2 })),
+            "{events:?}"
+        );
+        assert!(
+            matches!(events.last(), Some(IrStreamEvent::MessageStop)),
+            "{events:?}"
+        );
+        assert!(state.open_tools.is_empty());
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, IrStreamEvent::MessageDelta { .. })),
+            "{events:?}"
+        );
+    }
+}
