@@ -722,42 +722,45 @@ impl ProtocolReader for GeminiReader {
                             // as OpenAI: once the answer phase begins, index 0 is taken and a late thought
                             // part is dropped rather than corrupt block pairing.
                             if part.get(FIELD_THOUGHT).and_then(|t| t.as_bool()) == Some(true) {
-                                if let Some(text) = part.get(keys::TEXT).and_then(|t| t.as_str()) {
-                                    if !text.is_empty()
-                                        && !state.text_block_open
-                                        && state.open_tools.is_empty()
-                                    {
-                                        state.reasoning_seen = true;
-                                        if !state.thinking_block_open {
-                                            state.thinking_block_open = true;
-                                            out.push(IrStreamEvent::BlockStart {
-                                                index: 0,
-                                                block: crate::codec::ir::IrBlockMeta::Thinking {
-                                                    // IR-17: a Gemini thought part is a summary.
-                                                    kind: Some(
-                                                        crate::codec::ir::IrThinkingKind::Summary,
-                                                    ),
-                                                },
-                                                refusal: false,
-                                            });
-                                        }
+                                let text = part
+                                    .get(keys::TEXT)
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or_default();
+                                let signature =
+                                    part.get(FIELD_THOUGHT_SIGNATURE).and_then(|v| v.as_str());
+                                if (!text.is_empty() || signature.is_some_and(|s| !s.is_empty()))
+                                    && !state.text_block_open
+                                    && state.open_tools.is_empty()
+                                {
+                                    state.reasoning_seen = true;
+                                    if !state.thinking_block_open {
+                                        state.thinking_block_open = true;
+                                        out.push(IrStreamEvent::BlockStart {
+                                            index: 0,
+                                            block: crate::codec::ir::IrBlockMeta::Thinking {
+                                                // IR-17: a Gemini thought part is a summary.
+                                                kind: Some(
+                                                    crate::codec::ir::IrThinkingKind::Summary,
+                                                ),
+                                            },
+                                            refusal: false,
+                                        });
+                                    }
+                                    if !text.is_empty() {
                                         out.push(IrStreamEvent::BlockDelta {
                                             index: 0,
                                             delta: crate::codec::ir::IrDelta::ThinkingDelta(
                                                 text.to_string(),
                                             ),
                                         });
-                                        if let Some(sig) = part
-                                            .get(FIELD_THOUGHT_SIGNATURE)
-                                            .and_then(|v| v.as_str())
-                                        {
-                                            out.push(IrStreamEvent::BlockDelta {
-                                                index: 0,
-                                                delta: crate::codec::ir::IrDelta::SignatureDelta(
-                                                    sig.to_string(),
-                                                ),
-                                            });
-                                        }
+                                    }
+                                    if let Some(sig) = signature {
+                                        out.push(IrStreamEvent::BlockDelta {
+                                            index: 0,
+                                            delta: crate::codec::ir::IrDelta::SignatureDelta(
+                                                sig.to_string(),
+                                            ),
+                                        });
                                     }
                                 }
                                 continue;

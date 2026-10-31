@@ -73,6 +73,88 @@ fn gemini_sse(chunks: &[Value]) -> String {
         .collect::<String>()
 }
 
+#[test]
+fn signature_only_thought_chunk_survives_the_stream_reader() {
+    use crate::codec::ir::{IrDelta, IrSignatureOrigin, IrStopReason};
+
+    let writer = GeminiWriter;
+    let chunks: Vec<Value> = [
+        IrStreamEvent::BlockDelta {
+            index: 0,
+            delta: IrDelta::ThinkingDelta("let me reason".to_string()),
+        },
+        IrStreamEvent::BlockDelta {
+            index: 0,
+            delta: IrDelta::SignatureDelta("sig-xyz".to_string()),
+        },
+        IrStreamEvent::MessageDelta {
+            stop_reason: Some(IrStopReason::EndTurn),
+            stop_sequence: None,
+            usage: Default::default(),
+            stop_detail: None,
+        },
+    ]
+    .iter()
+    .map(|event| {
+        writer
+            .write_response_event(crate::codec::test_host::HOST, event)
+            .expect("Gemini thought, signature and terminal chunks")
+            .1
+    })
+    .collect();
+    assert_eq!(
+        chunks[1]["candidates"][0]["content"]["parts"][0]["text"],
+        ""
+    );
+
+    let out = xstream("gemini", "anthropic", &gemini_sse(&chunks));
+    let payloads = sse_payloads(&out);
+    let mut open = None;
+    let mut thinking = String::new();
+    let mut signatures = Vec::new();
+    let mut starts = 0;
+    let mut stops = 0;
+    for payload in &payloads {
+        match payload["type"].as_str() {
+            Some("content_block_start") => {
+                assert!(open.is_none(), "{out}");
+                assert_eq!(payload["content_block"]["type"], "thinking", "{out}");
+                open = Some(payload["index"].clone());
+                starts += 1;
+            }
+            Some("content_block_delta") => {
+                assert_eq!(open.as_ref(), Some(&payload["index"]), "{out}");
+                match payload["delta"]["type"].as_str() {
+                    Some("thinking_delta") => {
+                        thinking.push_str(payload["delta"]["thinking"].as_str().unwrap());
+                    }
+                    Some("signature_delta") => {
+                        signatures.push(crate::codec::ir::sig_envelope::read_carried(
+                            payload["delta"]["signature"].as_str().unwrap().to_string(),
+                            Some(IrSignatureOrigin::Anthropic),
+                        ));
+                    }
+                    _ => panic!("unexpected thinking delta: {payload}"),
+                }
+            }
+            Some("content_block_stop") => {
+                assert_eq!(open.take(), Some(payload["index"].clone()), "{out}");
+                stops += 1;
+            }
+            Some("message_stop") => assert!(open.is_none(), "{out}"),
+            _ => {}
+        }
+    }
+    assert_eq!(thinking, "let me reason", "{out}");
+    assert_eq!(
+        signatures,
+        vec![("sig-xyz".to_string(), Some(IrSignatureOrigin::Gemini))],
+        "the streamed signature must retain its bytes and Gemini origin: {out}"
+    );
+    assert_eq!((starts, stops, open), (1, 1, None), "{out}");
+    assert_eq!(payloads.last().unwrap()["type"], "message_stop", "{out}");
+}
+
 /// GEM-08 (reader): a native `functionCall.id` / `functionResponse.id` carries the pair to a
 /// foreign backend verbatim, instead of a synthesized id on the call and the NAME on the result.
 #[test]
