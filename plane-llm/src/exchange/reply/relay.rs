@@ -35,11 +35,18 @@ pub enum ContentType {
 }
 
 /// Whether the far end's success answer is taken whole rather than relayed: a non-stream answer
-/// that crosses dialects. Within one dialect the answer is relayed as the far end sent it, a
-/// stream-asked, body-answered reply included (dialect fidelity).
+/// that crosses dialects, or one that answers a caller who asked for an event stream (OWNER
+/// 2026-10-27: busbar answers in the caller's dialect AND mode, so that caller reads its stream
+/// synthesised from the body, within one dialect too). Otherwise a same-dialect answer is relayed
+/// as the far end sent it (dialect fidelity).
 #[must_use]
-pub fn takes_whole(ingress: &str, egress: &str, far_is_stream: bool) -> bool {
-    !far_is_stream && ingress != egress
+pub fn takes_whole(
+    ingress: &str,
+    egress: &str,
+    far_is_stream: bool,
+    wants_event_stream: bool,
+) -> bool {
+    !far_is_stream && (ingress != egress || wants_event_stream)
 }
 
 /// The content type a relayed answer wears.

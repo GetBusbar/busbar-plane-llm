@@ -687,9 +687,11 @@ fn a_json_array_caller_reads_its_stream_as_one_array() {
         relay::content_type("gemini", "gemini", true, true),
         ContentType::Json
     );
-    assert!(relay::takes_whole("openai", "anthropic", false));
-    assert!(!relay::takes_whole("openai", "openai", false));
-    assert!(!relay::takes_whole("openai", "anthropic", true));
+    assert!(relay::takes_whole("openai", "anthropic", false, false));
+    assert!(!relay::takes_whole("openai", "openai", false, false));
+    assert!(relay::takes_whole("openai", "openai", false, true));
+    assert!(!relay::takes_whole("openai", "anthropic", true, false));
+    assert!(!relay::takes_whole("openai", "openai", true, true));
 }
 
 // ── the reply ───────────────────────────────────────────────────────────────────────────────────
@@ -4604,8 +4606,9 @@ mod rehomed_metering {
     }
 
     /// One `stream: true` responses request answered by a far end of `far` (a native stream when
-    /// `stream`, else one whole body): the caller reads a responses event stream (or, within one
-    /// dialect, the far end's whole body unchanged), and the answer bills exactly 11 / 7 once.
+    /// `stream`, else one whole body): the caller reads a responses event stream (within one
+    /// dialect too: a whole body is synthesised into the caller's stream, OWNER 2026-10-27), and
+    /// the answer bills exactly 11 / 7 once.
     fn responses_case(far: &'static str, stream: bool) {
         let label = format!("responses<-{far} (stream: {stream})");
         let (content_type, body) = upstream_answer(far, stream);
@@ -4616,10 +4619,7 @@ mod rehomed_metering {
         let read = answer(&ctx, 200, head, &pieces, false);
         assert_eq!(read.status, 200, "{label}");
         let read_type = read.value("content-type").unwrap_or_default();
-        if far == "responses" && !stream {
-            assert_eq!(read_type, content_type, "{label}");
-            assert_eq!(read.body, body, "{label}: the far end's bytes");
-        } else {
+        {
             assert!(
                 read_type.starts_with("text/event-stream"),
                 "{label}: {read_type}"
