@@ -515,11 +515,10 @@ fn rsp11_error_stop_reason_message_delta_writes_response_failed() {
 
 // ─────────────────────────────────────── RSP-12 ───────────────────────────────────────
 
-/// RSP-12, held to 1.5.5: the Responses stream's top-level `error` event is not a stream error
-/// (v1.5.5 proto/openai_responses/reader.rs:542-1103 had no arm for it). The reader emits nothing for
-/// it, so `terminal_error` stays clear and the stream ends and bills as 1.5.5's did.
+/// RSP-12: a top-level upstream error preserves partial text, closes its block, and fails
+/// the translated stream without emitting a successful terminal delta.
 #[test]
-fn rsp12_top_level_error_event_is_not_a_stream_error() {
+fn rsp12_top_level_error_event_fails_and_closes_the_stream() {
     let raw = sse(&[
         responses_created(),
         (
@@ -531,8 +530,24 @@ fn rsp12_top_level_error_event_is_not_a_stream_error() {
             serde_json::json!({"type":"error","code":"server_error","message":"The server had an error.","param":null}),
         ),
     ]);
-    let (_, terminal_error) = xstream("responses", "anthropic", &raw);
-    assert_eq!(terminal_error, None);
+    let (out, terminal_error) = xstream("responses", "anthropic", &raw);
+    assert_eq!(terminal_error.as_deref(), Some("server_error"));
+    let payloads = sse_payloads(&out);
+    assert!(payloads.iter().any(|p| p["delta"]["text"] == "par"));
+    assert_eq!(payloads.iter().filter(|p| p["type"] == "error").count(), 1);
+    let block_stop = payloads
+        .iter()
+        .position(|p| p["type"] == "content_block_stop" && p["index"] == 0)
+        .expect("partial text block closes");
+    let message_stop = payloads
+        .iter()
+        .position(|p| p["type"] == "message_stop")
+        .expect("failed message terminates");
+    assert!(
+        block_stop < message_stop,
+        "block closes before message: {out}"
+    );
+    assert!(!payloads.iter().any(|p| p["type"] == "message_delta"));
 }
 
 // ─────────────────────────────────────── RSP-14 ───────────────────────────────────────
