@@ -1,13 +1,11 @@
-//! A health probe's far-end request, sans I/O: the smallest request a far end answers with its
-//! health (THE DESIGN: a probe is a kernel-originated unit pinned to one member; the plane answers
-//! its ATTEMPT with this request, the kernel's breaker classifies the answer as it classifies
-//! organic traffic, and the probe bills nothing).
+//! A health probe's far-end request, sans I/O: the smallest request a far end answers with its health
+//! (a probe is a kernel-originated unit pinned to one member; the plane answers its ATTEMPT with
+//! this, the kernel's breaker classifies the answer as organic traffic, and the probe bills nothing).
 //!
-//! 1.5.5's prober, as bytes: the far end's dialect's own probe body for the wire model, POSTed to
-//! the provider's fixed path or the dialect's single-answer path, with the head fields a native
-//! client sends. A lane under a path base is never probed (its path is the dialect's reshaped one,
-//! which a probe cannot name). The credential, the schedule, the timeout and the verdict are the
-//! kernel's.
+//! 1.5.5's prober as bytes: the far end's dialect's own probe body for the wire model, POSTed to the
+//! provider's fixed path or the dialect's single-answer path, with the head fields a native client
+//! sends. A lane under a path base is never probed (its path is the dialect's reshaped one, which a
+//! probe cannot name). Credential, schedule, timeout and verdict are the kernel's.
 
 use busbar_contract::protocol::{APPLICATION_JSON, EGRESS_UA_DEFAULT};
 

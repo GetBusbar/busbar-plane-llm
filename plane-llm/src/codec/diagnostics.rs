@@ -1,24 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE LLM PLANE'S OWN CODED DIAGNOSTICS: the thirty-two codes only this plane's code
-//! emits — the nine cross-protocol IR normalizations, the two usage-tap faults a same-protocol tap
-//! reads before it decodes, the three event-stream framing guards, the dropped provider-metadata
-//! report, and the sixteen lane-engine codes (the usage-tap reassembly cap, the two upstream
-//! transport interruptions, the lane breaker trip, the six cross-protocol response faults, the
-//! three rewrite-pass refusals, the two per-attempt timeouts and the restrict fallback with no
-//! eligible lane). The plane owns its constants exactly as every other plane does, and hands them
-//! to the host's catalog through [`DIAGNOSTICS`](crate::codec::diagnostics::DIAGNOSTICS)
-//! (`install_diagnostics` at the composition root); the host's own registry holds none of them.
+//! The LLM plane's own coded diagnostics: the thirty-two codes only this plane emits: the nine
+//! cross-protocol IR normalizations, two usage-tap faults, three event-stream framing guards, the
+//! dropped provider-metadata report, and sixteen lane-engine codes (usage-tap reassembly cap, two
+//! upstream transport interruptions, the lane breaker trip, six cross-protocol response faults, three
+//! rewrite-pass refusals, two per-attempt timeouts, and the restrict fallback with no eligible lane).
+//! The plane owns its constants and hands them to the host's catalog through
+//! [`DIAGNOSTICS`](crate::codec::diagnostics::DIAGNOSTICS) (`install_diagnostics` at the composition
+//! root); the host registry holds none.
 //!
-//! NUMBERING AND TEXT ARE FROZEN. Each constant keeps the `BUSBAR-NNNN`, slug, title, summary and
-//! action the host catalog publishes in `docs/diagnostics.md` / `docs/diagnostics.json`, so an
-//! operator's logs and the published page read identically whichever crate defines the constant;
-//! the drift test beside this module fails if a constant here and the catalog entry of the same code
-//! disagree in any field.
+//! Numbering and text are frozen. Each constant keeps the `BUSBAR-NNNN`, slug, title, summary and
+//! action the host catalog publishes in `docs/diagnostics.md` / `docs/diagnostics.json`, and the drift
+//! test beside this module fails if a constant and its catalog entry disagree in any field.
 //!
-//! The shared decode-failure code, `USAGE_TAP_DECODE_FAILED`, is not here: a cell's default tap and
-//! this plane both print it, so it is one contract shape (`busbar_contract::diagnostic`).
+//! `USAGE_TAP_DECODE_FAILED` is not here: a cell's default tap and this plane both print it, so it is
+//! one contract shape (`busbar_contract::diagnostic`).
 
 use busbar_contract::diagnostic::{Class, Diagnostic, Severity};
 
@@ -544,11 +541,10 @@ pub const FALLBACK_RESTRICT_NO_ELIGIBLE_LANE: Diagnostic = Diagnostic {
     since: "1.6.0",
     retired: false,
 };
-/// Report an operator `error_map` value that names no status class, once per distinct value for the
-/// life of the process, as 1.5.5 did: an uncoded warning (1.5.5 never carried a code for it, and
-/// busbar's catalogue has none). The misconfiguration sits on the hot error path, so it logs once and
-/// never per request. The set only dedupes this line; no answer the plane gives depends on
-/// it, which is why it sits here with the codec's other scratch state and not in the exchange.
+/// Report an operator `error_map` value naming no status class, once per distinct value per process,
+/// as 1.5.5 did: an uncoded warning (1.5.5 had no code, nor does the catalogue). It sits on the hot
+/// error path, so it logs once, never per request. The set only dedupes this line; no answer depends
+/// on it, hence it sits with the codec's other scratch state and not in the exchange.
 pub fn warn_error_map_class_unrecognized(value: &str) {
     use std::collections::HashSet;
     use std::sync::{Mutex, OnceLock};

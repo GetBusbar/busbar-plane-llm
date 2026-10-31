@@ -1,9 +1,9 @@
 //! The statuses this plane's refusals wear where they are not the kernel's defaults.
 //!
-//! The kernel chooses a refusal's status from the plane's statement: the row for the unit's
-//! dialect, else the row for every dialect, else its own default. What is stated here is what the
-//! kernel's default does not answer, each proved against a recorded answer (the root's
-//! `tests/llm_refusal_statuses.rs`) or, where the oracle has no cell yet, as noted below.
+//! The kernel chooses a refusal's status from the plane's statement: the row for the unit's dialect,
+//! else the row for every dialect, else its own default. What is stated here is what the kernel's
+//! default does not answer, each proved against a recorded answer (the root's
+//! `tests/llm_refusal_statuses.rs`) or, where the oracle has no cell yet, as noted.
 //!
 //! | reason | dialect | status | the recorded answer |
 //! |---|---|---|---|
@@ -18,25 +18,24 @@
 //! The first three are proved against recorded cells.
 //!
 //! Over budget answers the class default, 429, on every dialect but bedrock. On bedrock it is 1.5.5's
-//! 400 `ServiceQuotaExceededException` (OWNER 2026-10-27): the plane declares that refusal in its
-//! own table (`codec/bedrock/refusals.json`), which the runtime's exception and the llm conformance
-//! rig both read, and its status here is that table's (`tests/refusal_statuses.rs` holds the two
-//! equal).
+//! 400 `ServiceQuotaExceededException` (OWNER 2026-10-27): the plane declares that refusal in its own
+//! table (`codec/bedrock/refusals.json`), which the runtime's exception and the llm conformance rig
+//! both read, and its status here is that table's (`tests/refusal_statuses.rs` holds the two equal).
 //!
-//! The kernel's default is a status per refusal class (`busbar_contract::abi::plane::RefusalClass`,
-//! the one classification). Four reasons take the class default and state no row: destination
-//! unreachable answers 503 (its class, `Unreachable`; proved against the recorded `upstream_down`
-//! cells), a frozen group 403 (its class, `Forbidden`), and, since a policy refusal answers its
-//! 4xx rather than 503, no rate 400 (its class, `Rejected`; proved against the recorded
-//! `http.crosscut|unknown-path|openai-suffix` cell, `invalid_request_error`, "no configured rate for
-//! model 'X'") and no destination 404 (its class, `NotFound`; the not-found envelope with the
-//! dialect's model-not-found sentence). The last four rows go the other way: their reasons joined a
-//! class whose default differs from what this plane answers, so each keeps this plane's answer.
+//! The kernel's default is a status per refusal class (`busbar_contract::abi::plane::RefusalClass`).
+//! Four reasons take the class default and state no row: destination unreachable 503 (class
+//! `Unreachable`; proved against the recorded `upstream_down` cells), a frozen group 403
+//! (`Forbidden`), and, since a policy refusal answers its 4xx rather than 503, no rate 400
+//! (`Rejected`; proved against the recorded `http.crosscut|unknown-path|openai-suffix` cell,
+//! `invalid_request_error`, "no configured rate for model 'X'") and no destination 404 (`NotFound`;
+//! the not-found envelope with the dialect's model-not-found sentence). The last four rows go the
+//! other way: their reasons joined a class whose default differs from what this plane answers, so each
+//! keeps this plane's answer.
 //!
-//! The rest of the `Rejected` and `Busy` classes answer off 503 (unpriced, replayed, superseded
-//! and method-not-allowed 400; in-flight cap and in-flight 429), the kinds this plane already
-//! renders those classes in; the wrong-method 405 is the kernel's own stated status, and the
-//! node-wide inbound shed 503 is the router's, neither a class default.
+//! The rest of the `Rejected` and `Busy` classes answer off 503 (unpriced, replayed, superseded and
+//! method-not-allowed 400; in-flight cap and in-flight 429), the kinds this plane already renders
+//! those classes in; the wrong-method 405 is the kernel's own stated status, and the node-wide inbound
+//! shed 503 is the router's, neither a class default.
 //!
 //! A hook's veto is not stated here: the hook's own status rides the refusal.
 
@@ -56,9 +55,8 @@ const fn dialect_index(name: &str) -> u32 {
     panic!("a refusal status names a dialect the plane does not state");
 }
 
-/// The reason codes this plane states a status for: each a reason's place in the plane ABI's
-/// refusal vocabulary (`busbar_contract::abi::plane::reason_of`), pinned to its spelling by
-/// `tests/refusal_statuses.rs`.
+/// The reason codes this plane states a status for: each a reason's place in the plane ABI's refusal
+/// vocabulary (`busbar_contract::abi::plane::reason_of`), pinned to its spelling by `tests/refusal_statuses.rs`.
 pub mod reason {
     /// `unauthenticated`: no credential resolved to a principal.
     pub const UNAUTHENTICATED: u32 = 12;

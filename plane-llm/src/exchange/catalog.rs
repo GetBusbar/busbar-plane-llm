@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE LIST-MODELS CATALOG, rendered: `GET /v1/models` and `GET /v1beta/models` answer the names the
-//! kernel lists for the caller in the envelope of the dialect the request names (a catalog route is answered with no unit; the plane renders, the kernel
-//! lists).
+//! The list-models catalog, rendered: `GET /v1/models` and `GET /v1beta/models` answer the names the
+//! kernel lists for the caller in the envelope of the dialect the request names (answered with no
+//! unit; the plane renders, the kernel lists).
 //!
-//! Several dialects list their models on the same noun, each with its own envelope. Their primary
-//! surfaces are disjoint by path, so this is the one place a dialect is told apart by its PROTOCOL
-//! FINGERPRINT: each dialect declares its fingerprint headers
-//! ([`ProtocolDecl::list_models_fingerprint_headers`]) or the `/v1beta` path convention names it,
-//! the tightest claim over those wins, and a request that names none is answered in the residual
-//! default dialect. The previous release's rule, byte for byte: only a declared fingerprint steers
-//! the envelope, never an incidental header.
+//! Several dialects list models on the same noun, each with its own envelope, on disjoint primary
+//! paths, so this is the one place a dialect is told apart by its protocol fingerprint: each declares
+//! its fingerprint headers ([`ProtocolDecl::list_models_fingerprint_headers`]) or the `/v1beta` path
+//! convention names it, the tightest claim wins, and a request naming none is answered in the residual
+//! default dialect. The previous release's rule, byte for byte: only a declared fingerprint steers the
+//! envelope, never an incidental header.
 
 use busbar_contract::protocol::ProtocolDecl;
 

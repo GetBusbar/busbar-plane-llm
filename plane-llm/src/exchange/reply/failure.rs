@@ -2,12 +2,12 @@
 //! provider's error map places it in a class, the class names its disposition) and what the caller
 //! reads for it.
 //!
-//! The caller's answer is the previous release's, by disposition: a caller's own credential failing
-//! at the far end, and a client fault on a same-dialect hop, are the far end's bytes relayed
+//! The caller's answer follows the previous release, by disposition: a caller's own credential
+//! failing at the far end, and a client fault on a same-dialect hop, are the far end's bytes relayed
 //! verbatim (with the head fields a native answer carries); a client fault across dialects is
-//! reshaped into the caller's envelope; the far end refusing the deployment's own credential is
-//! the caller dialect's own authentication refusal; and every failure the walk may go past carries
-//! the relay the walk answers with if it ends there.
+//! reshaped into the caller's envelope; the far end refusing the deployment's own credential is the
+//! caller dialect's authentication refusal; every failure the walk may go past carries the relay the
+//! walk answers with if it ends there.
 
 use std::collections::HashMap;
 
@@ -74,11 +74,10 @@ fn mapped_class(value: &str) -> Option<StatusClass> {
     class
 }
 
-/// THE CLASS of a far-end error of `status` (the status the far end answered, which its dialect's
-/// reading carries) under the provider's `error_map`: a mapped provider code first,
-/// then the built-in context-length code on a request-size status, then a mapped structured type,
-/// then the status. A mapping to `context_length` never masks a 5xx; a mapping to a string that
-/// names no class is ignored.
+/// The class of a far-end error of `status` (the status its dialect's reading carries) under the
+/// provider's `error_map`: a mapped provider code first, then the built-in context-length code on a
+/// request-size status, then a mapped structured type, then the status. A mapping to `context_length`
+/// never masks a 5xx; a mapping to a string naming no class is ignored.
 #[must_use]
 pub fn normalize(
     status: u16,
@@ -123,9 +122,8 @@ pub fn normalize(
 }
 
 /// The far end's error relayed as it arrived (busbar is invisible on a same-dialect answer): its
-/// status, every head field but the ones busbar governs ([`wire::governed_response`]; the engine
-/// drops the per-connection ones as it writes the answer), and its body. Nothing is invented: a
-/// field the far end did not send is not on the relay.
+/// status, every head field except those busbar governs ([`wire::governed_response`]; the engine drops
+/// the per-connection ones), and its body. Nothing is invented.
 #[must_use]
 pub fn relay_verbatim(ingress: &str, far: &FarError<'_>) -> Rendered {
     let fields: Vec<(String, Vec<u8>)> = far

@@ -1,12 +1,11 @@
-//! The reply's byte helpers: the pure functions the previous release's answer path called between
-//! its reads and its writes, moved here whole so the served path and the plane run one copy.
+//! The reply's byte helpers: pure functions the answer path calls between its reads and writes, one
+//! copy shared by the served path and the plane.
 //!
-//! Each is a read of a dialect declaration or a dialect codec and nothing else: which content types
-//! stream, which content type a caller's stream wears, which far-end head fields a caller's dialect
-//! relays and which request id it carries, the kind and message a far-end error is reshaped with,
-//! the in-band error frame a cut stream ends on, the usage a body reported (or the floor it bills
-//! when it reported none that can be read), the open classes a delivery counted, and whether a
-//! generation the far end answered failed.
+//! Each is a read of a dialect declaration or codec and nothing else: which content types stream,
+//! which content type a caller's stream wears, which far-end head fields a caller's dialect relays and
+//! which request id it carries, the kind and message a far-end error is reshaped with, the in-band
+//! error frame a cut stream ends on, the usage a body reported (or the floor it bills when none can
+//! be read), the open classes a delivery counted, and whether a generation the far end answered failed.
 
 use std::collections::BTreeMap;
 
@@ -71,9 +70,8 @@ pub fn governed_response(dialect: &str, name: &str) -> bool {
 }
 
 /// Relay the far end's head onto a same-dialect answer (busbar is invisible to the caller too): each
-/// far field, in order, under a name the answer's own `fields` do not already carry, but the ones
-/// the dialect governs ([`governed_response`]). The per-connection fields are the writer's to drop
-/// as it writes the answer; nothing is invented.
+/// far field in order, under a name the answer's own `fields` do not already carry, except those the
+/// dialect governs ([`governed_response`]). Per-connection fields are the writer's to drop; nothing is invented.
 pub fn relay_far_head(
     dialect: &str,
     fields: &mut Vec<(String, Vec<u8>)>,
@@ -198,10 +196,9 @@ pub fn cross_protocol_error(status: u16, bytes: &[u8]) -> (&'static str, String)
 }
 
 /// The bytes a stream cut after its first byte ends on, in the caller's own framing: a modeled
-/// exception frame for a binary event-stream caller, else the caller's own in-band error event,
-/// asked of the live translator first (so the frame continues the stream's identity) and of the
-/// dialect second; a dialect the plane does not hold, or one that frames no in-band error, gets a
-/// bare `data:` frame.
+/// exception frame for a binary event-stream caller, else the caller's in-band error event, asked of
+/// the live translator first (so the frame continues the stream's identity) and the dialect second; a
+/// dialect the plane does not hold, or one framing no in-band error, gets a bare `data:` frame.
 #[must_use]
 pub fn mid_stream_error_bytes(
     host: &dyn busbar_contract::codec::CodecHost,
@@ -289,8 +286,8 @@ pub fn token_usage_of(usage: &Option<Billing>) -> Option<TokenUsage> {
     }
 }
 
-/// Every open class a delivery counted that is not a token, by class (owner LEDGER-100: every unit
-/// the far end reports is a ledger line under its meter class):
+/// Every open class a delivery counted that is not a token, by class (owner LEDGER-100: every unit the
+/// far end reports is a ledger line under its meter class):
 ///
 /// - a counted unit (a rerank's search units) verbatim;
 /// - a per-image answer's image count as `images`;
@@ -298,8 +295,8 @@ pub fn token_usage_of(usage: &Option<Billing>) -> Option<TokenUsage> {
 ///   millisecond (integer only; never more than was reported).
 ///
 /// Token usage reaches the ledger through [`token_usage_of`] (its open counts ride
-/// `TokenUsage::open_units`). `Characters` is the TTS request-seam size, no answer carries it,
-/// and `Flat` reports no count. A zero count is no hit on its class.
+/// `TokenUsage::open_units`). `Characters` is the TTS request-seam size, no answer carries it, and
+/// `Flat` reports no count. A zero count is no hit on its class.
 #[must_use]
 pub fn open_units_of(usage: &Option<Billing>) -> BTreeMap<String, u64> {
     use crate::codec::ir::open_class::{add, AUDIO_MS_CLASS, IMAGES_CLASS};

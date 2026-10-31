@@ -1,10 +1,10 @@
-//! THE PLANE'S SHAPING TABLES: what it reads, once per open or refresh, out of the settings the
+//! The plane's shaping tables: what it reads, once per open or refresh, out of the settings the
 //! kernel hands it.
 //!
-//! `OpenIn::settings` is ONE JSON object `{section: value}` holding the sections the plane's tail
-//! names, as the kernel validated them, with secret references stripped: `providers` (declaring),
-//! `models`, `pools` and `limits` (consumed). The kernel keeps the credentials, the money and the
-//! routing; the plane keeps only the fields that shape the bytes it writes to a far end:
+//! `OpenIn::settings` is one JSON object `{section: value}` of the sections the plane's tail names,
+//! as the kernel validated them, with secret references stripped: `providers` (declaring), `models`,
+//! `pools` and `limits` (consumed). The kernel keeps the credentials, money and routing; the plane
+//! keeps only the fields that shape the bytes it writes to a far end:
 //!
 //! | field | from |
 //! |---|---|
@@ -16,9 +16,8 @@
 //! | the global `default_max_tokens` and the effort → thinking-budget table | `limits` |
 //! | the translation cap, `request_body_max_bytes` (the operator's one knob) | `limits` |
 //!
-//! A request is written the same way whichever build holds the tables. The grammar was already judged by the
-//! kernel: a field this reading does not use is not read, and a malformed one it does use is a
-//! refusal to open.
+//! A request is written the same way whichever build holds the tables. The kernel already judged the
+//! grammar: a field this reading does not use is not read, and a malformed one it does use refuses to open.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -74,10 +73,10 @@ pub struct Lane {
     pub caps: LaneCaps,
     /// The provider's error-code map.
     pub error_map: HashMap<String, String>,
-    /// The far end's dialect's declared static fields (`ProtocolDecl::static_headers`,), written on every far request of a lane presented under the
-    /// dialect's own credential scheme; none under an operator's `auth:` override that is not the
-    /// dialect's scheme (`api-key`, `jwt-bearer`, `oauth-client-credentials`), whose declaration
-    /// carries none.
+    /// The far end's dialect's declared static fields (`ProtocolDecl::static_headers`), written on every
+    /// far request of a lane presented under the dialect's own credential scheme; none under an
+    /// operator `auth:` override that is not the dialect's scheme (`api-key`, `jwt-bearer`,
+    /// `oauth-client-credentials`), whose declaration carries none.
     pub statics: &'static [(&'static str, &'static str)],
     /// The model is served over the invoke envelope ([`super::invoke`]): its dialect is the one the
     /// envelope carries, its target, body edits, stream framing and refusals the envelope's.
@@ -303,10 +302,10 @@ fn lane_caps(p: &ProviderCfg, wire_model: &str) -> LaneCaps {
 }
 
 /// The provider's options a lane of `dialect` takes. They were judged against the provider's own
-/// dialect, so a lane that speaks it takes every one of them. A model served over the invoke
-/// envelope reaches the provider's (Bedrock's) far end, so it takes them too, the invoke-only ones
-/// included. A model whose own `protocol` names another dialect takes only the options that dialect
-/// also lists. No other lane takes an invoke-only option.
+/// dialect, so a lane speaking it takes every one. A model served over the invoke envelope reaches the
+/// provider's (Bedrock's) far end, so it takes them too, invoke-only ones included. A model whose own
+/// `protocol` names another dialect takes only the options that dialect also lists. No other lane
+/// takes an invoke-only option.
 fn lane_options(
     set: &[SetOption],
     provider_dialect: Option<&str>,
@@ -387,13 +386,13 @@ impl Shaping {
             .map_or(DEFAULT_AFFINITY_HEADER, String::as_str)
     }
 
-    /// READ THE TABLES from the settings object.
+    /// Read the tables from the settings object.
     ///
     /// # Errors
     ///
-    /// Why the settings do not describe a generation this plane can serve: a section that does not
-    /// read, a model naming no provider, a provider naming a dialect the plane does not speak, a
-    /// pool member naming no model, or one model given two context windows.
+    /// Why the settings do not describe a servable generation: a section that does not read, a model
+    /// naming no provider, a provider naming a dialect the plane does not speak, a pool member naming
+    /// no model, or one model given two context windows.
     pub fn from_settings(settings: &Value) -> Result<Self, String> {
         let blocks: BTreeMap<String, serde_json::Map<String, Value>> =
             section(settings, sections::PROVIDERS)?.unwrap_or_default();
@@ -546,12 +545,11 @@ impl Shaping {
         })
     }
 
-    /// THE TRANSLATION CAP this generation enforces, in bytes: the one the kernel handed in the
-    /// settings the plane was opened or refreshed with (`limits.request_body_max_bytes`, the
-    /// operator's one knob for the inbound body limit and this egress cap), else
-    /// [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`], the kernel's own default. It
-    /// bounds a whole answer taken for translation (past it, the caller's 500), the same-dialect copy
-    /// kept for usage, and what a translating writer accumulates per item.
+    /// The translation cap this generation enforces, in bytes: the kernel's `limits.request_body_max_bytes`
+    /// from the settings (the operator's one knob for the inbound body limit and this egress cap), else
+    /// [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`]. It bounds a whole answer taken for
+    /// translation (past it, the caller's 500), the same-dialect copy kept for usage, and what a
+    /// translating writer accumulates per item.
     #[must_use]
     pub fn translate_cap(&self) -> usize {
         self.request_body_max_bytes
