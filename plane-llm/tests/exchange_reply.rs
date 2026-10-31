@@ -687,9 +687,11 @@ fn a_json_array_caller_reads_its_stream_as_one_array() {
         relay::content_type("gemini", "gemini", true, true),
         ContentType::Json
     );
-    assert!(relay::takes_whole("openai", "anthropic", false));
-    assert!(!relay::takes_whole("openai", "openai", false));
-    assert!(!relay::takes_whole("openai", "anthropic", true));
+    assert!(relay::takes_whole("openai", "anthropic", false, false));
+    assert!(!relay::takes_whole("openai", "openai", false, false));
+    assert!(relay::takes_whole("openai", "openai", false, true));
+    assert!(!relay::takes_whole("openai", "anthropic", true, false));
+    assert!(!relay::takes_whole("openai", "openai", true, true));
 }
 
 // ── the reply ───────────────────────────────────────────────────────────────────────────────────
@@ -1555,6 +1557,53 @@ mod rehomed_answers {
             (read.end().units.tokens_in, read.end().units.tokens_out),
             (7, 3)
         );
+    }
+
+    /// OWNER 2026-10-27 (busbar answers in the caller's dialect AND mode) holds within one dialect
+    /// too: a caller that asked for a stream, served by a far end of its own dialect that answered
+    /// one whole body, reads its dialect's stream synthesised from that body, marked and billed from
+    /// the body, never the far end's `application/json` body under `stream: true`.
+    /// RED: a same-dialect stream-asked, body-answered reply relayed as `application/json`.
+    #[test]
+    fn a_same_dialect_whole_answer_to_a_stream_ask_is_the_callers_stream() {
+        let response = serde_json::to_vec(&json!({
+            "id": "resp_ok", "object": "response", "status": "completed", "model": "m-1",
+            "created_at": 0, "error": null, "incomplete_details": null, "instructions": null,
+            "metadata": null, "parallel_tool_calls": true, "temperature": null, "top_p": null,
+            "tool_choice": "auto", "tools": [],
+            "output": [{"type": "message", "id": "msg_ok", "role": "assistant",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": "hi", "annotations": []}]}],
+            "usage": {"input_tokens": 7, "output_tokens": 3, "total_tokens": 10}
+        }))
+        .expect("JSON");
+        for (dialect, body, last) in [
+            ("openai", chat_completion("hi"), "data: [DONE]"),
+            ("responses", response, "response.completed"),
+        ] {
+            let (arrived, lane) = ask(dialect, dialect, true);
+            let ctx = reply_ctx(&arrived, &lane, false);
+            let read = answer(&ctx, 200, JSON_HEAD, &[&body], false);
+            assert_eq!(read.status, 200, "{dialect}");
+            assert_eq!(
+                read.value("content-type").as_deref(),
+                Some("text/event-stream"),
+                "{dialect}: {:?} {}",
+                read.fields,
+                read.text()
+            );
+            assert!(read.text().contains(last), "{dialect}: {}", read.text());
+            let end = read.end();
+            assert!(
+                end.synthesized,
+                "{dialect}: the synthesised stream is marked"
+            );
+            assert_eq!(
+                (end.units.tokens_in, end.units.tokens_out),
+                (7, 3),
+                "{dialect}: billed from the far end's whole body"
+            );
+        }
     }
 
     // ── the relayed stream (forward_pool_integration_tests.rs) ─────────────────────────────────
@@ -4557,8 +4606,9 @@ mod rehomed_metering {
     }
 
     /// One `stream: true` responses request answered by a far end of `far` (a native stream when
-    /// `stream`, else one whole body): the caller reads a responses event stream (or, within one
-    /// dialect, the far end's whole body unchanged), and the answer bills exactly 11 / 7 once.
+    /// `stream`, else one whole body): the caller reads a responses event stream (within one
+    /// dialect too: a whole body is synthesised into the caller's stream, OWNER 2026-10-27), and
+    /// the answer bills exactly 11 / 7 once.
     fn responses_case(far: &'static str, stream: bool) {
         let label = format!("responses<-{far} (stream: {stream})");
         let (content_type, body) = upstream_answer(far, stream);
@@ -4569,10 +4619,7 @@ mod rehomed_metering {
         let read = answer(&ctx, 200, head, &pieces, false);
         assert_eq!(read.status, 200, "{label}");
         let read_type = read.value("content-type").unwrap_or_default();
-        if far == "responses" && !stream {
-            assert_eq!(read_type, content_type, "{label}");
-            assert_eq!(read.body, body, "{label}: the far end's bytes");
-        } else {
+        {
             assert!(
                 read_type.starts_with("text/event-stream"),
                 "{label}: {read_type}"
