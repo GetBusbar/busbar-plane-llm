@@ -40,9 +40,9 @@ pub struct IrRequest {
     pub n: Option<u32>,
     /// The reasoning/thinking ask, normalized across spellings (OpenAI `reasoning_effort` word,
     /// Anthropic/Gemini numeric budget). Number to number is a copy; word to number goes through
-    /// [`IrRequest::reasoning_budgets`]. The egress seam clears it with a warn when the lane lacks
-    /// the `reasoning` capability, so a non-reasoning model never 400s on it. Response-side
-    /// thinking content is carried by Thinking blocks and is not gated.
+    /// [`IrRequest::reasoning_budgets`]. The egress seam clears it with a warn when the lane lacks the
+    /// `reasoning` capability, so a non-reasoning model never 400s. Response-side thinking content is
+    /// carried by Thinking blocks and not gated.
     pub reasoning: Option<IrReasoningAsk>,
     /// Effort-word to token-budget table [minimal, low, medium, high], stamped by the egress seam
     /// from `limits.reasoning_effort_budgets` (defaults 1024/4096/8192/16384). Writers fall back to
@@ -164,14 +164,13 @@ pub enum IrStreamEvent {
     MessageStart {
         role: IrRole,
         usage: Option<IrUsage>,
-        /// Stream identity from the backend's stream-start metadata, so a writer can emit the
-        /// native top-level identity fields. Readers populate it; the writer synthesizes one when absent.
+        /// Stream identity from the backend's stream-start metadata, so a writer can emit the native
+        /// top-level identity fields. Readers populate it; the writer synthesizes one when absent.
         ///
-        /// On a cross-protocol stream `StreamTranslate::translate_event` clears only `id` and
-        /// `created`, so the ingress writer mints a native id instead of leaking `chatcmpl-`/`msg_`.
-        /// `model` is kept on purpose: writers anchor the native stream-start skeleton on it, and
-        /// clearing it produced a degenerate Anthropic `message_start` and a Gemini frame without
-        /// `modelVersion`. Same-protocol streams stay byte-exact.
+        /// On a cross-protocol stream `StreamTranslate::translate_event` clears only `id` and `created`,
+        /// so the ingress writer mints a native id instead of leaking `chatcmpl-`/`msg_`. `model` is kept:
+        /// writers anchor the native stream-start skeleton on it (clearing it gave a degenerate Anthropic
+        /// `message_start` and a Gemini frame without `modelVersion`). Same-protocol streams stay byte-exact.
         id: Option<String>,
         /// Unix epoch seconds of stream creation (OpenAI chunk `created`).
         created: Option<u64>,
@@ -532,11 +531,10 @@ pub enum IrBlock {
         /// Anthropic `cache_control` on a `tool_use` block. Only the Anthropic reader and writer
         /// touch it.
         cache_control: Option<CacheControl>,
-        /// Gemini 3 `thoughtSignature`, a sibling of `functionCall` that must be echoed back
-        /// verbatim next turn or Gemini 400s. Set by Gemini readers when Gemini is the source, and
-        /// injected by [`IrReq::prepare_for_egress`] with Google's documented sentinel when the
-        /// egress lane is Gemini AI Studio and the block has no real signature (e.g. OpenAI history
-        /// replayed against Gemini).
+        /// Gemini 3 `thoughtSignature`, a sibling of `functionCall` that must be echoed back verbatim
+        /// next turn or Gemini 400s. Set by Gemini readers, and injected by [`IrReq::prepare_for_egress`]
+        /// with Google's documented sentinel when the egress lane is Gemini AI Studio and the block has
+        /// no real signature (e.g. OpenAI history replayed against Gemini).
         thought_signature: Option<String>,
     },
     ToolResult {
@@ -627,14 +625,13 @@ impl IrBlock {
         }
     }
 
-    /// The search-result slot: one caller-supplied RAG passage —
-    /// Anthropic `search_result`, Converse `searchResult` — modelled as a `Text` block a model of
-    /// any dialect can read (a `title — source` header line, then the passage), carrying ONE
-    /// provenance citation of kind `search_result_location` with no location indices (which is what
-    /// tells it apart from an answer's search-result citation, which always has them). The
-    /// citation's `raw` holds the block's `citations` switch verbatim (`{"enabled": bool}`, spelled
-    /// identically by both wires). A dialect that has the block re-emits it from
-    /// [`IrBlock::as_search_result`]; any other dialect sends the text.
+    /// The search-result slot: one caller-supplied RAG passage (Anthropic `search_result`, Converse
+    /// `searchResult`) modelled as a `Text` block any dialect can read (a `title — source` header line,
+    /// then the passage), carrying one provenance citation of kind `search_result_location` with no
+    /// location indices (which tells it apart from an answer's search-result citation, which always has
+    /// them). The citation's `raw` holds the block's `citations` switch verbatim (`{"enabled": bool}`,
+    /// spelled identically by both wires). A dialect with the block re-emits it from
+    /// [`IrBlock::as_search_result`]; any other sends the text.
     pub fn search_result(
         source: &str,
         title: &str,
@@ -709,21 +706,20 @@ impl IrBlock {
         })
     }
 
-    /// Is this block's content opaque to busbar (carried verbatim, never readable as plaintext,
-    /// never disclosable to a sidecar)? Opaque shapes: Anthropic `redacted_thinking`, Bedrock
+    /// Is this block's content opaque to busbar (carried verbatim, never readable as plaintext, never
+    /// disclosable to a sidecar)? Opaque shapes: Anthropic `redacted_thinking`, Bedrock
     /// `redactedContent` (both `Thinking { redacted: true, text: <ciphertext> }`), and a Responses
     /// `reasoning` item with only `encrypted_content` (`redacted: false`, empty text, blob in
-    /// `signature`). The last would pass a redaction check keyed on `redacted`, hence this predicate.
+    /// `signature`), which a redaction check keyed on `redacted` would pass, hence this predicate.
     ///
     /// `redacted` is deliberately not set for the Responses shape: it is a writer instruction ("this
-    /// block's `text` is the opaque payload to re-emit"). The Responses writer drops `redacted`
-    /// blocks, which would lose `encrypted_content` on a Responses round-trip, and the Anthropic and
-    /// Bedrock writers would emit an empty-ciphertext block cross-protocol.
+    /// block's `text` is the opaque payload to re-emit"). The Responses writer drops `redacted` blocks
+    /// (losing `encrypted_content` on a round-trip) and the Anthropic and Bedrock writers would emit an
+    /// empty-ciphertext block cross-protocol.
     ///
-    /// The empty-text-plus-blob arm is general, not Responses-shaped: a text-less Gemini thought
-    /// part with `thoughtSignature` lands the same way. A block with real plaintext and a signature
-    /// is readable. Consumers must call this before touching `text`, which is empty or the
-    /// ciphertext itself when this returns true.
+    /// The empty-text-plus-blob arm is general: a text-less Gemini thought part with `thoughtSignature`
+    /// lands the same way. A block with real plaintext and a signature is readable. Call this before
+    /// touching `text`, which is empty or the ciphertext itself when this returns true.
     /// COH-17: an empty text block that only carries citations (a grounded turn with no text
     /// part). A writer whose dialect rejects an empty text block (Anthropic, Bedrock, Gemini) omits it.
     pub fn is_citation_carrier(&self) -> bool {

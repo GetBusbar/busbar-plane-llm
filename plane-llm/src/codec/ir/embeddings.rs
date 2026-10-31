@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! Embeddings IR. Cross-protocol across OpenAI, Cohere, Gemini,
-//! Bedrock (NO Anthropic — it ships no embeddings API). Split request/response per;
-//! token-metered → `Billing::Tokens`.
+//! Embeddings IR, cross-protocol across OpenAI, Cohere, Gemini, Bedrock (not Anthropic: no embeddings
+//! API). Token-metered: `Billing::Tokens`.
 //!
-//! Losslessness crux: a single response can carry MULTIPLE typed
-//! vectors AT ONCE (Cohere/Titan return float AND int8/binary), so vectors are keyed BY ENCODING in
-//! [`EmbeddingItem::vectors`] — a flat `Vec<f32>` would silently drop the others.
+//! Losslessness crux: one response can carry several typed vectors at once (Cohere/Titan return float
+//! and int8/binary), so vectors are keyed by encoding in [`EmbeddingItem::vectors`]; a flat
+//! `Vec<f32>` would drop the others.
 
 use busbar_contract::billing::{Billing, TokenUsage};
 use busbar_contract::ir::SourceScopedExtra;
@@ -72,19 +71,16 @@ pub struct EmbeddingsReq {
     pub extra: SourceScopedExtra,
 }
 
-/// THE EMBEDDINGS FAMILY'S WALK — this IR's answer to [`busbar_contract::ir::facts::IrFacts`], the
-/// family-blind seam the shared pipeline (hook/gate/tap) reads a request through. It lives HERE, in
-/// the module that owns the IR, for the reason [`busbar_contract::ir::invoke`]'s header states: one IR, one
-/// walk, one file — never folded into `facts.rs`, which carries the CHAT family's walk and would
-/// become a cross-family superset if a second family joined it.
+/// The embeddings family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`], the
+/// family-blind seam the shared pipeline (hook/gate/tap) reads a request through. It lives with the IR
+/// (one IR, one walk, one file; see [`busbar_contract::ir::invoke`]'s header), not in `facts.rs`, which
+/// carries the chat walk.
 ///
-/// Every CALLER-AUTHORED text field is projected to [`busbar_contract::ir::facts::ContentItem::Text`] so a
-/// `prompt: ro` screening gate sees it (the whole point of this change — an embeddings request was
-/// gate-blind before): each `input` string, and the Gemini retrieval `title` when present. Inputs
-/// that are present but UNSCREENABLE — a pre-tokenized token array, or an image reference — project
-/// [`busbar_contract::ir::facts::ContentItem::Opaque`] (present-but-unscreenable), never silently nothing.
-/// `input_type`/`task_type`/`truncate`/`dimensions` are enum/numeric ROLES, not caller free-text,
-/// and stay out.
+/// Every caller-authored text field is a [`busbar_contract::ir::facts::ContentItem::Text`] so a
+/// `prompt: ro` screening gate sees it (embeddings requests were gate-blind): each `input` string and
+/// the Gemini retrieval `title`. Present but unscreenable inputs (a pre-tokenized array, an image
+/// reference) project [`busbar_contract::ir::facts::ContentItem::Opaque`], never nothing.
+/// `input_type`/`task_type`/`truncate`/`dimensions` are roles, not free text.
 impl busbar_contract::ir::facts::IrFacts for EmbeddingsReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::EMBEDDINGS

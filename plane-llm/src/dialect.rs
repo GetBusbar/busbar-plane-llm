@@ -8,37 +8,35 @@ pub struct Dialect {
     pub name: &'static str,
     /// The egress-auth scheme that decorates a request to an upstream of this dialect.
     pub egress_scheme: &'static str,
-    /// THE DIALECT'S DEFAULT OUTBOUND AUTH STYLE (the design's auth points: a member's style is its
-    /// provider's `auth:`, else its plane's default for its dialect): the
-    /// style an auth plugin serves, stated in the plane tail's `dialect_auth`.
+    /// The dialect's default outbound auth style (a member's style is its provider's `auth:`, else the
+    /// plane's default for its dialect): the style an auth plugin serves, stated in the plane tail's `dialect_auth`.
     pub egress_style: &'static str,
-    /// THE DEFAULT STYLE'S PARAMETERS for this dialect, a JSON object (`""`: none), stated in the
-    /// plane tail's `dialect_auth.params` and handed the auth plugin's `open_outbound` as its
-    /// settings at seal, under the provider's own.
+    /// The default style's parameters, a JSON object (`""`: none), stated in the tail's
+    /// `dialect_auth.params` and handed the auth plugin's `open_outbound` as settings at seal, under the provider's own.
     pub egress_params: &'static str,
-    /// The request headers busbar GOVERNS for this dialect (lower-case): its credential headers and
-    /// its tenant selectors (the forced options of `crate::options::catalogue`). A same-dialect
-    /// route forwards every other client header unchanged; these never pass, because busbar's
-    /// upstream credential and configuration replace them.
+    /// The request headers busbar governs for this dialect (lower-case): its credential headers and
+    /// tenant selectors (the forced options of `crate::options::catalogue`). A same-dialect route
+    /// forwards every other client header unchanged; these never pass, as busbar's upstream credential
+    /// and configuration replace them.
     pub governed_headers: &'static [&'static str],
     /// The request URL query parameters busbar GOVERNS for this dialect: its credential parameters.
     /// A same-dialect route forwards every other caller parameter unchanged; these never pass.
     pub governed_query: &'static [&'static str],
-    /// The response headers busbar GOVERNS for this dialect (lower-case): what the far end derives
+    /// The response headers busbar governs for this dialect (lower-case): what the far end derives
     /// from busbar's own credential and tenant (the operator's organization or project id). A
     /// same-dialect answer relays every other upstream header; these never reach the caller.
     pub governed_response_headers: &'static [&'static str],
 }
 
-/// The upstream answer head fields that describe the OPERATOR's own upstream account or connection,
-/// in every dialect: the cookies a far end (or its CDN) sets for busbar's connection. A tenant never
-/// receives them; the previous release relayed only the request id. Exact names, so the host strips
-/// them before the plane reads the head ([`crate::plane_door::DENY_RESPONSE_HEADERS`]).
+/// The upstream answer head fields describing the operator's own account or connection, in every
+/// dialect: the cookies a far end (or its CDN) sets for busbar's connection. A tenant never gets them;
+/// the previous release relayed only the request id. Exact names, stripped by the host before the plane
+/// reads the head ([`crate::plane_door::DENY_RESPONSE_HEADERS`]).
 pub const ACCOUNT_RESPONSE_HEADERS: &[&str] = &["set-cookie", "set-cookie2"];
 
-/// The upstream answer head field families that report the operator's account-wide rate-limit state
-/// (`x-ratelimit-remaining-tokens`, `anthropic-ratelimit-requests-limit`, ...), in every dialect:
-/// one tenant must not read the operator's (or another tenant's) quota. Prefixes, lower-case.
+/// The upstream answer head field families reporting the operator's account-wide rate-limit state
+/// (`x-ratelimit-remaining-tokens`, `anthropic-ratelimit-requests-limit`, ...), in every dialect: one
+/// tenant must not read the operator's (or another's) quota. Lower-case prefixes.
 pub const ACCOUNT_RESPONSE_PREFIXES: &[&str] = &["x-ratelimit-", "anthropic-ratelimit-"];
 
 /// Whether the answer head field `name` (compared without case) is the operator's account state
@@ -56,9 +54,9 @@ pub fn account_scoped_response(name: &str) -> bool {
 /// What the two dialects of one vendor govern on an answer: the operator's tenant ids it echoes.
 const OPENAI_GOVERNED_RESPONSE: &[&str] = &["openai-organization", "openai-project"];
 
-/// What the two dialects of one vendor govern: its credential headers (a bearer, and the key header
-/// a re-hosted deployment of it reads) and its two tenant selectors, which only the provider's
-/// forced options (`crate::options::OPENAI`) set.
+/// What the two dialects of one vendor govern: its credential headers (a bearer, and the key header a
+/// re-hosted deployment reads) and two tenant selectors, which only the provider's forced options
+/// (`crate::options::OPENAI`) set.
 const OPENAI_GOVERNED: &[&str] = &[
     "authorization",
     "api-key",
@@ -66,10 +64,9 @@ const OPENAI_GOVERNED: &[&str] = &[
     "openai-project",
 ];
 
-/// The `api-key` style's parameters for the dialect whose credentials come in families (its
-/// codec's `EgressScheme::Static`): an api key presented in `x-api-key` with leading whitespace
-/// trimmed, an oauth token as a bearer, the operator's own key in `x-api-key`, a passthrough caller's
-/// as a bearer.
+/// The `api-key` style's parameters for the dialect whose credentials come in families (its codec's
+/// `EgressScheme::Static`): an api key in `x-api-key` with leading whitespace trimmed, an oauth token
+/// as a bearer, the operator's own key in `x-api-key`, a passthrough caller's as a bearer.
 pub(crate) const KEY_FAMILY_PARAMS: &str = concat!(
     r#"{"header":"x-api-key","#,
     r#""families":[{"prefix":"sk-ant-api","header":"x-api-key","trim_start":true},"#,
@@ -77,10 +74,9 @@ pub(crate) const KEY_FAMILY_PARAMS: &str = concat!(
     r#""own":{"header":"x-api-key"},"passthrough":{},"protocol":"anthropic"}"#,
 );
 
-/// The bearer-presented dialects' parameters (their codecs' `EgressScheme::Static` with no
-/// credential families, the operator's and a passthrough caller's credential both as a bearer),
-/// naming the dialect as the `protocol` a credential no header may carry is logged under (1.5.5's
-/// `protocol=` field).
+/// The bearer-presented dialects' parameters (their codecs' `EgressScheme::Static` with no credential
+/// families; the operator's and a passthrough caller's credential both as a bearer), naming the
+/// dialect as the `protocol` a credential no header may carry is logged under (1.5.5's `protocol=`).
 pub(crate) const OPENAI_PARAMS: &str =
     r#"{"families":[],"own":{},"passthrough":{},"protocol":"openai"}"#;
 /// [`OPENAI_PARAMS`] for the responses dialect.
@@ -89,9 +85,8 @@ pub(crate) const RESPONSES_PARAMS: &str =
 /// [`OPENAI_PARAMS`] for the cohere dialect.
 pub(crate) const COHERE_PARAMS: &str =
     r#"{"families":[],"own":{},"passthrough":{},"protocol":"cohere"}"#;
-/// The `x-goog-api-key`-presented dialect's parameters (its codec's `EgressScheme::Static`): the
-/// operator's and a passthrough caller's credential verbatim in `x-goog-api-key`, under its
-/// `protocol`.
+/// The `x-goog-api-key` dialect's parameters (its codec's `EgressScheme::Static`): the operator's and
+/// a passthrough caller's credential verbatim in `x-goog-api-key`, under its `protocol`.
 pub(crate) const GEMINI_PARAMS: &str = concat!(
     r#"{"families":[],"own":{"header":"x-goog-api-key"},"#,
     r#""passthrough":{"header":"x-goog-api-key"},"protocol":"gemini"}"#,
@@ -121,10 +116,10 @@ pub const DIALECTS: &[Dialect] = &[
     },
     Dialect {
         name: "openai",
-        // This dialect accepts a newer spelling as well, and both are declared. The reasoning
-        // models of this vendor refuse the older key outright, so a client of one of them sends
-        // only the newer; naming just the older was a hold sized off a key that never arrived.
-        // This dialect reports no separate written-to-cache quantity.
+        // This dialect accepts a newer spelling too, and both are declared: the vendor's reasoning
+        // models refuse the older key outright, so a client of one sends only the newer, and naming
+        // just the older was a hold sized off a key that never arrived. No separate written-to-cache
+        // quantity is reported.
         egress_scheme: "bearer",
         egress_style: "bearer",
         egress_params: OPENAI_PARAMS,

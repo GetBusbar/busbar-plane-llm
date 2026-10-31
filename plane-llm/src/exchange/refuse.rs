@@ -1,15 +1,15 @@
-//! A refusal, rendered: the status, the head fields and the body the caller reads, in the dialect
-//! envelope the previous release answered in.
+//! A refusal, rendered: the status, head fields and body the caller reads, in the dialect envelope
+//! the previous release answered in.
 //!
-//! One renderer for every refusal the plane writes (its own decode refusals, an attempt it answers
-//! without the far end, and the kernel's refusals), as 1.5.5's one renderer was: the envelope
-//! dialect's own error writer over `(status, kind, message)`, `content-type: application/json`,
-//! the dialect's own error headers, then `retry-after` when the refusal advises a wait. A dialect
-//! the plane does not hold renders the agnostic envelope.
+//! One renderer for every refusal the plane writes (its own decode refusals, an attempt answered
+//! without the far end, and the kernel's refusals), as 1.5.5's was: the envelope dialect's error
+//! writer over `(status, kind, message)`, `content-type: application/json`, the dialect's error
+//! headers, then `retry-after` when the refusal advises a wait. A dialect the plane does not hold
+//! renders the agnostic envelope.
 //!
-//! For a kernel refusal the plane chooses the kind (and, for an authentication refusal, the
-//! dialect's own vendor sentence) from the reason; every other message is the kernel's own text,
-//! which names the facts only the kernel has (a group, a window, a model with no rate).
+//! For a kernel refusal the plane chooses the kind (and, for authentication, the dialect's vendor
+//! sentence) from the reason; every other message is the kernel's own text, naming facts only the
+//! kernel has (a group, a window, a model with no rate).
 
 use crate::codec::framework::KIND_TIMEOUT;
 use busbar_contract::abi::plane::{class_of_word, reason_of, RefusalClass};
@@ -113,9 +113,8 @@ fn kind_of_status(status: u16) -> &'static str {
 }
 
 /// The kind a hook's refusal wears, by the status the hook chose (the previous release's
-/// `reject_kind_for_status`): a hook 429 reads as a rate limit, a 408 as a timeout, the 503 of a
-/// load-bearing hook that could not answer as overloaded (retryable), and a status with no natural
-/// kind as an invalid request.
+/// `reject_kind_for_status`): 429 a rate limit, 408 a timeout, the 503 of a load-bearing hook that
+/// could not answer overloaded (retryable), any status with no natural kind an invalid request.
 #[must_use]
 pub fn gate_kind(status: u16) -> &'static str {
     match status {
