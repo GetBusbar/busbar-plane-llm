@@ -81,6 +81,10 @@ fn gemini_logprobs_reach_openai_caller() {
     assert_eq!(content[0]["logprob"], -0.031);
     assert_eq!(content[0]["bytes"], serde_json::json!([72, 105])); // "Hi" UTF-8
     assert_eq!(content[0]["top_logprobs"][1]["token"], "Hello");
+    assert_eq!(
+        content[0]["top_logprobs"][1]["bytes"],
+        serde_json::json!([72, 101, 108, 108, 111])
+    );
     assert_eq!(content[1]["token"], "!");
 }
 

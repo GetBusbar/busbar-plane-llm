@@ -1033,13 +1033,76 @@ fn malformed_logprob_bytes_never_become_shortened_valid_tokens() {
     let written = write_token_logprobs(&entries);
     assert_eq!(written["content"][0]["bytes"], json!([226, 128]));
     assert!(capture.contains("dropping malformed logprob entry"));
-    let absent = json!({"content":[{"token":"hi","logprob":-0.5,"bytes":null}]});
+    let absent = json!({"content":[{"token":"hi","logprob":-0.5}]});
     let written = write_token_logprobs(&read_token_logprobs(Some(&absent)));
     assert_eq!(
         written["content"][0]["bytes"],
         json!([104, 105]),
         "existing unknown-bytes synthesis policy stays unchanged"
     );
+}
+
+#[test]
+fn logprob_null_bytes_survive_independently_for_chosen_and_top_tokens() {
+    use crate::codec::logprob_wire::{read_token_logprobs, write_token_logprobs};
+    let controls = [
+        None,
+        Some(json!(null)),
+        Some(json!([])),
+        Some(json!([226, 128])),
+    ];
+    for chosen_bytes in &controls {
+        for top_bytes in &controls {
+            let mut body = json!({"content":[{
+                "token":"<|x|>", "logprob":-0.5,
+                "top_logprobs":[{"token":"é", "logprob":-1.0}]
+            }]});
+            if let Some(bytes) = chosen_bytes {
+                body["content"][0]["bytes"] = bytes.clone();
+            }
+            if let Some(bytes) = top_bytes {
+                body["content"][0]["top_logprobs"][0]["bytes"] = bytes.clone();
+            }
+            let written = write_token_logprobs(&read_token_logprobs(Some(&body)));
+            let expected_chosen = chosen_bytes.clone().unwrap_or_else(|| json!(b"<|x|>"));
+            let expected_top = top_bytes.clone().unwrap_or_else(|| json!([195, 169]));
+            assert_eq!(written["content"][0]["bytes"], expected_chosen);
+            assert_eq!(
+                written["content"][0]["top_logprobs"][0]["bytes"],
+                expected_top
+            );
+            assert_eq!(written["content"][0]["token"], "<|x|>");
+            assert_eq!(written["content"][0]["logprob"], -0.5);
+            assert_eq!(written["content"][0]["top_logprobs"][0]["token"], "é");
+            assert_eq!(written["content"][0]["top_logprobs"][0]["logprob"], -1.0);
+        }
+    }
+}
+
+#[test]
+fn chat_reader_and_writer_preserve_explicit_null_logprob_bytes() {
+    let host = crate::codec::test_host::HOST;
+    let body = json!({
+        "id":"chatcmpl-bytes", "object":"chat.completion", "created":1, "model":"m",
+        "choices":[{"index":0, "finish_reason":"stop",
+            "message":{"role":"assistant", "content":"<|x|>"},
+            "logprobs":{"content":[{"token":"<|x|>", "logprob":-0.5, "bytes":null,
+                "top_logprobs":[{"token":"é", "logprob":-1.0, "bytes":null}]}],
+                "refusal":null}}],
+        "usage":{"prompt_tokens":17, "completion_tokens":9, "total_tokens":26}
+    });
+    let protocol = crate::codec::proto_codec::protocol_for("openai").unwrap();
+    let response = protocol.reader().read_response(host, &body).unwrap();
+    let written = protocol.writer().write_response(host, &response);
+    let chosen = &written["choices"][0]["logprobs"]["content"][0];
+    assert_eq!(chosen.get("bytes"), Some(&serde_json::Value::Null));
+    assert_eq!(
+        chosen["top_logprobs"][0].get("bytes"),
+        Some(&serde_json::Value::Null)
+    );
+    assert_eq!(written["choices"][0]["message"]["content"], "<|x|>");
+    assert_eq!(written["usage"]["prompt_tokens"], 17);
+    assert_eq!(written["usage"]["completion_tokens"], 9);
 }
 
 #[test]
