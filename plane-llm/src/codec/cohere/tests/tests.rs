@@ -3465,36 +3465,27 @@ fn test_tool_message_roundtrip_no_duplicate_text() {
 
 /// `max_tokens` must be narrowed with `u32::try_from`, NOT a
 /// bare `as u32`. A value above `u32::MAX` previously wrapped to a small nonsense cap and was
-/// forwarded to Cohere; it must now drop to `None` (no cap) rather than a truncated wrap. A
-/// valid in-range value still parses, and a zero/negative value is still rejected.
+/// forwarded to Cohere. Refuse an unrepresentable cap rather than silently remove it.
+/// Valid positive in-range values still parse unchanged.
 #[test]
-fn test_read_request_max_tokens_out_of_range_drops_to_none() {
+fn test_read_request_unrepresentable_max_tokens_refuses_without_removing_cap() {
     let reader = CohereReader;
 
-    // u32::MAX + 1 must NOT wrap to 0 (or any truncated value): it drops to None.
+    // u32::MAX + 1 must neither wrap nor become an uncapped request.
     let over = serde_json::json!({
         "model": "command",
         "messages": [{"role": "user", "content": "hi"}],
         "max_tokens": (u32::MAX as i64) + 1
     });
-    let ir = reader
-        .read_request(&over)
-        .expect("read_request should succeed");
-    assert_eq!(
-        ir.max_tokens, None,
-        "an out-of-range max_tokens must drop to None, not wrap under `as u32`"
-    );
+    assert!(reader.read_request(&over).is_err());
 
-    // A far-larger value likewise drops rather than truncating into the valid u32 range.
+    // A far-larger value is equally unrepresentable.
     let huge = serde_json::json!({
         "model": "command",
         "messages": [{"role": "user", "content": "hi"}],
         "max_tokens": i64::MAX
     });
-    let ir = reader
-        .read_request(&huge)
-        .expect("read_request should succeed");
-    assert_eq!(ir.max_tokens, None);
+    assert!(reader.read_request(&huge).is_err());
 
     // The exact u32::MAX boundary is in range and preserved.
     let max_in_range = serde_json::json!({
@@ -3518,27 +3509,19 @@ fn test_read_request_max_tokens_out_of_range_drops_to_none() {
         .expect("read_request should succeed");
     assert_eq!(ir.max_tokens, Some(1024));
 
-    // Zero/negative are still rejected by the `v > 0` filter (unchanged behavior).
+    // Zero and negative caps are refused, never silently erased.
     let zero = serde_json::json!({
         "model": "command",
         "messages": [{"role": "user", "content": "hi"}],
         "max_tokens": 0
     });
-    assert_eq!(
-        reader.read_request(&zero).expect("ok").max_tokens,
-        None,
-        "zero max_tokens is rejected"
-    );
+    assert!(reader.read_request(&zero).is_err());
     let neg = serde_json::json!({
         "model": "command",
         "messages": [{"role": "user", "content": "hi"}],
         "max_tokens": -5
     });
-    assert_eq!(
-        reader.read_request(&neg).expect("ok").max_tokens,
-        None,
-        "negative max_tokens is rejected"
-    );
+    assert!(reader.read_request(&neg).is_err());
 }
 
 /// `k` (top_k) must be narrowed with `u32::try_from`, NOT a

@@ -3870,6 +3870,85 @@ fn content_block_start_carries_seed_fields() {
     );
 }
 
+#[test]
+fn duplicate_tool_start_preserves_partial_arguments_and_later_frames() {
+    let host = crate::codec::test_host::HOST;
+    let clean = anthropic_writer();
+    let duplicated = anthropic_writer();
+    let start = IrStreamEvent::BlockStart {
+        index: 0,
+        block: IrBlockMeta::ToolUse {
+            id: "toolu_01".into(),
+            name: "get_weather".into(),
+        },
+        refusal: false,
+    };
+    let events = [
+        IrStreamEvent::MessageStart {
+            role: crate::codec::ir::IrRole::Assistant,
+            usage: None,
+            id: Some("msg_01".into()),
+            created: None,
+            model: Some("claude-sonnet-4-5".into()),
+        },
+        start.clone(),
+        IrStreamEvent::BlockDelta {
+            index: 0,
+            delta: IrDelta::InputJsonDelta("{\"x\":".into()),
+        },
+        IrStreamEvent::BlockDelta {
+            index: 0,
+            delta: IrDelta::InputJsonDelta("1}".into()),
+        },
+        IrStreamEvent::BlockStop { index: 0 },
+        IrStreamEvent::BlockStart {
+            index: 1,
+            block: IrBlockMeta::Text,
+            refusal: false,
+        },
+        IrStreamEvent::BlockDelta {
+            index: 1,
+            delta: IrDelta::TextDelta("Unrelated text: é \\\"\n".into()),
+        },
+        IrStreamEvent::BlockStop { index: 1 },
+        IrStreamEvent::MessageDelta {
+            stop_reason: Some(crate::codec::ir::IrStopReason::ToolUse),
+            stop_sequence: None,
+            usage: IrUsage {
+                input_tokens: 17,
+                output_tokens: 9,
+                ..Default::default()
+            },
+            stop_detail: None,
+        },
+        IrStreamEvent::MessageStop,
+    ];
+    let mut arguments = String::new();
+    for event in events {
+        let expected = clean.write_response_event(host, &event).unwrap();
+        let actual = duplicated.write_response_event(host, &event).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&actual).unwrap(),
+            serde_json::to_vec(&expected).unwrap()
+        );
+        if let IrStreamEvent::BlockDelta {
+            delta: IrDelta::InputJsonDelta(fragment),
+            ..
+        } = &event
+        {
+            assert_eq!(actual.1["delta"]["partial_json"], fragment.as_str());
+            arguments.push_str(fragment);
+            if fragment == "{\"x\":" {
+                assert!(duplicated.write_response_event(host, &start).is_none());
+            }
+        }
+    }
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&arguments).unwrap(),
+        serde_json::json!({"x": 1})
+    );
+}
+
 /// DESIGN F3 "Drops" (DF-WIRE card item 5): the reader puts NO empty text block in place of a block
 /// it does not model, in a turn or in `system`, and a same-dialect write still carries the original
 /// block at its own position. RED before: the IR held `{"type":"text","text":""}` at index 1.

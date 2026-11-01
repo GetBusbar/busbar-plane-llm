@@ -9,6 +9,143 @@
 use serde_json::{json, Value};
 
 #[test]
+fn translated_upstream_failure_is_terminal_even_with_open_blocks_or_deferred_success() {
+    use crate::codec::proto_stream::StreamTranslate;
+    let host = crate::codec::test_host::HOST;
+    let opening = concat!(
+        "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"usage\":{\"input_tokens\":17,\"output_tokens\":0}}}\n\n",
+        "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"before\"}}\n\n"
+    );
+    let stop = concat!(
+        "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n",
+        "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+    );
+    let error = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"failed\"}}\n\n";
+    for ingress in ["bedrock", "cohere", "openai"] {
+        for deferred_success in [false, true] {
+            let mut stream = StreamTranslate::new(ingress, "anthropic").unwrap();
+            assert!(!stream.feed(host, opening.as_bytes()).is_empty());
+            if deferred_success {
+                stream.feed(host, stop.as_bytes());
+            }
+            let mut failed = stream.feed(host, error.as_bytes());
+            assert!(!failed.is_empty(), "{ingress}");
+            if ingress == "bedrock" {
+                let frames = crate::codec::eventstream::drain_frames(&mut failed);
+                assert!(failed.is_empty());
+                assert_eq!(frames.len(), 1);
+                assert_eq!(frames[0].0, "serviceUnavailableException");
+            }
+            let tail = stream.finish(host);
+            if ingress == "openai" {
+                assert_eq!(tail, b"data: [DONE]\n\n");
+            } else {
+                assert!(tail.is_empty(), "{ingress}: {tail:?}");
+            }
+            // Late upstream frames still report work, but cannot reopen the failed client stream.
+            assert!(stream.feed(host, opening.as_bytes()).is_empty());
+            assert!(stream.feed(host, stop.as_bytes()).is_empty());
+            let usage = stream.usage().unwrap();
+            assert_eq!((usage.input_tokens, usage.output_tokens), (17, 7));
+            assert!(stream.terminal_error().is_some());
+        }
+    }
+}
+
+#[test]
+fn streamed_writer_media_drops_reach_the_existing_audit_paths() {
+    use crate::codec::proto_stream::StreamTranslate;
+    let host = crate::codec::test_host::HOST;
+    let bodies = [
+        json!({"candidates":[{"content":{"role":"model","parts":[{"text":"before"}]}}]}),
+        json!({"candidates":[{"content":{"role":"model","parts":[{"inlineData":{"mimeType":"image/png","data":"AQID"}}]}}]}),
+        json!({"candidates":[{"content":{"role":"model","parts":[{"text":"after"}]}}]}),
+        json!({"candidates":[{"content":{"role":"model","parts":[{"inlineData":{"mimeType":"image/png","data":"BAUG"}}]}}]}),
+    ];
+    for ingress in ["bedrock", "cohere"] {
+        let mut stream = StreamTranslate::new(ingress, "gemini").unwrap();
+        let mut bytes = Vec::new();
+        for body in &bodies {
+            bytes.extend(stream.feed(host, format!("data: {body}\n\n").as_bytes()));
+        }
+        bytes.extend(stream.finish(host));
+        assert_eq!(
+            stream
+                .dropped()
+                .iter()
+                .filter(|path| path.as_str() == "candidates[].content.parts[].inlineData")
+                .count(),
+            1,
+            "{ingress}: {:?}",
+            stream.dropped()
+        );
+        let frames: Vec<Value> = if ingress == "bedrock" {
+            crate::codec::eventstream::drain_frames(&mut bytes)
+                .into_iter()
+                .map(|(_, payload)| serde_json::from_slice(&payload).unwrap())
+                .collect()
+        } else {
+            std::str::from_utf8(&bytes)
+                .unwrap()
+                .lines()
+                .filter_map(|line| line.strip_prefix("data: "))
+                .map(|payload| serde_json::from_str(payload).unwrap())
+                .collect()
+        };
+        let after = frames
+            .iter()
+            .find(|value| {
+                value.pointer("/delta/text") == Some(&json!("after"))
+                    || value.pointer("/delta/message/content/text") == Some(&json!("after"))
+            })
+            .unwrap();
+        assert_eq!(
+            after
+                .get("contentBlockIndex")
+                .or_else(|| after.get("index")),
+            Some(&json!(1))
+        );
+    }
+    let mut native = StreamTranslate::new_same_proto("gemini").unwrap();
+    let wire = format!("data: {}\n\n", bodies[1]);
+    assert_eq!(native.feed(host, wire.as_bytes()), wire.as_bytes());
+    assert!(native.dropped().is_empty());
+}
+
+#[test]
+fn cohere_answer_citations_keep_answer_offsets_and_never_become_document_offsets() {
+    let citation = json!({"start":2,"end":5,"text":"abc","sources":[{"type":"document","document":{"url":"https://source.example","title":"source"}}]});
+    let body = json!({"id":"cohere-1","message":{"role":"assistant","content":[{"type":"text","text":"x abc y"}],"citations":[citation.clone()]},"finish_reason":"COMPLETE","usage":{"tokens":{"input_tokens":3,"output_tokens":4}}});
+    let written = xresp("cohere", "bedrock", &body);
+    let projected = &written["output"]["message"]["content"][0]["citationsContent"]["citations"][0];
+    assert_eq!(
+        projected["location"]["web"]["url"], "https://source.example",
+        "{written}"
+    );
+    assert!(
+        projected["location"].get("documentChar").is_none(),
+        "{written}"
+    );
+    assert_eq!(written["usage"]["inputTokens"], 3);
+    assert_eq!(written["usage"]["outputTokens"], 4);
+    let responses = xresp("cohere", "responses", &body);
+    let annotations = url_citations(&responses);
+    assert_eq!(annotations.len(), 1, "{responses}");
+    assert_eq!(annotations[0]["start_index"], 2);
+    assert_eq!(annotations[0]["end_index"], 5);
+    let native = xresp("cohere", "cohere", &body);
+    assert_eq!(native["message"]["citations"][0], citation);
+    let document = json!({"id":"msg_1","role":"assistant","content":[{"type":"text","text":"abc","citations":[{"type":"char_location","cited_text":"abc","document_index":3,"start_char_index":10,"end_char_index":13,"document_title":null,"file_id":null}]}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":4}});
+    let written = xresp("anthropic", "bedrock", &document);
+    assert_eq!(
+        written["output"]["message"]["content"][0]["citationsContent"]["citations"][0]["location"]
+            ["documentChar"],
+        json!({"documentIndex":3,"start":10,"end":13})
+    );
+}
+
+#[test]
 fn bedrock_exception_ends_stream_index_lifetime() {
     use crate::codec::ir::{IrBlockMeta, IrDelta, IrStreamEvent};
     let protocol = crate::codec::proto_codec::protocol_for("bedrock").unwrap();
