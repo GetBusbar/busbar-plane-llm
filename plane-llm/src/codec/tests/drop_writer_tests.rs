@@ -653,3 +653,39 @@ fn equal_vendor_images_from_distinct_native_containers_keep_distinct_drop_paths(
         .is_some());
     }
 }
+#[test]
+fn text_only_tool_writers_report_the_actual_child_and_preserve_adjacent_text() {
+    let body = json!({"model": "fixture-model", "input": [
+        {"type": "function_call_output", "call_id": "fixture-call", "output": [
+            {"type": "input_text", "text": "left"},
+            {"type": "input_image", "file_id": "fixture-file"},
+            {"type": "input_text", "text": "right"}
+        ]}
+    ]});
+    let child_path = "input[].type=function_call_output.output[].type=input_image";
+    let text_only = json!({"model": "fixture-model", "input": [
+        {"type": "function_call_output", "call_id": "fixture-call", "output": [
+            {"type": "input_text", "text": "left"},
+            {"type": "input_text", "text": "right"}
+        ]}
+    ]});
+    for egress in ["openai", "cohere"] {
+        let (wire, audited, cap) = translate_body("responses", egress, &body);
+        assert_eq!(audited, [child_path], "{egress}: {audited:?}");
+        assert!(warn_of(
+            &cap,
+            child_path,
+            "dropping non-text block inside a tool result"
+        )
+        .is_some());
+        assert_eq!(
+            wire["messages"][0]["content"], "leftright",
+            "{egress}: {wire}"
+        );
+        assert_eq!(wire["messages"][0]["role"], "tool", "{egress}: {wire}");
+        let (control, paths, warnings) = translate_body("responses", egress, &text_only);
+        assert!(paths.is_empty(), "{egress}: {paths:?}");
+        assert!(!warnings.contains("dropping non-text block inside a tool result"));
+        assert_eq!(wire["messages"], control["messages"]);
+    }
+}

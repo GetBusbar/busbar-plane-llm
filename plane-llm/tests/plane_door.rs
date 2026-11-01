@@ -154,6 +154,76 @@ fn the_tail_is_one_the_contract_accepts() {
     );
 }
 
+#[test]
+fn the_tail_prices_cheapest_with_the_default_input_output_blend() {
+    use busbar_contract::abi::plane::check::check_route_cost;
+    use busbar_contract::records::{UNIT_INPUT, UNIT_OUTPUT};
+
+    const TOKEN_BLEND_WEIGHT: f64 = 0.5;
+    const NANO_UNITS_PER_MICRO_UNIT: f64 = 1_000.0;
+
+    let terms = unsafe { TAIL.route_cost() };
+    let classes = unsafe { TAIL.billable_classes() };
+    assert_eq!(check_route_cost(terms, classes.len() as u64), Ok(()));
+    let recipe: Vec<(&str, f64)> = terms
+        .iter()
+        .map(|term| {
+            let class = classes[term.class as usize].class;
+            // SAFETY: the tail's class names are static strings.
+            let name = unsafe { std::slice::from_raw_parts(class.ptr(), class.len()) };
+            (std::str::from_utf8(name).expect("class name"), term.weight)
+        })
+        .collect();
+    assert_eq!(
+        recipe,
+        [
+            (UNIT_INPUT, TOKEN_BLEND_WEIGHT),
+            (UNIT_OUTPUT, TOKEN_BLEND_WEIGHT)
+        ]
+    );
+
+    let class_index = |name: &str| {
+        classes
+            .iter()
+            .position(|class| {
+                // SAFETY: each declared class name is a static string in this tail.
+                let bytes =
+                    unsafe { std::slice::from_raw_parts(class.class.ptr(), class.class.len()) };
+                bytes == name.as_bytes()
+            })
+            .expect("declared token class")
+    };
+
+    // Evaluate the declared recipe against nano-unit prices. Other billable classes, including
+    // caches, open units and the request fee, must not change the default token blend.
+    let cases = [
+        (0_u64, 0_u64, 0.0),
+        (1, 3, 0.002),
+        (1_000, 9_000, 5.0),
+        (5_000, 5_000, 5.0),
+        (9_000, 1_000, 5.0),
+        (2_000, 20_000, 11.0),
+        (20_000, 2_000, 11.0),
+    ];
+    let mut previous = 0.0;
+    for (input, output, historical_per_mtok) in cases {
+        let mut prices = vec![u64::MAX; classes.len()];
+        prices[class_index(UNIT_INPUT)] = input;
+        prices[class_index(UNIT_OUTPUT)] = output;
+        let cost: f64 = terms
+            .iter()
+            .map(|term| prices[term.class as usize] as f64 * term.weight)
+            .sum();
+        // One micro-unit/token is one unit/million tokens; nano-unit scores differ by 1000.
+        assert_eq!(cost / NANO_UNITS_PER_MICRO_UNIT, historical_per_mtok);
+        assert!(
+            cost >= previous,
+            "the declared blend preserves ordering for these exact nano-unit cases"
+        );
+        previous = cost;
+    }
+}
+
 /// Every dialect states its default outbound style in the tail, and every
 /// style a member may be bound under (each dialect's default, the provider `auth:` overrides) has
 /// exactly one outbound need naming it.
