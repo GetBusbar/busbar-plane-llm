@@ -372,3 +372,143 @@ fn actual_tool_overflow_fails_encoding_without_discarding_reported_usage() {
         "no success follows the failure: {output}"
     );
 }
+
+fn schema_request(schema: Value) -> crate::codec::ir::IrRequest {
+    protocol_for("openai")
+        .unwrap()
+        .reader()
+        .read_request(&json!({
+            "model": "test", "messages": [{"role": "user", "content": "hello"}],
+            "response_format": {"type": "json_schema", "json_schema": {"name": "result", "schema": schema}},
+            "tools": [{"type": "function", "function": {"name": "lookup", "parameters": schema}}]
+        }))
+        .expect("existing OpenAI schema request")
+}
+
+fn assert_schema_egress(schema: Value, expected: Value) {
+    let mut request = schema_request(schema.clone());
+    request.extra.clear();
+    let wire = GeminiWriter.write_request(crate::codec::test_host::HOST, &request);
+    assert_eq!(
+        wire.pointer("/generationConfig/responseSchema"),
+        Some(&expected)
+    );
+    assert_eq!(
+        wire.pointer("/tools/0/functionDeclarations/0/parameters"),
+        Some(&expected)
+    );
+    assert_eq!(
+        request.response_format.as_ref().unwrap().schema.as_ref(),
+        Some(&schema)
+    );
+    assert_eq!(request.tools[0].input_schema, schema);
+}
+
+#[test]
+fn nullable_schema_types_reach_native_response_and_tool_slots() {
+    for (source, native) in [
+        ("string", "STRING"),
+        ("number", "NUMBER"),
+        ("integer", "INTEGER"),
+        ("boolean", "BOOLEAN"),
+        ("array", "ARRAY"),
+        ("object", "OBJECT"),
+    ] {
+        for types in [json!([source, "null"]), json!(["null", source])] {
+            assert_schema_egress(
+                json!({"type": types, "description": "optional value"}),
+                json!({"type": native, "nullable": true, "description": "optional value"}),
+            );
+        }
+    }
+}
+
+#[test]
+fn nullable_schema_conversion_follows_nested_schemas_and_resolved_references() {
+    let schema = json!({
+        "type": "object", "required": ["type", "records"], "additionalProperties": false,
+        "$defs": {"Entry": {"type": ["string", "null"]}},
+        "properties": {
+            "type": {"$ref": "#/$defs/Entry", "description": "keep sibling"},
+            "records": {"type": ["array", "null"], "minItems": 1, "maxItems": 3,
+                "items": {"type": ["object", "null"], "properties": {
+                    "value": {"anyOf": [{"type": ["integer", "null"], "minimum": 0, "maximum": 8}, {"type": "string"}]}
+                }}}
+        }
+    });
+    assert_schema_egress(
+        schema,
+        json!({
+            "type": "object", "required": ["type", "records"], "additionalProperties": false,
+            "properties": {
+            "type": {"type": "STRING", "nullable": true, "description": "keep sibling"},
+                "records": {"type": "ARRAY", "nullable": true, "minItems": 1, "maxItems": 3,
+                    "items": {"type": "OBJECT", "nullable": true, "properties": {
+                        "value": {"anyOf": [{"type": "INTEGER", "nullable": true, "minimum": 0, "maximum": 8}, {"type": "string"}]}
+                    }}}
+            }
+        }),
+    );
+}
+
+#[test]
+fn schema_conversion_preserves_native_ordinary_and_literal_values() {
+    for schema in [
+        json!({"type": "string", "description": "ordinary", "enum": ["a", "b"]}),
+        json!({"type": "STRING", "nullable": true, "format": "date"}),
+        json!({"type": "STRING", "nullable": false}),
+        json!({"type": "object", "default": {"type": ["string", "null"], "nullable": false},
+            "enum": [{"type": ["object", "null"]}], "example": {"type": ["array", "null"]}}),
+    ] {
+        assert_schema_egress(schema.clone(), schema);
+    }
+}
+
+#[test]
+fn malformed_or_unsupported_schema_unions_are_not_narrowed() {
+    for schema in [
+        json!({"type": []}),
+        json!({"type": ["null"]}),
+        json!({"type": ["string", "number", "null"]}),
+        json!({"type": ["string", "number"]}),
+        json!({"type": ["null", "null"]}),
+        json!({"type": ["unknown", "null"]}),
+        json!({"type": [true, "null"]}),
+        json!({"type": ["string", "null"], "nullable": false}),
+        json!({"type": ["string", "null"], "nullable": "true"}),
+        json!({"type": "object", "properties": [{"type": ["string", "null"]}]}),
+    ] {
+        assert_schema_egress(schema.clone(), schema);
+    }
+}
+
+#[test]
+fn native_nullable_schemas_survive_the_existing_reader_writer_path() {
+    let schema = json!({"type": "OBJECT", "properties": {
+        "value": {"type": "STRING", "nullable": true, "description": "preserved"}
+    }});
+    let request = GeminiReader
+        .read_request(&json!({
+            "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+            "generationConfig": {"responseMimeType": "application/json", "responseSchema": schema},
+            "tools": [{"functionDeclarations": [{"name": "lookup", "parameters": schema}]}]
+        }))
+        .expect("native request");
+    assert_eq!(
+        request.tools[0]
+            .input_schema
+            .pointer("/properties/value/type"),
+        Some(&json!(["string", "null"]))
+    );
+    let wire = GeminiWriter.write_request(crate::codec::test_host::HOST, &request);
+    for path in [
+        "/generationConfig/responseSchema",
+        "/tools/0/functionDeclarations/0/parameters",
+    ] {
+        let result = wire.pointer(path).unwrap();
+        assert_eq!(
+            result.pointer("/properties/value"),
+            schema.pointer("/properties/value")
+        );
+    }
+}

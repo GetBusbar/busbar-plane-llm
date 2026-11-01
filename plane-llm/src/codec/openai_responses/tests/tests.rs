@@ -1,11 +1,363 @@
 use super::*;
 
 #[test]
+fn response_failed_codes_obey_pinned_response_schema_and_keep_native_codes() {
+    let schema: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../testing/llm-conformance/wire/responses.wire.json"
+    ))
+    .unwrap();
+    let legal = schema["response"]["error.code"]["enum"].as_array().unwrap();
+    let host = crate::codec::test_host::HOST;
+    for native in legal {
+        let signal = native.as_str().unwrap();
+        let writer = ResponsesWriter;
+        let (_, frame) = writer
+            .write_response_event(
+                host,
+                &IrStreamEvent::Error(IrError {
+                    class: StatusClass::ServerError,
+                    provider_signal: Some(signal.into()),
+                    retry_after: None,
+                }),
+            )
+            .unwrap();
+        assert_eq!(&frame["response"]["error"]["code"], native);
+        assert_eq!(frame["response"]["error"]["message"], signal);
+    }
+    for (class, expected) in [
+        (StatusClass::RateLimit, "rate_limit_exceeded"),
+        (StatusClass::ClientError, "invalid_prompt"),
+        (StatusClass::ContextLength, "invalid_prompt"),
+        (StatusClass::Auth, "server_error"),
+        (StatusClass::Billing, "server_error"),
+        (StatusClass::Overloaded, "server_error"),
+        (StatusClass::ServerError, "server_error"),
+        (StatusClass::Timeout, "server_error"),
+        (StatusClass::Network, "server_error"),
+    ] {
+        for signal in [
+            None,
+            Some("boom"),
+            Some("overloaded_error"),
+            Some("connection reset by peer"),
+        ] {
+            let writer = ResponsesWriter;
+            let error = IrError {
+                class,
+                provider_signal: signal.map(String::from),
+                retry_after: None,
+            };
+            let original_signal = error.provider_signal.clone();
+            let (_, frame) = writer
+                .write_response_event(host, &IrStreamEvent::Error(error.clone()))
+                .unwrap();
+            let response = &frame["response"];
+            assert_eq!(response["error"]["code"], expected, "{class:?} {signal:?}");
+            assert!(legal.contains(&response["error"]["code"]), "{frame}");
+            assert_eq!(response["error"]["message"], signal.unwrap_or("error"));
+            assert_eq!(error.provider_signal, original_signal);
+            assert_eq!(error.class, class);
+            // The ResponseError surface has no auth/billing/context-length subtype. Verify the
+            // classes represented by its canonical codes through both reader entry points.
+            let represented = match expected {
+                "rate_limit_exceeded" => StatusClass::RateLimit,
+                "invalid_prompt" => StatusClass::ClientError,
+                _ => StatusClass::ServerError,
+            };
+            assert_eq!(
+                ResponsesReader
+                    .read_response(host, response)
+                    .unwrap_err()
+                    .class,
+                represented
+            );
+            let mut state = StreamDecodeState::default();
+            let events =
+                ResponsesReader.read_response_events(host, EVT_RESPONSE_FAILED, &frame, &mut state);
+            assert!(events.iter().any(|event| matches!(event, IrStreamEvent::Error(error) if error.class == represented)), "{events:?}");
+        }
+    }
+}
+
+#[test]
+fn response_failed_unrepresentable_code_is_diagnosed_without_changing_http_error_envelope() {
+    let host = crate::codec::test_host::HOST;
+    let seam = crate::codec::drops::Seam {
+        direction: crate::codec::drops::Direction::Response,
+        ingress: "responses",
+        egress: "openai",
+    };
+    let (_, dropped) = crate::codec::drops::scope(seam, || {
+        ResponsesWriter.write_response_event(
+            host,
+            &IrStreamEvent::Error(IrError {
+                class: StatusClass::Auth,
+                provider_signal: Some("invalid_api_key".into()),
+                retry_after: None,
+            }),
+        )
+    });
+    assert_eq!(dropped, ["error.code"]);
+    let writer = ResponsesWriter;
+    let http_error = writer.write_error(host, 401, "authentication_error", "key refused");
+    assert_eq!(http_error["error"]["type"], "authentication_error");
+    assert_eq!(http_error["error"]["code"], "invalid_api_key");
+    assert_eq!(http_error["error"]["message"], "key refused");
+}
+
+#[test]
+fn responses_accumulator_refusal_ends_output_before_crossing_fragment() {
+    use crate::codec::ir::{IrBlockMeta, IrDelta, IrStopReason, IrStreamEvent, IrTokenLogprob};
+    let host = crate::codec::test_host::HOST;
+    let citation = |title: &str| crate::codec::ir::IrCitation {
+        url: Some("https://example.invalid".into()),
+        title: Some(title.into()),
+        start_index: Some(0),
+        end_index: Some(1),
+        ..Default::default()
+    };
+    let logprob = |token: &str| IrTokenLogprob {
+        token: token.into(),
+        logprob: -0.25,
+        bytes: None,
+        top: Vec::new(),
+    };
+    // Both byte limits and the terminal representation are observable through the existing
+    // writer API. Each path gets a crossing fragment followed by a smaller fragment that fits
+    // beside the retained prefix; accepting that suffix used to fabricate a successful answer.
+    for case in [
+        "text",
+        "refusal",
+        "tool",
+        "reasoning",
+        "summary",
+        "signature",
+        "citation",
+        "logprob",
+    ] {
+        for overflow in [false, true] {
+            let writer = ResponsesWriter;
+            writer.set_translate_cap(512);
+            writer.write_response_events(
+                host,
+                &IrStreamEvent::MessageStart {
+                    role: crate::codec::ir::IrRole::Assistant,
+                    usage: None,
+                    id: Some("resp_cap".into()),
+                    created: Some(1),
+                    model: Some("test".into()),
+                },
+            );
+            let block = match case {
+                "tool" => IrBlockMeta::ToolUse {
+                    id: "call_cap".into(),
+                    name: "lookup".into(),
+                },
+                "reasoning" | "signature" => IrBlockMeta::Thinking { kind: None },
+                "summary" => IrBlockMeta::Thinking {
+                    kind: Some(crate::codec::ir::IrThinkingKind::Summary),
+                },
+                _ => IrBlockMeta::Text,
+            };
+            writer.write_response_events(
+                host,
+                &IrStreamEvent::BlockStart {
+                    index: 0,
+                    block,
+                    refusal: case == "refusal",
+                },
+            );
+            let delta = |fragment: &str| match case {
+                "tool" => IrDelta::InputJsonDelta(fragment.into()),
+                "reasoning" | "summary" => IrDelta::ThinkingDelta(fragment.into()),
+                "signature" => IrDelta::SignatureDelta(fragment.into()),
+                "citation" => IrDelta::CitationsDelta(vec![citation(fragment)]),
+                "logprob" => IrDelta::LogprobsDelta(vec![logprob(fragment)]),
+                _ => IrDelta::TextDelta(fragment.into()),
+            };
+            let first_fragment = if case == "tool" { "{\"a\":" } else { "a" };
+            let last_fragment = if case == "tool" { "}" } else { "c" };
+            let first = writer.write_response_events(
+                host,
+                &IrStreamEvent::BlockDelta {
+                    index: 0,
+                    delta: delta(first_fragment),
+                },
+            );
+            assert!(!first.iter().any(|(name, _)| name == "error"), "{case}");
+            let crossing = if overflow {
+                let carried_overhead = match case {
+                    "citation" => "https://example.invalid".len(),
+                    "logprob" => std::mem::size_of::<IrTokenLogprob>(),
+                    _ => 0,
+                };
+                // This batch fits by itself; it crosses only when added to the held prefix.
+                "x".repeat(512 - carried_overhead)
+            } else if case == "tool" {
+                "1".into()
+            } else {
+                "b".into()
+            };
+            let crossed = writer.write_response_events(
+                host,
+                &IrStreamEvent::BlockDelta {
+                    index: 0,
+                    delta: delta(&crossing),
+                },
+            );
+            if overflow {
+                assert_eq!(crossed.len(), 1, "{case}: {crossed:?}");
+                assert_eq!(
+                    crossed[0].0, "error",
+                    "{case}: crossing fragment must fail before output"
+                );
+                assert_eq!(
+                    crossed[0].1["error"]["message"],
+                    "Responses stream accumulation limit exceeded",
+                    "{case}"
+                );
+            } else {
+                assert!(!crossed.iter().any(|(name, _)| name == "error"), "{case}");
+            }
+            // A clone must carry the failed state as well as the retained prefix.
+            let writer = writer.clone();
+            let later = writer.write_response_events(
+                host,
+                &IrStreamEvent::BlockDelta {
+                    index: 0,
+                    delta: delta(last_fragment),
+                },
+            );
+            let closed = writer.write_response_events(host, &IrStreamEvent::BlockStop { index: 0 });
+            let terminal = writer.write_response_events(
+                host,
+                &IrStreamEvent::MessageDelta {
+                    stop_reason: Some(IrStopReason::EndTurn),
+                    stop_sequence: None,
+                    usage: crate::codec::ir::IrUsage {
+                        input_tokens: 7,
+                        output_tokens: 11,
+                        ..Default::default()
+                    },
+                    stop_detail: None,
+                },
+            );
+            if overflow {
+                assert!(later.is_empty() && closed.is_empty() && terminal.is_empty(), "{case}: a failed stream must not emit later fragments or success: {later:?} {closed:?} {terminal:?}");
+            } else {
+                assert!(!closed.is_empty(), "{case}: normal item must close");
+                let response = &terminal
+                    .iter()
+                    .find(|(name, _)| name == EVT_RESPONSE_COMPLETED)
+                    .expect("normal stream completes")
+                    .1["response"];
+                assert_eq!(response["usage"]["input_tokens"], 7);
+                assert_eq!(response["usage"]["output_tokens"], 11);
+                let item = &response["output"][0];
+                match case {
+                    "tool" => assert_eq!(item["arguments"], "{\"a\":1}"),
+                    "reasoning" => assert_eq!(item["content"][0]["text"], "abc"),
+                    "summary" => assert_eq!(item["summary"][0]["text"], "abc"),
+                    "signature" => assert_eq!(item["encrypted_content"], "abc"),
+                    "refusal" => assert_eq!(item["content"][0]["refusal"], "abc"),
+                    "citation" => {
+                        let annotations = item["content"][0]["annotations"].as_array().unwrap();
+                        assert_eq!(
+                            annotations
+                                .iter()
+                                .map(|a| a["title"].as_str().unwrap())
+                                .collect::<Vec<_>>(),
+                            ["a", "b", "c"]
+                        );
+                    }
+                    "logprob" => {
+                        let logprobs = item["content"][0]["logprobs"].as_array().unwrap();
+                        assert_eq!(
+                            logprobs
+                                .iter()
+                                .map(|lp| lp["token"].as_str().unwrap())
+                                .collect::<Vec<_>>(),
+                            ["a", "b", "c"]
+                        );
+                    }
+                    _ => assert_eq!(item["content"][0]["text"], "abc"),
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn responses_stream_cap_failure_keeps_reported_usage_and_suppresses_success() {
+    let host = crate::codec::test_host::HOST;
+    for overflow in [false, true] {
+        let mut stream = crate::codec::proto_stream::StreamTranslate::new("responses", "openai")
+            .unwrap()
+            .with_translate_cap(5);
+        let mut output = Vec::new();
+        for data in [
+            serde_json::json!({"id":"chat_cap","model":"test","choices":[{"index":0,"delta":{"role":"assistant","content":"abc"},"finish_reason":null}]}),
+            serde_json::json!({"id":"chat_cap","choices":[{"index":0,"delta":{"content":if overflow { "LONG" } else { "e" }},"finish_reason":null}]}),
+            serde_json::json!({"id":"chat_cap","choices":[{"index":0,"delta":{"content":"d"},"finish_reason":null}]}),
+            serde_json::json!({"id":"chat_cap","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}),
+            serde_json::json!({"id":"chat_cap","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":11,"total_tokens":18}}),
+        ] {
+            let frame = format!("data: {data}\n\n");
+            output.extend(stream.feed(host, frame.as_bytes()));
+        }
+        output.extend(stream.finish(host));
+        let output = String::from_utf8(output).unwrap();
+        if overflow {
+            assert!(
+                output.contains("Responses stream accumulation limit exceeded"),
+                "{output}"
+            );
+            assert_eq!(output.matches("event: error\n").count(), 1, "{output}");
+            assert!(
+                !output.contains("LONG"),
+                "crossing delta was forwarded: {output}"
+            );
+            assert!(
+                !output.contains("response.output_text.done")
+                    && !output.contains("response.completed"),
+                "retained prefix was finalized as success: {output}"
+            );
+            assert_eq!(
+                stream.terminal_error(),
+                Some("Responses stream accumulation limit exceeded")
+            );
+        } else {
+            assert!(!output.contains("event: error\n"), "{output}");
+            assert!(output.contains("response.completed"), "{output}");
+            assert!(
+                output.contains("\"text\":\"abced\""),
+                "the exact-cap terminal must preserve every fragment: {output}"
+            );
+            assert_eq!(stream.terminal_error(), None);
+        }
+        let usage = stream
+            .usage()
+            .expect("reported work survives a local encode failure");
+        assert_eq!((usage.input_tokens, usage.output_tokens), (7, 11));
+    }
+}
+
+#[test]
 fn responses_writer_compacts_media_gaps_and_keeps_terminal_item_positions() {
     use crate::codec::ir::{IrBlockMeta, IrDelta, IrStopReason, IrStreamEvent, IrUsage};
     let writer = ResponsesWriter;
     let host = crate::codec::test_host::HOST;
     let mut frames = Vec::new();
+    frames.extend(writer.write_response_events(
+        host,
+        &IrStreamEvent::MessageStart {
+            role: crate::codec::ir::IrRole::Assistant,
+            usage: None,
+            id: Some("resp_first".into()),
+            created: Some(1),
+            model: Some("test".into()),
+        },
+    ));
     for event in [
         IrStreamEvent::BlockStart {
             index: 0,
@@ -98,6 +450,9 @@ fn responses_writer_compacts_media_gaps_and_keeps_terminal_item_positions() {
     assert_eq!(terminal["output"][2]["arguments"], "{}");
     assert_eq!(terminal["usage"]["output_tokens"], 5);
     writer.write_response_events(host, &IrStreamEvent::MessageStop);
+    // Production resolves a fresh writer for each stream. A duplicate MessageStart on the same
+    // writer belongs to its current stream and must not clear this stream's mapping.
+    let writer = ResponsesWriter;
     writer.write_response_events(
         host,
         &IrStreamEvent::MessageStart {
@@ -2344,8 +2699,11 @@ fn test_write_error_stream_event_full_shape() {
     assert_eq!(resp.get("status").and_then(|s| s.as_str()), Some("failed")); // golden wire-contract literal (kept bare on purpose)
     let err = resp.get("error").expect("nested error object present");
     assert_eq!(err.get("message").and_then(|m| m.as_str()), Some("boom"));
-    // Native ResponseError: code is the non-null enum (here carried from provider_signal).
-    assert_eq!(err.get("code").and_then(|c| c.as_str()), Some("boom"));
+    // The pinned ResponseError enum excludes "boom"; its text remains in message.
+    assert_eq!(
+        err.get("code").and_then(|c| c.as_str()),
+        Some("server_error")
+    );
     assert!(
         !err.as_object().unwrap().contains_key("type"),
         "Responses ResponseError carries no `type` field: {err}"
@@ -3063,11 +3421,11 @@ fn test_error_event_wraps_in_response_object() {
         error.get("message").and_then(|m| m.as_str()),
         Some("overloaded")
     );
-    // Native ResponseError shape: a non-null `code` enum (carried from the provider signal),
+    // Native ResponseError shape: a non-null canonical `code` enum,
     // and NO Chat-style `type`/`param` fields.
     assert_eq!(
         error.get("code").and_then(|c| c.as_str()),
-        Some("overloaded")
+        Some("server_error")
     );
     assert!(
         !error.as_object().unwrap().contains_key("type"),
@@ -3606,7 +3964,8 @@ fn test_response_failed_code_is_enum_even_for_human_provider_signal() {
         "the human text stays in `message`"
     );
 
-    // An auth-class transport error derives the auth code enum, not the human string.
+    // ResponseError has no authentication code; the HTTP error envelope does. The stream uses
+    // the generic failure code while retaining the original human message.
     let (_, payload) = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -3621,7 +3980,7 @@ fn test_response_failed_code_is_enum_even_for_human_provider_signal() {
         payload
             .pointer("/response/error/code")
             .and_then(|c| c.as_str()),
-        Some(ERR_TYPE_AUTHENTICATION)
+        Some(ERR_TYPE_SERVER_ERROR)
     );
 }
 
@@ -5696,7 +6055,7 @@ fn test_stream_terminal_events_carry_output_and_error() {
     );
     assert_eq!(
         failed["response"]["error"]["code"].as_str(),
-        Some("boom"),
+        Some("server_error"),
         "response.failed must still carry its populated error object"
     );
 }
@@ -8407,21 +8766,20 @@ fn responses_url_citation_survives_a_responses_round_trip() {
     );
 }
 
-// ── GOLDEN PARITY CELL: the (class -> `error.code` word) column this dialect renders, pinned as
-//    bytes; the nine classes are spelled by hand so the cell says the same thing whichever crate
-//    owns the enum.
+// ResponseError's closed enum is narrower than the separate HTTP error envelope. These expected
+// words follow the pinned Response schema; no oracle recording or golden file is changed.
 #[test]
 fn status_word_golden() {
     let golden: [(StatusClass, &str); 9] = [
-        (StatusClass::RateLimit, "rate_limit_error"),
+        (StatusClass::RateLimit, "rate_limit_exceeded"),
         (StatusClass::Overloaded, "server_error"),
         (StatusClass::ServerError, "server_error"),
         (StatusClass::Timeout, "server_error"),
         (StatusClass::Network, "server_error"),
-        (StatusClass::Auth, "authentication_error"),
-        (StatusClass::Billing, "insufficient_quota"),
-        (StatusClass::ClientError, "invalid_request_error"),
-        (StatusClass::ContextLength, "invalid_request_error"),
+        (StatusClass::Auth, "server_error"),
+        (StatusClass::Billing, "server_error"),
+        (StatusClass::ClientError, "invalid_prompt"),
+        (StatusClass::ContextLength, "invalid_prompt"),
     ];
     for (class, word) in golden {
         let err = CanonicalSignal {

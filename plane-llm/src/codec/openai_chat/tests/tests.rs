@@ -5440,10 +5440,10 @@ fn openai_annotation_without_a_url_is_skipped() {
     );
 }
 
-/// THE DELIVERY TEST: an OpenAI citation must survive the hop to Anthropic — before this fix, the
-/// citation ceased to exist entirely on this hop (url/title lost, not just the offsets).
+/// An OpenAI URL citation remains in the IR, but lacks the native source text and opaque index
+/// required by Anthropic. Its omission is audited without changing the answer or usage.
 #[test]
-fn openai_chat_citation_survives_the_hop_to_anthropic() {
+fn openai_chat_citation_unavailable_on_anthropic_is_audited() {
     let body = serde_json::json!({
         "id": "chatcmpl-cite3",
         "object": OBJ_COMPLETION,
@@ -5471,17 +5471,38 @@ fn openai_chat_citation_survives_the_hop_to_anthropic() {
     let ir = OpenAiReader
         .read_response(crate::codec::test_host::HOST, &body)
         .expect("read_response");
-    let out = super::super::anthropic::anthropic_writer()
-        .write_response(crate::codec::test_host::HOST, &ir);
-    let content = out["content"].as_array().expect("content array");
-    let citation = content
+    let citation = ir
+        .content
         .iter()
-        .find_map(|block| block.get("citations").and_then(|c| c.as_array()))
-        .and_then(|arr| arr.first())
-        .unwrap_or_else(|| panic!("no citation emitted on the Anthropic hop: {out}"));
-    assert_eq!(citation["type"], "web_search_result_location");
-    assert_eq!(citation["url"], "https://example.com/hop");
-    assert_eq!(citation["title"], "Hop Source");
+        .find_map(|block| match block {
+            IrBlock::Text { citations, .. } => citations.first(),
+            _ => None,
+        })
+        .expect("the source URL annotation is retained in the IR");
+    assert_eq!(citation.url.as_deref(), Some("https://example.com/hop"));
+    assert_eq!(citation.title.as_deref(), Some("Hop Source"));
+    assert_eq!(
+        (citation.start_index, citation.end_index),
+        (Some(7), Some(20))
+    );
+    let (out, dropped) = crate::codec::drops::scope(
+        crate::codec::drops::Seam {
+            direction: crate::codec::drops::Direction::Response,
+            ingress: "anthropic",
+            egress: "openai",
+        },
+        || {
+            super::super::anthropic::anthropic_writer()
+                .write_response(crate::codec::test_host::HOST, &ir)
+        },
+    );
+    assert_eq!(dropped, vec!["citations"]);
+    assert_eq!(out["content"].as_array().unwrap().len(), 1);
+    assert_eq!(out["content"][0]["text"], "See the source for details.");
+    assert!(out["content"][0]["citations"].is_null());
+    assert_eq!(out["usage"]["input_tokens"], 3);
+    assert_eq!(out["usage"]["output_tokens"], 4);
+    assert_eq!(out["stop_reason"], "end_turn");
 }
 
 // Chat#6: a RESPONSE tool_call with a blank/absent `id` must NOT yield an empty IR tool_use id (which
