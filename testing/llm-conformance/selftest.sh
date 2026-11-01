@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Busbar Inc and contributors
 #
 # Prove the LLM spec conformance rig cannot pass vacuously, before any verdict from it is trusted.
-# Every case goes through run.sh (vendor -> validate -> verdict), the real pipeline, with the tiny
+# Wire cases go through run.sh (vendor -> validate -> verdict), the real pipeline, with the tiny
 # tracked fixture under fixtures/selftest-recording (three 1.5.5 cells that validate cleanly):
 #
 #   (a) the known-good fixture                       -> GREEN, every owed row PASS
@@ -135,6 +135,30 @@ if [ "$rc" != 0 ] && [ "$(count "$W/d" FAIL)" = 1 ] && grep -q $'^llm|gemini|gem
   say PASS "(d) one mutated request type -> RED, exactly one FAIL on the #request row naming /contents"
 else
   say FAIL "(d) mutated request rc=$rc fails=$(count "$W/d" FAIL): $rows"
+fi
+
+# A request absent from the recording needs the pinned tool to rebuild it. An actually missing
+# tool must leave one FAIL and both reports, rather than crashing after the ledger was written.
+cp -R "$FIX" "$W/missing-tool-rec"
+rm "$W/missing-tool-rec/raw/llm__gemini__gemini__request__ok/request.body"
+rc="$(BUSBAR_ORACLE_TOOL_DIR="$W/no-such-tool" run "$W/missing-tool-rec" "$W/missing-tool")"
+if [ "$rc" != 0 ] && [ "$(count "$W/missing-tool" FAIL)" = 1 ] && \
+   [ "$(count "$W/missing-tool" PASS)" = 6 ] && \
+   python3 - "$W/missing-tool" <<'EOF'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+report = json.loads((p / "report.json").read_text())
+v, = report["violations"]
+assert (v["cell"], v["direction"], v["dialect"]) == ("llm|gemini|gemini|request|ok", "request", "gemini")
+assert v["pointer"] == "/" and v["rule"] and "does not exist" in v["detail"]
+assert "no-such-tool/build-request.py" in v["detail"]
+assert v["detail"] in (p / "report.md").read_text()
+assert "Traceback" not in (p / "validate.log").read_text()
+EOF
+then
+  say PASS "missing request and missing pinned tool -> RED, one FAIL and complete JSON/Markdown reports"
+else
+  say FAIL "missing request and missing pinned tool rc=$rc: expected one FAIL, six PASS and complete reports"
 fi
 
 # (e) empty recording -> vacuous RED
@@ -753,6 +777,86 @@ EOF
   else
     say FAIL "(u) reordered live copy rc=$rc: $out"
   fi
+fi
+
+# Exercise the real shared-run cache without building or vendoring: stop a cold run at its Python
+# bootstrap, then seed that discovered cache entry with a completed subject. Unchanged inputs must
+# reuse it; changing an inherited dependency or lock resolution must try a fresh run instead. No
+# copy of llm.sh's key algorithm is used here, so omitted inputs produce a stale-subject failure.
+if python3 - "$here/../.." "$W/cache-inputs" <<'EOF'
+import json, os, pathlib, shutil, subprocess, sys
+source, work = map(pathlib.Path, sys.argv[1:])
+errors = []
+for changed in ("Cargo.toml", "Cargo.lock"):
+    root = work / changed
+    root.mkdir(parents=True)
+    for name in ("Cargo.toml", "Cargo.lock", "plane-llm/Cargo.toml",
+                 "testing/conformance/llm.sh", "testing/conformance/requirements-llm.txt"):
+        dst = root / name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / name, dst)
+    (root / "testing/llm-conformance").mkdir()
+    # HEAD and working-tree changes are part of the actual cache API. This repository is disposable.
+    def git(*args):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    git("init", "-q")
+    git("add", "--force", ".")
+    git("-c", "core.hooksPath=/dev/null", "-c", "user.name=cache fixture", "-c", "user.email=cache@example.invalid",
+        "-c", "commit.gpgsign=false", "commit", "-qm", "cache fixture baseline")
+    attempts = root / "attempts"
+    bootstrap = root / "bootstrap"
+    bootstrap.write_text('#!/bin/sh\necho attempt >> "$CACHE_ATTEMPTS"\nexit 1\n')
+    bootstrap.chmod(0o755)
+    output = root / "output"
+    output.mkdir()
+    env = dict(os.environ, CARGO_TARGET_DIR=str(root / "target"), BUSBAR_CHECKOUT=str(root),
+               BUSBAR_PIN="cache-fixture", CONFORMANCE_SUITE="llm-gemini",
+               CONFORMANCE_OUT=str(output), LLM_CONFORMANCE_PYTHON=str(bootstrap),
+               CACHE_ATTEMPTS=str(attempts))
+    def run_subject():
+        return subprocess.run(["bash", str(root / "testing/conformance/llm.sh"), "--subject"],
+                              env=env, capture_output=True, text=True)
+    def count_attempts():
+        return len(attempts.read_text().splitlines()) if attempts.exists() else 0
+    try:
+        cold = run_subject()
+        assert cold.returncode != 0 and count_attempts() == 1, "cold run did not reach bootstrap"
+        shared, = (root / "target/llm-conformance").glob("*/shared.json")
+        shared.write_text(json.dumps(dict(fail="", selftest_rc=0, run_rc=0)))
+        subject = shared.parent / "busbar"
+        subject.write_text("#!/bin/sh\nexit 0\n")
+        subject.chmod(0o755)
+        warm = run_subject()
+        assert warm.returncode == 0 and warm.stdout.strip() == str(subject), "unchanged subject was not reused"
+        assert count_attempts() == 1, "unchanged input started another shared run"
+        path = root / changed
+        if changed == "Cargo.toml":
+            lines = path.read_text().splitlines(keepends=True)
+            i, = [i for i, line in enumerate(lines) if line.startswith("serde = ")]
+            assert lines[i] != 'serde = "=1.0.0"\n'
+            lines[i] = 'serde = "=1.0.0"\n'
+            path.write_text("".join(lines))
+        else:
+            packages = path.read_text().split("[[package]]")
+            i, = [i for i, block in enumerate(packages) if '\nname = "serde"\n' in block]
+            lines = packages[i].splitlines(keepends=True)
+            j, = [j for j, line in enumerate(lines) if line.startswith("version = ")]
+            assert lines[j] != 'version = "0.0.1"\n'
+            lines[j] = 'version = "0.0.1"\n'
+            packages[i] = "".join(lines)
+            path.write_text("[[package]]".join(packages))
+        fresh = run_subject()
+        assert fresh.returncode != 0 and count_attempts() == 2, "changed input reused stale completed subject"
+        assert len(list((root / "target/llm-conformance").glob("*/shared.json"))) == 2, "no independent shared-run evidence"
+    except AssertionError as error:
+        errors.append(f"{changed}: {error}")
+if errors:
+    raise SystemExit("; ".join(errors))
+EOF
+then
+  say PASS "shared-run cache reuses unchanged evidence and refuses stale subjects after either root Cargo input changes"
+else
+  say FAIL "shared-run cache reused stale evidence or failed its unchanged-input control"
 fi
 
 echo
