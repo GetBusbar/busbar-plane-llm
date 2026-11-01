@@ -133,11 +133,17 @@ fn a_request_block_drop_is_named_by_the_callers_block_container() {
         ]}]}),
     );
     let text = "dropping unresolvable vendor-scoped image reference on Anthropic egress";
-    on_the_drop_path(&audited, &cap, "input[].content[]", "BUSBAR-7085", text);
-    let warn = warn_of(&cap, "input[].content[]", text).unwrap();
+    on_the_drop_path(
+        &audited,
+        &cap,
+        "input[].content[].type=input_image",
+        "BUSBAR-7085",
+        text,
+    );
+    let warn = warn_of(&cap, "input[].content[].type=input_image", text).unwrap();
     assert!(
-        warn.contains("kind=type=input_image"),
-        "the block's kind as the caller's dialect spells it: {warn}"
+        warn.contains("direction=request"),
+        "the exact native tagged container is named in the request warning: {warn}"
     );
 }
 
@@ -158,12 +164,15 @@ fn an_answer_drop_is_named_by_the_far_ends_block_container() {
             "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 1}}),
     );
     let text = "dropping a reasoning/thinking block on OpenAI Chat egress";
-    on_the_drop_path(&audited, &cap, "content[]", "BUSBAR-7085", text);
-    let warn = warn_of(&cap, "content[]", text).unwrap();
-    assert!(
-        warn.contains("direction=response") && warn.contains("kind=type=thinking"),
-        "{warn}"
+    on_the_drop_path(
+        &audited,
+        &cap,
+        "content[].type=thinking",
+        "BUSBAR-7085",
+        text,
     );
+    let warn = warn_of(&cap, "content[].type=thinking", text).unwrap();
+    assert!(warn.contains("direction=response"), "{warn}");
 }
 
 // ───────────────────────────── the other writers ─────────────────────────────
@@ -308,7 +317,7 @@ fn bedrock_drops_an_image_format_it_has_no_member_for_never_png() {
     on_the_drop_path(
         &audited,
         &cap,
-        "messages[].content[]",
+        "messages[].content[].type=image",
         "BUSBAR-7085",
         "dropping image block on Bedrock egress",
     );
@@ -612,4 +621,35 @@ fn an_answer_readers_request_echo_is_on_the_drop_path() {
         "BUSBAR-7085",
         "dropping response `instructions` echo",
     );
+}
+
+#[test]
+fn equal_vendor_images_from_distinct_native_containers_keep_distinct_drop_paths() {
+    let (audited, cap) = translate(
+        "responses",
+        "anthropic",
+        &json!({
+            "model": "fixture-model", "input": [
+                {"type": "input_image", "file_id": "fixture-file"},
+                {"type": "message", "role": "user", "content": [{"type": "input_image", "file_id": "fixture-file"}]},
+                {"type": "function_call_output", "call_id": "fixture-call", "output": [{"type": "input_image", "file_id": "fixture-file"}]}
+            ]
+        }),
+    );
+    for path in [
+        "input[].type=input_image",
+        "input[].content[].type=input_image",
+        "input[].type=function_call_output.output[].type=input_image",
+    ] {
+        assert!(
+            audited.iter().any(|actual| actual == path),
+            "native container {path}: {audited:?}"
+        );
+        assert!(warn_of(
+            &cap,
+            path,
+            "dropping unresolvable vendor-scoped image reference"
+        )
+        .is_some());
+    }
 }

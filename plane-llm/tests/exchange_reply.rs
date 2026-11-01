@@ -5345,3 +5345,82 @@ fn an_error_map_class_that_names_no_class_is_reported_once() {
     ];
     assert_eq!(seen, want);
 }
+
+#[test]
+fn failed_responses_usage_is_observed_while_same_and_cross_dialect_refunds_stay_zero() {
+    let far = br#"{"id":"resp_failed","status":"failed","output":[],"error":{"code":"server_error","message":"failed turn"},"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}"#;
+    let observed = chat_handler("responses")
+        .extract_usage(HOST, "responses", far)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (observed.input, observed.output),
+        (5, 2),
+        "reported usage remains observable independently of refund policy"
+    );
+    for ingress in ["responses", "openai", "anthropic"] {
+        let mut arrived = arrival(ingress, false);
+        if ingress == "responses" {
+            arrived.path = "/v1/responses".into();
+            arrived.parsed = Some(serde_json::json!({"model":"p","input":"hi"}));
+            arrived.body = serde_json::to_vec(arrived.parsed.as_ref().unwrap()).unwrap();
+        }
+        let lane = lane("responses");
+        let reply_ctx = ReplyCtx {
+            arrived: &arrived,
+            lane: &lane,
+            intent: stream_intent(chat_handler(ingress), arrived.parsed.as_ref()),
+            passthrough: false,
+            translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        };
+        let mut reply = Reply::new(HOST, &reply_ctx, 200, JSON_HEAD);
+        let end = reply.feed(HOST, &reply_ctx, far, true, AT);
+        assert!(end.done);
+        assert_eq!(
+            (end.units.tokens_in, end.units.tokens_out),
+            (0, 0),
+            "{ingress}: observing usage must not change the existing failure refund"
+        );
+        if ingress == "responses" {
+            assert_eq!(
+                end.bytes.as_ref(),
+                far,
+                "same-dialect failure bytes remain verbatim"
+            );
+        }
+    }
+    // The cross-dialect whole-body fallback must not reinterpret diagnostic recovery as billing.
+    let cross = whole::translate(HOST, &ctx("openai", "responses", false, false), 200, far);
+    assert_eq!(cross.end, WholeEnd::NotTranslatable);
+    assert!(cross.refused.is_some());
+    assert_eq!(cross.usage, None);
+}
+
+#[test]
+fn responses_content_parse_failure_recovery_still_keeps_reported_work() {
+    let far = br#"{"status":"completed","output":"unreadable content","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}"#;
+    let observed = chat_handler("responses")
+        .extract_usage(HOST, "responses", far)
+        .unwrap()
+        .unwrap();
+    assert_eq!((observed.input, observed.output), (5, 2));
+    let cross = whole::translate(HOST, &ctx("openai", "responses", false, false), 200, far);
+    assert_eq!(cross.end, WholeEnd::NotTranslatable);
+    assert!(
+        cross.refused.is_some(),
+        "the parse refusal must remain visible"
+    );
+    let kept = busbar_plane_llm::exchange::reply::wire::token_usage_of(&cross.usage).unwrap();
+    assert_eq!(
+        (kept.input, kept.output),
+        (5, 2),
+        "a content parse failure is distinct from an upstream-declared refunded failure"
+    );
+    let nested = br#"{"status":"completed","output":"unreadable content","metadata":{"usage":{"input_tokens":999,"output_tokens":888}}}"#;
+    let no_report = whole::translate(HOST, &ctx("openai", "responses", false, false), 200, nested);
+    assert_eq!(no_report.end, WholeEnd::NotTranslatable);
+    assert_eq!(
+        no_report.usage, None,
+        "recovery uses only structurally located provider usage"
+    );
+}

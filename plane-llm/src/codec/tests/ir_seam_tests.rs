@@ -9,6 +9,128 @@
 use serde_json::{json, Value};
 
 #[test]
+fn cohere_folded_documents_keep_their_distinct_drop_origins() {
+    use crate::codec::{drops, proto_codec::protocol_for, test_host::HOST};
+    let cohere = protocol_for("cohere").unwrap();
+    let anthropic = protocol_for("anthropic").unwrap();
+    // Cohere's declared document input accepts objects; an opaque document has no foreign handle.
+    let document = json!({"id":"same-document"});
+    let body = json!({
+        "model":"m",
+        "documents":[document.clone()],
+        "messages":[
+            {"role":"system","content":"instruction"},
+            {"role":"user","content":[
+                {"type":"document","document":document.clone()},
+                {"type":"text","text":"answer this"}
+            ]}
+        ]
+    });
+    let request = cohere.reader().read_request(&body).unwrap();
+    let cloned = request.clone();
+    assert_eq!(request, cloned);
+    for request in [&request, &cloned] {
+        let (out, paths) = drops::scope(
+            drops::Seam {
+                direction: drops::Direction::Request,
+                ingress: "cohere",
+                egress: "anthropic",
+            },
+            || anthropic.writer().write_request(HOST, request),
+        );
+        assert_eq!(paths, ["documents[]", "messages[].content[].type=document"]);
+        assert_eq!(
+            out["messages"][0]["content"],
+            json!([{"type":"text","text":"answer this"}])
+        );
+        assert_eq!(out["system"], json!([{"type":"text","text":"instruction"}]));
+    }
+    let native = cohere.writer().write_request(HOST, &request);
+    assert_eq!(native["documents"], json!([document.clone(), document]));
+}
+
+#[test]
+fn cohere_tool_plan_and_thinking_parts_keep_their_distinct_drop_origins() {
+    use crate::codec::{drops, proto_codec::protocol_for, test_host::HOST};
+    let cohere = protocol_for("cohere").unwrap();
+    let openai = protocol_for("openai").unwrap();
+    let anthropic = protocol_for("anthropic").unwrap();
+    let content = json!([
+        {"type":"thinking","thinking":"same thought"},
+        {"type":"thinking","thinking":"same thought"},
+        {"type":"text","text":"answer"}
+    ]);
+    let response = cohere.reader().read_response(HOST, &json!({
+        "id":"r","message":{"role":"assistant","tool_plan":"same thought","content":content.clone()},
+        "finish_reason":"COMPLETE","usage":{"tokens":{"input_tokens":3,"output_tokens":4}}
+    })).unwrap();
+    let (out, paths) = drops::scope(
+        drops::Seam {
+            direction: drops::Direction::Response,
+            ingress: "openai",
+            egress: "cohere",
+        },
+        || openai.writer().write_response(HOST, &response.clone()),
+    );
+    assert_eq!(
+        paths,
+        ["message.tool_plan", "message.content[].type=thinking"]
+    );
+    assert_eq!(out["choices"][0]["message"]["content"], "answer");
+    assert_eq!(out["usage"]["prompt_tokens"], 3);
+    assert_eq!(out["usage"]["completion_tokens"], 4);
+    let request = cohere.reader().read_request(&json!({
+        "model":"m","messages":[{"role":"assistant","tool_plan":"same thought","content":content}]
+    })).unwrap();
+    let (out, paths) = drops::scope(
+        drops::Seam {
+            direction: drops::Direction::Request,
+            ingress: "cohere",
+            egress: "anthropic",
+        },
+        || anthropic.writer().write_request(HOST, &request),
+    );
+    assert_eq!(
+        paths,
+        ["messages[].tool_plan", "messages[].content[].type=thinking"]
+    );
+    assert_eq!(
+        out["messages"][0]["content"],
+        json!([{"type":"text","text":"answer"}])
+    );
+}
+
+#[test]
+fn cohere_tool_result_children_keep_the_native_message_content_path() {
+    use crate::codec::{drops, proto_codec::protocol_for, test_host::HOST};
+    let cohere = protocol_for("cohere").unwrap();
+    let anthropic = protocol_for("anthropic").unwrap();
+    let request = cohere.reader().read_request(&json!({
+        "model":"m","messages":[
+            {"role":"assistant","tool_calls":[{"id":"t","type":"function","function":{"name":"lookup","arguments":"{}"}}]},
+            {"role":"tool","tool_call_id":"t","content":[
+                {"type":"text","text":"before"},
+                {"type":"document","document":{"id":"opaque"}},
+                {"type":"text","text":"after"}
+            ]}
+        ]
+    })).unwrap();
+    let (out, paths) = drops::scope(
+        drops::Seam {
+            direction: drops::Direction::Request,
+            ingress: "cohere",
+            egress: "anthropic",
+        },
+        || anthropic.writer().write_request(HOST, &request),
+    );
+    assert_eq!(paths, ["messages[].content[].type=document"]);
+    assert_eq!(
+        out["messages"][1]["content"][0]["content"],
+        json!([{"type":"text","text":"before"},{"type":"text","text":"after"}])
+    );
+}
+
+#[test]
 fn translated_upstream_failure_is_terminal_even_with_open_blocks_or_deferred_success() {
     use crate::codec::proto_stream::StreamTranslate;
     let host = crate::codec::test_host::HOST;

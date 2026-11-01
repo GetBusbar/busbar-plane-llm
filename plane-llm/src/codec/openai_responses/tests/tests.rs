@@ -1,6 +1,126 @@
 use super::*;
 
 #[test]
+fn buffered_provider_generation_errors_remain_failed_in_responses() {
+    use crate::codec::ir::IrStopReason;
+    let host = crate::codec::test_host::HOST;
+    for (provider, body) in [
+        (
+            "gemini",
+            serde_json::json!({
+                "candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]},"finishReason":"MALFORMED_FUNCTION_CALL"}],
+                "usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":11}
+            }),
+        ),
+        (
+            "gemini",
+            serde_json::json!({
+                "candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]},"finishReason":"UNEXPECTED_TOOL_CALL"}],
+                "usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":11}
+            }),
+        ),
+        (
+            "cohere",
+            serde_json::json!({
+                "message":{"role":"assistant","content":[{"type":"text","text":"partial"}]},"finish_reason":"ERROR",
+                "usage":{"tokens":{"input_tokens":7,"output_tokens":11},"billed_units":{"input_tokens":7,"output_tokens":11}}
+            }),
+        ),
+    ] {
+        let protocol = crate::codec::proto_codec::protocol_for(provider).unwrap();
+        let response = protocol
+            .reader()
+            .read_response(host, &body)
+            .expect("supported provider response");
+        assert_eq!(
+            response.stop_reason,
+            Some(IrStopReason::Error),
+            "{provider}"
+        );
+        let buffered = ResponsesWriter.write_response(host, &response);
+        assert_eq!(buffered["status"], "failed", "{provider}: {buffered}");
+        assert_eq!(buffered["error"]["code"], "server_error");
+        assert_eq!(buffered["error"]["message"], "error");
+        assert_eq!(buffered["output"][0]["content"][0]["text"], "partial");
+        assert_eq!(buffered["usage"]["input_tokens"], 7);
+        assert_eq!(buffered["usage"]["output_tokens"], 11);
+        assert!(buffered["incomplete_details"].is_null());
+        assert_eq!(
+            ResponsesReader
+                .read_response(host, &buffered)
+                .unwrap_err()
+                .class,
+            StatusClass::ServerError
+        );
+        for (reason, status) in [
+            (None, "completed"),
+            (Some(IrStopReason::EndTurn), "completed"),
+            (Some(IrStopReason::ToolUse), "completed"),
+            (Some(IrStopReason::Refusal), "completed"),
+            (Some(IrStopReason::Other), "completed"),
+            (Some(IrStopReason::MaxTokens), "incomplete"),
+            (Some(IrStopReason::Safety), "incomplete"),
+        ] {
+            let mut normal = response.clone();
+            normal.stop_reason = reason;
+            let output = ResponsesWriter.write_response(host, &normal);
+            assert_eq!(output["status"], status, "{reason:?}");
+            assert!(output["error"].is_null(), "{reason:?}");
+            assert_eq!(output["output"][0]["content"][0]["text"], "partial");
+            assert_eq!(output["usage"]["output_tokens"], 11);
+        }
+    }
+}
+
+#[test]
+fn buffered_responses_failed_usage_is_observable_without_masking_failure() {
+    use busbar_contract::codec::OperationHandler;
+    let host = crate::codec::test_host::HOST;
+    let handler = crate::codec::chat_handle::ChatOperation("responses");
+    for (code, class) in [
+        ("server_error", StatusClass::ServerError),
+        ("rate_limit_exceeded", StatusClass::RateLimit),
+        ("invalid_prompt", StatusClass::ClientError),
+    ] {
+        let failed = serde_json::json!({
+            "status":"failed","output":[],"error":{"code":code,"message":"failed turn"},
+            "usage":{"input_tokens":17,"output_tokens":11,"total_tokens":28,"input_tokens_details":{"cached_tokens":5}}
+        });
+        let error = ResponsesReader.read_response(host, &failed).unwrap_err();
+        assert_eq!(error.class, class);
+        assert_eq!(error.provider_signal.as_deref(), Some(code));
+        let bytes = serde_json::to_vec(&failed).unwrap();
+        let usage = handler
+            .extract_usage(host, "responses", &bytes)
+            .expect("reported usage tap")
+            .expect("top-level usage is present");
+        assert_eq!(
+            (usage.input, usage.output, usage.cache_read),
+            (12, 11, Some(5))
+        );
+    }
+    for absent in [
+        serde_json::json!({"status":"failed","output":[],"error":{"code":"server_error"}}),
+        serde_json::json!({"status":"failed","output":[],"usage":null}),
+        serde_json::json!({"status":"failed","output":[],"usage":"invalid"}),
+        serde_json::json!({"status":"failed","output":[],"metadata":{"usage":{"input_tokens":999,"output_tokens":888}}}),
+    ] {
+        let bytes = serde_json::to_vec(&absent).unwrap();
+        assert!(
+            handler.extract_usage(host, "responses", &bytes).is_err(),
+            "unreported/nested usage must not be invented: {absent}"
+        );
+    }
+    let partially_readable =
+        br#"{"status":"failed","output":[],"usage":{"input_tokens":"17","output_tokens":11}}"#;
+    let usage = handler
+        .extract_usage(host, "responses", partially_readable)
+        .unwrap()
+        .unwrap();
+    assert_eq!((usage.input, usage.output), (0, 11), "existing per-count refusal preserves readable work without interpreting the string as a count");
+}
+
+#[test]
 fn response_failed_codes_obey_pinned_response_schema_and_keep_native_codes() {
     let schema: serde_json::Value = serde_json::from_str(include_str!(
         "../../../../../testing/llm-conformance/wire/responses.wire.json"
