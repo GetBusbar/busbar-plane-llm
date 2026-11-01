@@ -8,6 +8,41 @@
 
 use serde_json::{json, Value};
 
+#[test]
+fn bedrock_exception_ends_stream_index_lifetime() {
+    use crate::codec::ir::{IrBlockMeta, IrDelta, IrStreamEvent};
+    let protocol = crate::codec::proto_codec::protocol_for("bedrock").unwrap();
+    let host = crate::codec::test_host::HOST;
+    let emit = |event: &IrStreamEvent| protocol.writer().write_response_events(host, event);
+    emit(&stream_message_start("first"));
+    emit(&IrStreamEvent::BlockStart {
+        index: 5,
+        block: IrBlockMeta::Text,
+        refusal: false,
+    });
+    let error = busbar_contract::protocol::IrError {
+        class: busbar_contract::upstream::StatusClass::ServerError,
+        provider_signal: Some("upstream failed".into()),
+        retry_after: None,
+    };
+    assert!(protocol
+        .writer()
+        .write_response_exception(host, &error)
+        .is_some());
+    emit(&stream_message_start("second"));
+    assert!(emit(&IrStreamEvent::BlockStop { index: 5 }).is_empty());
+    emit(&IrStreamEvent::BlockStart {
+        index: 8,
+        block: IrBlockMeta::Text,
+        refusal: false,
+    });
+    let frames = emit(&IrStreamEvent::BlockDelta {
+        index: 8,
+        delta: IrDelta::TextDelta("new stream".into()),
+    });
+    assert_eq!(mapped_stream_index(&frames[0]), Some(0));
+}
+
 /// Buffered cross-protocol response: egress reader -> `chat_prepare_for_ingress` -> ingress writer.
 fn xresp(egress: &str, ingress: &'static str, body: &Value) -> Value {
     let egress_p = crate::codec::proto_codec::protocol_for(egress).expect("egress dialect");
