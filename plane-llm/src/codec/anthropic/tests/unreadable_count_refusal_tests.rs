@@ -129,12 +129,72 @@ fn buffered_response_refuses_an_unreadable_cache_tier_or_metered_count_on_its_ow
             "{usage}: the readable totals bill as stated"
         );
         let d = &ir.usage.detail;
-        assert!(
-            d.cache_creation_5m_input_tokens != Some(40)
-                && d.cache_creation_1h_input_tokens != Some(40)
-                && d.web_search_requests.is_none(),
-            "{usage}: the refused count bills nothing: {d:?}"
-        );
+        for (value, count) in [
+            (
+                usage.pointer("/cache_creation/ephemeral_5m_input_tokens"),
+                d.cache_creation_5m_input_tokens,
+            ),
+            (
+                usage.pointer("/cache_creation/ephemeral_1h_input_tokens"),
+                d.cache_creation_1h_input_tokens,
+            ),
+            (
+                usage.pointer("/server_tool_use/web_search_requests"),
+                d.web_search_requests,
+            ),
+        ] {
+            if value.is_some_and(serde_json::Value::is_string) {
+                assert_eq!(
+                    count, None,
+                    "{usage}: refused detail is absent, never coerced"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn unreadable_cache_totals_refuse_only_their_own_counts_on_every_read_path() {
+    for field in ["cache_read_input_tokens", "cache_creation_input_tokens"] {
+        let mut usage = serde_json::json!({"input_tokens":5,"output_tokens":9,
+            "cache_read_input_tokens":11,"cache_creation_input_tokens":13});
+        usage[field] = serde_json::json!("1500");
+        let expected = if field == "cache_read_input_tokens" {
+            (None, Some(13))
+        } else {
+            (Some(11), None)
+        };
+        let response = AnthropicReader
+            .read_response(crate::codec::test_host::HOST, &message(usage.clone()))
+            .unwrap();
+        let start = serde_json::json!({"type":"message_start",
+            "message":{"role":"assistant","usage":usage.clone()}});
+        let delta = serde_json::json!({"type":"message_delta","delta":{},"usage":usage.clone()});
+        let streamed = [("message_start", start), ("message_delta", delta)].map(|(event, data)| {
+            match AnthropicReader.read_response_event(crate::codec::test_host::HOST, event, &data) {
+                Some(IrStreamEvent::MessageStart {
+                    usage: Some(usage), ..
+                })
+                | Some(IrStreamEvent::MessageDelta { usage, .. }) => usage,
+                other => panic!("{event}: expected usage, got {other:?}"),
+            }
+        });
+        for usage in [response.usage, streamed[0].clone(), streamed[1].clone()] {
+            assert_eq!((usage.input_tokens, usage.output_tokens), (5, 9));
+            assert_eq!(
+                (
+                    usage.cache_read_input_tokens,
+                    usage.cache_creation_input_tokens
+                ),
+                expected
+            );
+        }
+        let tail = format!("cut\"}}],\"usage\":{usage}}}");
+        let recovered = AnthropicReader
+            .recover_truncated_usage(tail.as_bytes())
+            .unwrap();
+        assert_eq!((recovered.input, recovered.output), (5, 9));
+        assert_eq!((recovered.cache_read, recovered.cache_creation), expected);
     }
 }
 
@@ -173,6 +233,22 @@ fn streaming_usage_frames_refuse_an_unreadable_cache_tier_or_metered_count_on_it
             streamed_tokens("message_delta", &delta),
             Some((5, 9)),
             "message_delta with {usage}: the readable totals bill, the stream does not end"
+        );
+    }
+}
+
+#[test]
+fn truncated_recovery_preserves_readable_counts_beside_unreadable_details() {
+    for usage in unreadable_detail_usages() {
+        let tail = format!("cut\"}}],\"usage\":{usage}}}");
+        let recovered = AnthropicReader
+            .recover_truncated_usage(tail.as_bytes())
+            .expect("readable counts survive the refused detail");
+        assert_eq!((recovered.input, recovered.output), (5, 9));
+        assert!(!recovered.open_units.contains_key("search_units"));
+        assert_eq!(
+            recovered.cache_creation,
+            usage["cache_creation_input_tokens"].as_u64()
         );
     }
 }

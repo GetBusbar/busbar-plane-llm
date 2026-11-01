@@ -1,6 +1,10 @@
 use super::*;
 use crate::codec::keys;
 
+#[cfg(test)]
+#[path = "tests/remaining_gemini_tests.rs"]
+mod remaining_gemini_tests;
+
 /// One streamed `GenerateContentResponse` frame carrying `part` as the model's only part.
 fn model_part_frame(part: serde_json::Value) -> (String, serde_json::Value) {
     (

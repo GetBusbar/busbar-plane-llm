@@ -76,7 +76,7 @@ fn effort_on_a_default_lane_is_budget_tokens() {
 }
 
 /// Anthropic budget -> Gemini `thinkingBudget` is a straight number copy; and Gemini's
-/// dynamic -1 round-trips to Gemini verbatim while projecting to Anthropic as medium.
+/// dynamic -1 round-trips to Gemini verbatim.
 #[test]
 fn budgets_copy_between_anthropic_and_gemini() {
     let body = serde_json::json!({
@@ -114,6 +114,24 @@ fn budgets_copy_between_anthropic_and_gemini() {
         back["generationConfig"]["thinkingConfig"]["thinkingBudget"], -1,
         "dynamic must round-trip to Gemini as its native -1"
     );
+}
+
+#[test]
+fn dynamic_ask_uses_adaptive_thinking_or_is_dropped_observably() {
+    let ir = crate::codec::ir::IrRequest {
+        reasoning: Some(IrReasoningAsk::Dynamic),
+        ..Default::default()
+    };
+    let out = adaptive(&ir);
+    assert_eq!(out["thinking"], serde_json::json!({"type":"adaptive"}));
+    assert!(out.get("output_config").is_none(), "{out}");
+    let cap = busbar_test_kit::warn_capture::WarnCapture::default();
+    let out = tracing::subscriber::with_default(cap.clone(), || {
+        anthropic_writer().write_request(crate::codec::test_host::HOST, &ir)
+    });
+    assert!(out.get("thinking").is_none(), "{out}");
+    assert!(out.get("output_config").is_none(), "{out}");
+    assert!(cap.contains("reasoning"), "{:?}", cap.messages());
 }
 
 /// A numeric budget projected onto a WORD protocol bucketizes through the same table.
@@ -167,7 +185,7 @@ fn anthropic_clamps_and_drops_by_max_tokens() {
     assert_eq!(out3["thinking"]["type"], "adaptive", "{out3}");
 }
 
-/// Anthropic rejects temperature/top_k alongside thinking: both are omitted (observably via
+/// Anthropic rejects modified temperature/top_p alongside thinking: both are omitted (observably via
 /// warn) when the ask is emitted, and present when it is not.
 #[test]
 fn thinking_omits_incompatible_sampling_knobs() {
@@ -177,7 +195,8 @@ fn thinking_omits_incompatible_sampling_knobs() {
     let ir = super::super::openai_chat::OpenAiReader
         .read_request(&body)
         .expect("parses");
-    let out = adaptive(&ir);
+    let cap = busbar_test_kit::warn_capture::WarnCapture::default();
+    let out = tracing::subscriber::with_default(cap.clone(), || adaptive(&ir));
     assert_eq!(out["thinking"]["type"], "adaptive");
     assert_eq!(out["output_config"]["effort"], "low");
     assert!(
@@ -188,6 +207,9 @@ fn thinking_omits_incompatible_sampling_knobs() {
         out.get("top_p").is_none(),
         "top_p must be omitted with thinking (Anthropic 400s on it): {out}"
     );
+    for field in ["temperature", "top_p"] {
+        assert!(cap.contains(field), "{:?}", cap.messages());
+    }
 
     // Without a reasoning ask the same temperature is emitted normally.
     let mut plain = openai_effort_body("low");
@@ -278,6 +300,15 @@ fn seam_gate_clears_or_stamps() {
     let out = adaptive(&allowed);
     assert_eq!(out["thinking"]["type"], "adaptive");
     assert_eq!(out["output_config"]["effort"], "high");
+    for enabled in [false, true] {
+        let mut plain = crate::codec::ir::IrRequest::default();
+        super::super::chat_handle::chat_prepare_for_egress(&mut plain, &prep(enabled));
+        assert_eq!(plain.reasoning, None);
+        assert_eq!(plain.reasoning_budgets, None);
+        let out = adaptive(&plain);
+        assert!(out.get("thinking").is_none(), "{out}");
+        assert!(out.get("output_config").is_none(), "{out}");
+    }
 }
 
 /// CROSS-protocol Gemini egress MUST request `includeThoughts: true` alongside the budget, or

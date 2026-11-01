@@ -128,73 +128,30 @@ fn extract_error_context_length_from_message() {
     );
 }
 
-/// A streaming `content_block_start` whose `index` is an
-/// upstream-controlled pathological value (`u64::MAX`) must be CLAMPED to
-/// `MAX_ANTHROPIC_BLOCK_INDEX` before it enters the IR, so a downstream writer (GeminiWriter
-/// `open_tools`, Bedrock `contentBlockIndex`) never allocates/serializes against the raw value.
-/// Mirrors the Bedrock reader's `MAX_CONTENT_BLOCK_INDEX` clamp test. Against the OLD code
-/// (`.map(|v| v as usize)`) this index would be `u64::MAX as usize` and the assertion fails.
+/// Oversized indices are refused rather than aliased onto another block's supported index.
 #[test]
-fn content_block_start_clamps_pathological_index() {
-    let data = serde_json::json!({
-        "type": EVT_CONTENT_BLOCK_START,
-        "index": u64::MAX,
-        "content_block": { "type": "text" }
-    });
-    let ev = AnthropicReader
-        .read_response_event(
-            crate::codec::test_host::HOST,
+fn pathological_block_indices_refuse_all_three_stream_events() {
+    for (event, data) in [
+        (
             EVT_CONTENT_BLOCK_START,
-            &data,
-        )
-        .expect("content_block_start parses");
-    match ev {
-        IrStreamEvent::BlockStart { index, .. } => {
-            assert_eq!(
-                index, MAX_ANTHROPIC_BLOCK_INDEX as usize,
-                "a u64::MAX block index must be clamped to MAX_ANTHROPIC_BLOCK_INDEX"
-            );
-        }
-        other => panic!("expected BlockStart, got {other:?}"),
-    }
-}
-
-/// The same clamp must apply to
-/// `content_block_delta` and `content_block_stop`, not just `content_block_start` — all three
-/// share `read_clamped_block_index`. Guards that the class is fixed at every read site.
-#[test]
-fn content_block_delta_and_stop_clamp_pathological_index() {
-    let delta = serde_json::json!({
-        "type": EVT_CONTENT_BLOCK_DELTA,
-        "index": u64::MAX,
-        "delta": { "type": DELTA_TYPE_TEXT, "text": "x" }
-    });
-    match AnthropicReader
-        .read_response_event(
-            crate::codec::test_host::HOST,
+            serde_json::json!({"index":u64::MAX,"content_block":{"type":"text"}}),
+        ),
+        (
             EVT_CONTENT_BLOCK_DELTA,
-            &delta,
-        )
-        .expect("content_block_delta parses")
-    {
-        IrStreamEvent::BlockDelta { index, .. } => {
-            assert_eq!(index, MAX_ANTHROPIC_BLOCK_INDEX as usize);
-        }
-        other => panic!("expected BlockDelta, got {other:?}"),
-    }
-
-    let stop = serde_json::json!({
-        "type": EVT_CONTENT_BLOCK_STOP,
-        "index": u64::MAX
-    });
-    match AnthropicReader
-        .read_response_event(crate::codec::test_host::HOST, EVT_CONTENT_BLOCK_STOP, &stop)
-        .expect("content_block_stop parses")
-    {
-        IrStreamEvent::BlockStop { index } => {
-            assert_eq!(index, MAX_ANTHROPIC_BLOCK_INDEX as usize);
-        }
-        other => panic!("expected BlockStop, got {other:?}"),
+            serde_json::json!({"index":u64::MAX,"delta":{"type":"text_delta","text":"x"}}),
+        ),
+        (
+            EVT_CONTENT_BLOCK_STOP,
+            serde_json::json!({"index":u64::MAX}),
+        ),
+    ] {
+        assert!(matches!(
+            AnthropicReader.read_response_event(crate::codec::test_host::HOST, event, &data),
+            Some(IrStreamEvent::Error(IrError {
+                class: StatusClass::ServerError,
+                ..
+            }))
+        ));
     }
 }
 
@@ -930,24 +887,12 @@ fn read_request_array_system_parses_blocks() {
     }
 }
 
-/// Regression: a non-array, non-string `system` value (e.g. a number) must NOT panic
-/// — the refactored `as_array()`/`is_string()` guards simply produce no system blocks rather
-/// than reaching a `.unwrap()`. Direct guard that the unwrap is gone from the request path.
+/// Wrong-typed system instructions refuse instead of disappearing from the request.
 #[test]
-fn read_request_non_array_non_string_system_is_ignored_no_panic() {
-    let body = serde_json::json!({
-        "model": "claude-opus-4-8",
-        "system": 12345,
-        "messages": [{"role": "user", "content": "hi"}],
-        "max_tokens": 16
-    });
-    let ir = AnthropicReader
-        .read_request(&body)
-        .expect("unexpected system shape must not panic the request path");
-    assert!(
-        ir.system.is_empty(),
-        "a non-array/non-string system yields no blocks (no unwrap panic)"
-    );
+fn read_request_non_array_non_string_system_is_refused() {
+    let body = serde_json::json!({"model":"m","system":12345,
+        "messages":[{"role":"user","content":"hi"}],"max_tokens":16});
+    assert!(AnthropicReader.read_request(&body).is_err());
 }
 
 /// Regression: a `tool_result` block whose `content` is an ARRAY of nested blocks
@@ -1521,22 +1466,21 @@ fn synth_id_matches_native_length_and_alphabet() {
     );
 }
 
-/// `max_tokens`/`top_k` larger than `u32::MAX` must drop to
-/// `None` via checked `try_from`, NOT silently truncate. Old code: `4_294_967_297 as u32` == 1,
-/// forwarding a corrupted cap. Fixed code: out-of-range → None.
+/// An unreadable max_tokens is refused; an oversized top_k retains its existing omission.
 #[test]
-fn read_request_oversized_max_tokens_and_top_k_drop_to_none() {
+fn read_request_oversized_max_tokens_refuses_and_top_k_drops_to_none() {
     let body = serde_json::json!({
         "model": "claude-3-5-sonnet",
         "messages": [{ "role": "user", "content": "hi" }],
         "max_tokens": 4_294_967_297u64,
         "top_k": 8_589_934_592u64
     });
-    let ir = AnthropicReader.read_request(&body).expect("request parses");
-    assert_eq!(
-        ir.max_tokens, None,
-        "an over-u32 max_tokens must drop to None, not truncate to a small value"
-    );
+    assert!(AnthropicReader.read_request(&body).is_err());
+    let mut body = body;
+    body["max_tokens"] = serde_json::json!(1024);
+    let ir = AnthropicReader
+        .read_request(&body)
+        .expect("valid max_tokens parses");
     assert_eq!(
         ir.top_k, None,
         "an over-u32 top_k must drop to None, not truncate to a small value"

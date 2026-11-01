@@ -1,5 +1,314 @@
 use super::*;
 
+#[test]
+fn responses_writer_compacts_media_gaps_and_keeps_terminal_item_positions() {
+    use crate::codec::ir::{IrBlockMeta, IrDelta, IrStopReason, IrStreamEvent, IrUsage};
+    let writer = ResponsesWriter;
+    let host = crate::codec::test_host::HOST;
+    let mut frames = Vec::new();
+    for event in [
+        IrStreamEvent::BlockStart {
+            index: 0,
+            block: IrBlockMeta::Text,
+            refusal: false,
+        },
+        IrStreamEvent::BlockDelta {
+            index: 0,
+            delta: IrDelta::TextDelta("before".into()),
+        },
+        IrStreamEvent::BlockStop { index: 0 },
+        IrStreamEvent::BlockStart {
+            index: 1,
+            block: IrBlockMeta::Image,
+            refusal: false,
+        },
+        IrStreamEvent::BlockStop { index: 1 },
+        IrStreamEvent::BlockStart {
+            index: 2,
+            block: IrBlockMeta::Text,
+            refusal: false,
+        },
+    ] {
+        frames.extend(writer.write_response_events(host, &event));
+    }
+    // A mid-stream clone retains the mapping and earlier finalized item.
+    let writer = writer.clone();
+    for event in [
+        IrStreamEvent::BlockDelta {
+            index: 2,
+            delta: IrDelta::TextDelta("after".into()),
+        },
+        IrStreamEvent::BlockStart {
+            index: 3,
+            block: IrBlockMeta::Image,
+            refusal: false,
+        },
+        IrStreamEvent::BlockStop { index: 3 },
+        IrStreamEvent::BlockStart {
+            index: 4,
+            block: IrBlockMeta::ToolUse {
+                id: "call_x".into(),
+                name: "lookup".into(),
+            },
+            refusal: false,
+        },
+        IrStreamEvent::BlockDelta {
+            index: 4,
+            delta: IrDelta::InputJsonDelta("{}".into()),
+        },
+        // Close in reverse order: terminal output must still follow emitted item starts.
+        IrStreamEvent::BlockStop { index: 4 },
+        IrStreamEvent::BlockStop { index: 2 },
+        IrStreamEvent::MessageDelta {
+            stop_reason: Some(IrStopReason::ToolUse),
+            stop_sequence: None,
+            usage: IrUsage {
+                input_tokens: 3,
+                output_tokens: 5,
+                ..Default::default()
+            },
+            stop_detail: None,
+        },
+    ] {
+        frames.extend(writer.write_response_events(host, &event));
+    }
+    let added: Vec<_> = frames
+        .iter()
+        .filter(|(name, _)| name == EVT_OUTPUT_ITEM_ADDED)
+        .map(|(_, data)| data)
+        .collect();
+    assert_eq!(added.len(), 3);
+    let terminal = &frames
+        .iter()
+        .find(|(name, _)| name == EVT_RESPONSE_COMPLETED)
+        .unwrap()
+        .1["response"];
+    assert_eq!(terminal["output"].as_array().unwrap().len(), 3);
+    for (ordinal, item) in added.iter().enumerate() {
+        assert_eq!(item["output_index"], serde_json::json!(ordinal));
+        let id = &item["item"]["id"];
+        assert_eq!(&terminal["output"][ordinal]["id"], id);
+        for (_, data) in &frames {
+            if &data["item_id"] == id || &data["item"]["id"] == id {
+                assert_eq!(data["output_index"], serde_json::json!(ordinal));
+            }
+        }
+    }
+    assert_eq!(terminal["output"][1]["content"][0]["text"], "after");
+    assert_eq!(terminal["output"][2]["arguments"], "{}");
+    assert_eq!(terminal["usage"]["output_tokens"], 5);
+    writer.write_response_events(host, &IrStreamEvent::MessageStop);
+    writer.write_response_events(
+        host,
+        &IrStreamEvent::MessageStart {
+            role: crate::codec::ir::IrRole::Assistant,
+            usage: None,
+            id: Some("resp_next".into()),
+            created: Some(1),
+            model: Some("test".into()),
+        },
+    );
+    let next = writer.write_response_events(
+        host,
+        &IrStreamEvent::BlockStart {
+            index: 2,
+            block: IrBlockMeta::Text,
+            refusal: false,
+        },
+    );
+    assert_eq!(
+        next[0].1["output_index"], 0,
+        "new stream clears old mapping"
+    );
+}
+
+#[test]
+fn refusal_deltas_arrive_immediately_and_terminal_snapshots_do_not_repeat_them() {
+    use crate::codec::ir::{IrDelta, IrStopReason, IrStreamEvent, StreamDecodeState};
+    let mut state = StreamDecodeState::default();
+    let normal = reader_read_response_events(
+        EVT_OUTPUT_TEXT_DELTA,
+        &serde_json::json!({"output_index": 0, "delta": "é "}),
+        &mut state,
+    );
+    assert!(normal.iter().any(|event| matches!(
+        event,
+        IrStreamEvent::BlockStart {
+            index: 0,
+            refusal: false,
+            ..
+        }
+    )));
+    let annotation = reader_read_response_events(
+        EVT_OUTPUT_TEXT_ANNOTATION_ADDED,
+        &serde_json::json!({"output_index": 0, "annotation": {
+            "type": "url_citation", "url": "https://example.com", "title": "source",
+            "start_index": 0, "end_index": 1
+        }}),
+        &mut state,
+    );
+    assert!(annotation.iter().any(|event| matches!(event,
+        IrStreamEvent::BlockDelta { index: 0, delta: IrDelta::CitationsDelta(citations) }
+            if citations[0].start_index == Some(0) && citations[0].end_index == Some(1))));
+    reader_read_response_events(
+        EVT_CONTENT_PART_DONE,
+        &serde_json::json!({"output_index": 0}),
+        &mut state,
+    );
+    let mut emitted = Vec::new();
+    for delta in ["I ", "can't"] {
+        let events = reader_read_response_events(
+            EVT_REFUSAL_DELTA,
+            &serde_json::json!({"output_index": 1, "content_index": 0, "delta": delta}),
+            &mut state,
+        );
+        assert!(events.iter().any(|event| matches!(event,
+            IrStreamEvent::BlockDelta { index: 1, delta: IrDelta::TextDelta(text) } if text == delta)));
+        emitted.extend(events);
+    }
+    let done = serde_json::json!({"output_index": 1, "content_index": 0, "refusal": "I can't"});
+    emitted.extend(reader_read_response_events(
+        EVT_REFUSAL_DONE,
+        &done,
+        &mut state,
+    ));
+    assert!(reader_read_response_events(EVT_REFUSAL_DONE, &done, &mut state).is_empty());
+    for event_type in [EVT_CONTENT_PART_DONE, EVT_OUTPUT_ITEM_DONE] {
+        assert!(reader_read_response_events(
+            event_type,
+            &serde_json::json!({"output_index": 1}),
+            &mut state
+        )
+        .is_empty());
+    }
+    emitted.extend(reader_read_response_events(
+        EVT_RESPONSE_COMPLETED,
+        &serde_json::json!({"response": {
+            "status": "completed", "output": [
+                {"type": "message", "content": [{"type": "output_text", "text": "é "}]},
+                {"type": "message", "content": [{"type": "refusal", "refusal": "I can't"}]},
+                {"type": "message", "content": [{"type": "refusal", "refusal": "Another refusal"}]}
+            ], "usage": {"input_tokens": 5, "output_tokens": 8}
+        }}),
+        &mut state,
+    ));
+    let text: Vec<(usize, &str)> = emitted
+        .iter()
+        .filter_map(|event| match event {
+            IrStreamEvent::BlockDelta {
+                index,
+                delta: IrDelta::TextDelta(text),
+            } => Some((*index, text.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, vec![(1, "I "), (1, "can't"), (2, "Another refusal")]);
+    for idx in [1, 2] {
+        assert_eq!(
+            emitted
+                .iter()
+                .filter(|event| matches!(event,
+            IrStreamEvent::BlockStart { index, refusal: true, .. } if *index == idx))
+                .count(),
+            1
+        );
+        assert_eq!(
+            emitted
+                .iter()
+                .filter(|event| matches!(event,
+            IrStreamEvent::BlockStop { index } if *index == idx))
+                .count(),
+            1
+        );
+    }
+    assert!(emitted.iter().any(|event| matches!(event,
+        IrStreamEvent::MessageDelta { stop_reason: Some(IrStopReason::Refusal), usage, .. }
+            if usage.input_tokens == 5 && usage.output_tokens == 8)));
+}
+
+#[test]
+fn refusal_done_without_deltas_carries_text_once_and_bodyless_completion_keeps_refusal() {
+    use crate::codec::ir::{IrDelta, IrStopReason, IrStreamEvent, StreamDecodeState};
+    let mut state = StreamDecodeState::default();
+    let done = serde_json::json!({"output_index": 0, "content_index": 0, "refusal": "No."});
+    let events = reader_read_response_events(EVT_REFUSAL_DONE, &done, &mut state);
+    assert!(matches!(events.as_slice(), [
+        IrStreamEvent::BlockStart { index: 0, refusal: true, .. },
+        IrStreamEvent::BlockDelta { index: 0, delta: IrDelta::TextDelta(text) },
+        IrStreamEvent::BlockStop { index: 0 }
+    ] if text == "No."));
+    assert!(reader_read_response_events(EVT_REFUSAL_DONE, &done, &mut state).is_empty());
+    let terminal =
+        reader_read_response_events(EVT_RESPONSE_COMPLETED, &serde_json::json!({}), &mut state);
+    assert!(terminal.iter().any(|event| matches!(
+        event,
+        IrStreamEvent::MessageDelta {
+            stop_reason: Some(IrStopReason::Refusal),
+            ..
+        }
+    )));
+}
+
+#[test]
+fn refusal_deltas_survive_failed_and_incomplete_terminals_with_usage() {
+    use crate::codec::ir::{IrDelta, IrStopReason, IrStreamEvent, StreamDecodeState};
+    for (event_type, status, expected_stop) in [
+        (EVT_RESPONSE_FAILED, "failed", IrStopReason::Error),
+        (
+            EVT_RESPONSE_INCOMPLETE,
+            "incomplete",
+            IrStopReason::MaxTokens,
+        ),
+    ] {
+        let mut state = StreamDecodeState::default();
+        let events = reader_read_response_events(
+            EVT_REFUSAL_DELTA,
+            &serde_json::json!({"output_index": 0, "delta": "No."}),
+            &mut state,
+        );
+        assert!(events.iter().any(|event| matches!(event,
+            IrStreamEvent::BlockDelta { delta: IrDelta::TextDelta(text), .. } if text == "No.")));
+        let terminal = reader_read_response_events(
+            event_type,
+            &serde_json::json!({"response": {
+                "status": status, "error": {"code": "server_error"},
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "usage": {"input_tokens": 9, "output_tokens": 4}
+            }}),
+            &mut state,
+        );
+        assert!(terminal
+            .iter()
+            .any(|event| matches!(event, IrStreamEvent::BlockStop { index: 0 })));
+        assert!(terminal.iter().any(|event| matches!(event,
+            IrStreamEvent::MessageDelta { stop_reason, usage, .. }
+                if *stop_reason == Some(expected_stop) && usage.input_tokens == 9 && usage.output_tokens == 4)));
+    }
+}
+
+#[test]
+fn refusal_events_respect_existing_block_limit_and_tool_collision() {
+    use crate::codec::ir::StreamDecodeState;
+    let mut capped = StreamDecodeState::default();
+    capped.open_tools.extend(0..MAX_OPEN_TOOLS);
+    let mut collision = StreamDecodeState::default();
+    collision.open_tools.insert(MAX_OUTPUT_INDEX);
+    for state in [&mut capped, &mut collision] {
+        for event_type in [EVT_REFUSAL_DELTA, EVT_REFUSAL_DONE] {
+            let events = reader_read_response_events(
+                event_type,
+                &serde_json::json!({"output_index": MAX_OUTPUT_INDEX, "delta": "No.", "refusal": "No."}),
+                state,
+            );
+            assert!(
+                events.is_empty(),
+                "no orphan or collision events: {events:?}"
+            );
+        }
+        assert!(state.tool_ir_index.is_empty());
+    }
+}
+
 /// An `input_file` content block (a legitimate Responses input shape) must not
 /// silently vanish. Before this fix, `responses_block`'s bare `_ => Err(..)` was swallowed by
 /// every caller's `filter_map(..ok())` with ZERO log at any level — not a 400, not a warn, just a

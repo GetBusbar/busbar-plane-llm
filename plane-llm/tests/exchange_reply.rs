@@ -5139,6 +5139,126 @@ fn an_openai_whole_answer_reads_as_an_anthropic_message_naming_the_serving_model
     assert!(got.get("choices").is_none(), "no raw openai body: {got}");
 }
 
+#[test]
+fn malformed_anthropic_answer_keeps_reported_usage_at_the_reply_boundary() {
+    let far = br#"{"role":"assistant","content":"malformed","usage":{"input_tokens":17,"output_tokens":9}}"#;
+    let w = whole::translate(HOST, &ctx("openai", "anthropic", false, false), 200, far);
+    assert_eq!(w.end, WholeEnd::NotTranslatable);
+    assert_eq!(w.answer.status, 500);
+    assert!(
+        w.refused.is_some(),
+        "the original decode refusal remains explained"
+    );
+    let token = busbar_plane_llm::exchange::reply::wire::token_usage_of(&w.usage).unwrap();
+    assert_eq!((token.input, token.output), (17, 9));
+    let tapped = chat_handler("anthropic")
+        .extract_usage(HOST, "anthropic", far)
+        .unwrap()
+        .unwrap();
+    assert_eq!((tapped.input, tapped.output), (17, 9));
+    let nested = br#"{"role":"assistant","content":"malformed","metadata":{"usage":{"input_tokens":999,"output_tokens":888}}}"#;
+    let no_report = whole::translate(HOST, &ctx("openai", "anthropic", false, false), 200, nested);
+    assert_eq!(no_report.end, WholeEnd::NotTranslatable);
+    assert_eq!(
+        no_report.usage, None,
+        "nested metadata is not provider usage"
+    );
+    assert!(chat_handler("anthropic")
+        .extract_usage(HOST, "anthropic", nested)
+        .is_err());
+    let decoy = br#"{"role":"assistant","content":"malformed","usage":{"input_tokens":17,"output_tokens":9},"metadata":{"usage":{"input_tokens":999,"output_tokens":888}}}"#;
+    let reported = whole::translate(HOST, &ctx("openai", "anthropic", false, false), 200, decoy);
+    let token = busbar_plane_llm::exchange::reply::wire::token_usage_of(&reported.usage).unwrap();
+    assert_eq!((token.input, token.output), (17, 9));
+    let tapped = chat_handler("anthropic")
+        .extract_usage(HOST, "anthropic", decoy)
+        .unwrap()
+        .unwrap();
+    assert_eq!((tapped.input, tapped.output), (17, 9));
+
+    let arrived = arrival("openai", false);
+    let far_lane = lane("anthropic");
+    let reply_ctx = ReplyCtx {
+        arrived: &arrived,
+        lane: &far_lane,
+        intent: stream_intent(chat_handler("openai"), arrived.parsed.as_ref()),
+        passthrough: false,
+        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+    };
+    let mut reply = Reply::new(
+        HOST,
+        &reply_ctx,
+        200,
+        &[(b"content-type", b"application/json")],
+    );
+    let piece = reply.feed(HOST, &reply_ctx, far, true, AT);
+    assert_eq!(piece.head.unwrap().status, 500);
+    assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (17, 9));
+    assert!(
+        reply.partial(),
+        "reported work survives a failed output and a later leave"
+    );
+}
+
+#[test]
+fn empty_speech_output_is_a_failed_delivery_with_original_flat_billing() {
+    let mut context = ctx("openai", "openai", false, false);
+    context.operation = OpVerb::SPEECH;
+    let failed = whole::translate(HOST, &context, 200, b"");
+    assert_eq!(failed.end, WholeEnd::NotTranslatable);
+    assert_eq!(failed.answer.status, 500);
+    assert_eq!(failed.usage, Some(busbar_contract::billing::Billing::Flat));
+    let success = whole::translate(HOST, &context, 200, b"RIFF-not-empty");
+    assert_eq!(success.end, WholeEnd::Delivered);
+    assert_eq!(success.usage, failed.usage);
+    assert_eq!(success.answer.body, b"RIFF-not-empty");
+}
+
+#[test]
+fn malformed_rerank_retains_full_billing_variants_and_units() {
+    use busbar_contract::billing::Billing;
+    use busbar_plane_llm::exchange::reply::{wire, Units};
+    for value in [
+        Some(serde_json::json!(7)),
+        Some(serde_json::json!(0)),
+        Some(serde_json::json!(u64::MAX)),
+        None,
+        Some(serde_json::json!("7")),
+    ] {
+        let mut far = serde_json::json!({"results":[{"index":0,"relevance_score":"malformed"}]});
+        if let Some(value) = &value {
+            far["meta"] = serde_json::json!({"billed_units":{"search_units":value}});
+        }
+        let expected = match value.as_ref().and_then(Value::as_u64) {
+            Some(count) => Billing::Counted {
+                class: "search_units".into(),
+                count,
+            },
+            None => Billing::Flat,
+        };
+        let mut context = ctx("bedrock", "cohere", false, false);
+        context.operation = OpVerb::RERANK;
+        let failed = whole::translate(HOST, &context, 200, &serde_json::to_vec(&far).unwrap());
+        assert_eq!(failed.end, WholeEnd::NotTranslatable);
+        assert_eq!(failed.answer.status, 500);
+        assert!(failed.refused.is_some());
+        assert_eq!(failed.usage, Some(expected.clone()));
+        let units = Units::of(
+            wire::token_usage_of(&failed.usage).as_ref(),
+            wire::open_units_of(&failed.usage),
+        );
+        assert_eq!((units.tokens_in, units.tokens_out), (0, 0));
+        assert_eq!(
+            units.open.get("search_units").copied(),
+            value.as_ref().and_then(Value::as_u64)
+        );
+        far["results"][0]["relevance_score"] = serde_json::json!(0.75);
+        let success = whole::translate(HOST, &context, 200, &serde_json::to_vec(&far).unwrap());
+        assert_eq!(success.end, WholeEnd::Delivered);
+        assert_eq!(success.usage, Some(expected));
+    }
+}
+
 /// A banner and the `error_map_value` it carried, per event.
 type Banners = Vec<(String, Option<String>)>;
 

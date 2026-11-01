@@ -1567,3 +1567,11 @@ mod hosted_record_tests;
 #[cfg(test)]
 #[path = "tests/stream_error_member_tests.rs"]
 mod stream_error_member_tests;
+
+#[cfg(test)]
+#[path = "tests/wire_representability_tests.rs"]
+mod wire_representability_tests;
+
+#[cfg(test)]
+#[path = "tests/parser_refusal_tests.rs"]
+mod parser_refusal_tests;

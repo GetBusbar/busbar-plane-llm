@@ -193,6 +193,104 @@ fn mime_type_sanitizer_strips_header_injection() {
 }
 
 #[test]
+fn speech_response_sanitizes_foreign_mime_without_changing_audio() {
+    let audio = SlabBytes::from(b"\xff\x00RIFFDATA".as_slice());
+    let response = SpeechResp {
+        audio: Some(MediaBlob {
+            payload: MediaPayload::Bytes(audio.clone()),
+            mime_type: "audio/wav\r\nX-Injected: evil".into(),
+            pcm: None,
+        }),
+        ..Default::default()
+    };
+    let wire = write_speech_response(&response);
+    assert_eq!(wire.content_type, "audio/wav");
+    assert_eq!(wire.bytes, audio);
+}
+
+#[test]
+fn transcription_part_content_type_is_case_insensitive() {
+    let body = String::from_utf8(multipart_body("B"))
+        .unwrap()
+        .replace("Content-Type: audio/wav", "cOnTeNt-TyPe: audio/wav");
+    let request =
+        read_transcription_request(body.as_bytes(), "multipart/form-data; boundary=B").unwrap();
+    let audio = request.audio.expect("file part");
+    assert_eq!(audio.mime_type, "audio/wav");
+    match audio.payload {
+        MediaPayload::Bytes(bytes) => assert_eq!(bytes.as_ref(), b"RIFFDATA"),
+        other => panic!("expected raw audio, got {other:?}"),
+    }
+}
+
+#[test]
+fn invalid_base64_transcription_is_unrepresentable_before_dispatch() {
+    use busbar_contract::ir::handle::IrHandle;
+    let mut handle = crate::codec::leaf_handles::TranscriptionReqHandle(TranscriptionReq {
+        model: "m".into(),
+        audio: Some(MediaBlob {
+            payload: MediaPayload::B64("%%%invalid%%%".into()),
+            mime_type: "audio/wav".into(),
+            pcm: None,
+        }),
+        ..Default::default()
+    });
+    assert!(matches!(
+        handle.write_egress_request(crate::codec::test_host::HOST, "openai", "m"),
+        busbar_contract::codec::EgressWire::Unrepresentable { .. }
+    ));
+    assert!(handle.write_egress_request_bytes("openai", "m").is_empty());
+}
+
+#[test]
+fn invalid_or_missing_speech_audio_refuses_both_writes_and_keeps_exact_billing() {
+    use busbar_contract::codec::TranslatedResponse;
+    use busbar_contract::ir::handle::IrHandle;
+    let billing = Billing::Tokens(busbar_contract::billing::TokenUsage {
+        input: 17,
+        output: 9,
+        ..Default::default()
+    });
+    for audio in [
+        None,
+        Some(MediaBlob {
+            payload: MediaPayload::B64("%%%invalid%%%".into()),
+            mime_type: "audio/wav".into(),
+            pcm: None,
+        }),
+    ] {
+        let handle = crate::codec::leaf_handles::SpeechRespHandle(SpeechResp {
+            audio,
+            usage: Some(billing.clone()),
+            ..Default::default()
+        });
+        assert!(matches!(
+            handle.write_ingress_response(crate::codec::test_host::HOST, "openai", true),
+            TranslatedResponse::Untranslatable
+        ));
+        assert!(matches!(
+            handle.write_ingress_response_bytes(crate::codec::test_host::HOST, "openai", true),
+            TranslatedResponse::Untranslatable
+        ));
+        assert_eq!(handle.billing(), Some(billing.clone()));
+    }
+    let handle = crate::codec::leaf_handles::SpeechRespHandle(SpeechResp {
+        audio: Some(MediaBlob {
+            payload: MediaPayload::B64("AP8=".into()),
+            mime_type: "audio/wav".into(),
+            pcm: None,
+        }),
+        usage: Some(billing.clone()),
+        ..Default::default()
+    });
+    match handle.write_ingress_response_bytes(crate::codec::test_host::HOST, "openai", true) {
+        TranslatedResponse::Typed(wire) => assert_eq!(wire.bytes.as_ref(), b"\x00\xff"),
+        _ => panic!("valid audio must remain deliverable"),
+    }
+    assert_eq!(handle.billing(), Some(billing));
+}
+
+#[test]
 fn total_tokens_saturate_on_upstream_overflow() {
     // The three egress token sums must saturate (operands are upstream-controlled), matching
     // the billing.rs invariant — bare `+` would panic in debug / wrap to 0 in release.
@@ -239,6 +337,25 @@ fn multipart_boundary_ignores_trailing_content_type_params() {
     let r = ir;
     assert_eq!(r.model, "whisper-1");
     assert!(r.audio.is_some());
+}
+
+#[test]
+fn transcription_preserves_binary_boundary_lookalikes() {
+    let audio = b"\xff\x00abc--Bxyz\r\n--Bsuffix\r\n--B--suffix\r\ntail\r\n";
+    let mut body = b"--B\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-1\r\n--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\nContent-Type: audio/wav\r\n\r\n".to_vec();
+    body.extend_from_slice(audio);
+    body.extend_from_slice(b"\r\n--B--\r\n");
+    let request = super::super::super::leaf_codec::transcription_read_request(
+        "openai",
+        &body,
+        "multipart/form-data; boundary=B",
+    )
+    .expect("a delimiter prefix in binary content is payload");
+    assert_eq!(request.model, "whisper-1");
+    match request.audio.expect("file part").payload {
+        MediaPayload::Bytes(bytes) => assert_eq!(bytes.as_ref(), audio),
+        other => panic!("expected raw audio bytes, got {other:?}"),
+    }
 }
 
 #[test]

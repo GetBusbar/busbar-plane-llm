@@ -2207,6 +2207,10 @@ mod usage_census_tests;
 mod ir_mapping_tests;
 
 #[cfg(test)]
+#[path = "tests/tool_result_s3_format_tests.rs"]
+mod tool_result_s3_format_tests;
+
+#[cfg(test)]
 #[path = "tests/ir_mapping_structured_tests.rs"]
 mod ir_mapping_structured_tests;
 

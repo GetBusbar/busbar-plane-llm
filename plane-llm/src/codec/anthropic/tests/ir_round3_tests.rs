@@ -20,8 +20,6 @@ fn sse_payloads(out: &str) -> Vec<Value> {
 /// `default` is OpenAI's standard tier. Buffered. A tier Anthropic cannot name is the schema's
 /// `null`, never `standard` in its place (DF-SITES: no substitution), so the buffered answer agrees
 /// with the stream, whose `message_delta` omits it.
-///
-/// RED on dev: `flex` and `scale` were written as `"standard"`.
 #[test]
 fn item10_unknown_served_tier_never_reaches_an_anthropic_client_buffered() {
     for (openai_tier, want) in [
@@ -80,7 +78,20 @@ fn item10_unknown_served_tier_never_reaches_an_anthropic_client_stream() {
             &String::from_utf8(t.feed(crate::codec::test_host::HOST, b"data: [DONE]\n\n")).unwrap(),
         );
         out.push_str(&String::from_utf8(t.finish(crate::codec::test_host::HOST)).unwrap());
-        for p in sse_payloads(&out) {
+        let payloads = sse_payloads(&out);
+        assert!(
+            payloads.iter().any(|p| p["type"] == "message_start"),
+            "{out}"
+        );
+        assert!(
+            payloads.iter().any(|p| p["type"] == "message_delta"),
+            "{out}"
+        );
+        assert!(
+            payloads.iter().any(|p| p["type"] == "message_stop"),
+            "{out}"
+        );
+        for p in payloads {
             for tier in [
                 p.pointer("/usage/service_tier"),
                 p.pointer("/message/usage/service_tier"),

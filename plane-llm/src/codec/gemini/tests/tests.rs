@@ -1,6 +1,153 @@
 use super::*;
 use crate::codec::ir::{IrBlockMeta, IrDelta, IrStreamEvent, StreamDecodeState};
 
+#[test]
+fn streamed_media_does_not_change_synthesized_tool_call_ordinals() {
+    let body = serde_json::json!({
+        "responseId": "media-tool-turn",
+        "candidates": [{"content": {"role": "model", "parts": [
+            {"inlineData": {"mimeType": "image/png", "data": "aW1hZ2U="}},
+            {"text": "answer"},
+            {"functionCall": {"name": "first", "args": {}}},
+            {"fileData": {"mimeType": "audio/wav", "fileUri": "https://example.com/audio.wav"}},
+            {"functionCall": {"name": "second", "args": {}}}
+        ]}, "finishReason": "STOP"}]
+    });
+    let buffered: Vec<String> = GeminiReader
+        .read_response(crate::codec::test_host::HOST, &body)
+        .expect("buffered response")
+        .content
+        .into_iter()
+        .filter_map(|block| match block {
+            crate::codec::ir::IrBlock::ToolUse { id, .. } => Some(id),
+            _ => None,
+        })
+        .collect();
+    let streamed: Vec<String> = collect_stream(&[body])
+        .into_iter()
+        .filter_map(|event| match event {
+            IrStreamEvent::BlockStart {
+                block: IrBlockMeta::ToolUse { id, .. },
+                ..
+            } => Some(id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(buffered.len(), 2);
+    assert_eq!(
+        streamed, buffered,
+        "media indices are not tool-call ordinals"
+    );
+}
+
+#[test]
+fn streamed_generated_media_matches_buffered_blocks_and_preserves_text_offsets() {
+    use crate::codec::ir::IrBlock;
+    let parts = serde_json::json!([
+        {"thought": true, "text": "plan"},
+        {"text": "é "},
+        {"inlineData": {"mimeType": "image/png", "data": "aW1hZ2U="}},
+        {"inlineData": {"mimeType": "audio/pcm", "data": "YXVkaW8="}},
+        {"fileData": {"mimeType": "image/png", "fileUri": "https://example.com/image.png"}},
+        {"fileData": {"mimeType": "audio/wav", "fileUri": "https://example.com/audio.wav"}},
+        {"text": "hi"}
+    ]);
+    let terminal = serde_json::json!({
+        "candidates": [{
+            "finishReason": "STOP",
+            "citationMetadata": {"citationSources": [{
+                "startIndex": 3, "endIndex": 5, "uri": "https://example.com/source"
+            }]}
+        }],
+        "usageMetadata": {"promptTokenCount": 7, "candidatesTokenCount": 11}
+    });
+    let mut buffered_body = terminal.clone();
+    buffered_body["candidates"][0]["content"] =
+        serde_json::json!({"role": "model", "parts": parts});
+    let expected: Vec<IrBlock> = GeminiReader
+        .read_response(crate::codec::test_host::HOST, &buffered_body)
+        .expect("buffered media")
+        .content
+        .into_iter()
+        .filter(|b| matches!(b, IrBlock::Image { .. } | IrBlock::Media { .. }))
+        .collect();
+    let mut chunks: Vec<_> = parts.as_array().unwrap().iter().map(|part| {
+        serde_json::json!({"candidates": [{"content": {"role": "model", "parts": [part]}}]})
+    }).collect();
+    chunks.push(terminal);
+    let events = collect_stream(&chunks);
+    let media: Vec<IrBlock> = events
+        .iter()
+        .filter_map(|event| match event {
+            IrStreamEvent::BlockDelta {
+                delta: IrDelta::MediaDelta(block),
+                ..
+            } => Some((**block).clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(expected.len(), 4);
+    assert_eq!(media, expected);
+    let mut open = None;
+    let mut indices = Vec::new();
+    for event in &events {
+        match event {
+            IrStreamEvent::BlockStart { index, .. } => {
+                assert!(
+                    open.replace(*index).is_none(),
+                    "overlapping block: {events:?}"
+                );
+                indices.push(*index);
+            }
+            IrStreamEvent::BlockStop { index } => assert_eq!(open.take(), Some(*index)),
+            _ => {}
+        }
+    }
+    assert!(open.is_none());
+    assert_eq!(indices, (0..7).collect::<Vec<_>>());
+    assert!(events.iter().any(|event| matches!(event,
+        IrStreamEvent::BlockDelta { index: 6, delta: IrDelta::CitationsDelta(citations) }
+            if citations.len() == 1 && citations[0].start_index == Some(0) && citations[0].end_index == Some(2)
+    )));
+    assert!(events.iter().any(|event| matches!(event,
+        IrStreamEvent::MessageDelta { usage, .. } if usage.input_tokens == 7 && usage.output_tokens == 11
+    )));
+}
+
+#[test]
+fn streamed_media_before_text_keeps_indices_unique_and_does_not_reopen_thinking() {
+    let events = collect_stream(&[
+        serde_json::json!({"candidates": [{"content": {"parts": [
+            {"inlineData": {"mimeType": "image/png", "data": "aW1hZ2U="}}
+        ]}}]}),
+        serde_json::json!({"candidates": [{"content": {"parts": [
+            {"thought": true, "text": "late thought"}, {"text": "answer"}
+        ]}, "finishReason": "STOP"}]}),
+    ]);
+    let starts: Vec<usize> = events
+        .iter()
+        .filter_map(|event| match event {
+            IrStreamEvent::BlockStart { index, .. } => Some(*index),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(starts, vec![0, 1]);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        IrStreamEvent::BlockDelta {
+            index: 0,
+            delta: IrDelta::MediaDelta(_)
+        }
+    )));
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        IrStreamEvent::BlockDelta {
+            delta: IrDelta::ThinkingDelta(_),
+            ..
+        }
+    )));
+}
+
 fn collect_stream(chunks: &[serde_json::Value]) -> Vec<IrStreamEvent> {
     let reader = GeminiReader;
     let mut state = StreamDecodeState::default();
@@ -659,6 +806,87 @@ fn collect_function_calls(events: &[IrStreamEvent]) -> Vec<serde_json::Value> {
         }
     }
     calls
+}
+
+#[test]
+fn streamed_tool_arguments_use_the_buffered_object_coercion() {
+    for (input, expected) in [
+        (
+            serde_json::json!([1, 2]),
+            serde_json::json!({"args": [1, 2]}),
+        ),
+        (serde_json::json!(7), serde_json::json!({"args": 7})),
+        (serde_json::json!(null), serde_json::json!({})),
+        (serde_json::json!({"x": 1}), serde_json::json!({"x": 1})),
+    ] {
+        let calls = collect_function_calls(&[
+            IrStreamEvent::BlockStart {
+                index: 1,
+                block: IrBlockMeta::ToolUse {
+                    id: "call_args".into(),
+                    name: "f".into(),
+                },
+                refusal: false,
+            },
+            IrStreamEvent::BlockDelta {
+                index: 1,
+                delta: IrDelta::InputJsonDelta(input.to_string()),
+            },
+            IrStreamEvent::BlockStop { index: 1 },
+        ]);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["args"], expected, "input {input}");
+        let response = crate::codec::ir::IrResponse {
+            content: vec![crate::codec::ir::IrBlock::ToolUse {
+                id: "call_args".into(),
+                name: "f".into(),
+                input,
+                cache_control: None,
+                thought_signature: None,
+            }],
+            ..Default::default()
+        };
+        let buffered = GeminiWriter.write_response(crate::codec::test_host::HOST, &response);
+        assert_eq!(
+            buffered["candidates"][0]["content"]["parts"][0]["functionCall"]["args"],
+            expected
+        );
+    }
+}
+
+#[test]
+fn streamed_citation_anchor_stays_a_prefix_after_overflow() {
+    let writer = GeminiWriter;
+    writer.set_translate_cap(4);
+    for text in ["é", "too long", "x"] {
+        let (_, frame) = writer
+            .write_response_event(
+                crate::codec::test_host::HOST,
+                &IrStreamEvent::BlockDelta {
+                    index: 0,
+                    delta: IrDelta::TextDelta(text.into()),
+                },
+            )
+            .expect("text frame");
+        assert_eq!(frame["candidates"][0]["content"]["parts"][0]["text"], text);
+    }
+    let (_, frame) = writer
+        .write_response_event(
+            crate::codec::test_host::HOST,
+            &IrStreamEvent::BlockDelta {
+                index: 0,
+                delta: IrDelta::CitationsDelta(vec![crate::codec::ir::IrCitation {
+                    url: Some("https://example.com/source".into()),
+                    start_index: Some(0),
+                    end_index: Some(3),
+                    ..Default::default()
+                }]),
+            },
+        )
+        .expect("citation frame");
+    let source = &frame["candidates"][0]["citationMetadata"]["citationSources"][0];
+    assert_eq!(source["startIndex"], 0);
+    assert_eq!(source["endIndex"], 2, "clamps to retained UTF-8 prefix é");
 }
 
 /// Regression: a tool BlockStart + one whole-JSON InputJsonDelta + BlockStop emits EXACTLY ONE
@@ -6836,4 +7064,33 @@ fn gemini_char_offset_to_byte(text: &str, char_idx: i64) -> i64 {
         Some((byte_idx, _)) => byte_idx as i64,
         None => text.len() as i64,
     }
+}
+
+#[test]
+fn stop_key_scanner_refuses_short_and_unquoted_keys_without_panicking() {
+    use crate::codec::usage_tail::{StopKey, StopKeyScanner};
+    let invalid: &[&'static [u8]] = &[
+        b"",
+        b"x",
+        b"\"",
+        b"finishReason",
+        b"\"finishReason",
+        b"finishReason\"",
+        b"\"\"",
+    ];
+    for &key in invalid {
+        assert!(
+            StopKeyScanner::new(StopKey { key, depth: 1 }).is_none(),
+            "key {key:?}"
+        );
+    }
+    let mut scanner = StopKeyScanner::new(StopKey {
+        key: b"\"x\"",
+        depth: 1,
+    })
+    .expect("a quoted one-character key is valid");
+    scanner.feed(br#"{"x":"ST"#);
+    assert_eq!(scanner.token(), None);
+    scanner.feed(br#"OP"}"#);
+    assert_eq!(scanner.token(), Some("STOP"));
 }

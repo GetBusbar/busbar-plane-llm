@@ -280,8 +280,7 @@ fn anthropic_thinking_content_block_carry() {
 ///
 /// SAME-protocol: a document carrying `context`/`citations` is spliced back byte-exact (all four
 /// survive). CROSS-protocol (extra cleared at the seam): the `IrBlock::Media` projection keeps
-/// source.url + cache_control but DROPS context/citations (they have no neutral slot) — asserted so
-/// the documented drop is watched, not silent.
+/// source.url, cache_control, context and citations in the neutral Media slots.
 #[test]
 fn anthropic_document_block_carry() {
     let body = serde_json::json!({
@@ -365,6 +364,7 @@ fn anthropic_search_result_block_carry() {
         "search_result.source survives"
     );
     assert_eq!(sr["title"], "Article A", "search_result.title survives");
+    assert_eq!(sr, &body["messages"][0]["content"][0]);
     assert_eq!(
         sr["content"][0]["text"], "retrieved passage",
         "search_result.content survives"
@@ -613,7 +613,9 @@ fn anthropic_drops_penalties_seed_n_observably() {
             "{field} must not be emitted on the Anthropic wire: {out}"
         );
         assert!(
-            cap.contains(field),
+            cap.messages().iter().any(|message| message
+                .split_whitespace()
+                .any(|member| member == format!("parameter={field}"))),
             "dropping {field} on Anthropic egress must warn: {:?}",
             cap.messages()
         );

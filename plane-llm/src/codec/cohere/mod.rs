@@ -1086,3 +1086,7 @@ mod usage_census_tests;
 #[cfg(test)]
 #[path = "tests/df_map_audit_tests.rs"]
 mod df_map_audit_tests;
+
+#[cfg(test)]
+#[path = "tests/closure_regression_tests.rs"]
+mod closure_regression_tests;

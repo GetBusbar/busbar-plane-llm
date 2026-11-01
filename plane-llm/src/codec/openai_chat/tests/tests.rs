@@ -1,4 +1,41 @@
 use super::*;
+
+#[test]
+fn buffered_annotations_index_content_without_refusal_text() {
+    let citation = crate::codec::ir::IrCitation {
+        url: Some("https://example.com/source".into()),
+        title: Some("Source".into()),
+        start_index: Some(0),
+        end_index: Some(2),
+        ..Default::default()
+    };
+    let response = crate::codec::ir::IrResponse {
+        content: vec![
+            IrBlock::Text {
+                text: "refused".into(),
+                refusal: true,
+                cache_control: None,
+                citations: vec![citation.clone()],
+            },
+            IrBlock::text("é "),
+            IrBlock::Text {
+                text: "ok".into(),
+                refusal: false,
+                cache_control: None,
+                citations: vec![citation],
+            },
+        ],
+        ..Default::default()
+    };
+    let out = openai_writer().write_response(crate::codec::test_host::HOST, &response);
+    let message = &out["choices"][0]["message"];
+    assert_eq!(message["content"], "é ok");
+    assert_eq!(message["refusal"], "refused");
+    let annotations = message["annotations"].as_array().expect("annotations");
+    assert_eq!(annotations.len(), 1);
+    assert_eq!(annotations[0]["url_citation"]["start_index"], 2);
+    assert_eq!(annotations[0]["url_citation"]["end_index"], 4);
+}
 use crate::codec::ir::{IrBlock, IrBlockMeta, IrDelta, IrMessage, IrRole, IrStreamEvent, IrUsage};
 
 /// The streaming `include_usage` trailer must be its OWN chunk, not folded onto the finish

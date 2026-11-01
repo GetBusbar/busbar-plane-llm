@@ -106,8 +106,7 @@ fn absence_gains_nothing() {
     assert!(out2.get("parallel_tool_calls").is_none());
 }
 
-/// `parallel_tool_calls` with NO tool_choice synthesizes the neutral `auto` carrier — but only
-/// when tools exist; a tool-less request must not gain a tool_choice Anthropic would reject.
+/// An explicit `none` directive remains `none` when parallelism is disabled.
 #[test]
 fn parallel_flag_with_tool_choice_none_stays_none() {
     // parallel_tool_calls:false with tool_choice:"none" must NOT flip the directive to auto —
@@ -132,6 +131,7 @@ fn parallel_flag_with_tool_choice_none_stays_none() {
     );
 }
 
+/// Without a directive, parallelism uses an `auto` carrier only when tools exist.
 #[test]
 fn parallel_without_directive_synthesizes_auto_only_with_tools() {
     let with_tools = serde_json::json!({
@@ -166,17 +166,30 @@ fn native_metadata_wins_over_promoted_user() {
         "model": "m",
         "max_tokens": 16,
         "messages": [{"role": "user", "content": "hi"}],
-        "metadata": {"user_id": "original"}
+        "metadata": {"user_id": "original", "custom": "keep"}
     });
-    let ir = AnthropicReader.read_request(&body).expect("parses");
+    let mut ir = AnthropicReader.read_request(&body).expect("parses");
+    ir.user = Some("promoted-decoy".into());
     // Same-protocol translated path: extra still carries metadata verbatim.
     let out = anthropic_writer().write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(out["metadata"]["user_id"], "original");
-    assert_eq!(
-        out["metadata"].as_object().unwrap().len(),
-        1,
-        "metadata must be the verbatim original, not a merged object"
-    );
+    assert_eq!(out["metadata"], body["metadata"]);
+}
+
+#[test]
+fn enabled_parallelism_survives_both_anthropic_seams() {
+    let body = serde_json::json!({
+        "model": "m", "messages": [{"role": "user", "content": "hi"}],
+        "tools": tools_json(), "tool_choice": "auto", "parallel_tool_calls": true
+    });
+    let ir = OpenAiReader.read_request(&body).expect("parses");
+    assert_eq!(ir.parallel_tool_calls, Some(true));
+    let out = anthropic_writer().write_request(crate::codec::test_host::HOST, &ir);
+    assert_eq!(out["tool_choice"]["disable_parallel_tool_use"], false);
+    let back = AnthropicReader.read_request(&out).expect("parses");
+    assert_eq!(back.parallel_tool_calls, Some(true));
+    let openai = openai_writer().write_request(crate::codec::test_host::HOST, &back);
+    assert_eq!(openai["parallel_tool_calls"], true);
 }
 
 /// `/v1/responses` DOES model top-level `parallel_tool_calls`, identically to Chat

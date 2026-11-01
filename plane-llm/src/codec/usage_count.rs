@@ -461,3 +461,7 @@ pub fn stated_total_note(
 #[cfg(test)]
 #[path = "tests/usage_count_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/usage_total_boundary_tests.rs"]
+mod usage_total_boundary_tests;
