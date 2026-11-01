@@ -4844,6 +4844,107 @@ mod rehomed_metering {
 
     // ── a caller that leaves while a relayed end's last window is written ────
 
+    #[test]
+    fn local_entropy_failure_keeps_actual_reply_units_and_late_cancel_accounting() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct LimitedEntropy(AtomicUsize);
+        impl busbar_contract::codec::CodecHost for LimitedEntropy {
+            fn fill_entropy(&self, out: &mut [u8]) -> bool {
+                out.fill(7);
+                self.0
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
+                    .is_ok()
+            }
+            fn wall_clock_now(&self) -> Option<u64> {
+                Some(1)
+            }
+        }
+        let opening = b"data: {\"id\":\"upstream-id\",\"object\":\"chat.completion.chunk\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"unwritten-canary\"},\"finish_reason\":null}]}\n\n";
+        let finished = b"data: {\"id\":\"upstream-id\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3,\"total_tokens\":10}}\n\n";
+        let failure =
+            b"data: {\"error\":{\"type\":\"server_error\",\"code\":\"upstream-failure\"}}\n\n";
+        let (arrived, lane) = ask("responses", "openai", true);
+        let ctx = reply_ctx(&arrived, &lane);
+        // Zero draws fails the response id; one draw fails the first item after its response id.
+        for draws in [0, 1] {
+            for upstream_failed in [false, true] {
+                let host = LimitedEntropy(AtomicUsize::new(draws));
+                let mut reply = Reply::new(&host, &ctx, 200, SSE_HEAD);
+                let opening = reply.feed(&host, &ctx, opening, false, AT);
+                let text = String::from_utf8_lossy(&opening.bytes);
+                assert!(text.contains("error"), "{text}");
+                assert!(!text.contains("unwritten-canary"), "{text}");
+                let _ = reply.feed(&host, &ctx, finished, false, AT);
+                let tail = if upstream_failed {
+                    failure.as_slice()
+                } else {
+                    b"".as_slice()
+                };
+                let end = reply.feed(&host, &ctx, tail, true, AT);
+                assert!(end.done);
+                assert_eq!(end.verdict, Verdict::Hard);
+                if upstream_failed {
+                    assert_eq!(end.fault, Some(Fault::Transient("stream-terminal-error")));
+                    assert_eq!((end.units.tokens_in, end.units.tokens_out), (0, 0));
+                    assert!(
+                        !reply.partial(),
+                        "an upstream terminal error retains its refund policy"
+                    );
+                } else {
+                    assert_eq!(end.fault, Some(Fault::Transient("stream-translate-abort")));
+                    assert_eq!((end.units.tokens_in, end.units.tokens_out), (7, 3));
+                    assert!(
+                        reply.partial(),
+                        "a late cancellation must retain the executed units too"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn entropy_failure_only_in_final_flush_keeps_actual_reply_units() {
+        struct Silent;
+        impl busbar_contract::codec::CodecHost for Silent {
+            fn fill_entropy(&self, _out: &mut [u8]) -> bool {
+                false
+            }
+            fn wall_clock_now(&self) -> Option<u64> {
+                Some(1)
+            }
+        }
+        let (arrived, lane) = ask("responses", "anthropic", true);
+        let ctx = reply_ctx(&arrived, &lane);
+        let mut reply = Reply::new(&Silent, &ctx, 200, SSE_HEAD);
+        let delta = b"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":3}}\n\n";
+        let first = reply.feed(&Silent, &ctx, delta, false, AT);
+        assert!(first.bytes.is_empty(), "the terminal delta is deferred");
+        let end = reply.feed(&Silent, &ctx, b"", true, AT);
+        assert_eq!(end.verdict, Verdict::Hard);
+        assert_eq!(end.fault, Some(Fault::Transient("stream-translate-abort")));
+        assert_eq!((end.units.tokens_in, end.units.tokens_out), (0, 3));
+        assert!(reply.partial());
+        let body = String::from_utf8_lossy(&end.bytes);
+        assert!(body.contains("error"), "{body}");
+        assert!(!body.contains("response.completed"), "{body}");
+
+        // The host's separate mid-stream-error path uses this same live writer API. Its original
+        // failure must survive even when there is no correlation id and no entropy to mint one.
+        let protocol = busbar_plane_llm::codec::proto_codec::protocol_for("responses").unwrap();
+        let original = busbar_contract::protocol::IrError {
+            class: StatusClass::ServerError,
+            provider_signal: Some("original-provider-failure".into()),
+            retry_after: None,
+        };
+        let (_, framed) = protocol
+            .writer()
+            .write_error_frame(&Silent, &original)
+            .unwrap();
+        let text = framed.to_string();
+        assert!(text.contains("original-provider-failure"), "{text}");
+        assert!(!text.contains("0000000000"), "{text}");
+    }
+
     /// One answer read to its end in one far-end piece: the reply (for its cancel reading) and
     /// the end.
     fn ended(ctx: &ReplyCtx<'_>, head: &[(&[u8], &[u8])], far: &[u8]) -> (Reply, Piece<'static>) {
