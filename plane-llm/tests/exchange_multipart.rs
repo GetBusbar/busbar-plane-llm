@@ -155,3 +155,38 @@ fn delimiter_lookalikes_in_a_file_do_not_hide_the_model() {
         Some("whisper-1")
     );
 }
+
+#[test]
+fn disposition_parameters_are_whole_keys_outside_quoted_filenames() {
+    let body = concat!(
+        "--B\r\nContent-Disposition: form-data; filename=\"model\"; name=\"file\"\r\n\r\naudio\r\n",
+        "--B\r\nX-Note: name=\"decoy\"\r\n",
+        "content-disposition: form-data; filename=\"a;\\\"b\"; NAME = \"mo\\del\"\r\n\r\nwhisper-1\r\n",
+        "--B--\r\n"
+    );
+    assert_eq!(
+        multipart_model(CT_B, body.as_bytes()).as_deref(),
+        Some("whisper-1")
+    );
+}
+
+#[test]
+fn an_ambiguous_part_name_cannot_hide_a_second_model() {
+    use busbar_plane_llm::exchange::arrive::{arrive, Decline};
+
+    let body = concat!(
+        "--B\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncheap-model\r\n",
+        "--B\r\nContent-Disposition: form-data; name=\"file\"; name=\"model\"\r\n\r\nexpensive-model\r\n",
+        "--B--\r\n"
+    );
+    let headers = [(b"content-type".as_slice(), CT_B.as_bytes())];
+    let refusal = arrive(
+        "POST",
+        "/v1/audio/transcriptions",
+        &headers,
+        body.as_bytes(),
+        &(),
+    )
+    .expect_err("an ambiguous field cannot be skipped when determining the admitted model");
+    assert_eq!((refusal.why, refusal.status), (Decline::MissingModel, 400));
+}

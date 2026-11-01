@@ -30,7 +30,10 @@ impl ProtocolWriter for CohereWriter {
         let system_text: String = req
             .system
             .iter()
-            .filter_map(|b| {
+            .enumerate()
+            .filter_map(|(block_index, b)| {
+                let _block_origin =
+                    crate::codec::drops::block_scope(req.block_origins.system.get(block_index));
                 if let crate::codec::ir::IrBlock::Text { text, .. } = b {
                     Some(text.as_str())
                 } else {
@@ -56,7 +59,14 @@ impl ProtocolWriter for CohereWriter {
         // Text documents lifted out of message content into the request's top-level `documents`
         // (COH-18), in the order they were attached.
         let mut documents: Vec<serde_json::Value> = Vec::new();
-        for msg in &req.messages {
+        for (message_index, msg) in req.messages.iter().enumerate() {
+            let _message_origins = req
+                .block_origins
+                .messages
+                .get(message_index)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+
             let role_str = match msg.role {
                 crate::codec::ir::IrRole::System => keys::SYSTEM,
                 crate::codec::ir::IrRole::User => keys::USER,
@@ -78,7 +88,10 @@ impl ProtocolWriter for CohereWriter {
             // as "look at this and compare it to [image] [image]".
             let mut parts: Vec<serde_json::Value> = Vec::new();
             let mut has_image = false;
-            for b in &msg.content {
+            for (block_index, b) in msg.content.iter().enumerate() {
+                let _block_origin =
+                    crate::codec::drops::block_scope(_message_origins.get(block_index));
+
                 match b {
                     crate::codec::ir::IrBlock::Text { text, .. } => {
                         parts.push(
@@ -193,7 +206,10 @@ impl ProtocolWriter for CohereWriter {
                 let carrier_is_user = msg.role == crate::codec::ir::IrRole::User;
                 let fold_text_into_tool = !carrier_is_user;
                 let mut emitted_tool_result = false;
-                for block in &msg.content {
+                for (block_index, block) in msg.content.iter().enumerate() {
+                    let _block_origin =
+                        crate::codec::drops::block_scope(_message_origins.get(block_index));
+
                     if let crate::codec::ir::IrBlock::ToolResult {
                         tool_use_id,
                         content,
@@ -237,9 +253,24 @@ impl ProtocolWriter for CohereWriter {
                         // syntax). A FOREIGN vendor handle cannot be re-emitted and is dropped with
                         // a warn.
                         let mut doc_parts: Vec<serde_json::Value> = Vec::new();
-                        for b in content {
-                            let crate::codec::ir::IrBlock::Media { kind, source, .. } = b else {
-                                continue;
+                        for (block_index, b) in content.iter().enumerate() {
+                            let _block_origin = crate::codec::drops::child_scope(block_index);
+
+                            let (kind, source) = match b {
+                                crate::codec::ir::IrBlock::Media { kind, source, .. } => {
+                                    (kind.as_str(), source)
+                                }
+                                crate::codec::ir::IrBlock::Text { .. }
+                                | crate::codec::ir::IrBlock::Json(_) => continue,
+                                _ => {
+                                    crate::codec::drops::writer_drop!(
+                                        crate::codec::drops::block(b.kind_name()),
+                                        &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                                        [],
+                                        "dropping non-text block inside a tool result on Cohere egress: tool content carries text and native document parts only"
+                                    );
+                                    continue;
+                                }
                             };
                             match source {
                                 crate::codec::ir::IrImageSource::Vendor { vendor, value }
@@ -251,9 +282,9 @@ impl ProtocolWriter for CohereWriter {
                                     }));
                                 }
                                 _ => crate::codec::drops::writer_drop!(
-                                    crate::codec::drops::block(kind.as_str()),
+                                    crate::codec::drops::block(kind),
                                     &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                                    [media_kind = kind.as_str(),],
+                                    [media_kind = kind,],
                                     "dropping attachment inside a tool result on Cohere egress: \
                                      Cohere v2 tool content carries text and native `document` \
                                      parts only, and this source has no Cohere document form"
@@ -401,7 +432,10 @@ impl ProtocolWriter for CohereWriter {
 
             if msg.role == crate::codec::ir::IrRole::Assistant {
                 let mut tool_calls_arr: Vec<serde_json::Value> = Vec::new();
-                for block in &msg.content {
+                for (block_index, block) in msg.content.iter().enumerate() {
+                    let _block_origin =
+                        crate::codec::drops::block_scope(_message_origins.get(block_index));
+
                     if let crate::codec::ir::IrBlock::ToolUse {
                         id, name, input, ..
                     } = block
@@ -502,8 +536,15 @@ impl ProtocolWriter for CohereWriter {
                 );
             } else {
                 let v = match tc {
-                    crate::codec::ir::IrToolChoice::Required
-                    | crate::codec::ir::IrToolChoice::Tool { .. } => {
+                    crate::codec::ir::IrToolChoice::Required => Some(COHERE_TOOL_CHOICE_REQUIRED),
+                    crate::codec::ir::IrToolChoice::Tool { name } => {
+                        crate::codec::drops::writer_drop!(
+                            crate::codec::drops::TOOL_CHOICE,
+                            &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                            [tool = %name, ],
+                            "dropping the targeted tool constraint on Cohere egress: tool_choice \
+                             can require a tool but cannot select a particular function"
+                        );
                         Some(COHERE_TOOL_CHOICE_REQUIRED)
                     }
                     crate::codec::ir::IrToolChoice::None => Some(COHERE_TOOL_CHOICE_NONE),
@@ -614,6 +655,7 @@ impl ProtocolWriter for CohereWriter {
     ) -> Option<(String, serde_json::Value)> {
         match ev {
             IrStreamEvent::MessageStart { role, id, .. } => {
+                self.begin_stream();
                 let cohere_role = match role {
                     crate::codec::ir::IrRole::Assistant => keys::ASSISTANT,
                     crate::codec::ir::IrRole::System
@@ -625,8 +667,15 @@ impl ProtocolWriter for CohereWriter {
                 // emitted stream is indistinguishable from a native Cohere stream.
                 // The FIRST `message-start` decides this stream's id; a duplicate replays it rather
                 // than announcing the same message under a second identity.
-                let id = self
-                    .carried_stream_id(|| id.clone().unwrap_or_else(|| synthesize_cohere_id(host)));
+                let id = match self.carried_stream_id(|| {
+                    id.clone()
+                        .filter(|id| !id.is_empty())
+                        .map(Ok)
+                        .unwrap_or_else(|| synthesize_cohere_id(host))
+                }) {
+                    Ok(id) => id,
+                    Err(_) => return Some((String::new(), self.encoding_failure(host))),
+                };
                 Some((
                     "".to_string(),
                     serde_json::json!({
@@ -647,7 +696,7 @@ impl ProtocolWriter for CohereWriter {
                     // cross-protocol block that carries NO opening frame (redacted thinking / Image, below)
                     // is never recorded, so its `BlockStop` stays silent rather than emitting an
                     // orphan `content-end` — see `open_text_indices`.
-                    self.mark_text_open(*index);
+                    let index = self.mark_text_open(*index);
                     Some((
                         "".to_string(),
                         serde_json::json!({
@@ -671,7 +720,7 @@ impl ProtocolWriter for CohereWriter {
                     // Record the open tool index so the matching `BlockStop` closes it with
                     // `tool-call-end` (the native Cohere v2 close event for a tool block) rather
                     // than `content-end` (the text-block close event) — see `open_tool_indices`.
-                    self.mark_tool_open(*index);
+                    let index = self.mark_tool_open(*index);
                     Some((
                         "".to_string(),
                         serde_json::json!({
@@ -696,7 +745,7 @@ impl ProtocolWriter for CohereWriter {
                 // tool call — so a foreign model's reasoning reached a Cohere client as a plan
                 // (COH-09).
                 crate::codec::ir::IrBlockMeta::Thinking { .. } => {
-                    self.mark_text_open(*index);
+                    let index = self.mark_text_open(*index);
                     Some((
                         "".to_string(),
                         serde_json::json!({
@@ -717,98 +766,109 @@ impl ProtocolWriter for CohereWriter {
                 | crate::codec::ir::IrBlockMeta::Image => None,
             },
 
-            IrStreamEvent::BlockDelta { index, delta } => match delta {
-                crate::codec::ir::IrDelta::TextDelta(text) => Some((
-                    "".to_string(),
-                    // Native Cohere v2 content-delta frames carry the text at
-                    // delta.message.content.text (an object), matching the content-start shape and
-                    // this reader's object path. A bare string here is non-native and a client that
-                    // reads content.text would accumulate nothing.
-                    //
-                    // NO `type` key inside `content` here (verified against Cohere's own API
-                    // reference): a real content-delta's `content` object is `{ "text": "…" }` only
-                    // -- `type` is carried ONLY by content-START (see the `BlockStart` arm above),
-                    // never repeated on every delta. Emitting one here was an extra field no native
-                    // Cohere client emits, which a strict parser -- or anyone fingerprinting streams
-                    // for the indistinguishability property this protocol's docs promise -- could
-                    // use to tell a busbar-translated stream from a native one. The reader already
-                    // accepts BOTH shapes (this one and the real one) for exactly this reason; this
-                    // is the writer catching up to match the real wire, not a breaking change to the
-                    // read side.
-                    serde_json::json!({
-                        (keys::TYPE): ET_CONTENT_DELTA,
-                        (keys::INDEX): index,
-                        (keys::DELTA): { (keys::MESSAGE): { (keys::CONTENT): { (keys::TEXT): text } } }
-                    }),
-                )),
-                // Streamed tool-call argument fragments map to a native `tool-call-delta` frame
-                // carrying the argument chunk at delta.message.tool_calls.function.arguments — the
-                // exact path this file's reader reads. Without this arm, cross-protocol tool-call
-                // arguments never reached a Cohere-ingress client.
-                crate::codec::ir::IrDelta::InputJsonDelta(args) => Some((
-                    "".to_string(),
-                    serde_json::json!({
-                        (keys::TYPE): ET_TOOL_CALL_DELTA,
-                        (keys::INDEX): index,
-                        (keys::DELTA): {
-                            (keys::MESSAGE): {
-                                (keys::TOOL_CALLS): { (keys::FUNCTION): { (keys::ARGUMENTS): args } }
-                            }
-                        }
-                    }),
-                )),
-                // A reasoning delta streams into its thinking content block exactly as a Cohere
-                // reasoning model streams it: a `content-delta` whose content is
-                // `{ "thinking": "<chunk>" }` (no `type`, like the text delta above) — the buffered
-                // writer's `{"type":"thinking"}` part, streamed (COH-09).
-                crate::codec::ir::IrDelta::ThinkingDelta(text) => Some((
-                    "".to_string(),
-                    serde_json::json!({
-                        (keys::TYPE): ET_CONTENT_DELTA,
-                        (keys::INDEX): index,
-                        (keys::DELTA): { (keys::MESSAGE): { (keys::CONTENT): { (keys::THINKING): text } } }
-                    }),
-                )),
-                // IR-21: Cohere has no streamed media member.
-                crate::codec::ir::IrDelta::SignatureDelta(_)
-                | crate::codec::ir::IrDelta::RedactedReasoningDelta(_)
-                | crate::codec::ir::IrDelta::MediaDelta(_) => None,
-                // Cohere v2's SSE vocabulary DOES include `citation-start` (paired with
-                // `citation-end`), so a streamed citation re-emits natively instead of being
-                // suppressed. Suppressing it made the SAME request against the SAME backend return
-                // sources at `stream:false` and no sources at `stream:true` — the worst shape of a
-                // loss, because nothing about the request explains the difference.
-                //
-                // WIRE SHAPE (docs.cohere.com/v2/docs/streaming): a `citation-start` event carries a
-                // SINGLE Citation object at `delta.message.citations` — NOT an array. The reference
-                // event is `CitationStartEventDeltaMessage(citations=Citation(...))`, one Citation per
-                // event. Emitting a JSON array here was off-spec: a native Cohere v2 SDK deserializes
-                // `delta.message.citations` into ONE `Citation`, so an array body is a decode error
-                // (and a proxy tell). This SINGLE-frame arm therefore frames the FIRST citation only;
-                // `write_response_events` is what walks a multi-citation delta, re-entering here once
-                // per citation, so a caller reaching this method directly still gets a well-formed
-                // (if partial) frame rather than an off-spec array. An empty batch emits nothing.
-                crate::codec::ir::IrDelta::CitationsDelta(cits) if !cits.is_empty() => {
-                    let c = cits.first()?;
-                    Some((
+            IrStreamEvent::BlockDelta { index, delta } => {
+                let index = self.wire_index(*index);
+                match delta {
+                    crate::codec::ir::IrDelta::TextDelta(text) => Some((
+                        "".to_string(),
+                        // Native Cohere v2 content-delta frames carry the text at
+                        // delta.message.content.text (an object), matching the content-start shape and
+                        // this reader's object path. A bare string here is non-native and a client that
+                        // reads content.text would accumulate nothing.
+                        //
+                        // NO `type` key inside `content` here (verified against Cohere's own API
+                        // reference): a real content-delta's `content` object is `{ "text": "…" }` only
+                        // -- `type` is carried ONLY by content-START (see the `BlockStart` arm above),
+                        // never repeated on every delta. Emitting one here was an extra field no native
+                        // Cohere client emits, which a strict parser -- or anyone fingerprinting streams
+                        // for the indistinguishability property this protocol's docs promise -- could
+                        // use to tell a busbar-translated stream from a native one. The reader already
+                        // accepts BOTH shapes (this one and the real one) for exactly this reason; this
+                        // is the writer catching up to match the real wire, not a breaking change to the
+                        // read side.
+                        serde_json::json!({
+                            (keys::TYPE): ET_CONTENT_DELTA,
+                            (keys::INDEX): index,
+                            (keys::DELTA): { (keys::MESSAGE): { (keys::CONTENT): { (keys::TEXT): text } } }
+                        }),
+                    )),
+                    // Streamed tool-call argument fragments map to a native `tool-call-delta` frame
+                    // carrying the argument chunk at delta.message.tool_calls.function.arguments — the
+                    // exact path this file's reader reads. Without this arm, cross-protocol tool-call
+                    // arguments never reached a Cohere-ingress client.
+                    crate::codec::ir::IrDelta::InputJsonDelta(args) => Some((
                         "".to_string(),
                         serde_json::json!({
-                            (keys::TYPE): ET_CITATION_START,
+                            (keys::TYPE): ET_TOOL_CALL_DELTA,
                             (keys::INDEX): index,
                             (keys::DELTA): {
                                 (keys::MESSAGE): {
-                                    (keys::CITATIONS): write_cohere_citation(c)
+                                    (keys::TOOL_CALLS): { (keys::FUNCTION): { (keys::ARGUMENTS): args } }
                                 }
                             }
                         }),
-                    ))
+                    )),
+                    // A reasoning delta streams into its thinking content block exactly as a Cohere
+                    // reasoning model streams it: a `content-delta` whose content is
+                    // `{ "thinking": "<chunk>" }` (no `type`, like the text delta above) — the buffered
+                    // writer's `{"type":"thinking"}` part, streamed (COH-09).
+                    crate::codec::ir::IrDelta::ThinkingDelta(text) => Some((
+                        "".to_string(),
+                        serde_json::json!({
+                            (keys::TYPE): ET_CONTENT_DELTA,
+                            (keys::INDEX): index,
+                            (keys::DELTA): { (keys::MESSAGE): { (keys::CONTENT): { (keys::THINKING): text } } }
+                        }),
+                    )),
+                    // IR-21: Cohere has no streamed media member.
+                    crate::codec::ir::IrDelta::SignatureDelta(_)
+                    | crate::codec::ir::IrDelta::RedactedReasoningDelta(_) => None,
+                    crate::codec::ir::IrDelta::MediaDelta(block) => {
+                        crate::codec::drops::writer_drop!(
+                        crate::codec::drops::block(block.kind_name()),
+                        &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                        [], "dropping generated media on Cohere streaming egress: no native media delta"
+                    );
+                        None
+                    }
+                    // Cohere v2's SSE vocabulary DOES include `citation-start` (paired with
+                    // `citation-end`), so a streamed citation re-emits natively instead of being
+                    // suppressed. Suppressing it made the SAME request against the SAME backend return
+                    // sources at `stream:false` and no sources at `stream:true` — the worst shape of a
+                    // loss, because nothing about the request explains the difference.
+                    //
+                    // WIRE SHAPE (docs.cohere.com/v2/docs/streaming): a `citation-start` event carries a
+                    // SINGLE Citation object at `delta.message.citations` — NOT an array. The reference
+                    // event is `CitationStartEventDeltaMessage(citations=Citation(...))`, one Citation per
+                    // event. Emitting a JSON array here was off-spec: a native Cohere v2 SDK deserializes
+                    // `delta.message.citations` into ONE `Citation`, so an array body is a decode error
+                    // (and a proxy tell). This SINGLE-frame arm therefore frames the FIRST citation only;
+                    // `write_response_events` is what walks a multi-citation delta, re-entering here once
+                    // per citation, so a caller reaching this method directly still gets a well-formed
+                    // (if partial) frame rather than an off-spec array. An empty batch emits nothing.
+                    crate::codec::ir::IrDelta::CitationsDelta(cits) if !cits.is_empty() => {
+                        let c = cits.first()?;
+                        Some((
+                            "".to_string(),
+                            serde_json::json!({
+                                (keys::TYPE): ET_CITATION_START,
+                                (keys::INDEX): index,
+                                (keys::DELTA): {
+                                    (keys::MESSAGE): {
+                                        (keys::CITATIONS): write_cohere_citation(c)
+                                    }
+                                }
+                            }),
+                        ))
+                    }
+                    crate::codec::ir::IrDelta::CitationsDelta(_) => None,
+                    // Cohere v2 has no cross-protocol logprobs shape (token IDs only); dropped.
+                    crate::codec::ir::IrDelta::LogprobsDelta(_) => None,
                 }
-                crate::codec::ir::IrDelta::CitationsDelta(_) => None,
-                // Cohere v2 has no cross-protocol logprobs shape (token IDs only); dropped.
-                crate::codec::ir::IrDelta::LogprobsDelta(_) => None,
-            },
+            }
 
             IrStreamEvent::BlockStop { index } => {
+                let wire_index = self.wire_index(*index);
                 // The IR `BlockStop` carries only the integer index, not the block kind. A native
                 // Cohere v2 stream closes a tool-call block with `tool-call-end` and a text-content
                 // block with `content-end`. Emitting `content-end` for BOTH — as a prior revision
@@ -828,12 +888,12 @@ impl ProtocolWriter for CohereWriter {
                 if self.take_tool_open(*index) {
                     Some((
                         "".to_string(),
-                        serde_json::json!({ (keys::TYPE): ET_TOOL_CALL_END, (keys::INDEX): index }),
+                        serde_json::json!({ (keys::TYPE): ET_TOOL_CALL_END, (keys::INDEX): wire_index }),
                     ))
                 } else if self.take_text_open(*index) {
                     Some((
                         "".to_string(),
-                        serde_json::json!({ (keys::TYPE): ET_CONTENT_END, (keys::INDEX): index }),
+                        serde_json::json!({ (keys::TYPE): ET_CONTENT_END, (keys::INDEX): wire_index }),
                     ))
                 } else {
                     None
@@ -908,27 +968,16 @@ impl ProtocolWriter for CohereWriter {
                 ))
             }
 
-            IrStreamEvent::MessageStop => None,
+            IrStreamEvent::MessageStop => {
+                self.finish_stream();
+                None
+            }
             IrStreamEvent::Error(err) => {
-                // Cohere v2 has NO `type: "error"` out-of-band stream event. A native v2 stream
-                // signals a mid-stream error by terminating with a `message-end` frame whose
-                // `finish_reason` is `ERROR` (infrastructure failure) or `ERROR_TOXIC` (content
-                // moderation). Emitting a `type: "error"` frame was both non-native (a strict Cohere
-                // SDK ignores or rejects an unknown event type, silently dropping the error) and a
-                // protocol-indistinguishability tell. We therefore emit the native `message-end`
-                // termination instead. The reader maps `ERROR_TOXIC` back to IR `safety` and the
-                // generic `ERROR` to IR `error` (the lowercase passthrough), so this round-trips: a
-                // content-moderation signal in the provider_signal maps to `ERROR_TOXIC`, everything
-                // else to the generic `ERROR`.
-                let toxic = err
-                    .provider_signal
-                    .as_deref()
-                    .is_some_and(cohere_error_is_content_moderation);
-                let finish_reason = if toxic {
-                    COHERE_FINISH_ERROR_TOXIC
-                } else {
-                    COHERE_FINISH_ERROR
-                };
+                self.finish_stream();
+                // A genuine stream failure terminates with v2's native ERROR. ERROR_TOXIC is a
+                // legacy v1 token; a moderation word in an error's detail does not turn that
+                // failure into an ordinary served Safety stop (which writes COMPLETE).
+                let finish_reason = COHERE_FINISH_ERROR;
                 // Emit the native `message-end` shape EXACTLY — `type` + `delta.{finish_reason,
                 // usage}` — and nothing else. A native Cohere v2 `message-end` frame (the one the
                 // normal MessageDelta arm above produces) carries ONLY `type` and `delta`; it never
@@ -937,8 +986,8 @@ impl ProtocolWriter for CohereWriter {
                 // both of which diverge from the native wire shape and let a client (or passive
                 // observer) fingerprint the proxy — and a strict v2 SDK may reject the unexpected
                 // field. The load-bearing discriminant is
-                // `finish_reason` (`ERROR`/`ERROR_TOXIC`), which the reader maps back to IR
-                // (`error`/`safety` respectively), so the detail string carries no protocol value on
+                // `finish_reason` (`ERROR`), which the reader maps back to IR failure, so the detail
+                // string carries no protocol value on
                 // the wire; surface it server-side instead so operators are not left with an opaque
                 // error.
                 if let Some(detail) = err.provider_signal.as_deref() {
@@ -999,7 +1048,7 @@ impl ProtocolWriter for CohereWriter {
                     frames.push(start);
                     frames.push((
                         "".to_string(),
-                        serde_json::json!({ (keys::TYPE): ET_CITATION_END, (keys::INDEX): index }),
+                        serde_json::json!({ (keys::TYPE): ET_CITATION_END, (keys::INDEX): self.wire_index(*index) }),
                     ));
                 }
             }
@@ -1013,11 +1062,91 @@ impl ProtocolWriter for CohereWriter {
         host: &dyn busbar_contract::codec::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> serde_json::Value {
+        self.try_write_response(host, resp)
+            .unwrap_or_else(|_| self.encoding_failure(host))
+    }
+
+    fn try_write_response_events(
+        &self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        ev: &IrStreamEvent,
+    ) -> Result<Vec<(String, serde_json::Value)>, IrError> {
+        match ev {
+            IrStreamEvent::BlockStart {
+                block: crate::codec::ir::IrBlockMeta::ToolUse { id, name },
+                ..
+            } if id.is_empty() || name.is_empty() => return Err(response_projection_error()),
+            IrStreamEvent::BlockDelta {
+                delta: crate::codec::ir::IrDelta::CitationsDelta(citations),
+                ..
+            } if citations
+                .iter()
+                .any(|citation| !citation_representable(citation)) =>
+            {
+                return Err(response_projection_error())
+            }
+            _ => {}
+        }
+        // Refuse before the infallible multi-frame adapter can emit a successful opening frame.
+        // The adapter reuses this cached identity and retains its citation start/end fan-out.
+        if let IrStreamEvent::MessageStart {
+            role: crate::codec::ir::IrRole::Assistant,
+            id,
+            ..
+        } = ev
+        {
+            self.begin_stream();
+            self.carried_stream_id(|| {
+                id.clone()
+                    .filter(|id| !id.is_empty())
+                    .map(Ok)
+                    .unwrap_or_else(|| synthesize_cohere_id(host))
+            })?;
+        }
+        Ok(self.write_response_events(host, ev))
+    }
+
+    fn try_write_response(
+        &self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        resp: &crate::codec::ir::IrResponse,
+    ) -> Result<serde_json::Value, IrError> {
         let mut out = serde_json::Map::new();
         let mut content_arr: Vec<serde_json::Value> = Vec::new();
         let mut tool_calls_arr: Vec<serde_json::Value> = Vec::new();
 
-        for block in &resp.content {
+        for (block_index, block) in resp.content.iter().enumerate() {
+            let _block_origin =
+                crate::codec::drops::block_scope(resp.block_origins.response.get(block_index));
+
+            match block {
+                crate::codec::ir::IrBlock::ToolUse {
+                    id, name, input, ..
+                } => {
+                    let bad_arguments = match input {
+                        serde_json::Value::String(arguments) => {
+                            crate::codec::json::parse_str::<serde_json::Value>(arguments).is_err()
+                        }
+                        _ => false,
+                    };
+                    if id.is_empty() || name.is_empty() || bad_arguments {
+                        return Err(response_projection_error());
+                    }
+                }
+                crate::codec::ir::IrBlock::Text { citations, .. }
+                    if citations
+                        .iter()
+                        .any(|citation| !citation_representable(citation)) =>
+                {
+                    return Err(response_projection_error())
+                }
+                _ => {}
+            }
+        }
+        for (block_index, block) in resp.content.iter().enumerate() {
+            let _block_origin =
+                crate::codec::drops::block_scope(resp.block_origins.response.get(block_index));
+
             match block {
                 crate::codec::ir::IrBlock::Text { text, .. } => {
                     content_arr
@@ -1094,7 +1223,9 @@ impl ProtocolWriter for CohereWriter {
         let id = resp
             .id
             .clone()
-            .unwrap_or_else(|| synthesize_cohere_id(host));
+            .filter(|id| !id.is_empty())
+            .map(Ok)
+            .unwrap_or_else(|| synthesize_cohere_id(host))?;
         out.insert(keys::ID.to_string(), serde_json::Value::String(id));
         // model that served the response (preserved across cross-protocol translation)
         if let Some(ref model) = resp.model {
@@ -1187,7 +1318,7 @@ impl ProtocolWriter for CohereWriter {
             serde_json::Value::Object(usage_map),
         );
 
-        serde_json::Value::Object(out)
+        Ok(serde_json::Value::Object(out))
     }
 
     /// NATIVE Cohere v2 error envelope. The Cohere v2 chat API conveys the error *category* via the

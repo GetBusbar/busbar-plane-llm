@@ -171,6 +171,7 @@ fn translated_upstream_failure_is_terminal_even_with_open_blocks_or_deferred_suc
             let usage = stream.usage().unwrap();
             assert_eq!((usage.input_tokens, usage.output_tokens), (17, 7));
             assert!(stream.terminal_error().is_some());
+            assert!(!stream.local_encoding_failure());
         }
     }
 }
@@ -1659,4 +1660,110 @@ fn gemini_interleaved_media_keeps_dense_bedrock_and_cohere_text_indices() {
             .collect();
         assert_eq!(indices, [0, 1], "{name} {frames:?}");
     }
+}
+
+#[test]
+fn malformed_leaf_recovery_keeps_full_billing_variants() {
+    use busbar_contract::{billing::Billing, codec::RequestHandler, operation::OpVerb};
+    let cohere = crate::codec::cohere::handler::CohereRequestHandler;
+    let bedrock = crate::codec::bedrock::handler::BedrockRequestHandler;
+    let handlers: [(&str, &dyn RequestHandler); 2] = [("cohere", &cohere), ("bedrock", &bedrock)];
+    for (_, handler) in handlers {
+        let op = handler.operation_handler(OpVerb::RERANK).unwrap();
+        for count in [0, 7, u64::MAX] {
+            let malformed = serde_json::to_vec(&json!({"results":[{"index":0}],
+                "meta":{"billed_units":{"search_units":count}}}))
+            .unwrap();
+            assert!(op
+                .read_response(crate::codec::test_host::HOST, &malformed)
+                .is_err());
+            let expected = Some(Billing::Counted {
+                class: "search_units".into(),
+                count,
+            });
+            assert_eq!(
+                op.recover_response_billing(crate::codec::test_host::HOST, &malformed),
+                expected
+            );
+            let valid = serde_json::to_vec(&json!({"results":[{"index":0,"relevance_score":0.9}],
+                "meta":{"billed_units":{"search_units":count}}}))
+            .unwrap();
+            assert_eq!(
+                op.read_response(crate::codec::test_host::HOST, &valid)
+                    .unwrap()
+                    .billing(),
+                expected
+            );
+        }
+        for count in [json!(null), json!("bad")] {
+            let body = serde_json::to_vec(&json!({"results":[{"index":0}],
+                "meta":{"billed_units":{"search_units":count}}}))
+            .unwrap();
+            assert_eq!(
+                op.recover_response_billing(crate::codec::test_host::HOST, &body),
+                Some(Billing::Flat)
+            );
+        }
+        assert_eq!(
+            op.recover_response_billing(
+                crate::codec::test_host::HOST,
+                br#"{"results":[{"index":0}]}"#
+            ),
+            Some(Billing::Flat)
+        );
+        assert_eq!(
+            op.recover_response_billing(crate::codec::test_host::HOST, b"not JSON"),
+            None
+        );
+    }
+    let op = cohere.operation_handler(OpVerb::EMBEDDINGS).unwrap();
+    let body=br#"{"embeddings":{"float":[[1,"bad"]]},"meta":{"billed_units":{"input_tokens":18446744073709551615}}}"#;
+    let Some(Billing::Tokens(usage)) =
+        op.recover_response_billing(crate::codec::test_host::HOST, body)
+    else {
+        panic!("embedding recovery must stay token-metered")
+    };
+    assert_eq!(usage.input, u64::MAX);
+}
+
+#[test]
+fn cohere_stream_writer_refuses_unrepresentable_tool_and_citation_events() {
+    use crate::codec::ir::{IrBlockMeta, IrCitation, IrDelta, IrStreamEvent};
+    let protocol = crate::codec::proto_codec::protocol_for("cohere").unwrap();
+    for event in [
+        IrStreamEvent::BlockStart {
+            index: 0,
+            block: IrBlockMeta::ToolUse {
+                id: "".into(),
+                name: "f".into(),
+            },
+            refusal: false,
+        },
+        IrStreamEvent::BlockDelta {
+            index: 0,
+            delta: IrDelta::CitationsDelta(vec![IrCitation {
+                document_index: Some(3),
+                ..Default::default()
+            }]),
+        },
+    ] {
+        assert!(protocol
+            .writer()
+            .try_write_response_events(crate::codec::test_host::HOST, &event)
+            .is_err());
+    }
+    let event = IrStreamEvent::BlockStart {
+        index: 0,
+        block: IrBlockMeta::ToolUse {
+            id: "call".into(),
+            name: "f".into(),
+        },
+        refusal: false,
+    };
+    let events = protocol
+        .writer()
+        .try_write_response_events(crate::codec::test_host::HOST, &event)
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].1["type"], "tool-call-start");
 }

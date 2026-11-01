@@ -983,3 +983,88 @@ fn egress_dropped_controls_reports_the_right_controls_per_dialect() {
         vec!["response_format"]
     );
 }
+
+#[test]
+fn missing_block_origin_is_explicit_ir_metadata_and_scoped_native_origins_restore() {
+    const PARENT: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+        dialect: "fixture-native",
+        path: "fixture_parent[].payload",
+    };
+    const CHILD: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+        dialect: "fixture-native",
+        path: "fixture_parent[].children[].payload",
+    };
+    let origin = crate::codec::ir::IrBlockOrigin {
+        source: Some(&PARENT),
+        children: vec![crate::codec::ir::IrBlockOrigin::at(&CHILD)],
+    };
+    let cap = WarnCapture::default();
+    let (_, paths) = tracing::subscriber::with_default(cap.clone(), || {
+        scope(SEAM, || {
+            let drop_image = || {
+                note(Dropped::member(
+                    IMAGE,
+                    &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                    "fixture image drop",
+                ))
+            };
+            with_block_origin(Some(&origin), || {
+                drop_image();
+                with_child_origin(0, drop_image);
+                drop_image();
+            });
+            drop_image();
+        })
+    });
+    assert_eq!(
+        paths,
+        [
+            "fixture_parent[].payload",
+            "fixture_parent[].children[].payload",
+            "ir.block.kind=image"
+        ]
+    );
+    assert!(cap.contains("native block source metadata is unavailable"));
+}
+
+#[test]
+fn native_reader_omissions_keep_known_source_containers_without_an_ir_block() {
+    for (dialect, body, expected) in [
+        (
+            "openai",
+            json!({"choices": [{"message": {"role": "assistant", "content": [
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,YQ=="}}
+            ]}}]}),
+            vec!["choices[].message.content[]"],
+        ),
+        (
+            "bedrock",
+            json!({"output": {"message": {"role": "assistant", "content": [
+                {"reasoningContent": {"future_fixture": true}},
+                {"image": {"format": "png", "source": {"future_fixture": true}}}
+            ]}}}),
+            vec![
+                "output.message.content[].reasoningContent",
+                "output.message.content[].image",
+            ],
+        ),
+    ] {
+        let protocol = protocol_for(dialect).expect("fixture native protocol");
+        let (response, paths) = scope(
+            Seam {
+                direction: Direction::Response,
+                ingress: "anthropic",
+                egress: dialect,
+            },
+            || {
+                protocol
+                    .reader()
+                    .read_response(crate::codec::test_host::HOST, &body)
+            },
+        );
+        let response = response.expect("native omission remains readable");
+        assert!(response.content.is_empty());
+        assert!(response.block_origins.response.is_empty());
+        assert_eq!(paths, expected);
+    }
+}

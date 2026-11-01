@@ -1278,7 +1278,7 @@ def main():
                 # of the two halves is missing.
                 ledger.record(rid, "FAIL", f"{dialect} request: not recorded and not rebuildable", build_why)
                 pd["request"]["FAIL"] += 1
-                violations.append((cid, "request", dialect, build_why))
+                violations.append((cid, "request", dialect, Violation("/", "request.unavailable", build_why)))
             else:
                 if body is None:
                     body = build.request_for(c)["body"].encode("utf-8")

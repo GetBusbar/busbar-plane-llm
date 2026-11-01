@@ -12,6 +12,7 @@ use std::borrow::Cow;
 use busbar_contract::ir::facts::OPAQUE_CONTENT_MARKER;
 use serde_json::Value;
 
+use crate::codec::keys;
 use crate::codec::openai_responses::{
     read_reasoning_encrypted_content, read_reasoning_text, CONTENT_TYPE_OUTPUT_TEXT,
     ITEM_TYPE_FUNCTION_CALL, ITEM_TYPE_REASONING,
@@ -58,8 +59,8 @@ impl BlockText<'_> {
 fn conversation_turns<'a>(v: &'a Value, dialect: &str) -> Option<&'a Vec<Value>> {
     let key = match dialect {
         PROTO_GEMINI => "contents",
-        PROTO_RESPONSES => "input",
-        _ => "messages",
+        PROTO_RESPONSES => keys::INPUT,
+        _ => keys::MESSAGES,
     };
     v.get(key).and_then(Value::as_array)
 }
@@ -69,14 +70,14 @@ fn turn_count(v: &Value, dialect: &str) -> usize {
     match conversation_turns(v, dialect) {
         Some(turns) => turns.len(),
         None => usize::from(
-            dialect == PROTO_RESPONSES && v.get("input").and_then(Value::as_str).is_some(),
+            dialect == PROTO_RESPONSES && v.get(keys::INPUT).and_then(Value::as_str).is_some(),
         ),
     }
 }
 
 /// A block carrying a plain `text` string.
 fn generic_block_text(b: &Value) -> BlockText<'_> {
-    match b.get("text").and_then(Value::as_str) {
+    match b.get(keys::TEXT).and_then(Value::as_str) {
         Some(t) => BlockText::Text(Cow::Borrowed(t)),
         None => BlockText::None,
     }
@@ -85,8 +86,8 @@ fn generic_block_text(b: &Value) -> BlockText<'_> {
 /// A block's text in `dialect`'s wire shapes, reasoning included, opaque reasoning marked.
 fn block_text<'a>(b: &'a Value, dialect: &str) -> BlockText<'a> {
     match dialect {
-        PROTO_ANTHROPIC => match b.get("type").and_then(Value::as_str) {
-            Some("thinking") => match b.get("thinking").and_then(Value::as_str) {
+        PROTO_ANTHROPIC => match b.get(keys::TYPE).and_then(Value::as_str) {
+            Some(keys::THINKING) => match b.get(keys::THINKING).and_then(Value::as_str) {
                 Some(t) => BlockText::Text(Cow::Borrowed(t)),
                 None => BlockText::None,
             },
@@ -105,7 +106,7 @@ fn block_text<'a>(b: &'a Value, dialect: &str) -> BlockText<'a> {
                 generic_block_text(b)
             }
         }
-        PROTO_RESPONSES => match b.get("type").and_then(Value::as_str) {
+        PROTO_RESPONSES => match b.get(keys::TYPE).and_then(Value::as_str) {
             Some(ITEM_TYPE_REASONING) => {
                 let text = read_reasoning_text(b);
                 if !text.is_empty() {
@@ -129,7 +130,7 @@ fn gemini_parts(c: &Value) -> String {
         .map(|parts| {
             parts
                 .iter()
-                .filter_map(|p| p.get("text").and_then(Value::as_str))
+                .filter_map(|p| p.get(keys::TEXT).and_then(Value::as_str))
                 .collect::<Vec<_>>()
                 .join("\n")
         })
@@ -143,7 +144,7 @@ fn gemini_parts_chars(c: &Value) -> usize {
         .map(|parts| {
             parts
                 .iter()
-                .filter_map(|p| p.get("text").and_then(Value::as_str))
+                .filter_map(|p| p.get(keys::TEXT).and_then(Value::as_str))
                 .map(|t| t.chars().count())
                 .sum()
         })
@@ -168,10 +169,10 @@ fn system_text_chars(v: &Value, dialect: &str) -> usize {
     match dialect {
         PROTO_GEMINI => v.get("systemInstruction").map_or(0, gemini_parts_chars),
         PROTO_RESPONSES => v
-            .get("instructions")
+            .get(keys::INSTRUCTIONS)
             .and_then(Value::as_str)
             .map_or(0, |s| s.chars().count()),
-        _ => match v.get("system") {
+        _ => match v.get(keys::SYSTEM) {
             Some(Value::String(s)) => s.chars().count(),
             Some(Value::Array(blocks)) => {
                 blocks.iter().map(|b| block_text(b, dialect).chars()).sum()
@@ -183,7 +184,7 @@ fn system_text_chars(v: &Value, dialect: &str) -> usize {
 
 /// Whether a responses item is a reasoning item.
 fn is_reasoning_item(m: &Value) -> bool {
-    m.get("type").and_then(Value::as_str) == Some(ITEM_TYPE_REASONING)
+    m.get(keys::TYPE).and_then(Value::as_str) == Some(ITEM_TYPE_REASONING)
 }
 
 /// The system prompt and every turn's characters.
@@ -199,7 +200,7 @@ fn total_text_chars(v: &Value, dialect: &str, system_chars: usize) -> usize {
                 total += block_text(m, PROTO_RESPONSES).chars();
                 continue;
             }
-            match m.get("content") {
+            match m.get(keys::CONTENT) {
                 Some(Value::String(s)) => total += s.chars().count(),
                 Some(Value::Array(blocks)) => {
                     total += blocks
@@ -212,7 +213,7 @@ fn total_text_chars(v: &Value, dialect: &str, system_chars: usize) -> usize {
             }
         }
     } else if dialect == PROTO_RESPONSES {
-        if let Some(s) = v.get("input").and_then(Value::as_str) {
+        if let Some(s) = v.get(keys::INPUT).and_then(Value::as_str) {
             total += s.chars().count();
         }
     }
@@ -221,11 +222,11 @@ fn total_text_chars(v: &Value, dialect: &str, system_chars: usize) -> usize {
 
 /// The end user: `user`, then `metadata.user_id`; empty is none.
 fn body_end_user(v: &Value) -> Option<String> {
-    v.get("user")
+    v.get(keys::USER)
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
         .or_else(|| {
-            v.get("metadata")
+            v.get(keys::METADATA)
                 .and_then(|m| m.get("user_id"))
                 .and_then(Value::as_str)
                 .filter(|s| !s.is_empty())
@@ -237,23 +238,24 @@ fn body_end_user(v: &Value) -> Option<String> {
 fn turn(m: &Value, dialect: &str) -> (String, String) {
     let text = if dialect == PROTO_GEMINI {
         gemini_parts(m)
-    } else if dialect == PROTO_RESPONSES && (is_reasoning_item(m) || m.get("content").is_none()) {
+    } else if dialect == PROTO_RESPONSES && (is_reasoning_item(m) || m.get(keys::CONTENT).is_none())
+    {
         // A reasoning item, or an item with no `content`, reads through its block's text.
         block_text(m, PROTO_RESPONSES)
             .text()
             .map(Cow::into_owned)
             .unwrap_or_default()
     } else {
-        flatten_content(m.get("content"), dialect)
+        flatten_content(m.get(keys::CONTENT), dialect)
     };
-    let role = match m.get("role").and_then(Value::as_str) {
-        Some("model") if dialect == PROTO_GEMINI => "assistant",
+    let role = match m.get(keys::ROLE).and_then(Value::as_str) {
+        Some(keys::MODEL) if dialect == PROTO_GEMINI => keys::ASSISTANT,
         Some(role) => role,
-        None if dialect == PROTO_RESPONSES => match m.get("type").and_then(Value::as_str) {
+        None if dialect == PROTO_RESPONSES => match m.get(keys::TYPE).and_then(Value::as_str) {
             Some(CONTENT_TYPE_OUTPUT_TEXT | ITEM_TYPE_REASONING | ITEM_TYPE_FUNCTION_CALL) => {
-                "assistant"
+                keys::ASSISTANT
             }
-            _ => "user",
+            _ => keys::USER,
         },
         None => "",
     };
@@ -266,18 +268,20 @@ pub(super) fn raw_view(v: &Value, dialect: &str) -> RawView {
     let system = match dialect {
         PROTO_GEMINI => v.get("systemInstruction").map(gemini_parts),
         PROTO_RESPONSES => v
-            .get("instructions")
+            .get(keys::INSTRUCTIONS)
             .and_then(Value::as_str)
             .map(str::to_string),
-        _ => v.get("system").map(|s| flatten_content(Some(s), dialect)),
+        _ => v
+            .get(keys::SYSTEM)
+            .map(|s| flatten_content(Some(s), dialect)),
     }
     .filter(|s| !s.is_empty());
     let turns = match conversation_turns(v, dialect) {
         Some(turns) => turns.iter().map(|m| turn(m, dialect)).collect(),
         None if dialect == PROTO_RESPONSES => v
-            .get("input")
+            .get(keys::INPUT)
             .and_then(Value::as_str)
-            .map(|s| vec![("user".to_string(), s.to_string())])
+            .map(|s| vec![(keys::USER.to_string(), s.to_string())])
             .unwrap_or_default(),
         None => Vec::new(),
     };
@@ -285,7 +289,7 @@ pub(super) fn raw_view(v: &Value, dialect: &str) -> RawView {
         turn_count: turn_count(v, dialect),
         text_chars: total_text_chars(v, dialect, system_chars),
         has_tools: v
-            .get("tools")
+            .get(keys::TOOLS)
             .and_then(Value::as_array)
             .is_some_and(|a| !a.is_empty()),
         system,

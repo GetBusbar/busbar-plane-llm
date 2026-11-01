@@ -24,6 +24,51 @@ pub const PROTO_COHERE: &str = "cohere";
 pub const PROTO_RESPONSES: &str = "responses";
 
 use crate::codec::ir::IrStreamEvent;
+
+pub(crate) fn entropy_error() -> IrError {
+    IrError {
+        class: busbar_contract::upstream::StatusClass::ServerError,
+        provider_signal: Some("identifier entropy unavailable".into()),
+        retry_after: None,
+    }
+}
+
+/// Preserve a writer failure across the contract's infallible buffered-stream handle seam.
+/// This host is scoped to one translation; clocks and entropy still come from the handed host.
+pub(crate) struct CheckedEntropy<'a> {
+    host: &'a dyn busbar_contract::codec::CodecHost,
+    failed: std::sync::atomic::AtomicBool,
+}
+
+impl<'a> CheckedEntropy<'a> {
+    pub(crate) fn new(host: &'a dyn busbar_contract::codec::CodecHost) -> Self {
+        Self {
+            host,
+            failed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+    pub(crate) fn failed(&self) -> bool {
+        self.failed.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl busbar_contract::codec::CodecHost for CheckedEntropy<'_> {
+    fn fill_entropy(&self, out: &mut [u8]) -> bool {
+        if self.failed() || !self.host.fill_entropy(out) {
+            self.failed
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            false
+        } else {
+            true
+        }
+    }
+    fn wall_clock_now(&self) -> Option<u64> {
+        self.host.wall_clock_now()
+    }
+    fn monotonic_ns(&self) -> Option<u64> {
+        self.host.monotonic_ns()
+    }
+}
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
 
@@ -90,6 +135,15 @@ pub trait ProtocolReader: Send + Sync {
     /// Map a raw stop-reason token found under [`Self::stop_reason_key`] exactly as
     /// [`Self::read_response`] maps it. `None` where `read_response` reads no reason.
     fn stop_reason_of_token(&self, _token: &str) -> Option<crate::codec::ir::IrStopReason> {
+        None
+    }
+
+    /// Independently read a complete response's reported usage after its content failed decoding.
+    /// The dialect locates its own usage object structurally; the default infers nothing.
+    fn recover_response_usage(
+        &self,
+        _body: &serde_json::Value,
+    ) -> Option<busbar_contract::billing::TokenUsage> {
         None
     }
 
@@ -331,6 +385,40 @@ pub trait ProtocolWriter: Send + Sync {
         self.write_response_event(host, ev).into_iter().collect()
     }
 
+    /// Fallible encoding for writers that must synthesize an identity. An error contributes no
+    /// successful frames; the stream seam records the failure and continues metering upstream.
+    fn try_write_response_events(
+        &self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        ev: &IrStreamEvent,
+    ) -> Result<Vec<(String, serde_json::Value)>, IrError> {
+        Ok(self.write_response_events(host, ev))
+    }
+
+    fn try_write_request_for_lane(
+        &self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        req: &crate::codec::ir::IrRequest,
+        model: &str,
+        caps: &LaneCaps,
+    ) -> Result<serde_json::Value, IrError> {
+        Ok(self.write_request_for_lane(host, req, model, caps))
+    }
+
+    fn try_write_response(
+        &self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        resp: &crate::codec::ir::IrResponse,
+    ) -> Result<serde_json::Value, IrError> {
+        Ok(self.write_response(host, resp))
+    }
+
+    /// Render a local encoding refusal independently of stream identity. A dialect's optional
+    /// error correlation id may be absent when its entropy is unavailable.
+    fn encoding_failure(&self, host: &dyn busbar_contract::codec::CodecHost) -> serde_json::Value {
+        self.write_error(host, 500, "server_error", "identifier entropy unavailable")
+    }
+
     /// Map a mid-stream `IrError` to a modeled-exception pair `(exception_name, message)` for
     /// protocols whose stream signals errors with an out-of-band exception frame. Only the AWS
     /// Bedrock event-stream does: an SDK dispatches off the `:message-type: exception` /
@@ -361,7 +449,20 @@ pub trait ProtocolWriter: Send + Sync {
         host: &dyn busbar_contract::codec::CodecHost,
         err: &IrError,
     ) -> Option<(String, serde_json::Value)> {
-        self.write_response_event(host, &IrStreamEvent::Error(err.clone()))
+        match self.try_write_response_events(host, &IrStreamEvent::Error(err.clone())) {
+            Ok(frames) => frames.into_iter().next(),
+            Err(_) => Some((
+                "error".into(),
+                self.write_error(
+                    host,
+                    500,
+                    "server_error",
+                    err.provider_signal
+                        .as_deref()
+                        .unwrap_or("upstream stream error"),
+                ),
+            )),
+        }
     }
 
     /// Write a whole (non-streaming) response to wire JSON.
@@ -717,6 +818,54 @@ impl<T> StreamCell<T> {
 impl<T: Clone> Clone for StreamCell<T> {
     fn clone(&self) -> Self {
         StreamCell::new(self.lock().clone())
+    }
+}
+
+/// Stable dense wire indices for blocks this writer actually emits. Closed mappings remain for
+/// late citations and cloned stream writers. Isolated event callers that supplied no message start
+/// retain their historical input indices; a real message starts dense allocation at zero.
+#[derive(Clone)]
+pub(crate) struct EmittedBlockIndices {
+    indices: std::collections::BTreeMap<usize, usize>,
+    finished: bool,
+    started: bool,
+}
+
+impl EmittedBlockIndices {
+    pub(crate) const fn new() -> Self {
+        Self {
+            indices: std::collections::BTreeMap::new(),
+            finished: true,
+            started: false,
+        }
+    }
+
+    /// A duplicate start in an active stream retains its mappings and identity.
+    pub(crate) fn begin(&mut self) -> bool {
+        if self.started && !self.finished {
+            return false;
+        }
+        self.indices.clear();
+        self.finished = false;
+        self.started = true;
+        true
+    }
+
+    pub(crate) fn open(&mut self, index: usize) -> usize {
+        let next = if self.started {
+            self.indices.len()
+        } else {
+            index
+        };
+        *self.indices.entry(index).or_insert(next)
+    }
+
+    pub(crate) fn wire(&self, index: usize) -> usize {
+        self.indices.get(&index).copied().unwrap_or(index)
+    }
+
+    pub(crate) fn finish(&mut self) {
+        self.finished = true;
     }
 }
 

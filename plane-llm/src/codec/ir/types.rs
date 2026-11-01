@@ -10,6 +10,9 @@ use serde_json::Value;
 pub struct IrRequest {
     pub system: Vec<IrBlock>,
     pub messages: Vec<IrMessage>,
+    /// Diagnostic source paths captured while decoding, moved with the corresponding blocks.
+    /// These never supply provider payload or affect semantic IR equality.
+    pub block_origins: IrBlockOrigins,
     /// Count of wire turns folded out of `messages` into `system` (a `system`/`developer` entry
     /// anywhere in `messages`/`input`). Zero where system is its own wire field. A hook's
     /// `message_count` counts the raw wire array, so `IrFacts::shape().turn_count` adds this back.
@@ -233,6 +236,8 @@ pub enum IrStopReason {
 pub struct IrResponse {
     pub role: IrRole,
     pub content: Vec<IrBlock>,
+    /// Diagnostic source paths captured while decoding the response blocks.
+    pub block_origins: IrBlockOrigins,
     pub stop_reason: Option<IrStopReason>,
     pub usage: IrUsage,
     /// The model that served the response, so a pool route names the serving member. `None` if the upstream sent none.
@@ -253,13 +258,12 @@ pub struct IrResponse {
     /// Per-token logprobs in generation order (OpenAI `choices[].logprobs.content`; Gemini
     /// `candidates[].logprobsResult`). Empty means the backend sent none.
     pub logprobs: Vec<IrTokenLogprob>,
-    /// The original ingress request body, captured on the cross-protocol response seam so a
-    /// Responses writer can mirror client-set request values (`temperature`, `top_p`,
-    /// `instructions`, `metadata`, `tool_choice`, `parallel_tool_calls`, `tools`). `None` on
-    /// same-protocol and for every non-Responses writer.
     /// IR-16 / IR-02. Refinement of `stop_reason` ([`IrStopDetail`]); `stop_reason` is always set to
     /// the nearest coarse variant beside it. `None` == no refinement.
     pub stop_detail: Option<IrStopDetail>,
+    /// Original ingress request body captured on the cross-protocol seam. The Responses writer
+    /// mirrors client-set request values from it (`temperature`, `top_p`, `instructions`,
+    /// `metadata`, `tool_choice`, `parallel_tool_calls`, `tools`); other writers do not consume it.
     pub request_echo: Option<Value>,
     /// Safety/moderation verdicts the upstream reported, one per category.
     pub safety: Vec<IrSafetyVerdict>,
@@ -328,6 +332,7 @@ pub struct IrSearchResult {
 impl Default for IrResponse {
     fn default() -> Self {
         IrResponse {
+            block_origins: Default::default(),
             role: IrRole::Assistant,
             content: Vec::new(),
             stop_reason: None,
@@ -467,12 +472,15 @@ impl IrReasoningEffort {
 
 /// One generated token's logprob plus the top alternatives at that position, the neutral pivot
 /// between OpenAI entries and Gemini's parallel `logprobsResult` arrays. `bytes` is OpenAI-only
-/// (a token can be a partial UTF-8 fragment); a writer needing bytes synthesizes them from the token.
+/// (a token can be a partial UTF-8 fragment); a writer needing bytes synthesizes them only when
+/// the source omitted them, preserving an explicit null as no byte representation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrTokenLogprob {
     pub token: String,
     pub logprob: f64,
     pub bytes: Option<Vec<u8>>,
+    /// With no byte vector, true preserves explicit null; false permits UTF-8 synthesis.
+    pub bytes_null: bool,
     /// Top alternatives at this position (may include the chosen token). Empty when not asked for.
     pub top: Vec<IrTopLogprob>,
 }
@@ -483,6 +491,8 @@ pub struct IrTopLogprob {
     pub token: String,
     pub logprob: f64,
     pub bytes: Option<Vec<u8>>,
+    /// With no byte vector, true preserves explicit null; false permits UTF-8 synthesis.
+    pub bytes_null: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -497,6 +507,47 @@ pub enum IrRole {
     User,
     Assistant,
     Tool,
+}
+
+/// The native path of one decoded block, including any nested tool-result content.
+/// A path names a source container/member in notation A; it contains no request data.
+#[derive(Debug)]
+pub struct IrBlockSource {
+    pub dialect: &'static str,
+    pub path: &'static str,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct IrBlockOrigin {
+    pub source: Option<&'static IrBlockSource>,
+    pub children: Vec<IrBlockOrigin>,
+}
+
+impl IrBlockOrigin {
+    pub fn at(source: &'static IrBlockSource) -> Self {
+        Self {
+            source: Some(source),
+            children: Vec::new(),
+        }
+    }
+}
+
+/// Diagnostic metadata parallel to decoded IR containers. Readers record entries at creation
+/// and perform the same insertions/folds on both vectors; writers never reconstruct an origin
+/// from a block's value, kind or final position. A structural editor must move these entries
+/// with its blocks, or clear them when it replaces the content.
+#[derive(Debug, Clone, Default)]
+pub struct IrBlockOrigins {
+    pub system: Vec<IrBlockOrigin>,
+    pub messages: Vec<Vec<IrBlockOrigin>>,
+    pub response: Vec<IrBlockOrigin>,
+}
+
+// Source paths are diagnostic metadata, not part of the normalized request/response semantics.
+impl PartialEq for IrBlockOrigins {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -706,6 +757,12 @@ impl IrBlock {
         })
     }
 
+    /// COH-17: an empty text block that only carries citations (a grounded turn with no text
+    /// part). A writer whose dialect rejects an empty text block (Anthropic, Bedrock, Gemini) omits it.
+    pub fn is_citation_carrier(&self) -> bool {
+        matches!(self, IrBlock::Text { text, citations, .. } if text.is_empty() && !citations.is_empty())
+    }
+
     /// Is this block's content opaque to busbar (carried verbatim, never readable as plaintext, never
     /// disclosable to a sidecar)? Opaque shapes: Anthropic `redacted_thinking`, Bedrock
     /// `redactedContent` (both `Thinking { redacted: true, text: <ciphertext> }`), and a Responses
@@ -720,12 +777,6 @@ impl IrBlock {
     /// The empty-text-plus-blob arm is general: a text-less Gemini thought part with `thoughtSignature`
     /// lands the same way. A block with real plaintext and a signature is readable. Call this before
     /// touching `text`, which is empty or the ciphertext itself when this returns true.
-    /// COH-17: an empty text block that only carries citations (a grounded turn with no text
-    /// part). A writer whose dialect rejects an empty text block (Anthropic, Bedrock, Gemini) omits it.
-    pub fn is_citation_carrier(&self) -> bool {
-        matches!(self, IrBlock::Text { text, citations, .. } if text.is_empty() && !citations.is_empty())
-    }
-
     pub fn is_opaque(&self) -> bool {
         match self {
             // `text` holds the opaque bytes (Anthropic `redacted_thinking`, Bedrock `redactedContent`).
@@ -1076,15 +1127,16 @@ pub struct IrModalityCounts {
 /// A provider `usage` block whose bucket counts do not sum to the total it stated. Holds numbers
 /// so a caller can act on it.
 ///
-/// `unaccounted` is `reported_total - summed_total`. Positive means the provider billed tokens
-/// busbar did not decode, the direction that silently costs money.
+/// `unaccounted` is the signed `reported_total - summed_total` diagnostic, clamped to the
+/// `i64` range. Positive means the provider counted tokens busbar did not itemize. Billing uses
+/// the exact unsigned difference of the raw totals, so the diagnostic clamp never loses units.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UsageIdentityNote {
     /// The total the provider stated (Gemini `usageMetadata.totalTokenCount`).
     pub reported_total: u64,
     /// The sum of the buckets busbar decoded from that same block.
     pub summed_total: u64,
-    /// `reported_total - summed_total`.
+    /// Signed total difference clamped to `i64`; use the raw totals for exact unit accounting.
     pub unaccounted: i64,
     /// Which identity was checked, e.g. `"gemini.usageMetadata"`.
     pub identity: &'static str,
@@ -1163,7 +1215,7 @@ impl IrUsage {
             add(
                 &mut open,
                 UNITEMIZED_TOKENS_CLASS,
-                u64::try_from(note.unaccounted).unwrap_or(0),
+                note.reported_total.saturating_sub(note.summed_total),
             );
         }
         open
@@ -1231,6 +1283,9 @@ pub enum IrDelta {
 /// OpenAI's flat stream uses it to synthesize block boundaries from chunks.
 #[derive(Debug, Clone, Default)]
 pub struct StreamDecodeState {
+    /// Native origins recorded at the reader's block creation sites, keyed by that exact IR
+    /// stream index. Retained through late citations until this decoder is dropped.
+    pub block_origins: std::collections::BTreeMap<usize, IrBlockOrigin>,
     /// Far-end wire paths this stream already dropped on a TRANSLATE attempt, each warned once;
     /// read at stream end (`codec::drops::read_stream_frame`).
     pub dropped: Vec<String>,
@@ -1251,7 +1306,8 @@ pub struct StreamDecodeState {
     /// Whether the reasoning Thinking block (index 0) is currently open.
     pub thinking_block_open: bool,
     /// Set once a `delta.refusal` chunk is seen. A refusal reports `finish_reason: "stop"`, so
-    /// without it the terminal frame maps to `EndTurn` and the refusal signal is lost. OpenAI Chat only.
+    /// without it the terminal frame maps to `EndTurn` and the refusal signal is lost. OpenAI Chat
+    /// and Responses use this latch; Responses also suppresses restated refusal snapshots.
     pub refusal_seen: bool,
     /// Stop reason buffered across Bedrock's `messageStop` and `metadata` frames, so one combined
     /// `MessageDelta{stop_reason, usage}` is emitted. Bedrock reader only.
@@ -1263,10 +1319,11 @@ pub struct StreamDecodeState {
     /// `model_context_window_exceeded` becomes `MaxTokens` plus `ContextWindowExceeded`.
     pub pending_stop_detail: Option<IrStopDetail>,
     /// Maps each opened tool-call wire index (OpenAI `oai_idx`, Cohere `frame_idx`) to the IR block
-    /// index its `BlockStart` used, for O(log n) lookup instead of scanning `open_tools`. Every key
-    /// here is also in `open_tools`, but not the reverse (Cohere's `open_tools` also holds
-    /// `TEXT_BLOCK_SEEN_SENTINEL`). Neither is shrunk during a stream, so close paths replay the
-    /// exact opened index, except the OpenAI Chat terminal branch, which `mem::take`s both.
+    /// index its `BlockStart` used, for O(log n) lookup instead of scanning `open_tools`. Tool-call
+    /// keys also occur in `open_tools` (Cohere additionally keeps `TEXT_BLOCK_SEEN_SENTINEL`).
+    /// Responses reuses this map for persistent output-index refusal history across restated
+    /// snapshots, so those keys need not be open tools. Tool mappings retain exact opened indices
+    /// until terminal cleanup; OpenAI Chat's terminal branch takes both maps.
     ///
     /// OpenAI: text can arrive after tool calls and shifts the tool index base, so an index
     /// recomputed at close could differ from the one opened. Replaying the recorded index keeps every
@@ -1287,6 +1344,8 @@ pub struct StreamDecodeState {
     /// Gemini restates the full cumulative `citationSources[]` list on every chunk, so this watermark
     /// makes each chunk emit only the tail it added. Gemini only.
     pub citations_emitted: usize,
+    /// Gemini's response-wide grounding chunk indices and Part-relative text anchors.
+    pub(crate) gemini_citations: crate::codec::gemini::GeminiCitationState,
     /// Answer text streamed so far (GEM-16). Gemini states streamed citation offsets as UTF-8 byte
     /// offsets into the whole response while [`IrCitation::start_index`] is a character offset, so
     /// converting needs this text. Gemini reader only.

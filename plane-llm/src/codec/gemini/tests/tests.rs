@@ -984,12 +984,8 @@ fn test_writer_tool_call_reassembles_split_json_args() {
 /// `busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT` (the cap this accumulator enforces
 /// until the plane hands its own — the same
 /// operator-tunable limit that already bounds a buffered cross-protocol non-stream completion body
-/// elsewhere) and assert the established overflow behavior fires: fragments past the cap stop being
-/// appended (the buffer stops growing, it is not aborted and no in-band error frame is emitted), so
-/// the resulting buffer is guaranteed-malformed JSON and degrades to the SAME pre-existing
-/// `args: {}` fallback `BlockStop` already applies to any unparseable accumulation. Unfixed, this
-/// test fails because the buffer instead grows past the cap (the guard for
-/// the unbounded-buffer defect).
+/// elsewhere). Overflow keeps the buffer bounded and returns a protocol-shaped error, never a
+/// runnable call with substituted arguments.
 #[test]
 fn test_writer_tool_call_args_capped_at_max_len() {
     let cap = busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
@@ -1056,7 +1052,7 @@ fn test_writer_tool_call_args_capped_at_max_len() {
             crate::codec::test_host::HOST,
             &IrStreamEvent::BlockStop { index: 1 },
         )
-        .expect("BlockStop on an open tool block must flush a functionCall frame");
+        .expect("overflow must be reported to the client");
     let parts = chunk
         .pointer("/candidates/0/content/parts")
         .and_then(|p| p.as_array())
@@ -1066,21 +1062,14 @@ fn test_writer_tool_call_args_capped_at_max_len() {
         .iter()
         .filter_map(|part| part.get(FIELD_FUNCTION_CALL).cloned())
         .collect();
-    assert_eq!(
-        calls.len(),
-        1,
-        "the tool call must still flush exactly one functionCall part on overflow: {calls:?}"
+    assert!(
+        calls.is_empty(),
+        "overflow must not produce a runnable call: {chunk}"
     );
+    assert_eq!(chunk.pointer("/error/code"), Some(&serde_json::json!(500)));
     assert_eq!(
-        calls[0].pointer("/name").and_then(|n| n.as_str()),
-        Some("big_tool"),
-        "the name must survive even when args overflowed and were truncated: {calls:?}"
-    );
-    assert_eq!(
-        calls[0].get("args"),
-        Some(&serde_json::json!({})),
-        "a truncated (malformed-JSON) args buffer must degrade to the existing args:{{}} fallback, \
-         not panic or emit a partial/invalid args object: {calls:?}"
+        chunk.pointer("/error/status"),
+        Some(&serde_json::json!("INTERNAL"))
     );
 }
 
@@ -4863,6 +4852,7 @@ fn context_length_override_only_fires_on_400_or_413() {
 /// field(s) under test so the assertion targets exactly one gap.
 fn base_ir_request() -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         system_turns_folded: 0,
         system_folds: Vec::new(),
         reasoning: None,

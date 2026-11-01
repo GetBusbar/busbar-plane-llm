@@ -307,7 +307,18 @@ impl Relay {
 
     /// END the relay cleanly: the far end's body is complete.
     pub fn end(&mut self, host: &dyn busbar_contract::codec::CodecHost) -> End {
+        // Flushing deferred terminal events can itself fail to encode. Sample the outcome after
+        // that flush, retaining the usage already folded from the provider's final frames.
+        let tail = self
+            .translate
+            .as_mut()
+            .map(|t| t.finish(host))
+            .unwrap_or_default();
         let translate_aborted = self.translate.as_ref().is_some_and(|t| t.aborted());
+        let encoding_failed = self
+            .translate
+            .as_ref()
+            .is_some_and(|t| t.local_encoding_failure());
         let stream_terminal_error = self
             .translate
             .as_ref()
@@ -316,18 +327,15 @@ impl Relay {
         let stream_fault =
             (self.far_is_stream && self.first_byte)
                 .then_some(())
-                .and(if stream_terminal_error {
+                .and(if encoding_failed {
+                    Some("stream-translate-abort")
+                } else if stream_terminal_error {
                     Some("stream-terminal-error")
                 } else if translate_aborted {
                     Some("stream-translate-abort")
                 } else {
                     None
                 });
-        let tail = self
-            .translate
-            .as_mut()
-            .map(|t| t.finish(host))
-            .unwrap_or_default();
         let bytes = if let Some(framer) = self.json_array.as_mut() {
             let mut wrapped = if translate_aborted {
                 Vec::new()
@@ -370,6 +378,10 @@ impl Relay {
                 // bytes are kept, whose reading found no usage, and a warning says the request
                 // was undercounted.
                 None
+            } else if far_reported_failure(host, self.ingress, &buf) {
+                // A usage tap may recover reported work independently of the failure. Apply the
+                // existing upstream-failure refund before reading that billable-usage tap.
+                None
             } else {
                 let tapped = self.handler.extract_usage(host, self.ingress, &buf);
                 tap_fault = tapped.as_ref().err().copied();
@@ -383,10 +395,6 @@ impl Relay {
                         // failed before the last byte): it bills only the usage reported in the bytes in
                         // hand, never the floor (oracle cell `route.failover|fo|primary-cut-body`).
                         Err(_) if cut_short(&buf) => wire::reported_usage(self.ingress, &buf),
-                        // A body its dialect reads as a reported failure (a Responses `status: "failed"`)
-                        // bills no tokens: its usage tap reads nothing from a body its reader refused
-                        // (`read_response` failed, 0 tokens), and its streamed twin bills none.
-                        Err(_) if far_reported_failure(host, self.ingress, &buf) => None,
                         Err(_) => {
                             fault_unreadable(self.ingress, buf.len());
                             Some(wire::unrecovered_usage(self.ingress, &buf))

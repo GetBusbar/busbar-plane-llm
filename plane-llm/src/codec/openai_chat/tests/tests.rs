@@ -400,6 +400,7 @@ fn read_request_ignores_nonpositive_max_completion_tokens() {
 #[test]
 fn write_request_tool_result_multi_text_concatenates_without_separator() {
     let req = crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         reasoning: None,
         reasoning_budgets: None,
         logprobs: None,
@@ -476,6 +477,7 @@ fn write_request_forces_logprobs_flag_when_only_top_logprobs_present() {
 #[test]
 fn write_request_emits_max_tokens_from_modeled_cap() {
     let req = crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         reasoning: None,
         reasoning_budgets: None,
         logprobs: None,
@@ -621,6 +623,7 @@ fn response_format_survives_same_protocol_roundtrip() {
 #[test]
 fn write_request_omits_token_cap_when_absent() {
     let req = crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         reasoning: None,
         reasoning_budgets: None,
         logprobs: None,
@@ -670,6 +673,7 @@ fn write_request_omits_token_cap_when_absent() {
 #[test]
 fn write_request_keeps_tool_use_on_user_message() {
     let req = crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         reasoning: None,
         reasoning_budgets: None,
         logprobs: None,
@@ -735,6 +739,7 @@ fn write_request_keeps_tool_use_on_user_message() {
 #[test]
 fn write_request_pure_tool_result_message_emits_only_flat_entries() {
     let req = crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         reasoning: None,
         reasoning_budgets: None,
         logprobs: None,
@@ -797,6 +802,7 @@ fn write_request_pure_tool_result_message_emits_only_flat_entries() {
 #[test]
 fn write_request_tool_role_mixed_content_not_dropped() {
     let req = crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         reasoning: None,
         reasoning_budgets: None,
         logprobs: None,
@@ -892,6 +898,7 @@ fn write_request_tool_role_mixed_content_not_dropped() {
 #[test]
 fn write_request_tool_result_on_user_message_emits_tool_message() {
     let req = crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         reasoning: None,
         reasoning_budgets: None,
         logprobs: None,
@@ -1565,6 +1572,7 @@ fn unknown_reasoning_effort_survives_in_extra() {
 #[test]
 fn write_request_tool_call_only_assistant_has_null_content() {
     let req = crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         reasoning: None,
         reasoning_budgets: None,
         logprobs: None,
@@ -1841,6 +1849,7 @@ fn extract_error_context_length_scan_is_precise_no_false_positives() {
 #[test]
 fn write_request_non_text_system_block_does_not_vanish_silently() {
     let req = crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         reasoning: None,
         reasoning_budgets: None,
         logprobs: None,
@@ -1904,7 +1913,7 @@ fn write_request_non_text_system_block_does_not_vanish_silently() {
 fn synth_completion_id_matches_native_length_and_alphabet() {
     // Native OpenAI chat-completion ids are `chatcmpl-` + 24 base62 chars (33 chars total). A
     // too-short or wrong-alphabet suffix is an SDK-/tooling-visible proxy tell.
-    let id = synth_completion_id(crate::codec::test_host::HOST);
+    let id = synth_completion_id(crate::codec::test_host::HOST).expect("test entropy");
     let suffix = id
         .strip_prefix("chatcmpl-") // golden wire-contract literal (kept bare on purpose)
         .expect("synthesized id has the chatcmpl- prefix");
@@ -1939,7 +1948,7 @@ fn synth_completion_id_burst_is_unique_and_unbiased() {
     let mut low_bucket: u64 = 0;
     let mut total_chars: u64 = 0;
     for _ in 0..N {
-        let id = synth_completion_id(crate::codec::test_host::HOST);
+        let id = synth_completion_id(crate::codec::test_host::HOST).expect("test entropy");
         assert_eq!(
             id.len(),
             "chatcmpl-".len() + COMPLETION_ID_TOKEN_LEN, // golden wire-contract literal (kept bare on purpose)
@@ -1981,7 +1990,7 @@ fn synth_completion_id_unique_even_with_identical_entropy() {
     // MSB-first into the leading chars, so adjacent ids differ in those positions.
     let mut seen = std::collections::HashSet::new();
     for _ in 0..10_000 {
-        let id = synth_completion_id(crate::codec::test_host::HOST);
+        let id = synth_completion_id(crate::codec::test_host::HOST).expect("test entropy");
         assert_eq!(id.len(), "chatcmpl-".len() + 24); // golden wire-contract literal (kept bare on purpose)
         assert!(seen.insert(id.clone()), "duplicate synthesized id: {id}");
     }
@@ -2043,6 +2052,7 @@ fn write_request_assistant_tool_result_block_not_emitted_as_content() {
     // Gemini/Anthropic tool result rides on a non-Tool message), so this asserts both: the content
     // array carries only the text block, and a separate tool message carries the result.
     let req = crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         reasoning: None,
         reasoning_budgets: None,
         logprobs: None,
@@ -2114,6 +2124,7 @@ fn write_request_assistant_tool_result_block_not_emitted_as_content() {
 #[test]
 fn write_request_thinking_block_dropped_from_message_content() {
     let req = crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         reasoning: None,
         reasoning_budgets: None,
         logprobs: None,
@@ -3598,6 +3609,7 @@ fn read_response_tolerates_missing_usage() {
 fn write_request_string_tool_arguments_emitted_verbatim() {
     let raw = "not-json {oops".to_string();
     let req = crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         reasoning: None,
         reasoning_budgets: None,
         logprobs: None,
@@ -4497,6 +4509,7 @@ fn phase0_sampling_fields_roundtrip_same_protocol() {
 fn test_write_request_file_id_image_dropped_not_corrupted() {
     let writer = OpenAiWriter;
     let req = crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         reasoning: None,
         reasoning_budgets: None,
         logprobs: None,
@@ -4578,6 +4591,7 @@ fn test_write_request_file_id_image_dropped_not_corrupted() {
 fn test_write_request_image_s3_dropped_not_corrupted() {
     let writer = OpenAiWriter;
     let req = crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         reasoning: None,
         reasoning_budgets: None,
         logprobs: None,
@@ -5761,6 +5775,7 @@ fn write_response_passes_carried_logprobs_through_instead_of_null() {
         token: "Hi".into(),
         logprob: -0.1,
         bytes: None,
+        bytes_null: false,
         top: vec![],
     }];
     let out =

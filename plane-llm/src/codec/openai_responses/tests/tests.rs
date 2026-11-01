@@ -240,6 +240,7 @@ fn responses_accumulator_refusal_ends_output_before_crossing_fragment() {
         token: token.into(),
         logprob: -0.25,
         bytes: None,
+        bytes_null: false,
         top: Vec::new(),
     };
     // Both byte limits and the terminal representation are observable through the existing
@@ -1850,16 +1851,13 @@ fn test_stream_fanout() {
     assert_eq!(events7.len(), 0);
 }
 
-/// A STREAMED Responses refusal carries its text only in
-/// the terminal `response.completed` frame as an `output[].content[]` `{type:"refusal"}` part
-/// (status `completed`). The streaming reader previously handled only `output_text.delta`, so it
-/// SILENTLY DROPPED the refusal text AND left stop_reason=end_turn. It must now surface the
-/// refusal text as a Text block and promote stop_reason to Refusal (mirroring the non-stream path).
+/// A terminal-only Responses refusal still needs the buffered-body fallback when no
+/// refusal.delta or refusal.done events preceded response.completed.
 #[test]
 fn read_response_events_streamed_refusal_surfaces_text_and_refusal_stop_reason() {
     use crate::codec::ir::{IrDelta, IrStopReason, IrStreamEvent};
     let mut state = crate::codec::ir::StreamDecodeState::default();
-    // No output_text.delta is emitted for a refusal — only the terminal completed frame.
+    // This fixture deliberately omits the refusal events and supplies only the terminal body.
     let events = reader_read_response_events(
         EVT_RESPONSE_COMPLETED,
         &serde_json::json!({
@@ -3208,7 +3206,7 @@ fn test_message_start_emits_identity() {
 fn test_synthesize_response_id_unique() {
     let n = 1000;
     let ids: std::collections::HashSet<String> = (0..n)
-        .map(|_| synthesize_response_id(crate::codec::test_host::HOST))
+        .map(|_| synthesize_response_id(crate::codec::test_host::HOST).expect("test entropy"))
         .collect();
     assert_eq!(
         ids.len(),
@@ -3236,7 +3234,7 @@ fn test_synth_token_meets_minimum_width() {
     const { assert!(ITEM_ID_TOKEN_LEN >= MIN_TOKEN_LEN) };
     const { assert!(RESPONSE_ID_TOKEN_LEN >= MIN_TOKEN_LEN) };
 
-    let resp_id = synthesize_response_id(crate::codec::test_host::HOST);
+    let resp_id = synthesize_response_id(crate::codec::test_host::HOST).expect("test entropy");
     let resp_suffix = resp_id
         .strip_prefix("resp_") // golden wire-contract literal (kept bare on purpose)
         .expect("synthesized response id uses resp_ prefix");
@@ -3246,7 +3244,7 @@ fn test_synth_token_meets_minimum_width() {
         resp_suffix.len()
     );
 
-    let item_id = synthesize_item_id(crate::codec::test_host::HOST, "msg");
+    let item_id = synthesize_item_id(crate::codec::test_host::HOST, "msg").expect("test entropy");
     let item_suffix = item_id
         .strip_prefix("msg_") // golden wire-contract literal (kept bare on purpose)
         .expect("synthesized item id uses the given prefix");
@@ -5099,7 +5097,7 @@ fn test_write_error_maps_overloaded_to_server_error() {
 /// fingerprint a proxied response or extract the server clock from the id.
 #[test]
 fn test_synthesize_response_id_is_opaque_native_length() {
-    let id = synthesize_response_id(crate::codec::test_host::HOST);
+    let id = synthesize_response_id(crate::codec::test_host::HOST).expect("test entropy");
     let suffix = id.strip_prefix("resp_").expect("resp_ prefix");
     assert_eq!(
         suffix.len(),
@@ -5127,7 +5125,7 @@ fn test_synthesize_response_id_is_opaque_native_length() {
 #[test]
 fn test_synthesize_item_id_is_opaque_native_length() {
     for prefix in ["msg", "fc"] {
-        let id = synthesize_item_id(crate::codec::test_host::HOST, prefix);
+        let id = synthesize_item_id(crate::codec::test_host::HOST, prefix).expect("test entropy");
         let suffix = id
             .strip_prefix(&format!("{prefix}_"))
             .expect("prefix present");
@@ -5157,11 +5155,15 @@ fn test_synthesized_ids_are_unique() {
     let mut seen = std::collections::HashSet::new();
     for _ in 0..10_000 {
         assert!(
-            seen.insert(synthesize_response_id(crate::codec::test_host::HOST)),
+            seen.insert(
+                synthesize_response_id(crate::codec::test_host::HOST).expect("test entropy")
+            ),
             "duplicate resp_ id"
         );
         assert!(
-            seen.insert(synthesize_item_id(crate::codec::test_host::HOST, "msg")),
+            seen.insert(
+                synthesize_item_id(crate::codec::test_host::HOST, "msg").expect("test entropy")
+            ),
             "duplicate msg_ id"
         );
     }
@@ -5173,16 +5175,24 @@ fn test_synthesized_ids_are_unique() {
 #[test]
 fn test_item_id_for_is_stream_stable_and_opaque() {
     let writer = ResponsesWriter;
-    let a1 = writer.item_id_for(crate::codec::test_host::HOST, "msg", 0);
-    let a2 = writer.item_id_for(crate::codec::test_host::HOST, "msg", 0);
+    let a1 = writer
+        .item_id_for(crate::codec::test_host::HOST, "msg", 0)
+        .expect("the controlled host supplies item-id entropy");
+    let a2 = writer
+        .item_id_for(crate::codec::test_host::HOST, "msg", 0)
+        .expect("the cached item id remains available");
     assert_eq!(
         a1, a2,
         "same (prefix,index) yields a stable id within a stream"
     );
     assert!(a1.starts_with("msg_")); // golden wire-contract literal (kept bare on purpose)
-    let b = writer.item_id_for(crate::codec::test_host::HOST, "msg", 1);
+    let b = writer
+        .item_id_for(crate::codec::test_host::HOST, "msg", 1)
+        .expect("the controlled host supplies another item's entropy");
     assert_ne!(a1, b, "different indices get distinct ids");
-    let fc = writer.item_id_for(crate::codec::test_host::HOST, "fc", 0);
+    let fc = writer
+        .item_id_for(crate::codec::test_host::HOST, "fc", 0)
+        .expect("the controlled host supplies function-item entropy");
     assert_ne!(
         a1, fc,
         "different prefixes at the same index get distinct ids"
@@ -5191,7 +5201,9 @@ fn test_item_id_for_is_stream_stable_and_opaque() {
 
     // A new stream (reset) mints a fresh id for the same key.
     writer.reset_sequence_number();
-    let a_after = writer.item_id_for(crate::codec::test_host::HOST, "msg", 0);
+    let a_after = writer
+        .item_id_for(crate::codec::test_host::HOST, "msg", 0)
+        .expect("the controlled host supplies the next stream's entropy");
     assert_ne!(
         a1, a_after,
         "a reused writer must not replay a previous stream's item id"
@@ -6499,7 +6511,7 @@ fn test_synth_token_uniform_base62_only() {
     // 20_000 tokens * 48 chars = 960_000 samples. With ~15.5k expected per digit, the standard
     // deviation per digit is ~124 (<1%), so a 25% group-mean gap is overwhelmingly significant.
     for _ in 0..20_000 {
-        let tok = synth_token::<48>(crate::codec::test_host::HOST);
+        let tok = synth_token::<48>(crate::codec::test_host::HOST).expect("test entropy");
         assert_eq!(tok.len(), 48, "token width must be exactly N");
         for c in tok.chars() {
             assert!(
@@ -6602,6 +6614,7 @@ fn test_responses_tool_choice_absent_is_none() {
 /// individual tests can set just the one knob under test.
 fn empty_ir_request() -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
+        block_origins: Default::default(),
         reasoning: None,
         reasoning_budgets: None,
         logprobs: None,
@@ -7906,10 +7919,12 @@ fn responses_stream_logprobs_ride_text_done_and_finalized_part() {
                     token: "Hi".into(),
                     logprob: -0.25,
                     bytes: None,
+                    bytes_null: false,
                     top: vec![crate::codec::ir::IrTopLogprob {
                         token: "Hello".into(),
                         logprob: -1.5,
                         bytes: None,
+                        bytes_null: false,
                     }],
                 },
             ]),
@@ -8336,8 +8351,7 @@ fn leading_developer_item_does_not_warn() {
 }
 
 /// A Responses `output_text` content part's sibling `annotations` (`url_citation` entries) must be
-/// read into the IR Text block's `citations` — url/title, offsets deliberately left `None` (see
-/// `read_url_annotations` in `openai_chat/mod.rs`, shared by both readers).
+/// read into the IR Text block's `citations`, including its URL, title and character offsets.
 #[test]
 fn responses_output_text_annotations_read_into_ir_citations() {
     let json = serde_json::json!({
@@ -8352,12 +8366,10 @@ fn responses_output_text_annotations_read_into_ir_citations() {
                 "text": "See the source for details.",
                 "annotations": [{
                     "type": "url_citation",
-                    "url_citation": {
-                        "url": "https://example.com/r",
-                        "title": "Responses Source",
-                        "start_index": 7,
-                        "end_index": 20
-                    }
+                    "url": "https://example.com/r",
+                    "title": "Responses Source",
+                    "start_index": 7,
+                    "end_index": 20
                 }]
             }]
         }],
@@ -8683,6 +8695,7 @@ fn writer_logprob_accumulator_is_bounded_in_entries_and_bytes() {
         token,
         logprob: -0.1,
         bytes: None,
+        bytes_null: false,
         top: Vec::new(),
     };
     let writer = ResponsesWriter;

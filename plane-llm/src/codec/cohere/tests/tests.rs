@@ -835,7 +835,8 @@ fn is_uuid_v4(s: &str) -> bool {
 /// client comparing against the documented UUID shape could use as a proxy tell.
 #[test]
 fn test_synthesized_id_is_uuid_shaped() {
-    let id = synthesize_cohere_id(crate::codec::test_host::HOST);
+    let id =
+        synthesize_cohere_id(crate::codec::test_host::HOST).expect("host entropy is available");
     assert!(
         is_uuid_shaped(&id),
         "synthesized id must match the UUID layout, got {id}"
@@ -855,7 +856,8 @@ fn test_synthesized_id_is_uuid_shaped() {
 #[test]
 fn test_synthesized_id_is_valid_uuid_v4() {
     for _ in 0..1000 {
-        let id = synthesize_cohere_id(crate::codec::test_host::HOST);
+        let id =
+            synthesize_cohere_id(crate::codec::test_host::HOST).expect("host entropy is available");
         assert!(
             is_uuid_v4(&id),
             "synthesized id must be a valid RFC-4122 UUIDv4 (version nibble 4, variant 10xx), \
@@ -882,7 +884,8 @@ fn test_synthesized_id_does_not_leak_timestamp() {
     // the intent (no deterministic clock prefix) unambiguous.
     let mut matched = 0u32;
     for _ in 0..256 {
-        let id = synthesize_cohere_id(crate::codec::test_host::HOST);
+        let id =
+            synthesize_cohere_id(crate::codec::test_host::HOST).expect("host entropy is available");
         let first_group = id.split('-').next().unwrap_or("");
         if first_group == leaked_prefix {
             matched += 1;
@@ -906,7 +909,8 @@ fn test_synthesized_ids_are_unique() {
     const N: usize = 4096;
     let mut seen = std::collections::HashSet::with_capacity(N);
     for _ in 0..N {
-        let id = synthesize_cohere_id(crate::codec::test_host::HOST);
+        let id =
+            synthesize_cohere_id(crate::codec::test_host::HOST).expect("host entropy is available");
         assert!(
             is_uuid_v4(&id),
             "each synthesized id must be a well-formed UUIDv4, got {id}"
@@ -1264,7 +1268,7 @@ fn test_stream_error_emits_native_message_end_not_error_event() {
         "emitted message-end must decode back to a generic `error` stop, got {decoded:?}"
     );
 
-    // Content-moderation signal -> ERROR_TOXIC.
+    // A genuine error stays ERROR even when its signal mentions content moderation.
     let toxic = IrStreamEvent::Error(busbar_contract::protocol::IrError {
         class: busbar_contract::upstream::StatusClass::ClientError,
         provider_signal: Some("content_filter_safety".to_string()),
@@ -1278,8 +1282,8 @@ fn test_stream_error_emits_native_message_end_not_error_event() {
             .get("delta")
             .and_then(|d| d.get("finish_reason"))
             .and_then(|v| v.as_str()),
-        Some("ERROR_TOXIC"), // golden wire-contract literal (kept bare on purpose)
-        "a content-moderation signal maps to the native ERROR_TOXIC finish_reason"
+        Some("ERROR"),
+        "a genuine error uses the v2 ERROR finish_reason regardless of its detail"
     );
     assert!(
         toxic_frame.get("message").is_none(),

@@ -406,30 +406,44 @@ fn responses_request_input_image_detail_carried() {
 fn responses_request_output_text_annotations_survive() {
     let body = serde_json::json!({
         "input": [{
-            "type": "output_text",
-            "text": "grounded claim",
-            "annotations": [
-                { "type": "url_citation", "url_citation": { "url": "https://src.example/doc", "title": "Doc" } }
-            ]
+            "type": "message",
+            "role": "assistant",
+            "content": [{
+                "type": "output_text",
+                "text": "grounded claim",
+                "annotations": [{
+                    "type": "url_citation",
+                    "url": "https://src.example/doc",
+                    "title": "Doc",
+                    "start_index": 0,
+                    "end_index": 14
+                }]
+            }]
         }]
     });
     let ir = read_req(&body);
 
-    let carried_url = ir
+    let citation = ir
         .messages
         .iter()
         .flat_map(|m| &m.content)
         .find_map(|b| match b {
             crate::codec::ir::IrBlock::Text { citations, .. } if !citations.is_empty() => {
-                citations[0].url.clone()
+                Some(&citations[0])
             }
             _ => None,
-        });
+        })
+        .expect("assistant history citation");
     assert_eq!(
-        carried_url.as_deref(),
+        citation.url.as_deref(),
         Some("https://src.example/doc"),
         "output_text.annotations url must be carried into IR citations: {:?}",
         ir.messages
+    );
+    assert_eq!(citation.title.as_deref(), Some("Doc"));
+    assert_eq!(
+        (citation.start_index, citation.end_index),
+        (Some(0), Some(14))
     );
 }
 
@@ -1246,6 +1260,7 @@ fn responses_reset_clears_citation_and_logprob_accumulators() {
             token: "stale".into(),
             logprob: -0.25,
             bytes: None,
+            bytes_null: false,
             top: Vec::new(),
         }],
     );

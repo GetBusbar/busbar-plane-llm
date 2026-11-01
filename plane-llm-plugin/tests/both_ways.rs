@@ -873,10 +873,14 @@ mod door_units {
     struct Answer {
         outcome: Outcome,
         verdict: u32,
+        status: u32,
+        more: bool,
+        fault: u8,
         done: bool,
         emitted: String,
         /// The counts the answer reported: `(class, amount)`.
         units: Vec<(u32, u64)>,
+        sources: Vec<u32>,
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -938,11 +942,18 @@ mod door_units {
         Answer {
             outcome: called.outcome,
             verdict: f.out.verdict,
+            status: f.out.reply_status,
+            more: f.out.more != 0,
+            fault: f.out.fault,
             done: f.out.flags & EMIT_DONE != 0,
             emitted: String::from_utf8_lossy(&reply[..f.out.emitted as usize]).into_owned(),
             units: units[..f.out.units_written as usize]
                 .iter()
                 .map(|u| (u.class, u.amount))
+                .collect(),
+            sources: units[..f.out.units_written as usize]
+                .iter()
+                .map(|u| u.source)
                 .collect(),
         }
     }
@@ -1270,6 +1281,114 @@ mod door_units {
         arrive_with(&p, 33, STREAM_CHAT);
         attempt_with(&p, 33, b"large", 1, STREAM_CHAT);
         assert_eq!(cancel(&p), busbar_contract::abi::plane::CANCEL_ABORTED);
+    }
+
+    const OPENAI_STREAM_CHAT: &[u8] =
+        br#"{"model":"p","stream":true,"messages":[{"role":"user","content":"hi"}]}"#;
+
+    fn openai_stream_arrives(p: &Plugin<Plane>, unit: u64) {
+        let mut a: Frame<ArriveIn, ArriveOut> = Frame::new(z(), z());
+        (a.input.head, a.out.head) = (in_head(), out_head());
+        (a.input.unit, a.input.method, a.input.target) =
+            (unit, text(b"POST"), text(b"/v1/chat/completions"));
+        (a.input.fields, a.input.fields_len) =
+            (super::OPENAI_CALLER.as_ptr(), super::OPENAI_CALLER.len());
+        a.input.body = octets(OPENAI_STREAM_CHAT);
+        assert_eq!(p.call(slot::ARRIVE, &mut a).outcome, Outcome::Ready);
+        attempt_with(p, unit, b"large", 1, OPENAI_STREAM_CHAT);
+    }
+
+    #[test]
+    fn a_whole_local_delivery_failure_keeps_reported_work_on_the_actual_doors_late_cancel() {
+        let (_d, p) = door();
+        // This dispatcher has no host services: random.fill refuses. The buffered Anthropic
+        // answer is complete, but writing the caller's OpenAI stream cannot mint its local id.
+        openai_stream_arrives(&p, 41);
+        let last = piece_into(
+            &p,
+            41,
+            FROM_FAR_END,
+            PIECE_HAS_STATUS | PIECE_LAST,
+            200,
+            ANSWER,
+            b"large",
+            0,
+            1,
+        );
+        assert_eq!(last.outcome, Outcome::Ready, "{last:?}");
+        assert_eq!(
+            last.verdict, VERDICT_HARD,
+            "delivery still failed: {last:?}"
+        );
+        assert_eq!(
+            last.status, 500,
+            "no financial success is fabricated: {last:?}"
+        );
+        assert_eq!(last.fault, busbar_contract::abi::plane::FAULT_TRANSIENT);
+        assert!(
+            last.more && !last.done,
+            "the error body remains pending: {last:?}"
+        );
+        assert_eq!(last.emitted.len(), 1, "one actual output byte crossed");
+        assert_eq!(last.units, [(0, 7), (1, 3), (2, 0), (3, 0)]);
+        assert!(last
+            .sources
+            .iter()
+            .all(|source| *source == busbar_contract::abi::plane::UNITS_REPORTED));
+        assert!(
+            last.units
+                .iter()
+                .all(|(class, _)| *class != plane_door::FEE_CLASS_INDEX),
+            "a 500 carries no request fee"
+        );
+        let disposition = cancel(&p);
+        assert_eq!(disposition, busbar_contract::abi::plane::CANCEL_OK_PARTIAL);
+        assert!(busbar_contract::abi::plane::cancel_bills_reported_units(
+            disposition,
+            true
+        ));
+        assert!(
+            !busbar_contract::abi::plane::cancel_bills_reported_units(disposition, false),
+            "the host still requires actual delivered bytes"
+        );
+    }
+
+    #[test]
+    fn no_usage_and_upstream_errors_keep_the_actual_doors_refund_disposition() {
+        for (unit, status, body) in [
+            (43, 200, b"not JSON".as_slice()),
+            (45, 503, super::UPSTREAM_FAILED),
+        ] {
+            let (_d, p) = door();
+            openai_stream_arrives(&p, unit);
+            let last = piece_into(
+                &p,
+                unit,
+                FROM_FAR_END,
+                PIECE_HAS_STATUS | PIECE_LAST,
+                status,
+                body,
+                b"large",
+                0,
+                1,
+            );
+            assert_eq!(last.outcome, Outcome::Ready, "{last:?}");
+            assert!(
+                last.more && !last.done && !last.emitted.is_empty(),
+                "late cancellation follows real output: {last:?}"
+            );
+            assert!(last.status >= 500, "{last:?}");
+            assert!(
+                last.units.is_empty(),
+                "no executed usage was reported: {last:?}"
+            );
+            let disposition = cancel(&p);
+            assert_eq!(disposition, busbar_contract::abi::plane::CANCEL_FAILED);
+            assert!(!busbar_contract::abi::plane::cancel_bills_reported_units(
+                disposition,
+                true
+            ));
+        }
     }
 }
 

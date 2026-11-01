@@ -37,6 +37,7 @@ mod slots;
 mod usage;
 mod writer;
 
+pub(crate) use citations::GeminiCitationState;
 use citations::*;
 pub use framer::GeminiJsonArrayFramer;
 use schema::*;
@@ -1141,6 +1142,7 @@ fn read_gemini_logprobs(v: Option<&serde_json::Value>) -> Vec<crate::codec::ir::
                 token: c.get(keys::TOKEN)?.as_str()?.to_string(),
                 logprob: c.get(FIELD_LOG_PROBABILITY)?.as_f64()?,
                 bytes: None,
+                bytes_null: false,
                 top: tops
                     .and_then(|t| t.get(i))
                     .and_then(|t| t.get(FIELD_CANDIDATES))
@@ -1152,6 +1154,7 @@ fn read_gemini_logprobs(v: Option<&serde_json::Value>) -> Vec<crate::codec::ir::
                                     token: t.get(keys::TOKEN)?.as_str()?.to_string(),
                                     logprob: t.get(FIELD_LOG_PROBABILITY)?.as_f64()?,
                                     bytes: None,
+                                    bytes_null: false,
                                 })
                             })
                             .collect()
@@ -1441,6 +1444,7 @@ struct GeminiOpenTool {
     id: String,
     name: String,
     args: String,
+    overflowed: bool,
 }
 
 #[derive(Clone)]
@@ -1480,6 +1484,7 @@ struct GeminiStream {
 #[derive(Clone, Debug, Default)]
 struct GeminiStreamText {
     text: String,
+    truncated: bool,
     block_starts: Vec<(usize, usize)>,
     chars: usize,
     marks: Vec<usize>,
@@ -1499,6 +1504,7 @@ pub const GeminiWriter: GeminiWriter = GeminiWriter {
         response_id: None,
         stream_text: GeminiStreamText {
             text: String::new(),
+            truncated: false,
             block_starts: Vec::new(),
             chars: 0,
             marks: Vec::new(),

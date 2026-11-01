@@ -1,3 +1,90 @@
+use crate::codec::ir::{IrBlockOrigin, IrBlockOrigins, IrBlockSource};
+
+static MESSAGE_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[]",
+};
+static REQUEST_CONTENT_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content",
+};
+static REQUEST_PART_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content[]",
+};
+static REQUEST_TOOL_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].tool_calls[]",
+};
+static REQUEST_FUNCTION_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].function_call",
+};
+static REQUEST_REFUSAL_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].refusal",
+};
+static RESPONSE_REASONING_CONTENT_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "choices[].message.reasoning_content",
+};
+static RESPONSE_REASONING_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "choices[].message.reasoning",
+};
+static RESPONSE_CONTENT_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "choices[].message.content",
+};
+static RESPONSE_PART_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "choices[].message.content[]",
+};
+static RESPONSE_REFUSAL_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "choices[].message.refusal",
+};
+static RESPONSE_TOOL_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "choices[].message.tool_calls[]",
+};
+static RESPONSE_FUNCTION_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "choices[].message.function_call",
+};
+static STREAM_REASONING_CONTENT_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "choices[].delta.reasoning_content",
+};
+static STREAM_REASONING_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "choices[].delta.reasoning",
+};
+static STREAM_CONTENT_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "choices[].delta.content",
+};
+static STREAM_REFUSAL_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "choices[].delta.refusal",
+};
+static STREAM_TOOL_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "choices[].delta.tool_calls[]",
+};
+static STREAM_FUNCTION_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "choices[].delta.function_call",
+};
+static STREAM_ANNOTATIONS_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "choices[].delta.annotations[]",
+};
+static STREAM_LOGPROBS_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "choices[].logprobs.content[]",
+};
+
 use super::*;
 use crate::codec::dialect::ir_parse_error;
 use crate::codec::ir_encode::{synth_response_tool_call_id, tool_input_from_arguments};
@@ -105,6 +192,7 @@ impl ProtocolReader for OpenAiReader {
 
         let mut extra = serde_json::Map::new();
         let mut system_blocks: Vec<crate::codec::ir::IrBlock> = Vec::new();
+        let mut block_origins = IrBlockOrigins::default();
         // Count of `system`/`developer` entries folded out of `messages` below, so
         // `IrFacts::shape()` reports the raw wire array length.
         let mut system_turns_folded: usize = 0;
@@ -200,9 +288,17 @@ impl ProtocolReader for OpenAiReader {
                     if let Some(content) = content_val {
                         if let Some(text) = content.as_str() {
                             system_blocks.push(crate::codec::ir::IrBlock::text(text.to_string()));
+                            block_origins
+                                .system
+                                .push(IrBlockOrigin::at(&REQUEST_CONTENT_SOURCE));
                         } else if let Some(arr) = content.as_array() {
                             for block_val in arr {
-                                system_blocks.extend(read_openai_part(block_val)?);
+                                if let Some(block) = read_openai_part(block_val)? {
+                                    system_blocks.push(block);
+                                    block_origins
+                                        .system
+                                        .push(IrBlockOrigin::at(&REQUEST_PART_SOURCE));
+                                }
                             }
                         }
                     }
@@ -214,6 +310,9 @@ impl ProtocolReader for OpenAiReader {
                         .is_some_and(|a| !a.is_empty());
                     if system_blocks.len() == blocks_before && !had_parts {
                         system_blocks.push(crate::codec::ir::IrBlock::text(String::new()));
+                        block_origins
+                            .system
+                            .push(IrBlockOrigin::at(&MESSAGE_SOURCE));
                     }
                     crate::codec::ir::IrSystemFold::record(
                         &mut system_folds,
@@ -228,6 +327,7 @@ impl ProtocolReader for OpenAiReader {
                     );
                 } else {
                     let mut msg_content = Vec::new();
+                    let mut msg_origins = Vec::new();
 
                     // A Tool-role message's `content` is the tool result, captured below as the
                     // `ToolResult` block's inner content. Also pushing it as a standalone Text block
@@ -237,9 +337,13 @@ impl ProtocolReader for OpenAiReader {
                         if let Some(cv) = content_val {
                             if let Some(text) = cv.as_str() {
                                 msg_content.push(crate::codec::ir::IrBlock::text(text.to_string()));
+                                msg_origins.push(IrBlockOrigin::at(&REQUEST_CONTENT_SOURCE));
                             } else if let Some(arr) = cv.as_array() {
                                 for block_val in arr {
-                                    msg_content.extend(read_openai_part(block_val)?);
+                                    if let Some(block) = read_openai_part(block_val)? {
+                                        msg_content.push(block);
+                                        msg_origins.push(IrBlockOrigin::at(&REQUEST_PART_SOURCE));
+                                    }
                                 }
                             }
                         }
@@ -294,6 +398,7 @@ impl ProtocolReader for OpenAiReader {
                                         cache_control: None,
                                         thought_signature: None,
                                     });
+                                    msg_origins.push(IrBlockOrigin::at(&REQUEST_TOOL_SOURCE));
                                 }
                             }
                         }
@@ -322,6 +427,7 @@ impl ProtocolReader for OpenAiReader {
                                 cache_control: None,
                                 thought_signature: None,
                             });
+                            msg_origins.push(IrBlockOrigin::at(&REQUEST_FUNCTION_SOURCE));
                         }
                     }
 
@@ -356,6 +462,12 @@ impl ProtocolReader for OpenAiReader {
                         // A string is used verbatim; an array is parsed via `read_openai_block` and
                         // its text parts concatenated (non-text parts contribute nothing), so
                         // array-form tool output is not collapsed to an empty string.
+                        let tool_content_origin =
+                            if content_val.is_some_and(|v| v.is_string() || v.is_array()) {
+                                IrBlockOrigin::at(&REQUEST_CONTENT_SOURCE)
+                            } else {
+                                IrBlockOrigin::default()
+                            };
                         let content_text = match content_val {
                             Some(serde_json::Value::String(s)) => s.clone(),
                             Some(serde_json::Value::Array(parts)) => {
@@ -379,6 +491,10 @@ impl ProtocolReader for OpenAiReader {
                             is_error: false,
                             cache_control: None,
                         });
+                        msg_origins.push(IrBlockOrigin {
+                            source: Some(&MESSAGE_SOURCE),
+                            children: vec![tool_content_origin],
+                        });
                     }
 
                     // A message-level `refusal` string (echoed into replayed history) carries the
@@ -396,6 +512,7 @@ impl ProtocolReader for OpenAiReader {
                             citations: Vec::new(),
                             refusal: true,
                         });
+                        msg_origins.push(IrBlockOrigin::at(&REQUEST_REFUSAL_SOURCE));
                     }
 
                     // The per-message participant `name`, parked under `MESSAGE_NAMES_SENTINEL` by IR
@@ -450,6 +567,7 @@ impl ProtocolReader for OpenAiReader {
                         role,
                         content: msg_content,
                     });
+                    block_origins.messages.push(msg_origins);
                 }
             }
         }
@@ -588,6 +706,7 @@ impl ProtocolReader for OpenAiReader {
             .and_then(|v| u32::try_from(v).ok());
 
         let mut ir = crate::codec::ir::IrRequest {
+            block_origins,
             reasoning,
             logprobs,
             top_logprobs,
@@ -709,10 +828,17 @@ impl ProtocolReader for OpenAiReader {
         //    an open text block and opens a new Thinking block at the next free index from the
         //    monotone counter, so no opened index shifts. Its index is recorded under
         //    `LATE_THINKING_KEY` for later deltas and its stop.
-        if let Some(reasoning) = delta
-            .and_then(|d| d.get(REASONING_CONTENT).or_else(|| d.get(keys::REASONING)))
-            .and_then(|r| r.as_str())
-            .filter(|r| !r.is_empty())
+        if let Some((reasoning, reasoning_source)) = delta
+            .and_then(|d| {
+                d.get(REASONING_CONTENT)
+                    .map(|v| (v, &STREAM_REASONING_CONTENT_SOURCE))
+                    .or_else(|| {
+                        d.get(keys::REASONING)
+                            .map(|v| (v, &STREAM_REASONING_SOURCE))
+                    })
+            })
+            .and_then(|(r, source)| r.as_str().map(|r| (r, source)))
+            .filter(|(r, _)| !r.is_empty())
         {
             if !state.thinking_block_open {
                 let answer_started = state.text_block_open
@@ -731,6 +857,9 @@ impl ProtocolReader for OpenAiReader {
                     0
                 };
                 state.thinking_block_open = true;
+                state
+                    .block_origins
+                    .insert(index, IrBlockOrigin::at(reasoning_source));
                 out.push(IrStreamEvent::BlockStart {
                     index,
                     block: crate::codec::ir::IrBlockMeta::Thinking { kind: None },
@@ -804,6 +933,14 @@ impl ProtocolReader for OpenAiReader {
                 if is_refusal {
                     state.tool_ir_index.insert(REFUSAL_TEXT_KEY, ti);
                 }
+                state.block_origins.insert(
+                    ti,
+                    IrBlockOrigin::at(if is_refusal {
+                        &STREAM_REFUSAL_SOURCE
+                    } else {
+                        &STREAM_CONTENT_SOURCE
+                    }),
+                );
                 out.push(IrStreamEvent::BlockStart {
                     index: ti,
                     block: crate::codec::ir::IrBlockMeta::Text,
@@ -839,6 +976,9 @@ impl ProtocolReader for OpenAiReader {
                     state.text_index = Some(i);
                     i
                 });
+                state
+                    .block_origins
+                    .insert(ti, IrBlockOrigin::at(&STREAM_LOGPROBS_SOURCE));
                 out.push(IrStreamEvent::BlockStart {
                     index: ti,
                     block: crate::codec::ir::IrBlockMeta::Text,
@@ -881,6 +1021,9 @@ impl ProtocolReader for OpenAiReader {
                         state.text_index = Some(i);
                         i
                     });
+                    state
+                        .block_origins
+                        .insert(ti, IrBlockOrigin::at(&STREAM_ANNOTATIONS_SOURCE));
                     out.push(IrStreamEvent::BlockStart {
                         index: ti,
                         block: crate::codec::ir::IrBlockMeta::Text,
@@ -906,7 +1049,12 @@ impl ProtocolReader for OpenAiReader {
         //    it rides the same path under the reserved `LEGACY_FUNCTION_CALL_KEY` with a synthesized
         //    `call_…` id, so it does not vanish while `finish_reason: "function_call"` reports a
         //    tool use with no block.
-        let tool_items: Vec<(usize, Option<&str>, Option<&serde_json::Value>)> = match delta
+        let tool_items: Vec<(
+            usize,
+            Option<&str>,
+            Option<&serde_json::Value>,
+            &'static IrBlockSource,
+        )> = match delta
             .and_then(|d| d.get(keys::TOOL_CALLS))
             .and_then(|t| t.as_array())
         {
@@ -925,13 +1073,21 @@ impl ProtocolReader for OpenAiReader {
                         oai_idx,
                         tc.get(keys::ID).and_then(|i| i.as_str()),
                         tc.get(keys::FUNCTION),
+                        &STREAM_TOOL_SOURCE,
                     )
                 })
                 .collect(),
             None => delta
                 .and_then(|d| d.get(keys::FUNCTION_CALL))
                 .filter(|f| f.is_object())
-                .map(|f| vec![(LEGACY_FUNCTION_CALL_KEY, None, Some(f))])
+                .map(|f| {
+                    vec![(
+                        LEGACY_FUNCTION_CALL_KEY,
+                        None,
+                        Some(f),
+                        &STREAM_FUNCTION_SOURCE,
+                    )]
+                })
                 .unwrap_or_default(),
         };
         if !tool_items.is_empty() {
@@ -942,7 +1098,7 @@ impl ProtocolReader for OpenAiReader {
             // text index (`text_block_closed`), so text resuming after the tool calls (vLLM / Azure /
             // OpenRouter) opens a new block at the next free index.
             close_text_block(state, &mut out);
-            for (oai_idx, tc_id, func) in tool_items {
+            for (oai_idx, tc_id, func, tool_source) in tool_items {
                 if let Some(name) = func
                     .and_then(|f| f.get(keys::NAME))
                     .and_then(|n| n.as_str())
@@ -965,6 +1121,9 @@ impl ProtocolReader for OpenAiReader {
                         // Record the IR index this BlockStart used; arg deltas and the finish-path
                         // BlockStop replay it, since the counter never revisits a claimed slot.
                         state.tool_ir_index.insert(oai_idx, ir_idx);
+                        state
+                            .block_origins
+                            .insert(ir_idx, IrBlockOrigin::at(tool_source));
                         out.push(IrStreamEvent::BlockStart {
                             index: ir_idx,
                             block: crate::codec::ir::IrBlockMeta::ToolUse {
@@ -1150,11 +1309,15 @@ impl ProtocolReader for OpenAiReader {
 
         // Parse content (may be null)
         let mut content: Vec<crate::codec::ir::IrBlock> = Vec::new();
+        let mut block_origins = IrBlockOrigins::default();
 
         // Compatible providers (GLM, DeepSeek) emit chain-of-thought in `reasoning_content` (or
         // `reasoning`). Map it to a Thinking block ahead of the answer so it survives translation to
         // protocols that have one; others drop it on write.
-        for key in [REASONING_CONTENT, keys::REASONING] {
+        for (key, source) in [
+            (REASONING_CONTENT, &RESPONSE_REASONING_CONTENT_SOURCE),
+            (keys::REASONING, &RESPONSE_REASONING_SOURCE),
+        ] {
             if let Some(r) = message_val.get(key).and_then(|v| v.as_str()) {
                 if !r.is_empty() {
                     content.push(crate::codec::ir::IrBlock::Thinking {
@@ -1165,6 +1328,7 @@ impl ProtocolReader for OpenAiReader {
                         kind: None,
                         signature_origin: None,
                     });
+                    block_origins.response.push(IrBlockOrigin::at(source));
                     break;
                 }
             }
@@ -1185,6 +1349,9 @@ impl ProtocolReader for OpenAiReader {
                         citations,
                         refusal: false,
                     });
+                    block_origins
+                        .response
+                        .push(IrBlockOrigin::at(&RESPONSE_CONTENT_SOURCE));
                 }
             } else if let Some(arr) = content_val.as_array() {
                 for block_val in arr {
@@ -1194,6 +1361,9 @@ impl ProtocolReader for OpenAiReader {
                     // An image part in a response message array has no Chat response
                     // representation, so it is dropped observably with a `warn!`.
                     if matches!(block, crate::codec::ir::IrBlock::Image { .. }) {
+                        let _native_drop_origin = crate::codec::drops::block_scope(Some(
+                            &IrBlockOrigin::at(&RESPONSE_PART_SOURCE),
+                        ));
                         crate::codec::drops::writer_drop!(
                             crate::codec::drops::IMAGE,
                             &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
@@ -1204,6 +1374,9 @@ impl ProtocolReader for OpenAiReader {
                         );
                     } else {
                         content.push(block);
+                        block_origins
+                            .response
+                            .push(IrBlockOrigin::at(&RESPONSE_PART_SOURCE));
                     }
                 }
             }
@@ -1224,6 +1397,9 @@ impl ProtocolReader for OpenAiReader {
                     citations: Vec::new(),
                     refusal: true,
                 });
+                block_origins
+                    .response
+                    .push(IrBlockOrigin::at(&RESPONSE_REFUSAL_SOURCE));
             }
         }
 
@@ -1261,6 +1437,9 @@ impl ProtocolReader for OpenAiReader {
                         cache_control: None,
                         thought_signature: None,
                     });
+                    block_origins
+                        .response
+                        .push(IrBlockOrigin::at(&RESPONSE_TOOL_SOURCE));
                 }
             }
         }
@@ -1289,6 +1468,9 @@ impl ProtocolReader for OpenAiReader {
                     cache_control: None,
                     thought_signature: None,
                 });
+                block_origins
+                    .response
+                    .push(IrBlockOrigin::at(&RESPONSE_FUNCTION_SOURCE));
             }
         }
 
@@ -1336,6 +1518,7 @@ impl ProtocolReader for OpenAiReader {
             crate::codec::logprob_wire::read_token_logprobs(choices[0].get(keys::LOGPROBS));
 
         Ok(crate::codec::ir::IrResponse {
+            block_origins,
             logprobs,
             role: crate::codec::ir::IrRole::Assistant,
             content,
@@ -1426,4 +1609,151 @@ fn unmodeled_tool_call(tc_val: &serde_json::Value) -> bool {
         .get(keys::TYPE)
         .and_then(serde_json::Value::as_str)
         .is_some_and(|t| t != keys::FUNCTION)
+}
+
+#[cfg(test)]
+mod native_origin_tests {
+    use super::*;
+    use crate::codec::drops;
+    use crate::codec::ir::IrBlockOrigin;
+    use serde_json::json;
+
+    fn projected_paths(origin: Option<&IrBlockOrigin>) -> Vec<String> {
+        let (_, paths) = drops::scope(
+            drops::Seam {
+                direction: drops::Direction::Request,
+                ingress: VENDOR_NAME,
+                egress: crate::codec::anthropic::DECL.name,
+            },
+            || {
+                drops::with_block_origin(origin, || {
+                    drops::note(drops::Dropped::member(
+                        drops::IMAGE,
+                        &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                        "projection probe",
+                    ));
+                })
+            },
+        );
+        paths
+    }
+
+    #[test]
+    fn folded_system_sources_and_aggregate_tool_children_keep_native_containers() {
+        let body = json!({"messages": [
+            {"role": "system", "content": "rules"},
+            {"role": "developer", "content": [{"type": "futurePart"}, {"type": "text", "text": "rules"}]},
+            {"role": "user", "content": [{"type": "futurePart"}, {"type": "text", "text": "question"}]},
+            {"role": "tool", "tool_call_id": "call_lookup", "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]},
+            {"role": "tool", "tool_call_id": "call_missing"}
+        ]});
+        let request = OpenAiReader.read_request(&body).unwrap();
+        let [scalar, array] = request.block_origins.system.as_slice() else {
+            panic!("two folded native entries");
+        };
+        assert_eq!(projected_paths(Some(scalar)), ["messages[].content"]);
+        assert_eq!(projected_paths(Some(array)), ["messages[].content[]"]);
+        let [user, tool, missing] = request.block_origins.messages.as_slice() else {
+            panic!("system entries fold out of messages");
+        };
+        let [user_part] = user.as_slice() else {
+            panic!("unsupported part has no origin");
+        };
+        assert_eq!(projected_paths(Some(user_part)), ["messages[].content[]"]);
+        let [tool] = tool.as_slice() else {
+            panic!("tool result");
+        };
+        let [child] = tool.children.as_slice() else {
+            panic!("array folds to one text child");
+        };
+        assert_eq!(projected_paths(Some(child)), ["messages[].content"]);
+        let [missing] = missing.as_slice() else {
+            panic!("missing tool result");
+        };
+        let [synthetic] = missing.children.as_slice() else {
+            panic!("synthetic empty text");
+        };
+        assert!(synthetic.source.is_none());
+    }
+
+    #[test]
+    fn response_origin_does_not_shift_after_a_skipped_image_part() {
+        let body = json!({"choices": [{"message": {
+            "reasoning": "consider", "content": [
+                {"type": "image_url", "image_url": {"url": "https://example.test/image"}},
+                {"type": "text", "text": "answer"}
+            ], "refusal": "cannot comply"
+        }}]});
+        let response = OpenAiReader
+            .read_response(crate::codec::test_host::HOST, &body)
+            .unwrap();
+        let [reasoning, content, refusal] = response.block_origins.response.as_slice() else {
+            panic!("image output is omitted");
+        };
+        assert_eq!(
+            projected_paths(Some(reasoning)),
+            ["choices[].message.reasoning"]
+        );
+        assert_eq!(
+            projected_paths(Some(content)),
+            ["choices[].message.content[]"]
+        );
+        assert_eq!(
+            projected_paths(Some(refusal)),
+            ["choices[].message.refusal"]
+        );
+        assert_eq!(
+            response.block_origins.response.len(),
+            response.content.len()
+        );
+    }
+
+    #[test]
+    fn stream_sources_distinguish_legacy_tools_refusals_and_annotations() {
+        let cases = [
+            (
+                json!({"choices": [{"delta": {"function_call": {"name": "lookup", "arguments": "{}"}}}]}),
+                "choices[].delta.function_call",
+            ),
+            (
+                json!({"choices": [{"delta": {"tool_calls": [{"index": 17, "id": "call_lookup", "function": {"name": "lookup", "arguments": "{}"}}]}}]}),
+                "choices[].delta.tool_calls[]",
+            ),
+            (
+                json!({"choices": [{"delta": {"refusal": "cannot comply"}}]}),
+                "choices[].delta.refusal",
+            ),
+            (
+                json!({"choices": [{"delta": {"reasoning": "consider"}}]}),
+                "choices[].delta.reasoning",
+            ),
+            (
+                json!({"choices": [{"delta": {"annotations": [{"type": "url_citation", "url_citation": {"url": "https://example.test/source", "title": "source"}}]}}]}),
+                "choices[].delta.annotations[]",
+            ),
+        ];
+        for (body, expected) in cases {
+            let mut state = crate::codec::ir::StreamDecodeState::default();
+            let events = OpenAiReader.read_response_events(
+                crate::codec::test_host::HOST,
+                "",
+                &body,
+                &mut state,
+            );
+            let mut saw_start = false;
+            for event in events {
+                if let IrStreamEvent::BlockStart { index, .. } = event {
+                    saw_start = true;
+                    assert_eq!(projected_paths(state.block_origins.get(&index)), [expected]);
+                }
+            }
+            assert!(saw_start);
+        }
+        let mut state = crate::codec::ir::StreamDecodeState::default();
+        OpenAiReader.read_response_events(crate::codec::test_host::HOST, "", &json!({"choices": [{"delta": {"tool_calls": [{"index": 17, "function": {"arguments": "{}"}}]}}]}), &mut state);
+        assert!(
+            state.block_origins.is_empty(),
+            "arguments without a successful BlockStart create no origin"
+        );
+    }
 }

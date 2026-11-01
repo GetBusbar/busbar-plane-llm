@@ -232,6 +232,27 @@ leaf_op! {
     fn taps_usage(&self) -> bool {
         true
     }
+    fn extract_usage(
+        &self,
+        _host: &dyn busbar_contract::codec::CodecHost,
+        _ingress: &str,
+        body: &[u8],
+    ) -> Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault>
+    {
+        crate::codec::rerank_wire::extract_usage(body, super::VENDOR_NAME)
+    }
+    fn recover_response_billing(
+        &self,
+        _host: &dyn busbar_contract::codec::CodecHost,
+        body: &[u8],
+    ) -> Option<busbar_contract::billing::Billing> {
+        let value: Value = crate::codec::json::parse(body).ok()?;
+        crate::codec::ir::rerank::RerankResp {
+            search_units: crate::codec::rerank_wire::read_search_units(&value, super::VENDOR_NAME),
+            ..Default::default()
+        }.billing()
+    }
+
 }
 
 /// IR to rerank request wire ([`BedrockRerank::write_request`]).
@@ -439,7 +460,8 @@ pub fn read_rerank_request(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let documents = crate::codec::rerank_wire::read_documents(wire.get(keys::DOCUMENTS));
+    let documents = crate::codec::rerank_wire::read_documents(wire.get(keys::DOCUMENTS))
+        .map_err(|message| IngressReject::BadRequest(message.into()))?;
     if query.is_empty() || documents.is_empty() {
         return Err(IngressReject::BadRequest(
             "rerank request requires `query` and `documents`".into(),
@@ -469,18 +491,12 @@ pub fn read_rerank_response(
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
     Ok(crate::codec::ir::rerank::RerankResp {
         id: v.get(keys::ID).and_then(Value::as_str).map(str::to_string),
-        results: crate::codec::rerank_wire::read_results(v.get(keys::RESULTS)),
+        results: crate::codec::rerank_wire::read_results(v.get(keys::RESULTS))
+            .map_err(|message| CodecError::Malformed(message.into()))?,
         // A Bedrock-hosted Cohere rerank model answers in Cohere's shape; the billed search units
         // (`meta.billed_units.search_units`) are read exactly as the Cohere reader does, else the flat
         // marker (nothing estimated). An unreadable count is refused alone (`refused_count`).
-        search_units: crate::codec::usage_count::billed_count_opt(
-            v.get("meta").and_then(|m| m.get("billed_units")),
-            "search_units",
-        )
-        .unwrap_or_else(|unreadable| {
-            crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
-            None
-        }),
+        search_units: crate::codec::rerank_wire::read_search_units(&v, super::VENDOR_NAME),
         ..Default::default()
     })
 }

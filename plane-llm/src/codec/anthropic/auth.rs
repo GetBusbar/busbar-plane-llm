@@ -16,7 +16,11 @@ impl AnthropicWriter {
         error_type: &str,
         message: &str,
     ) -> serde_json::Value {
-        Self::error_envelope_with_request_id(error_type, message, &synth_request_id(host))
+        let mut envelope = Self::error_envelope_with_request_id(error_type, message, "");
+        envelope[super::REQUEST_ID] = synth_request_id(host)
+            .ok()
+            .map_or(serde_json::Value::Null, serde_json::Value::String);
+        envelope
     }
 
     /// The same envelope with the `request_id` supplied (see [`request_id_from_entropy`]), for a

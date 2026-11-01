@@ -5,6 +5,37 @@
 
 use crate::codec::keys;
 
+/// Validate the policy fields this reader promotes, before any optional projection can erase them.
+pub(super) fn validate_hosted_tool(tool: &serde_json::Value) -> Result<(), super::IrError> {
+    let Some(obj) = tool.as_object() else {
+        return Ok(());
+    };
+    let Some(kind) = obj.get(keys::TYPE).and_then(serde_json::Value::as_str) else {
+        return Ok(());
+    };
+    if !kind.starts_with(HOSTED_TYPE_PREFIX_WEB_SEARCH)
+        && !kind.starts_with(HOSTED_TYPE_PREFIX_WEB_FETCH)
+    {
+        return Ok(());
+    }
+    if obj.get(super::MAX_USES).is_some_and(|value| {
+        !value.is_null() && value.as_u64().and_then(|n| u32::try_from(n).ok()).is_none()
+    }) {
+        return Err(super::ir_parse_error());
+    }
+    for key in [keys::ALLOWED_DOMAINS, super::BLOCKED_DOMAINS] {
+        if obj.get(key).is_some_and(|value| {
+            !value.is_null()
+                && !value
+                    .as_array()
+                    .is_some_and(|items| items.iter().all(serde_json::Value::is_string))
+        }) {
+            return Err(super::ir_parse_error());
+        }
+    }
+    Ok(())
+}
+
 /// Versioned `type` prefixes of the Anthropic server tools whose KIND the IR models (IR-11). The
 /// version suffix names Anthropic's own schema revision and is not carried; the writer picks one.
 pub(super) const HOSTED_TYPE_PREFIX_WEB_SEARCH: &str = "web_search_";

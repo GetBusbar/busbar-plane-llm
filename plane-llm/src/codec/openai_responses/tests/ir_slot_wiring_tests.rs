@@ -15,7 +15,7 @@ fn seam(egress: &str, body: &serde_json::Value) -> serde_json::Value {
         &mut req,
         &busbar_contract::ir::egress_prep::EgressPrep {
             thought_signature_fill: false,
-            ingress_protocol: "chat",
+            ingress_protocol: "responses",
             egress_requires_max_tokens: false,
             lane_default_max_tokens: None,
             global_default_max_tokens: 4096,

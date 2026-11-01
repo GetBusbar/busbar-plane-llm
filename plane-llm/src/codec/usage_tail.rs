@@ -25,14 +25,14 @@ fn find_last(hay: &[u8], needle: &[u8]) -> Option<usize> {
 /// bracket-match the following `{...}` (string- and escape-aware, so a `}` inside a quoted string
 /// does not close it early). Returns the span including both braces.
 fn balanced_object_after(buf: &[u8], mut i: usize) -> Option<&[u8]> {
-    while i < buf.len() && (buf[i] as char).is_whitespace() {
+    while i < buf.len() && matches!(buf[i], b' ' | b'\t' | b'\r' | b'\n') {
         i += 1;
     }
     if buf.get(i) != Some(&b':') {
         return None;
     }
     i += 1;
-    while i < buf.len() && (buf[i] as char).is_whitespace() {
+    while i < buf.len() && matches!(buf[i], b' ' | b'\t' | b'\r' | b'\n') {
         i += 1;
     }
     if buf.get(i) != Some(&b'{') {
@@ -71,13 +71,20 @@ fn balanced_object_after(buf: &[u8], mut i: usize) -> Option<&[u8]> {
 }
 
 /// Isolate the self-contained trailing usage object from a head-truncated response `tail`: find the
-/// last `key` (`"usage"`, or `"usageMetadata"` for gemini), bracket-match the `{...}` after it and
-/// parse that span. `None` when the key is absent or its object does not fit in the retained tail
+/// last object-valued `key` (`"usage"`, or `"usageMetadata"` for gemini), bracket-match the
+/// `{...}` after it and parse that span. Later scalar metadata members with that name are skipped. `None` when the key is absent or its object does not fit in the retained tail
 /// (never observed; it is a handful of integer fields). The caller maps its dialect's fields.
 pub fn isolate_tail_usage_object(tail: &[u8], key: &[u8]) -> Option<serde_json::Value> {
-    let key_pos = find_last(tail, key)?;
-    let obj = balanced_object_after(tail, key_pos + key.len())?;
-    crate::codec::json::parse(obj).ok()
+    let mut end = tail.len();
+    while let Some(key_pos) = find_last(&tail[..end], key) {
+        if let Some(obj) = balanced_object_after(tail, key_pos + key.len()) {
+            // A later metadata member can share the key but hold a scalar. Keep looking for
+            // the preceding usage object instead of losing the provider's reported counts.
+            return crate::codec::json::parse(obj).ok();
+        }
+        end = key_pos;
+    }
+    None
 }
 
 /// The longest string value [`StopKeyScanner`] reads. A stop-reason token is a short enum member
@@ -157,7 +164,7 @@ impl StopKeyScanner {
             && k[0] == b'"'
             && k[k.len() - 1] == b'"'
             && key.depth > 0;
-        well_formed.then_some(Self {
+        well_formed.then(|| Self {
             name: &k[1..k.len() - 1],
             depth: key.depth,
             state: ScanState::Seeking,

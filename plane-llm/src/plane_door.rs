@@ -55,8 +55,8 @@ use busbar_contract::abi::mechanism::ticket::{CompletionHandle, Ticket};
 use busbar_contract::abi::plane::check::check_piece_in;
 use busbar_contract::abi::plane::{
     ArriveIn, ArriveOut, BillableClass, DialectAuth, OnPieceIn, OnPieceOut, OpClass, OutField,
-    PlaneOpenIn, PlaneSnapshot, PlaneTail, ProjectIn, ProjectOut, RefusalIn, RefusalOut, ServeIn,
-    ServeOut, UnitCount, ANSWER_LAYOUT, CANCEL_ABORTED, CANCEL_FAILED, CANCEL_OK_PARTIAL,
+    PlaneOpenIn, PlaneSnapshot, PlaneTail, ProjectIn, ProjectOut, RefusalIn, RefusalOut, RouteCost,
+    ServeIn, ServeOut, UnitCount, ANSWER_LAYOUT, CANCEL_ABORTED, CANCEL_FAILED, CANCEL_OK_PARTIAL,
     CLAIM_ENTRY, CLAIM_EXACT, CLAIM_PROBE, EMIT_DONE, EMIT_TO_FAR_END, FROM_CALLER, FROM_FAR_END,
     FROM_KERNEL, INGRESS_REQUEST_RESPONSE, INGRESS_RESPONSE_STREAM, PIECE_CUT, PIECE_FIELDS,
     PIECE_FINAL, PIECE_HAS_STATUS, PIECE_LAST, PRINCIPAL_NONE, PRINCIPAL_REQUIRED, REFUSAL_GATE,
@@ -216,6 +216,25 @@ const BILLABLE_CLASSES: &[BillableClass] =
 /// The tail's fee units: [`FEE_CLASS`].
 const FEE_UNITS: &[AbiStr] = &[abi_str(FEE_CLASS)];
 
+/// The first two entries of `TOKEN_CLASSES` and the token counts returned by `counts`.
+const INPUT_TOKEN_CLASS_INDEX: u32 = 0;
+const OUTPUT_TOKEN_CLASS_INDEX: u32 = 1;
+/// Historical default routing score: the mean of the input and output token prices.
+/// Other token classes, open units and the request fee do not participate in this score.
+const INPUT_OUTPUT_ROUTE_WEIGHT: f64 = 0.5;
+const ROUTE_COST: &[RouteCost] = &[
+    RouteCost {
+        class: INPUT_TOKEN_CLASS_INDEX,
+        _reserved: 0,
+        weight: INPUT_OUTPUT_ROUTE_WEIGHT,
+    },
+    RouteCost {
+        class: OUTPUT_TOKEN_CLASS_INDEX,
+        _reserved: 0,
+        weight: INPUT_OUTPUT_ROUTE_WEIGHT,
+    },
+];
+
 /// The outbound auth styles the members are bound under: each dialect's default (`egress_style`),
 /// then the provider `auth:` overrides the grammar accepts (`api-key` is also a default), each named
 /// once. One outbound need per style ([`NEEDS`]); a member dials the need its resolved style names.
@@ -327,6 +346,7 @@ const TAIL_ROW: PlaneTail = {
         .with_op_classes(OP_CLASSES)
         .with_billable_classes(BILLABLE_CLASSES)
         .with_fee_units(FEE_UNITS)
+        .with_route_cost(ROUTE_COST)
         .with_refusal_statuses(&crate::refusal::REFUSAL_STATUSES);
     t.flags = TAIL_FALLBACK | TAIL_PROBES;
     t.ingress = INGRESS_REQUEST_RESPONSE | INGRESS_RESPONSE_STREAM;

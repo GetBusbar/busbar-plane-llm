@@ -948,7 +948,7 @@ fn read_response_array_content_parses_no_unwrap() {
 fn synth_message_id_no_collision_under_rapid_minting() {
     let n = 10_000;
     let ids: std::collections::HashSet<String> = (0..n)
-        .map(|_| synth_message_id(crate::codec::test_host::HOST))
+        .map(|_| synth_message_id(crate::codec::test_host::HOST).expect("test entropy"))
         .collect();
     assert_eq!(
         ids.len(),
@@ -984,7 +984,7 @@ fn synth_message_id_no_collision_under_rapid_minting() {
 fn synth_request_id_no_collision_under_rapid_minting() {
     let n = 10_000;
     let ids: std::collections::HashSet<String> = (0..n)
-        .map(|_| synth_request_id(crate::codec::test_host::HOST))
+        .map(|_| synth_request_id(crate::codec::test_host::HOST).expect("test entropy"))
         .collect();
     assert_eq!(
         ids.len(),
@@ -1410,7 +1410,7 @@ fn redacted_thinking_response_round_trips_as_native_block() {
 fn synth_id_uniform_and_unique_under_burst() {
     let n = 20_000usize;
     let ids: Vec<String> = (0..n)
-        .map(|_| synth_request_id(crate::codec::test_host::HOST))
+        .map(|_| synth_request_id(crate::codec::test_host::HOST).expect("test entropy"))
         .collect();
     let unique: std::collections::HashSet<&String> = ids.iter().collect();
     assert_eq!(
@@ -1456,7 +1456,7 @@ fn synth_id_uniform_and_unique_under_burst() {
 /// or alphabet — `req_01` + 24 base62 chars = 30 total.
 #[test]
 fn synth_id_matches_native_length_and_alphabet() {
-    let id = synth_request_id(crate::codec::test_host::HOST);
+    let id = synth_request_id(crate::codec::test_host::HOST).expect("test entropy");
     assert_eq!(id.len(), 30, "native 30-char length");
     let token = id.strip_prefix("req_01").expect("req_01 prefix");
     assert_eq!(token.len(), 24, "24-char base62 token");
@@ -1531,7 +1531,7 @@ fn write_message_drops_unsigned_thinking_block() {
             },
         ],
     };
-    let out = write_message(&msg, 0, &[]);
+    let out = write_message(&msg, 0, &[], &[]);
     let content = out
         .get("content")
         .and_then(|c| c.as_array())
@@ -1588,7 +1588,7 @@ fn write_message_emits_empty_array_when_all_blocks_dropped() {
             },
         ],
     };
-    let out = write_message(&msg, 0, &[]);
+    let out = write_message(&msg, 0, &[], &[]);
     let content = out.get("content").expect("content key present");
     assert!(
             !content.is_string(),
@@ -1617,7 +1617,7 @@ fn write_message_emits_array_for_surviving_block() {
             refusal: false,
         }],
     };
-    let out = write_message(&msg, 0, &[]);
+    let out = write_message(&msg, 0, &[], &[]);
     let arr = out
         .get("content")
         .and_then(|c| c.as_array())
@@ -2114,8 +2114,14 @@ fn synth_ids_match_native_shape_base62_versioned_fixed_length() {
                 "token must not have a 6+ run of leading '0' (the clock+counter fingerprint), got `{token}`"
             );
     };
-    check(&synth_message_id(crate::codec::test_host::HOST), "msg_");
-    check(&synth_request_id(crate::codec::test_host::HOST), "req_");
+    check(
+        &synth_message_id(crate::codec::test_host::HOST).expect("test entropy"),
+        "msg_",
+    );
+    check(
+        &synth_request_id(crate::codec::test_host::HOST).expect("test entropy"),
+        "req_",
+    );
 }
 
 /// Regression: synthesized ids must come from the CSPRNG, not a deterministic clock+counter
@@ -2126,11 +2132,11 @@ fn synth_ids_match_native_shape_base62_versioned_fixed_length() {
 /// is not all-zero (which would mean the RNG path silently produced no entropy).
 #[test]
 fn synth_ids_are_csprng_unique_within_tick() {
-    let a = synth_message_id(crate::codec::test_host::HOST);
-    let b = synth_message_id(crate::codec::test_host::HOST);
+    let a = synth_message_id(crate::codec::test_host::HOST).expect("test entropy");
+    let b = synth_message_id(crate::codec::test_host::HOST).expect("test entropy");
     assert_ne!(a, b, "two synthesized message ids must never collide");
-    let ra = synth_request_id(crate::codec::test_host::HOST);
-    let rb = synth_request_id(crate::codec::test_host::HOST);
+    let ra = synth_request_id(crate::codec::test_host::HOST).expect("test entropy");
+    let rb = synth_request_id(crate::codec::test_host::HOST).expect("test entropy");
     assert_ne!(ra, rb, "two synthesized request ids must never collide");
 
     // The full 24-char token must never be all-'0' (that would mean no entropy AND a degenerate
@@ -2152,7 +2158,7 @@ fn synth_ids_are_csprng_unique_within_tick() {
 fn synth_id_leading_chars_are_not_constant() {
     let mut firsts = std::collections::HashSet::new();
     for _ in 0..64 {
-        let id = synth_message_id(crate::codec::test_host::HOST);
+        let id = synth_message_id(crate::codec::test_host::HOST).expect("test entropy");
         let token = &id[id.len() - 24..];
         firsts.insert(token.as_bytes()[0]);
     }
@@ -2401,7 +2407,7 @@ fn write_message_system_role_does_not_emit_system() {
             refusal: false,
         }],
     };
-    let out = write_message(&msg, 0, &[]);
+    let out = write_message(&msg, 0, &[], &[]);
     assert_ne!(
         out.get("role").and_then(|r| r.as_str()),
         Some("system"),
@@ -3405,7 +3411,8 @@ fn anthropic_citations_roundtrip_byte_exact_all_variants() {
 
 /// When an IrCitation has NO `raw` (synthesized on a cross-protocol hop, e.g. Gemini→IR), the
 /// Anthropic writer BUILDS the correct Anthropic shape from neutral fields. Covers the
-/// web_search_result_location synthesis path (url/title/cited_text) a Gemini grounding source maps to.
+/// web_search_result_location synthesis path when all required source fields, including the
+/// opaque encrypted index, are available. Incomplete foreign citations have separate refusal tests.
 #[test]
 fn anthropic_writes_web_search_citation_from_neutral_fields() {
     let block = crate::codec::ir::IrBlock::Text {
@@ -3414,13 +3421,13 @@ fn anthropic_writes_web_search_citation_from_neutral_fields() {
         citations: vec![crate::codec::ir::IrCitation {
             domain: None,
             kind: Some("web_search_result_location".to_string()),
-            cited_text: None,
+            cited_text: Some("quoted passage".to_string()),
             title: Some("Source Title".to_string()),
             url: Some("https://grounding.example/doc".to_string()),
             document_index: None,
             start_index: Some(10),
             end_index: Some(42),
-            encrypted_index: None,
+            encrypted_index: Some("opaque-source-index".to_string()),
             raw: None,
             ..Default::default()
         }],
@@ -3441,6 +3448,14 @@ fn anthropic_writes_web_search_citation_from_neutral_fields() {
     assert_eq!(
         c.get("title").and_then(|v| v.as_str()),
         Some("Source Title")
+    );
+    assert_eq!(
+        c.get("cited_text").and_then(|v| v.as_str()),
+        Some("quoted passage")
+    );
+    assert_eq!(
+        c.get("encrypted_index").and_then(|v| v.as_str()),
+        Some("opaque-source-index")
     );
 }
 
@@ -3749,7 +3764,7 @@ fn write_message_keeps_redacted_thinking_block() {
             },
         ],
     };
-    let out = write_message(&msg, 0, &[]);
+    let out = write_message(&msg, 0, &[], &[]);
     let content = out
         .get("content")
         .and_then(|c| c.as_array())

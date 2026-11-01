@@ -132,9 +132,14 @@ impl ProtocolReader for AnthropicReader {
         body: &serde_json::Value,
     ) -> Result<crate::codec::ir::IrRequest, IrError> {
         let obj = body.as_object().ok_or_else(ir_parse_error)?;
+        // This key is private reader state, never a caller-provided replacement for parsed blocks.
+        if obj.contains_key(ANTHROPIC_UNMODELED_BLOCKS_SENTINEL) {
+            return Err(ir_parse_error());
+        }
 
         let mut extra = serde_json::Map::new();
         let mut system_blocks: Vec<crate::codec::ir::IrBlock> = Vec::new();
+        let mut block_origins = crate::codec::ir::IrBlockOrigins::default();
         // Count of `role:"system"` entries folded out of `messages` below, so `IrFacts::shape()`
         // reports the raw `messages` array length.
         let mut system_turns_folded: usize = 0;
@@ -151,8 +156,13 @@ impl ProtocolReader for AnthropicReader {
                     citations: Vec::new(),
                     refusal: false,
                 });
+                block_origins.system.push(string_origin(OriginSite::System));
             } else if let Some(arr) = system_val.as_array() {
-                system_blocks.extend(read_blocks(arr)?);
+                let (blocks, origins) = read_blocks_with_origins(arr, OriginSite::System)?;
+                system_blocks.extend(blocks);
+                block_origins.system.extend(origins);
+            } else {
+                return Err(ir_parse_error());
             }
         }
 
@@ -169,11 +179,12 @@ impl ProtocolReader for AnthropicReader {
             // rather than coerce to an empty conversation. An absent `messages` stays lenient.
             let messages_arr = messages_val.as_array().ok_or_else(ir_parse_error)?;
             for msg_val in messages_arr {
-                let msg = read_message(msg_val)?;
+                let (msg, origins) = read_message_with_origins(msg_val)?;
                 if msg.role == crate::codec::ir::IrRole::System {
                     system_turns_folded += 1;
                     let blocks_before = system_blocks.len();
                     system_blocks.extend(msg.content);
+                    block_origins.system.extend(origins);
                     crate::codec::ir::IrSystemFold::record(
                         &mut system_folds,
                         messages.len(),
@@ -184,6 +195,7 @@ impl ProtocolReader for AnthropicReader {
                 } else {
                     stash_unmodeled_blocks(msg_val, messages.len(), &mut unmodeled_blocks);
                     messages.push(msg);
+                    block_origins.messages.push(origins);
                 }
             }
         }
@@ -204,6 +216,7 @@ impl ProtocolReader for AnthropicReader {
             // empty, which would silently strip the caller's tools.
             let tools_arr = tools_val.as_array().ok_or_else(ir_parse_error)?;
             for tool_val in tools_arr {
+                super::slots::validate_hosted_tool(tool_val)?;
                 match read_hosted_tool(tool_val) {
                     Some(hosted) => hosted_tools.push(hosted),
                     None => tools.push(read_tool(tool_val)?),
@@ -212,8 +225,7 @@ impl ProtocolReader for AnthropicReader {
         }
 
         // Extract scalar fields and extra
-        // Checked `u32::try_from`: `as u32` would truncate a `max_tokens`/`top_k` above `u32::MAX`
-        // (4294967297 to 1). An out-of-range value drops to `None` and the upstream applies its default.
+        // A present unreadable max_tokens is refused below; it cannot become a different default.
         let max_tokens = obj
             .get(keys::MAX_TOKENS)
             .and_then(|v| v.as_u64())
@@ -221,9 +233,21 @@ impl ProtocolReader for AnthropicReader {
             // `max_tokens: 0` is absent, as in every other reader: a zero cap would force an
             // invalid body on egress.
             .filter(|&v| v > 0);
+        if obj.get(keys::MAX_TOKENS).is_some_and(|value| {
+            !value.is_null() && value.as_u64().and_then(|v| u32::try_from(v).ok()).is_none()
+        }) {
+            return Err(ir_parse_error());
+        }
         // temperature / top_p / top_k / stop_sequences are mapping-file rows, read below.
         // `tool_choice` is normalized into the IR union so forced or targeted use survives.
         let tool_choice = read_anthropic_tool_choice(obj.get(keys::TOOL_CHOICE));
+        if obj
+            .get(keys::TOOL_CHOICE)
+            .is_some_and(|value| !value.is_null())
+            && tool_choice.is_none()
+        {
+            return Err(ir_parse_error());
+        }
         // `disable_parallel_tool_use` rides inside tool_choice; it is inverted ("parallel allowed?")
         // to carry to OpenAI's `parallel_tool_calls`.
         let parallel_tool_calls = obj
@@ -231,6 +255,13 @@ impl ProtocolReader for AnthropicReader {
             .and_then(|tc| tc.get(super::DISABLE_PARALLEL_TOOL_USE))
             .and_then(|v| v.as_bool())
             .map(|disabled| !disabled);
+        if obj
+            .get(keys::TOOL_CHOICE)
+            .and_then(|tc| tc.get(super::DISABLE_PARALLEL_TOOL_USE))
+            .is_some_and(|value| !value.is_null() && !value.is_boolean())
+        {
+            return Err(ir_parse_error());
+        }
         // `metadata.user_id` is Anthropic's spelling of OpenAI's `user`; promote it. The `metadata`
         // object still rides `extra`, keeping same-protocol fidelity byte-exact.
         let user = obj
@@ -286,6 +317,12 @@ impl ProtocolReader for AnthropicReader {
             .get(keys::STREAM)
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        if obj
+            .get(keys::STREAM)
+            .is_some_and(|value| !value.is_null() && !value.is_boolean())
+        {
+            return Err(ir_parse_error());
+        }
 
         // Unmodeled top-level keys go to `extra`; the modelled keys are the mapping file's rows.
         crate::codec::carry::keep_unmodelled(super::map::REQUEST, obj, &mut extra);
@@ -310,6 +347,7 @@ impl ProtocolReader for AnthropicReader {
             system_turns_folded,
             system_folds,
             messages,
+            block_origins,
             tools,
             max_tokens,
             tool_choice,
@@ -323,12 +361,36 @@ impl ProtocolReader for AnthropicReader {
         Ok(ir)
     }
 
+    fn recover_response_usage(
+        &self,
+        body: &serde_json::Value,
+    ) -> Option<busbar_contract::billing::TokenUsage> {
+        let usage = body.get(keys::USAGE)?;
+        Some(read_anthropic_usage(Some(usage)).ok()?.to_token_usage())
+    }
+
     fn read_response_event(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
         event_type: &str,
         data: &serde_json::Value,
     ) -> Option<IrStreamEvent> {
+        if matches!(
+            event_type,
+            EVT_CONTENT_BLOCK_START | EVT_CONTENT_BLOCK_DELTA | EVT_CONTENT_BLOCK_STOP
+        ) && data
+            .get(keys::INDEX)
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|index| index > MAX_ANTHROPIC_BLOCK_INDEX)
+        {
+            return Some(IrStreamEvent::Error(IrError {
+                class: StatusClass::ServerError,
+                provider_signal: Some(
+                    "upstream content block index exceeds the supported range".into(),
+                ),
+                retry_after: None,
+            }));
+        }
         match event_type {
             EVT_MESSAGE_START => {
                 let msg = data.get(keys::MESSAGE)?;
@@ -506,6 +568,19 @@ impl ProtocolReader for AnthropicReader {
         data: &serde_json::Value,
         state: &mut crate::codec::ir::StreamDecodeState,
     ) -> Vec<IrStreamEvent> {
+        if matches!(
+            event_type,
+            EVT_CONTENT_BLOCK_START | EVT_CONTENT_BLOCK_DELTA | EVT_CONTENT_BLOCK_STOP
+        ) && data
+            .get(keys::INDEX)
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|index| index > MAX_ANTHROPIC_BLOCK_INDEX)
+        {
+            return self
+                .read_response_event(host, event_type, data)
+                .into_iter()
+                .collect();
+        }
         // Suppressed blocks: a block type the IR does not model on a stream (`server_tool_use`,
         // `web_search_tool_result`, `mcp_tool_use`, a future type) produces no `BlockStart`, so its
         // deltas and stop would reach a foreign client for a block it never saw open. Remember
@@ -516,9 +591,25 @@ impl ProtocolReader for AnthropicReader {
                 .get(super::CONTENT_BLOCK)
                 .and_then(|b| b.get(keys::TYPE))
                 .and_then(|t| t.as_str());
-            if let (Some(index), Some(t)) = (read_clamped_block_index(data), block_type) {
-                if !is_streamed_anthropic_block_type(t) {
+            if let Some(index) = read_clamped_block_index(data) {
+                // A new start replaces any prior suppression at this index. A malformed tool
+                // start must suppress its deltas too, since no destination block was opened.
+                state.open_tools.remove(&index);
+                state.block_origins.remove(&index);
+                let malformed_tool = block_type == Some(STOP_TOOL_USE)
+                    && [keys::ID, keys::NAME].into_iter().any(|key| {
+                        !data
+                            .get(super::CONTENT_BLOCK)
+                            .and_then(|block| block.get(key))
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|value| !value.is_empty())
+                    });
+                if block_type.is_none_or(|t| !is_streamed_anthropic_block_type(t)) || malformed_tool
+                {
                     state.open_tools.insert(index);
+                    if malformed_tool {
+                        tracing::warn!(index, "dropping malformed upstream tool block and its deltas: missing tool identity");
+                    }
                     return vec![];
                 }
             }
@@ -547,6 +638,9 @@ impl ProtocolReader for AnthropicReader {
                             .and_then(|d| d.as_str())
                             .unwrap_or("")
                             .to_string();
+                        if let Some(origin) = stream_block_origin(BLOCK_TYPE_REDACTED_THINKING) {
+                            state.block_origins.insert(index, origin);
+                        }
                         return vec![
                             // A redacted start: the writer must know at block-start time to emit
                             // `redacted_thinking`, never a plaintext `thinking` seed.
@@ -566,7 +660,20 @@ impl ProtocolReader for AnthropicReader {
         }
         // Anthropic events are otherwise already block-structured (1:1): wrap the singular.
         match self.read_response_event(host, event_type, data) {
-            Some(ev) => vec![ev],
+            Some(ev) => {
+                if let IrStreamEvent::BlockStart { index, .. } = &ev {
+                    if let Some(kind) = data
+                        .get(super::CONTENT_BLOCK)
+                        .and_then(|block| block.get(keys::TYPE))
+                        .and_then(|kind| kind.as_str())
+                    {
+                        if let Some(origin) = stream_block_origin(kind) {
+                            state.block_origins.insert(*index, origin);
+                        }
+                    }
+                }
+                vec![ev]
+            }
             None => vec![],
         }
     }
@@ -587,7 +694,11 @@ impl ProtocolReader for AnthropicReader {
 
         // Parse content blocks
         let content_val = obj.get(keys::CONTENT).ok_or_else(ir_parse_error)?;
+        if !content_val.is_array() {
+            return Err(ir_parse_error());
+        }
         let mut content: Vec<crate::codec::ir::IrBlock> = Vec::new();
+        let mut block_origins = crate::codec::ir::IrBlockOrigins::default();
         if let Some(arr) = content_val.as_array() {
             // A block kind the reader does not model is dropped, never answered as an empty text
             // block; a translate attempt names it (`RESPONSE_BLOCKS`).
@@ -595,7 +706,9 @@ impl ProtocolReader for AnthropicReader {
                 .iter()
                 .filter(|b| super::RESPONSE_BLOCKS.iter().all(|g| g.models(b)))
             {
-                content.push(read_block(block_val)?);
+                let (block, origin) = read_block_with_origin(block_val, OriginSite::Response)?;
+                content.push(block);
+                block_origins.response.push(origin);
             }
         }
 
@@ -638,6 +751,7 @@ impl ProtocolReader for AnthropicReader {
             logprobs: Vec::new(),
             role,
             content,
+            block_origins,
             stop_reason,
             usage,
             model,
@@ -660,3 +774,70 @@ impl ProtocolReader for AnthropicReader {
 #[cfg(test)]
 #[path = "tests/unreadable_count_refusal_tests.rs"]
 mod unreadable_count_refusal_tests;
+
+#[cfg(test)]
+mod block_origin_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn native_request_origins_follow_system_fold_and_nested_result() {
+        let body = json!({
+            "system": [{"type": "text", "text": "top"}],
+            "messages": [
+                {"role": "system", "content": [{"type": "thinking", "thinking": "folded"}]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "call", "content": [
+                        {"type": "text", "text": "answer"},
+                        {"type": "image", "source": {"type": "url", "url": "https://example.test/i"}}
+                    ]},
+                    {"type": "redacted_thinking", "data": "opaque"}
+                ]}
+            ]
+        });
+        let req = AnthropicReader.read_request(&body).expect("native request");
+        assert_eq!(req.system.len(), req.block_origins.system.len());
+        assert_eq!(req.messages.len(), req.block_origins.messages.len());
+        assert_eq!(
+            req.messages[0].content.len(),
+            req.block_origins.messages[0].len()
+        );
+        assert_eq!(
+            req.block_origins.system[1].source.unwrap().path,
+            "messages[].content[].type=thinking"
+        );
+        let result = &req.block_origins.messages[0][0];
+        assert_eq!(
+            result.source.unwrap().path,
+            "messages[].content[].type=tool_result"
+        );
+        assert_eq!(result.children.len(), 2);
+        assert_eq!(
+            result.children[0].source.unwrap().path,
+            "messages[].content[].type=tool_result.content[]"
+        );
+        assert_eq!(
+            req.block_origins.messages[0][1].source.unwrap().path,
+            "messages[].content[].type=redacted_thinking"
+        );
+    }
+
+    #[test]
+    fn native_response_origins_follow_filtered_blocks() {
+        let body = json!({
+            "role": "assistant", "content": [
+                {"type": "text", "text": "answer"},
+                {"type": "unknown", "future": true},
+                {"type": "redacted_thinking", "data": "opaque"}
+            ]
+        });
+        let resp = AnthropicReader
+            .read_response(crate::codec::test_host::HOST, &body)
+            .expect("native response");
+        assert_eq!(resp.content.len(), resp.block_origins.response.len());
+        assert_eq!(
+            resp.block_origins.response[1].source.unwrap().path,
+            "content[].type=redacted_thinking"
+        );
+    }
+}

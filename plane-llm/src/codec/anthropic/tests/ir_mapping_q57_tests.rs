@@ -708,7 +708,7 @@ fn ant18_search_result_citation_source_maps_both_ways() {
 
     let mut neutral = citations[0].clone();
     neutral.raw = None;
-    let written = super::write_citation(&neutral);
+    let written = super::write_citation(&neutral).expect("complete search-result citation");
     assert_eq!(
         written,
         json!({"type": "search_result_location", "cited_text": "c", "source": "https://kb/1",

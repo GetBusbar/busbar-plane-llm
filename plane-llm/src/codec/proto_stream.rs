@@ -93,6 +93,10 @@ pub struct StreamTranslate {
     /// arm reads to tell a clean close from an aborted one. Holds the human message
     /// (`provider_signal`); `None` on a clean stream.
     terminal_error: Option<String>,
+    /// Stop writing after a local encoding failure while continuing to read upstream usage.
+    encoding_failed: bool,
+    /// An upstream terminal error retains its refund semantics even if encoding also fails.
+    upstream_error: bool,
     /// Terminal-usage fold (SSE ingress: anthropic/gemini/cohere/responses; see
     /// `StreamFraming::folds_terminal_usage`). Holds the deferred terminal `MessageDelta`
     /// `(stop_reason, stop_sequence, usage, stop_detail)` so a trailing usage-only chunk (OpenAI
@@ -177,6 +181,8 @@ impl StreamTranslate {
             same_proto,
             last_usage: None,
             terminal_error: None,
+            encoding_failed: false,
+            upstream_error: false,
             pending_terminal: None,
             pending_stop: false,
             open_blocks: std::collections::BTreeSet::new(),
@@ -314,10 +320,18 @@ impl StreamTranslate {
             // the first zero clobber the second's counts. `last_usage` is the production billing source.
             self.fold_reported_usage(usage);
         }
+        // Usage remains observable after failure, but no later event may resume client output.
+        if self.upstream_error {
+            return;
+        }
         // A-tap terminal-error capture: a reader-emitted `Error` is the breaker-failure signal. Its
         // message is recorded so the stream-end arms treat the stream as failed (no token billing,
         // breaker transient), from the reader's structured decode, not a brace-scan of output bytes.
         if let crate::codec::ir::IrStreamEvent::Error(err) = &ev {
+            self.upstream_error = true;
+            self.open_blocks.clear();
+            self.pending_terminal = None;
+            self.pending_stop = false;
             self.terminal_error = Some(
                 err.provider_signal
                     .clone()
@@ -494,7 +508,7 @@ impl StreamTranslate {
         // it was a fingerprintable tell. The ingress writer decides which frame, if any; this only
         // places it. `translate_event` runs cross-protocol only, so same-protocol passthrough cannot
         // double-emit.
-        if is_message_start {
+        if is_message_start && !self.encoding_failed {
             if let Some(frame) = self
                 .ingress
                 .decl()
@@ -529,9 +543,11 @@ impl StreamTranslate {
         // ids to the client's form. Reshaping again strips only one layer on reverse decode, so the
         // client would echo an id the backend never issued. Tell the pipeline they are client-facing.
         st.ir_already_prepared = true;
+        let (events, origins) = response_to_ir_events_with_origins(ir);
+        st.decode.block_origins = origins;
         let ingress_name = st.ingress.name_static();
         let mut out: Vec<u8> = Vec::new();
-        for ev in response_to_ir_events(ir) {
+        for ev in events {
             st.translate_ir_event(host, ingress_name, ev, &mut out);
         }
         out.extend_from_slice(&st.finish(host));
@@ -573,6 +589,7 @@ impl StreamTranslate {
             // A-tap terminal-error capture on the same-protocol path: the original error frame
             // re-emits verbatim, but the breaker/billing arms still need to know the stream aborted.
             if let crate::codec::ir::IrStreamEvent::Error(err) = &ev {
+                self.upstream_error = true;
                 self.terminal_error = Some(
                     err.provider_signal
                         .clone()
@@ -602,6 +619,9 @@ impl StreamTranslate {
         ev: &crate::codec::ir::IrStreamEvent,
         out: &mut Vec<u8>,
     ) {
+        if self.encoding_failed {
+            return;
+        }
         // Track the IR lifecycle before the writer runs: `write_response_event` returning `None` does
         // not mean no block opened. `gemini/writer.rs`'s ToolUse `BlockStart` returns `None` on
         // purpose (it buffers name/args and emits the `functionCall` part on `BlockStop`); tracking
@@ -620,7 +640,60 @@ impl StreamTranslate {
         // `BlockStart`/`BlockStop` into the content-part brackets a strict SDK requires
         // (`ProtocolWriter::write_response_events`). Other writers yield 0 or 1. Each frame goes
         // through the transport/vtable split below independently.
-        for (out_et, mut out_data) in self.ingress.writer().write_response_events(host, ev) {
+        let origin = match ev {
+            crate::codec::ir::IrStreamEvent::BlockStart { index, .. }
+            | crate::codec::ir::IrStreamEvent::BlockDelta { index, .. }
+            | crate::codec::ir::IrStreamEvent::BlockStop { index } => {
+                self.decode.block_origins.get(index).cloned()
+            }
+            _ => None,
+        };
+        let encoded = if self.ingress.name_static() == self.egress.name_static() {
+            crate::codec::drops::with_block_origin(origin.as_ref(), || {
+                self.ingress.writer().try_write_response_events(host, ev)
+            })
+        } else {
+            let mut dropped = std::mem::take(&mut self.decode.dropped);
+            let seam = crate::codec::drops::Seam {
+                direction: crate::codec::drops::Direction::Response,
+                ingress: self.ingress.name_static(),
+                egress: self.egress.name_static(),
+            };
+            let encoded = crate::codec::drops::scope_more(seam, &mut dropped, || {
+                crate::codec::drops::with_block_origin(origin.as_ref(), || {
+                    self.ingress.writer().try_write_response_events(host, ev)
+                })
+            });
+            self.decode.dropped = dropped;
+            encoded
+        };
+        let frames = match encoded {
+            Ok(frames) => frames,
+            Err(error) => {
+                self.encoding_failed = true;
+                if self.terminal_error.is_none() {
+                    self.terminal_error = error.provider_signal;
+                }
+                // No frame from the failed encode is delivered and no replacement id is minted.
+                // This native error body also works before an opening response id exists.
+                let error = if let crate::codec::ir::IrStreamEvent::Error(original) = ev {
+                    self.ingress.writer().write_error(
+                        host,
+                        500,
+                        "server_error",
+                        original
+                            .provider_signal
+                            .as_deref()
+                            .unwrap_or("upstream stream error"),
+                    )
+                } else {
+                    self.ingress.writer().encoding_failure(host)
+                };
+                write_sse_frame(out, "error", &error);
+                return;
+            }
+        };
+        for (out_et, mut out_data) in frames {
             if self.ingress_eventstream {
                 // Bedrock-ingress client: pack the event into a binary eventstream frame (valid
                 // CRC32). Per-frame metrics (a usage frame's real latency) come through the framing
@@ -903,6 +976,12 @@ impl StreamTranslate {
         self.terminal_error.as_deref()
     }
 
+    /// A local encoding failure is a translation abort that retains reported work. An upstream
+    /// terminal error keeps the reply's existing refund semantics instead.
+    pub fn local_encoding_failure(&self) -> bool {
+        self.encoding_failed && !self.upstream_error
+    }
+
     /// Frame a terminal mid-stream error through the live ingress writer this translator has driven
     /// since the first frame, the one that latched the stream's identity. A fresh writer from the
     /// registry restarts every per-stream cell: on a Responses ingress the failure would carry
@@ -934,6 +1013,14 @@ impl StreamTranslate {
     /// Anthropic: empty, `message_stop` already terminates).
     pub fn finish(&mut self, host: &dyn busbar_contract::codec::CodecHost) -> Vec<u8> {
         let mut out: Vec<u8> = Vec::new();
+        // A failure already emitted its terminal frame. Do not flush deferred success, block
+        // closes or framing metadata after it, even if later upstream bytes caused an abort.
+        if !self.same_proto && (self.upstream_error || self.encoding_failed) {
+            if self.emit_done {
+                out.extend_from_slice(SSE_DONE_FRAME);
+            }
+            return out;
+        }
         // Bedrock-ingress abort: the buffer overflowed `MAX_BUF` with no terminator, so no
         // `messageStop`/`metadata` was translated. A real ConverseStream always ends with
         // messageStop+metadata or an exception frame, so a bare close is a tell and leaves an SDK in
@@ -1030,8 +1117,18 @@ impl StreamTranslate {
 pub fn response_to_ir_events(
     ir: &crate::codec::ir::IrResponse,
 ) -> Vec<crate::codec::ir::IrStreamEvent> {
+    response_to_ir_events_with_origins(ir).0
+}
+
+fn response_to_ir_events_with_origins(
+    ir: &crate::codec::ir::IrResponse,
+) -> (
+    Vec<crate::codec::ir::IrStreamEvent>,
+    std::collections::BTreeMap<usize, crate::codec::ir::IrBlockOrigin>,
+) {
     use crate::codec::ir::{IrBlock, IrBlockMeta, IrDelta, IrStreamEvent};
     let mut events: Vec<IrStreamEvent> = Vec::new();
+    let mut origins = std::collections::BTreeMap::new();
     events.push(IrStreamEvent::MessageStart {
         role: ir.role,
         // Usage rides the terminal delta.
@@ -1042,7 +1139,7 @@ pub fn response_to_ir_events(
     });
     let mut index = 0usize;
     let mut logprobs_pending = !ir.logprobs.is_empty();
-    for block in ir.content.iter() {
+    for (source_index, block) in ir.content.iter().enumerate() {
         match block {
             IrBlock::Text {
                 text,
@@ -1051,6 +1148,9 @@ pub fn response_to_ir_events(
                 ..
             } => {
                 // A refusal message stays a refusal (IR-02).
+                if let Some(origin) = ir.block_origins.response.get(source_index) {
+                    origins.insert(index, origin.clone());
+                }
                 events.push(IrStreamEvent::BlockStart {
                     index,
                     block: IrBlockMeta::Text,
@@ -1080,6 +1180,9 @@ pub fn response_to_ir_events(
             IrBlock::ToolUse {
                 id, name, input, ..
             } => {
+                if let Some(origin) = ir.block_origins.response.get(source_index) {
+                    origins.insert(index, origin.clone());
+                }
                 events.push(IrStreamEvent::BlockStart {
                     index,
                     block: IrBlockMeta::ToolUse {
@@ -1102,6 +1205,9 @@ pub fn response_to_ir_events(
                 kind,
                 ..
             } => {
+                if let Some(origin) = ir.block_origins.response.get(source_index) {
+                    origins.insert(index, origin.clone());
+                }
                 events.push(IrStreamEvent::BlockStart {
                     index,
                     block: if *redacted {
@@ -1142,8 +1248,11 @@ pub fn response_to_ir_events(
     // IR-21: a generated image / audio part (a Bedrock `image`, a Gemini `inlineData`) streams whole
     // as `MediaDelta` in its own block, trailing the other blocks so a dialect with no streamed
     // media still sees contiguous indices.
-    for block in ir.content.iter() {
+    for (source_index, block) in ir.content.iter().enumerate() {
         if matches!(block, IrBlock::Image { .. } | IrBlock::Media { .. }) {
+            if let Some(origin) = ir.block_origins.response.get(source_index) {
+                origins.insert(index, origin.clone());
+            }
             events.push(IrStreamEvent::BlockStart {
                 index,
                 block: IrBlockMeta::Image,
@@ -1174,7 +1283,7 @@ pub fn response_to_ir_events(
         stop_detail: ir.stop_detail.clone(),
     });
     events.push(IrStreamEvent::MessageStop);
-    events
+    (events, origins)
 }
 
 /// Registry-resolved streaming-translator factory, the single seam both the hot (`engine/mod.rs`)
@@ -1436,3 +1545,49 @@ fn merge_trailing_usage_detail(
 #[cfg(test)]
 #[path = "tests/merge_trailing_usage_tests.rs"]
 mod merge_trailing_usage_tests;
+
+#[cfg(test)]
+mod block_origin_synthesis_tests {
+    use super::*;
+    use crate::codec::proto_codec::ProtocolReader;
+    use serde_json::json;
+
+    #[test]
+    fn actual_buffered_origins_follow_compacted_and_reordered_stream_indices() {
+        let response = crate::codec::bedrock::BedrockReader
+            .read_response(
+                crate::codec::test_host::HOST,
+                &json!({"output": {"message": {"role": "assistant", "content": [
+                    {"image": {"format": "png", "source": {"bytes": "YQ=="}}},
+                    {"text": "fixture answer"},
+                    {"reasoningContent": {"reasoningText": {"text": "fixture thought"}}}
+                ]}}}),
+            )
+            .expect("native buffered response");
+        let (events, origins) = response_to_ir_events_with_origins(&response);
+        let opened: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                crate::codec::ir::IrStreamEvent::BlockStart { index, .. } => Some(*index),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(opened, origins.keys().copied().collect::<Vec<_>>());
+        let sources: Vec<_> = opened
+            .iter()
+            .map(|index| {
+                let source = origins.get(index).unwrap().source.unwrap();
+                assert_eq!(source.dialect, "bedrock");
+                source.path
+            })
+            .collect();
+        assert_eq!(
+            sources,
+            [
+                "output.message.content[].text",
+                "output.message.content[].reasoningContent",
+                "output.message.content[].image"
+            ]
+        );
+    }
+}

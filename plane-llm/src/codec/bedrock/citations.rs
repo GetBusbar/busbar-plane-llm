@@ -34,12 +34,24 @@ pub(super) fn write_bedrock_citation(
     // `documentChar` takes the neutral char offsets, except for an Anthropic `page_location` /
     // `content_block_location` (per `kind`), whose offsets are page/block numbers and would
     // mislabel as characters; those stay unlocated (the title and quoted text still cross).
-    let char_offsets = !matches!(
-        c.kind.as_deref(),
-        Some(keys::PAGE_LOCATION)
-            | Some(keys::CONTENT_BLOCK_LOCATION)
-            | Some(keys::SEARCH_RESULT_LOCATION)
-    );
+    let answer_text_offsets = c.kind.as_deref() == Some("web_search_result_location")
+        || (c.kind.is_none() && url.is_some());
+    let char_offsets = !answer_text_offsets
+        && !matches!(
+            c.kind.as_deref(),
+            Some(keys::PAGE_LOCATION)
+                | Some(keys::CONTENT_BLOCK_LOCATION)
+                | Some(keys::SEARCH_RESULT_LOCATION)
+        );
+    if answer_text_offsets && (c.start_index.is_some() || c.end_index.is_some()) {
+        crate::codec::drops::writer_drop!(
+            crate::codec::drops::TEXT,
+            &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+            [dropped = 1,],
+            "dropping answer-text citation offsets on a bedrock egress: the web location carries \
+             the source URL but has no answer-text span"
+        );
+    }
     let mut located = false;
     if char_offsets {
         if let (Some(start), Some(end)) = (c.start_index, c.end_index) {

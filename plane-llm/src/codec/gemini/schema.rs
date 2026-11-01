@@ -101,6 +101,67 @@ pub(super) const GEMINI_SCHEMA_NAME_KEYED_MAPS: &[&str] = &[keys::PROPERTIES, "d
 /// 400ed on a `required` entry with no property (or an optional field became invisible to the
 /// model). Descending name-keyed maps via [`sanitize_gemini_schema_names`] keeps the filter on keywords.
 pub(super) fn sanitize_gemini_schema(schema: &serde_json::Value) -> serde_json::Value {
+    let mut cleaned = sanitize_gemini_schema_keywords(schema);
+    write_gemini_nullable_types(&mut cleaned);
+    cleaned
+}
+
+fn write_gemini_nullable_types(schema: &mut serde_json::Value) {
+    let Some(map) = schema.as_object_mut() else {
+        return;
+    };
+    let nullable_type = map.get(keys::TYPE).and_then(|value| {
+        let types = value.as_array()?;
+        let [first, second] = types.as_slice() else {
+            return None;
+        };
+        let non_null = match (first.as_str()?, second.as_str()?) {
+            ("null", other) | (other, "null") => other,
+            _ => return None,
+        };
+        match non_null {
+            "string" => Some("STRING"),
+            "number" => Some("NUMBER"),
+            "integer" => Some("INTEGER"),
+            "boolean" => Some("BOOLEAN"),
+            "array" => Some("ARRAY"),
+            "object" => Some("OBJECT"),
+            _ => None,
+        }
+    });
+    if let Some(ty) = nullable_type {
+        if map
+            .get(FIELD_NULLABLE)
+            .is_none_or(|v| v == &serde_json::Value::Bool(true))
+        {
+            map.insert(keys::TYPE.to_string(), serde_json::json!(ty));
+            map.insert(FIELD_NULLABLE.to_string(), serde_json::Value::Bool(true));
+        }
+    }
+    // Only schema positions contain types. Defaults, enums and examples are caller data.
+    for (key, value) in map {
+        match key.as_str() {
+            keys::PROPERTIES | "dependentSchemas" | "$defs" | keys::DEFINITIONS => {
+                if let Some(names) = value.as_object_mut() {
+                    for child in names.values_mut() {
+                        write_gemini_nullable_types(child);
+                    }
+                }
+            }
+            "items" | keys::ADDITIONAL_PROPERTIES => write_gemini_nullable_types(value),
+            "anyOf" | "oneOf" | "allOf" | "prefixItems" => {
+                if let Some(schemas) = value.as_array_mut() {
+                    for child in schemas {
+                        write_gemini_nullable_types(child);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn sanitize_gemini_schema_keywords(schema: &serde_json::Value) -> serde_json::Value {
     match schema {
         serde_json::Value::Object(map) => {
             let mut cleaned = serde_json::Map::new();
@@ -119,14 +180,14 @@ pub(super) fn sanitize_gemini_schema(schema: &serde_json::Value) -> serde_json::
                 let sanitized = if GEMINI_SCHEMA_NAME_KEYED_MAPS.contains(&k.as_str()) {
                     sanitize_gemini_schema_names(v)
                 } else {
-                    sanitize_gemini_schema(v)
+                    sanitize_gemini_schema_keywords(v)
                 };
                 cleaned.insert(k.clone(), sanitized);
             }
             serde_json::Value::Object(cleaned)
         }
         serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(sanitize_gemini_schema).collect())
+            serde_json::Value::Array(arr.iter().map(sanitize_gemini_schema_keywords).collect())
         }
         other => other.clone(),
     }
@@ -139,10 +200,10 @@ pub(super) fn sanitize_gemini_schema_names(value: &serde_json::Value) -> serde_j
     match value {
         serde_json::Value::Object(map) => serde_json::Value::Object(
             map.iter()
-                .map(|(k, v)| (k.clone(), sanitize_gemini_schema(v)))
+                .map(|(k, v)| (k.clone(), sanitize_gemini_schema_keywords(v)))
                 .collect(),
         ),
-        other => sanitize_gemini_schema(other),
+        other => sanitize_gemini_schema_keywords(other),
     }
 }
 

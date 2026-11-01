@@ -42,6 +42,7 @@ fn openai_logprobs_object_carries_the_required_refusal_member() {
         token: "hi".to_string(),
         logprob: -0.25,
         bytes: None,
+        bytes_null: false,
         top: Vec::new(),
     }];
     let out = crate::codec::logprob_wire::write_token_logprobs(&lps);
@@ -68,6 +69,7 @@ fn responses_part_logprobs_stay_a_bare_array_after_the_refusal_member_lands() {
             token: "hi".to_string(),
             logprob: -0.5,
             bytes: None,
+            bytes_null: false,
             top: Vec::new(),
         }],
         "hi",

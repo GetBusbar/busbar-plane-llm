@@ -1,6 +1,47 @@
+const INITIAL_THINKING_INDEX: usize = 0;
+
+use crate::codec::ir::{IrBlockOrigin, IrBlockOrigins, IrBlockSource};
+
+static SYSTEM_PART_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: COUNT_LABEL,
+    path: "systemInstruction.parts[]",
+};
+static REQUEST_PART_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: COUNT_LABEL,
+    path: "contents[].parts[]",
+};
+static FUNCTION_RESPONSE_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: COUNT_LABEL,
+    path: "contents[].parts[].functionResponse.response",
+};
+static FUNCTION_RESPONSE_PART_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: COUNT_LABEL,
+    path: "contents[].parts[].functionResponse.parts[]",
+};
+static RESPONSE_PART_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: COUNT_LABEL,
+    path: "candidates[].content.parts[]",
+};
+static GROUNDING_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: COUNT_LABEL,
+    path: "candidates[].groundingMetadata.groundingChunks[]",
+};
+static CITATION_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: COUNT_LABEL,
+    path: "candidates[]",
+};
+static LOGPROBS_SOURCE: IrBlockSource = IrBlockSource {
+    dialect: COUNT_LABEL,
+    path: "candidates[].logprobsResult",
+};
+
 use super::*;
 use crate::codec::dialect::ir_parse_error;
 use crate::codec::keys;
+
+// Citation-only text aggregates legacy citationSources and grounding entries, including
+// retained registry entries. Its native common container is the candidate; selecting one
+// current leaf would invent a source for the other contributors.
 
 /// What a translate attempt cannot carry from this dialect (`codec::drops`).
 static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
@@ -209,6 +250,7 @@ impl ProtocolReader for GeminiReader {
 
         let mut extra = serde_json::Map::new();
         let mut system_blocks: Vec<crate::codec::ir::IrBlock> = Vec::new();
+        let mut block_origins = IrBlockOrigins::default();
 
         // Per-request tool-call index. `functionCall` parts carry no id, so a deterministic non-empty
         // one is synthesized (`synth_tool_call_id`); the index keeps two same-named calls distinct so
@@ -223,6 +265,9 @@ impl ProtocolReader for GeminiReader {
                 for part in parts_arr {
                     if let Some(text_val) = part.get(keys::TEXT).and_then(|t| t.as_str()) {
                         system_blocks.push(crate::codec::ir::IrBlock::text(text_val.to_string()));
+                        block_origins
+                            .system
+                            .push(IrBlockOrigin::at(&SYSTEM_PART_SOURCE));
                     }
                 }
             }
@@ -248,6 +293,7 @@ impl ProtocolReader for GeminiReader {
                 };
 
                 let mut msg_content = Vec::new();
+                let mut msg_origins = Vec::new();
                 // Edge-validate `parts` (array-only): a present wrong-typed value would silently become
                 // an empty turn, so reject with a 400. Absent stays lenient.
                 let parts_val = content_val.get(FIELD_PARTS);
@@ -291,11 +337,13 @@ impl ProtocolReader for GeminiReader {
                                 kind: Some(crate::codec::ir::IrThinkingKind::Summary),
                                 signature_origin,
                             });
+                            msg_origins.push(IrBlockOrigin::at(&REQUEST_PART_SOURCE));
                         }
                         // Text part
                         else if let Some(text_val) = part.get(keys::TEXT).and_then(|t| t.as_str())
                         {
                             msg_content.push(crate::codec::ir::IrBlock::text(text_val.to_string()));
+                            msg_origins.push(IrBlockOrigin::at(&REQUEST_PART_SOURCE));
                         }
                         // FunctionCall (ToolUse)
                         else if let Some(func_call) = part.get(FIELD_FUNCTION_CALL) {
@@ -330,6 +378,7 @@ impl ProtocolReader for GeminiReader {
                                 cache_control: None,
                                 thought_signature,
                             });
+                            msg_origins.push(IrBlockOrigin::at(&REQUEST_PART_SOURCE));
                         }
                         // FunctionResponse (ToolResult)
                         else if let Some(func_resp) = part.get(FIELD_FUNCTION_RESPONSE) {
@@ -358,11 +407,24 @@ impl ProtocolReader for GeminiReader {
                                     && !o.contains_key(keys::OUTPUT)
                             });
                             let mut content = vec![crate::codec::ir::IrBlock::text(response_text)];
+                            let response_origin = if func_resp.get(keys::RESPONSE).is_some() {
+                                IrBlockOrigin::at(&FUNCTION_RESPONSE_SOURCE)
+                            } else {
+                                IrBlockOrigin::default()
+                            };
+                            let mut child_origins = vec![response_origin];
                             // A multimodal result's attachments ride in `functionResponse.parts` (GEM-07).
                             if let Some(parts) =
                                 func_resp.get(FIELD_PARTS).and_then(|p| p.as_array())
                             {
-                                content.extend(parts.iter().filter_map(read_gemini_media_part));
+                                for part in parts {
+                                    if let Some(block) = read_gemini_media_part(part) {
+                                        content.push(block);
+                                        child_origins.push(IrBlockOrigin::at(
+                                            &FUNCTION_RESPONSE_PART_SOURCE,
+                                        ));
+                                    }
+                                }
                             }
                             msg_content.push(crate::codec::ir::IrBlock::ToolResult {
                                 tool_use_id,
@@ -370,10 +432,15 @@ impl ProtocolReader for GeminiReader {
                                 is_error,
                                 cache_control: None,
                             });
+                            msg_origins.push(IrBlockOrigin {
+                                source: Some(&REQUEST_PART_SOURCE),
+                                children: child_origins,
+                            });
                         }
                         // InlineData (base64) / FileData (URI) to Image or Media by mime (`read_gemini_media_part`).
                         else if let Some(block) = read_gemini_media_part(part) {
                             msg_content.push(block);
+                            msg_origins.push(IrBlockOrigin::at(&REQUEST_PART_SOURCE));
                         }
                         // Any other part (`executableCode` / `codeExecutionResult`, a future kind) has no
                         // IR form: not read, and a translate attempt names the drop (`REQUEST_BLOCKS`).
@@ -384,6 +451,7 @@ impl ProtocolReader for GeminiReader {
                     role,
                     content: msg_content,
                 });
+                block_origins.messages.push(msg_origins);
             }
         }
 
@@ -540,6 +608,7 @@ impl ProtocolReader for GeminiReader {
         crate::codec::carry::keep_unmodelled(super::map::REQUEST, obj, &mut extra);
 
         let mut ir = crate::codec::ir::IrRequest {
+            block_origins,
             reasoning,
             logprobs,
             top_logprobs,
@@ -714,7 +783,7 @@ impl ProtocolReader for GeminiReader {
                         // tool-only stream starts tools at 0 (see the tool branch). The next tool index
                         // comes from persistent state (`open_tools`), not a per-chunk local, so indices
                         // stay stable across a response's SSE chunks.
-                        for part in parts_arr {
+                        for (part_index, part) in parts_arr.iter().enumerate() {
                             // A `thought: true` part is streamed reasoning, not answer text (as the
                             // buffered reader treats it). Route it to a Thinking block at index 0 ahead
                             // of the answer, like the OpenAI reader; otherwise a Gemini backend's
@@ -731,12 +800,17 @@ impl ProtocolReader for GeminiReader {
                                 if (!text.is_empty() || signature.is_some_and(|s| !s.is_empty()))
                                     && !state.text_block_open
                                     && state.open_tools.is_empty()
+                                    && state.next_ir_index == 0
                                 {
                                     state.reasoning_seen = true;
                                     if !state.thinking_block_open {
                                         state.thinking_block_open = true;
+                                        state.block_origins.insert(
+                                            INITIAL_THINKING_INDEX,
+                                            IrBlockOrigin::at(&RESPONSE_PART_SOURCE),
+                                        );
                                         out.push(IrStreamEvent::BlockStart {
-                                            index: 0,
+                                            index: INITIAL_THINKING_INDEX,
                                             block: crate::codec::ir::IrBlockMeta::Thinking {
                                                 // IR-17: a Gemini thought part is a summary.
                                                 kind: Some(
@@ -791,6 +865,9 @@ impl ProtocolReader for GeminiReader {
                                     if !state.text_block_open {
                                         state.text_block_open = true;
                                         state.text_index = Some(ti);
+                                        state
+                                            .block_origins
+                                            .insert(ti, IrBlockOrigin::at(&RESPONSE_PART_SOURCE));
                                         out.push(IrStreamEvent::BlockStart {
                                             index: ti,
                                             block: crate::codec::ir::IrBlockMeta::Text,
@@ -804,6 +881,8 @@ impl ProtocolReader for GeminiReader {
                                     if state.streamed_text.len().saturating_add(text.len())
                                         <= busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT
                                     {
+                                        let answer_start = state.streamed_text.len();
+                                        let char_start = state.streamed_chars;
                                         extend_char_marks(
                                             &mut state.streamed_char_marks,
                                             &mut state.streamed_chars,
@@ -811,6 +890,12 @@ impl ProtocolReader for GeminiReader {
                                             text,
                                         );
                                         state.streamed_text.push_str(text);
+                                        state.gemini_citations.record_part(
+                                            part_index,
+                                            (answer_start, char_start),
+                                            (ti, state.text_block_start),
+                                            (text.len(), state.streamed_chars - char_start),
+                                        );
                                     }
                                     out.push(IrStreamEvent::BlockDelta {
                                         index: ti,
@@ -853,16 +938,10 @@ impl ProtocolReader for GeminiReader {
                                 if !name_val.is_empty()
                                     && state.open_tools.len() < MAX_GEMINI_TOOL_FRAMES
                                 {
-                                    // A tool block claims the next free IR index from the monotone counter
-                                    // by order of first appearance, never reset, so a slot claimed before a
-                                    // terminal path cannot be re-claimed after it (the defect the openai_chat
-                                    // reader once had; see `claim_ir_index`). `text_base` is only for
-                                    // `synth_tool_call_id` (the id space is unrelated to IR indices).
-                                    // Recorded in `open_tools` so the finishReason handler emits a matching
-                                    // BlockStop. Any earlier text part counts as position 0, open or closed
-                                    // (`state.text_index.is_some()`), as in the buffered reader, so streamed
-                                    // and buffered answers name a call alike.
-                                    let text_base = usize::from(state.text_index.is_some());
+                                    // IR indices include text, thinking and generated media. The native
+                                    // call id instead uses the tool-call ordinal, as the buffered reader
+                                    // does, so inserting media never changes a tool's correlation id.
+                                    let tool_call_index = state.open_tools.len();
                                     let ir_idx = state.claim_ir_index();
                                     state.open_tools.insert(ir_idx);
 
@@ -875,7 +954,7 @@ impl ProtocolReader for GeminiReader {
                                     }
                                     // Close a still-open text block too (preamble-then-tool), or the text and
                                     // tool blocks overlap and break bracketing. Mirrors the finishReason text
-                                    // close (`text_base` was captured pre-close). The closed block keeps its
+                                    // close. The closed block keeps its
                                     // index (latched `text_block_closed`) so a later citation still annotates
                                     // its text instead of opening a new empty block beside the tool (GEM-20).
                                     if state.text_block_open {
@@ -893,8 +972,7 @@ impl ProtocolReader for GeminiReader {
 
                                     // Gemini streams carry no tool-call id; synthesize a stable non-empty one
                                     // keyed by (tool-position, name) so Anthropic/OpenAI writers emit one on
-                                    // `content_block_start`. Tool blocks occupy `text_base..text_base+n`, so
-                                    // `ir_idx - text_base` is the 0-based position. Salted with the chunk's
+                                    // `content_block_start`. Salted with the chunk's
                                     // `responseId` (repeated on every chunk) so two turns in one conversation
                                     // whose first call shares a name get different ids (see `synth_tool_call_id`).
                                     let turn_salt =
@@ -904,11 +982,14 @@ impl ProtocolReader for GeminiReader {
                                         .map(str::to_string)
                                         .unwrap_or_else(|| {
                                             synth_tool_call_id(
-                                                ir_idx - text_base,
+                                                tool_call_index,
                                                 &name_val,
                                                 turn_salt.unwrap_or(""),
                                             )
                                         });
+                                    state
+                                        .block_origins
+                                        .insert(ir_idx, IrBlockOrigin::at(&RESPONSE_PART_SOURCE));
                                     out.push(IrStreamEvent::BlockStart {
                                         index: ir_idx,
                                         block: crate::codec::ir::IrBlockMeta::ToolUse {
@@ -933,6 +1014,36 @@ impl ProtocolReader for GeminiReader {
                                     });
                                 }
                             }
+                            // Generated attachments use the same typed block as the buffered
+                            // reader. Close the preceding prose before the complete media block;
+                            // later prose claims a new index and keeps answer-relative citations.
+                            if let Some(block) = read_gemini_media_part(part) {
+                                if state.thinking_block_open {
+                                    state.thinking_block_open = false;
+                                    out.push(IrStreamEvent::BlockStop { index: 0 });
+                                }
+                                if state.text_block_open {
+                                    state.text_block_open = false;
+                                    state.text_block_closed = true;
+                                    out.push(IrStreamEvent::BlockStop {
+                                        index: state.text_index.unwrap_or(0),
+                                    });
+                                }
+                                let index = state.claim_ir_index();
+                                state
+                                    .block_origins
+                                    .insert(index, IrBlockOrigin::at(&RESPONSE_PART_SOURCE));
+                                out.push(IrStreamEvent::BlockStart {
+                                    index,
+                                    block: crate::codec::ir::IrBlockMeta::Image,
+                                    refusal: false,
+                                });
+                                out.push(IrStreamEvent::BlockDelta {
+                                    index,
+                                    delta: crate::codec::ir::IrDelta::MediaDelta(Box::new(block)),
+                                });
+                                out.push(IrStreamEvent::BlockStop { index });
+                            }
                         }
                     }
                 }
@@ -949,65 +1060,88 @@ impl ProtocolReader for GeminiReader {
             // characters (GEM-16): convert against the text streamed so far (`state.streamed_text`), as
             // the buffered path does against the full text. Metadata follows the text it cites, so the
             // anchor holds it; an offset past it clamps.
-            // Gemini restates the list cumulatively on every chunk, so only the tail past the watermark
-            // is emitted (the whole list made a client see the first citation once per chunk). A list
-            // shorter than the watermark (an upstream that resets) yields no delta, never a panic.
-            let all_citations = read_gemini_streamed_citations(
+            // The corpus list is cumulative; grounding chunks instead accumulate across responses.
+            let all_citations = match read_gemini_streamed_citations(
                 candidate,
                 &state.streamed_text,
                 &state.streamed_char_marks,
-            );
-            // GEM-16: converted offsets index the whole streamed answer; the IR indexes the annotated
-            // text block, so shift by where it began.
-            let block_start = i64::try_from(state.text_block_start).unwrap_or(i64::MAX);
-            let citations: Vec<crate::codec::ir::IrCitation> = all_citations
-                .get(state.citations_emitted..)
-                .unwrap_or_default()
-                .iter()
-                .cloned()
-                .map(|mut c| {
-                    if block_start > 0 {
-                        c.start_index = c.start_index.map(|s| (s - block_start).max(0));
-                        c.end_index = c.end_index.map(|e| (e - block_start).max(0));
+                &mut state.gemini_citations,
+                &mut state.citations_emitted,
+            ) {
+                Ok(citations) => citations,
+                Err(citations) => {
+                    crate::codec::drops::writer_drop!(
+                        crate::codec::drops::wire("candidates[].groundingMetadata"),
+                        &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                        [],
+                        "grounding metadata exceeded the existing citation retention bound; \
+                         unretainable citations are omitted without changing text or usage"
+                    );
+                    citations
+                }
+            };
+            let mut by_block: std::collections::BTreeMap<usize, Vec<crate::codec::ir::IrCitation>> =
+                std::collections::BTreeMap::new();
+            for mut c in all_citations {
+                let (target, start) = c
+                    .start_index
+                    .and_then(|start| state.gemini_citations.owner(start))
+                    .unwrap_or((
+                        state.text_index.unwrap_or(usize::MAX),
+                        state.text_block_start,
+                    ));
+                let block_start = i64::try_from(start).unwrap_or(i64::MAX);
+                if block_start > 0 {
+                    c.start_index = c.start_index.map(|s| (s - block_start).max(0));
+                    c.end_index = c.end_index.map(|e| (e - block_start).max(0));
+                }
+                by_block.entry(target).or_default().push(c);
+            }
+            for (target, citations) in by_block {
+                if target != usize::MAX && state.text_index != Some(target) {
+                    out.push(IrStreamEvent::BlockDelta {
+                        index: target,
+                        delta: crate::codec::ir::IrDelta::CitationsDelta(citations),
+                    });
+                    continue;
+                }
+                if !citations.is_empty() && state.text_block_closed && !state.text_block_open {
+                    // These sources cite text a functionCall already closed (GEM-20): the citation annotates
+                    // that block at its index, not a new empty text block beside the open tool.
+                    if let Some(ti) = state.text_index {
+                        out.push(IrStreamEvent::BlockDelta {
+                            index: ti,
+                            delta: crate::codec::ir::IrDelta::CitationsDelta(citations),
+                        });
                     }
-                    c
-                })
-                .collect();
-            state.citations_emitted = state.citations_emitted.max(all_citations.len());
-            if !citations.is_empty() && state.text_block_closed && !state.text_block_open {
-                // These sources cite text a functionCall already closed (GEM-20): the citation annotates
-                // that block at its index, not a new empty text block beside the open tool.
-                if let Some(ti) = state.text_index {
+                } else if !citations.is_empty() {
+                    // Claim the text block's index from the monotone counter (`claim_ir_index`), like the text
+                    // arm; otherwise a citation/logprobs delta before the first text part could reuse an index
+                    // another block claimed and corrupt the cross-protocol index mapping.
+                    let ti = state.text_index.unwrap_or_else(|| state.claim_ir_index());
+                    if !state.text_block_open {
+                        // Close a still-open thinking block first (as the text arm does), or two blocks are open.
+                        if state.thinking_block_open {
+                            state.thinking_block_open = false;
+                            out.push(IrStreamEvent::BlockStop { index: 0 });
+                        }
+                        state.text_block_open = true;
+                        state.text_index = Some(ti);
+                        state
+                            .block_origins
+                            .insert(ti, IrBlockOrigin::at(&CITATION_SOURCE));
+                        out.push(IrStreamEvent::BlockStart {
+                            index: ti,
+                            block: crate::codec::ir::IrBlockMeta::Text,
+                            refusal: false,
+                        });
+                    }
                     out.push(IrStreamEvent::BlockDelta {
                         index: ti,
                         delta: crate::codec::ir::IrDelta::CitationsDelta(citations),
                     });
                 }
-            } else if !citations.is_empty() {
-                // Claim the text block's index from the monotone counter (`claim_ir_index`), like the text
-                // arm; otherwise a citation/logprobs delta before the first text part could reuse an index
-                // another block claimed and corrupt the cross-protocol index mapping.
-                let ti = state.text_index.unwrap_or_else(|| state.claim_ir_index());
-                if !state.text_block_open {
-                    // Close a still-open thinking block first (as the text arm does), or two blocks are open.
-                    if state.thinking_block_open {
-                        state.thinking_block_open = false;
-                        out.push(IrStreamEvent::BlockStop { index: 0 });
-                    }
-                    state.text_block_open = true;
-                    state.text_index = Some(ti);
-                    out.push(IrStreamEvent::BlockStart {
-                        index: ti,
-                        block: crate::codec::ir::IrBlockMeta::Text,
-                        refusal: false,
-                    });
-                }
-                out.push(IrStreamEvent::BlockDelta {
-                    index: ti,
-                    delta: crate::codec::ir::IrDelta::CitationsDelta(citations),
-                });
             }
-
             // 2c. Streaming logprobs, carried at the candidate level (`candidates[].logprobsResult`).
             // Anchored like citations: the delta attaches to the text block's index (opening it if no
             // text part has arrived) so an OpenAI-dialect stream can re-emit `choices[].logprobs.content[]`.
@@ -1029,6 +1163,9 @@ impl ProtocolReader for GeminiReader {
                     }
                     state.text_block_open = true;
                     state.text_index = Some(ti);
+                    state
+                        .block_origins
+                        .insert(ti, IrBlockOrigin::at(&LOGPROBS_SOURCE));
                     out.push(IrStreamEvent::BlockStart {
                         index: ti,
                         block: crate::codec::ir::IrBlockMeta::Text,
@@ -1173,9 +1310,15 @@ impl ProtocolReader for GeminiReader {
         // candidate (only `finishReason` + `safetyRatings`); treat it as empty and continue to the
         // `finishReason` mapping, as the streaming reader does. Hard-failing gave a spurious 500.
         let mut content: Vec<crate::codec::ir::IrBlock> = Vec::new();
+        let mut block_origins = IrBlockOrigins::default();
         // A Google-Search-grounded answer: the IR hosted web-search record, ahead of the text (its
         // spans keep riding the text blocks' citations).
-        content.extend(super::citations::read_grounding_record(candidate));
+        if let Some(block) = super::citations::read_grounding_record(candidate) {
+            content.push(block);
+            block_origins
+                .response
+                .push(IrBlockOrigin::at(&GROUNDING_SOURCE));
+        }
         // Per-response tool-call index feeding `synth_tool_call_id` (Gemini carries no tool id).
         let mut tool_call_index: usize = 0;
         // This response's `responseId`, salted into every synthesized tool-call id so a different turn
@@ -1223,11 +1366,17 @@ impl ProtocolReader for GeminiReader {
                         kind: Some(crate::codec::ir::IrThinkingKind::Summary),
                         signature_origin,
                     });
+                    block_origins
+                        .response
+                        .push(IrBlockOrigin::at(&RESPONSE_PART_SOURCE));
                 }
                 // Text part → IrBlock::Text
                 else if let Some(text) = part.get(keys::TEXT).and_then(|t| t.as_str()) {
                     if !text.is_empty() {
                         content.push(crate::codec::ir::IrBlock::text(text.to_string()));
+                        block_origins
+                            .response
+                            .push(IrBlockOrigin::at(&RESPONSE_PART_SOURCE));
                     }
                 }
 
@@ -1265,12 +1414,18 @@ impl ProtocolReader for GeminiReader {
                         cache_control: None,
                         thought_signature,
                     });
+                    block_origins
+                        .response
+                        .push(IrBlockOrigin::at(&RESPONSE_PART_SOURCE));
                 }
 
                 // A generated image / audio part (`inlineData` / `fileData`) is answer content (GEM-17):
                 // read into Image / Media so a target with a response attachment slot (Bedrock `image`) gets it.
                 if let Some(block) = read_gemini_media_part(part) {
                     content.push(block);
+                    block_origins
+                        .response
+                        .push(IrBlockOrigin::at(&RESPONSE_PART_SOURCE));
                 }
 
                 // Any other part (`executableCode` / `codeExecutionResult`, a future kind) has no IR form;
@@ -1334,6 +1489,7 @@ impl ProtocolReader for GeminiReader {
         let logprobs = read_gemini_logprobs(candidate.get(FIELD_LOGPROBS_RESULT));
 
         Ok(crate::codec::ir::IrResponse {
+            block_origins,
             logprobs,
             role: crate::codec::ir::IrRole::Assistant,
             content,
@@ -1414,3 +1570,154 @@ fn close_open_blocks(
 #[cfg(test)]
 #[path = "tests/unreadable_count_refusal_tests.rs"]
 mod unreadable_count_refusal_tests;
+
+#[cfg(test)]
+mod native_origin_tests {
+    use super::*;
+    use crate::codec::drops;
+    use crate::codec::ir::IrBlockOrigin;
+    use serde_json::json;
+
+    fn projected_paths(origin: Option<&IrBlockOrigin>) -> Vec<String> {
+        let (_, paths) = drops::scope(
+            drops::Seam {
+                direction: drops::Direction::Request,
+                ingress: COUNT_LABEL,
+                egress: crate::codec::anthropic::DECL.name,
+            },
+            || {
+                drops::with_block_origin(origin, || {
+                    drops::note(drops::Dropped::member(
+                        drops::IMAGE,
+                        &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                        "projection probe",
+                    ));
+                });
+            },
+        );
+        paths
+    }
+
+    #[test]
+    fn nested_result_sources_survive_skipped_parts_and_missing_response() {
+        let body = json!({
+            "systemInstruction": {"parts": [{"text": "rules"}]},
+            "contents": [{"parts": [
+                {"futurePart": {}},
+                {"functionResponse": {"name": "lookup", "response": {"output": "ok"},
+                    "parts": [{"futurePart": {}}, {"fileData": {"mimeType": "image/png", "fileUri": "https://example.test/image"}}]}},
+                {"functionResponse": {"name": "empty"}}
+            ]}]
+        });
+        let request = GeminiReader.read_request(&body).unwrap();
+        let [system] = request.block_origins.system.as_slice() else {
+            panic!("system text");
+        };
+        assert_eq!(projected_paths(Some(system)), ["systemInstruction.parts[]"]);
+        let [message] = request.block_origins.messages.as_slice() else {
+            panic!("one native turn");
+        };
+        let [result, missing] = message.as_slice() else {
+            panic!("unknown part contributes no block");
+        };
+        let [response, image] = result.children.as_slice() else {
+            panic!("result text and decoded attachment");
+        };
+        assert_eq!(
+            projected_paths(Some(response)),
+            ["contents[].parts[].functionResponse.response"]
+        );
+        assert_eq!(
+            projected_paths(Some(image)),
+            ["contents[].parts[].functionResponse.parts[]"]
+        );
+        let [synthetic] = missing.children.as_slice() else {
+            panic!("synthetic null text");
+        };
+        assert!(synthetic.source.is_none());
+    }
+
+    #[test]
+    fn buffered_grounding_and_multi_output_part_keep_their_actual_containers() {
+        let body = json!({"candidates": [{
+            "groundingMetadata": {"groundingChunks": [{"web": {"uri": "https://example.test/source"}}]},
+            "content": {"parts": [{"futurePart": {}}, {
+                "text": "answer", "functionCall": {"name": "lookup", "args": {}},
+                "inlineData": {"mimeType": "image/png", "data": "aW1hZ2U="}
+            }]}
+        }]});
+        let response = GeminiReader
+            .read_response(crate::codec::test_host::HOST, &body)
+            .unwrap();
+        let (grounding, parts) = response.block_origins.response.split_first().unwrap();
+        assert_eq!(
+            projected_paths(Some(grounding)),
+            ["candidates[].groundingMetadata.groundingChunks[]"]
+        );
+        assert!(!parts.is_empty());
+        for origin in parts {
+            assert_eq!(
+                projected_paths(Some(origin)),
+                ["candidates[].content.parts[]"]
+            );
+        }
+        assert_eq!(
+            response.block_origins.response.len(),
+            response.content.len()
+        );
+    }
+
+    #[test]
+    fn streaming_origins_follow_emitted_indices_across_text_tools_and_media() {
+        let mut state = crate::codec::ir::StreamDecodeState::default();
+        let body = json!({"candidates": [{"content": {"parts": [
+            {"futurePart": {}}, {"text": "before"},
+            {"functionCall": {"name": "lookup", "args": {}}},
+            {"inlineData": {"mimeType": "image/png", "data": "aW1hZ2U="}},
+            {"text": "after"}
+        ]}}]});
+        let events =
+            GeminiReader.read_response_events(crate::codec::test_host::HOST, "", &body, &mut state);
+        let mut opened = std::collections::BTreeSet::new();
+        for event in events {
+            if let IrStreamEvent::BlockStart { index, .. } = event {
+                assert!(opened.insert(index));
+                assert_eq!(
+                    projected_paths(state.block_origins.get(&index)),
+                    ["candidates[].content.parts[]"]
+                );
+            }
+        }
+        assert!(!opened.is_empty());
+        let recorded: std::collections::BTreeSet<_> = state.block_origins.keys().copied().collect();
+        assert_eq!(opened, recorded);
+
+        let mut omitted = crate::codec::ir::StreamDecodeState::default();
+        GeminiReader.read_response_events(
+            crate::codec::test_host::HOST,
+            "",
+            &json!({"candidates": [{"content": {"parts": [{"futurePart": {}}]}}]}),
+            &mut omitted,
+        );
+        assert!(omitted.block_origins.is_empty());
+    }
+
+    #[test]
+    fn citation_only_aggregate_uses_the_native_candidate_without_inventing_a_leaf() {
+        let mut state = crate::codec::ir::StreamDecodeState::default();
+        let body = json!({"candidates": [{
+            "citationMetadata": {"citationSources": [{"uri": "https://example.test/legacy"}]},
+            "groundingMetadata": {"groundingChunks": [{"web": {"uri": "https://example.test/grounding"}}]}
+        }]});
+        let events =
+            GeminiReader.read_response_events(crate::codec::test_host::HOST, "", &body, &mut state);
+        let origin = events
+            .iter()
+            .find_map(|event| match event {
+                IrStreamEvent::BlockStart { index, .. } => state.block_origins.get(index),
+                _ => None,
+            })
+            .expect("citation-only text start");
+        assert_eq!(projected_paths(Some(origin)), ["candidates[]"]);
+    }
+}

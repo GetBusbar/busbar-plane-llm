@@ -57,6 +57,7 @@ fn openai_logprobs_codec_round_trips_bytes_and_top() {
         token: "Hi".into(),
         logprob: -0.1,
         bytes: None,
+        bytes_null: false,
         top: vec![],
     }];
     let out = write_openai_logprobs(&no_bytes);

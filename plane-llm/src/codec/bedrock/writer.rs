@@ -127,10 +127,13 @@ impl ProtocolWriter for BedrockWriter {
         ev: &IrStreamEvent,
     ) -> Option<(String, serde_json::Value)> {
         match ev {
-            IrStreamEvent::MessageStart { .. } => Some((
-                ET_MESSAGE_START.to_string(),
-                serde_json::json!({ (keys::ROLE): keys::ASSISTANT }),
-            )),
+            IrStreamEvent::MessageStart { .. } => {
+                self.begin_stream();
+                Some((
+                    ET_MESSAGE_START.to_string(),
+                    serde_json::json!({ (keys::ROLE): keys::ASSISTANT }),
+                ))
+            }
 
             IrStreamEvent::BlockStart {
                 index,
@@ -147,7 +150,7 @@ impl ProtocolWriter for BedrockWriter {
                     None
                 }
                 crate::codec::ir::IrBlockMeta::ToolUse { id, name } => {
-                    self.mark_block_open(*index);
+                    let index = self.mark_block_open(*index);
                     Some((
                         ET_CONTENT_BLOCK_START.to_string(),
                         serde_json::json!({
@@ -171,85 +174,95 @@ impl ProtocolWriter for BedrockWriter {
                 crate::codec::ir::IrBlockMeta::Image => None,
             },
 
-            IrStreamEvent::BlockDelta { index, delta } => match delta {
-                crate::codec::ir::IrDelta::TextDelta(text) => Some((
-                    ET_CONTENT_BLOCK_DELTA.to_string(),
-                    serde_json::json!({
-                        (super::CONTENT_BLOCK_INDEX): index,
-                        (keys::DELTA): { (keys::TEXT): text }
-                    }),
-                )),
+            IrStreamEvent::BlockDelta { index, delta } => {
+                let index = self.wire_index(*index);
+                match delta {
+                    crate::codec::ir::IrDelta::TextDelta(text) => Some((
+                        ET_CONTENT_BLOCK_DELTA.to_string(),
+                        serde_json::json!({
+                            (super::CONTENT_BLOCK_INDEX): index,
+                            (keys::DELTA): { (keys::TEXT): text }
+                        }),
+                    )),
 
-                crate::codec::ir::IrDelta::InputJsonDelta(json_str) => Some((
-                    ET_CONTENT_BLOCK_DELTA.to_string(),
-                    serde_json::json!({
-                        (super::CONTENT_BLOCK_INDEX): index,
-                        (keys::DELTA): { (super::TOOL_USE_CAMEL): { (keys::INPUT): json_str } }
-                    }),
-                )),
+                    crate::codec::ir::IrDelta::InputJsonDelta(json_str) => Some((
+                        ET_CONTENT_BLOCK_DELTA.to_string(),
+                        serde_json::json!({
+                            (super::CONTENT_BLOCK_INDEX): index,
+                            (keys::DELTA): { (super::TOOL_USE_CAMEL): { (keys::INPUT): json_str } }
+                        }),
+                    )),
 
-                // Streamed thinking. Each `ReasoningContentBlockDelta` frame carries one of `text`,
-                // `signature` or `redactedContent`, so each IR delta is exactly one frame. Streaming
-                // inverse of `bedrock_reasoning_block`.
-                crate::codec::ir::IrDelta::ThinkingDelta(text) => Some((
-                    ET_CONTENT_BLOCK_DELTA.to_string(),
-                    serde_json::json!({
-                        (super::CONTENT_BLOCK_INDEX): index,
-                        (keys::DELTA): { (super::REASONING_CONTENT): { (keys::TEXT): text } }
-                    }),
-                )),
+                    // Streamed thinking. Each `ReasoningContentBlockDelta` frame carries one of `text`,
+                    // `signature` or `redactedContent`, so each IR delta is exactly one frame. Streaming
+                    // inverse of `bedrock_reasoning_block`.
+                    crate::codec::ir::IrDelta::ThinkingDelta(text) => Some((
+                        ET_CONTENT_BLOCK_DELTA.to_string(),
+                        serde_json::json!({
+                            (super::CONTENT_BLOCK_INDEX): index,
+                            (keys::DELTA): { (super::REASONING_CONTENT): { (keys::TEXT): text } }
+                        }),
+                    )),
 
-                // A reasoning signature token re-emits under `signature`.
-                crate::codec::ir::IrDelta::SignatureDelta(sig) => Some((
-                    ET_CONTENT_BLOCK_DELTA.to_string(),
-                    serde_json::json!({
-                        (super::CONTENT_BLOCK_INDEX): index,
-                        (keys::DELTA): { (super::REASONING_CONTENT): { (keys::SIGNATURE): sig } }
-                    }),
-                )),
-                // A redacted-reasoning delta re-emits its bytes under `redactedContent`, never as a
-                // plaintext `signature`. IR-21: the stream has no generated-media delta member.
-                crate::codec::ir::IrDelta::MediaDelta(_) => None,
-                crate::codec::ir::IrDelta::RedactedReasoningDelta(redacted) => Some((
-                    ET_CONTENT_BLOCK_DELTA.to_string(),
-                    serde_json::json!({
-                        (super::CONTENT_BLOCK_INDEX): index,
-                        (keys::DELTA): { (super::REASONING_CONTENT): { (super::REDACTED_CONTENT): redacted } }
-                    }),
-                )),
-                // Streamed citations: `ContentBlockDelta` has a `citation` member (same field set as the
-                // buffered `Citation`) interleaved with `text` at the same `contentBlockIndex`.
-                // Suppressing it made `stream: false` return sources and `stream: true` none.
-                //
-                // A native `citation` delta carries one citation, so this single-frame arm frames the
-                // first of the batch; `write_response_events` walks a multi-citation delta, re-entering
-                // here per citation. A direct caller therefore still gets a well-formed frame.
-                crate::codec::ir::IrDelta::CitationsDelta(cits) => {
-                    let c = cits.first()?;
-                    match super::write_bedrock_citation(c) {
-                        Some(citation) => Some((
-                            ET_CONTENT_BLOCK_DELTA.to_string(),
-                            serde_json::json!({
-                                (super::CONTENT_BLOCK_INDEX): index,
-                                (keys::DELTA): { (keys::CITATION): citation }
-                            }),
-                        )),
-                        // All neutral fields empty: nothing for the union, and `{}` would be malformed. Dropped with a warn.
-                        None => {
-                            crate::codec::drops::writer_drop!(
+                    // A reasoning signature token re-emits under `signature`.
+                    crate::codec::ir::IrDelta::SignatureDelta(sig) => Some((
+                        ET_CONTENT_BLOCK_DELTA.to_string(),
+                        serde_json::json!({
+                            (super::CONTENT_BLOCK_INDEX): index,
+                            (keys::DELTA): { (super::REASONING_CONTENT): { (keys::SIGNATURE): sig } }
+                        }),
+                    )),
+                    // A redacted-reasoning delta re-emits its bytes under `redactedContent`, never as a
+                    // plaintext `signature`. IR-21: the stream has no generated-media delta member.
+                    crate::codec::ir::IrDelta::MediaDelta(block) => {
+                        crate::codec::drops::writer_drop!(
+                        crate::codec::drops::block(block.kind_name()),
+                        &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                        [], "dropping generated media on Bedrock streaming egress: no native media delta"
+                    );
+                        None
+                    }
+                    crate::codec::ir::IrDelta::RedactedReasoningDelta(redacted) => Some((
+                        ET_CONTENT_BLOCK_DELTA.to_string(),
+                        serde_json::json!({
+                            (super::CONTENT_BLOCK_INDEX): index,
+                            (keys::DELTA): { (super::REASONING_CONTENT): { (super::REDACTED_CONTENT): redacted } }
+                        }),
+                    )),
+                    // Streamed citations: `ContentBlockDelta` has a `citation` member (same field set as the
+                    // buffered `Citation`) interleaved with `text` at the same `contentBlockIndex`.
+                    // Suppressing it made `stream: false` return sources and `stream: true` none.
+                    //
+                    // A native `citation` delta carries one citation, so this single-frame arm frames the
+                    // first of the batch; `write_response_events` walks a multi-citation delta, re-entering
+                    // here per citation. A direct caller therefore still gets a well-formed frame.
+                    crate::codec::ir::IrDelta::CitationsDelta(cits) => {
+                        let c = cits.first()?;
+                        match super::write_bedrock_citation(c) {
+                            Some(citation) => Some((
+                                ET_CONTENT_BLOCK_DELTA.to_string(),
+                                serde_json::json!({
+                                    (super::CONTENT_BLOCK_INDEX): index,
+                                    (keys::DELTA): { (keys::CITATION): citation }
+                                }),
+                            )),
+                            // All neutral fields empty: nothing for the union, and `{}` would be malformed. Dropped with a warn.
+                            None => {
+                                crate::codec::drops::writer_drop!(
                                 crate::codec::drops::TEXT,
                                 &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
                                 [],
                                 "dropping a streamed citation on a bedrock egress: it carried no \
                                  title, url, quoted text or resolvable character location, so there \
                                  is no populated member for the Converse `citation` delta union");
-                            None
+                                None
+                            }
                         }
                     }
+                    // Converse has no logprobs shape; dropped.
+                    crate::codec::ir::IrDelta::LogprobsDelta(_) => None,
                 }
-                // Converse has no logprobs shape; dropped.
-                crate::codec::ir::IrDelta::LogprobsDelta(_) => None,
-            },
+            }
 
             // An untracked index (Image, whose start had no projection) is not closed, which would
             // orphan a `contentBlockStop`.
@@ -257,7 +270,7 @@ impl ProtocolWriter for BedrockWriter {
                 if self.take_block_open(*index) {
                     Some((
                         ET_CONTENT_BLOCK_STOP.to_string(),
-                        serde_json::json!({ (super::CONTENT_BLOCK_INDEX): index }),
+                        serde_json::json!({ (super::CONTENT_BLOCK_INDEX): self.wire_index(*index) }),
                     ))
                 } else {
                     None
@@ -312,7 +325,10 @@ impl ProtocolWriter for BedrockWriter {
                 }
             },
 
-            IrStreamEvent::MessageStop => None,
+            IrStreamEvent::MessageStop => {
+                self.finish_stream();
+                None
+            }
 
             // A mid-stream error. The native form is a modeled-exception event-stream frame
             // (`:message-type: exception`), which `StreamTranslate` emits via `write_response_exception`
@@ -320,6 +336,7 @@ impl ProtocolWriter for BedrockWriter {
             // to an `event`-typed frame naming a real stream-union exception
             // (`bedrock_stream_exception_for`, not the request-level HTTP set), never a literal `"error"`.
             IrStreamEvent::Error(err) => {
+                self.finish_stream();
                 let (exception_name, message) = bedrock_stream_exception_for(err);
                 Some((
                     exception_name.to_string(),
@@ -372,6 +389,7 @@ impl ProtocolWriter for BedrockWriter {
         _host: &dyn busbar_contract::codec::CodecHost,
         err: &busbar_contract::protocol::IrError,
     ) -> Option<(String, String)> {
+        self.finish_stream();
         let (exception_name, message) = bedrock_stream_exception_for(err);
         Some((exception_name.to_string(), message))
     }
@@ -383,7 +401,10 @@ impl ProtocolWriter for BedrockWriter {
     ) -> serde_json::Value {
         let mut content_arr: Vec<serde_json::Value> = Vec::new();
 
-        for block in &resp.content {
+        for (block_index, block) in resp.content.iter().enumerate() {
+            let _block_origin =
+                crate::codec::drops::block_scope(resp.block_origins.response.get(block_index));
+
             match block {
                 crate::codec::ir::IrBlock::Text {
                     text, citations, ..
@@ -663,6 +684,9 @@ impl BedrockWriter {
             // splice re-emits the verbatim block, so the modelled copy is not written.
             let guard_modelled = stashed_ir_indices([system_guard_content], None);
             for (sys_idx, block) in req.system.iter().enumerate() {
+                let _block_origin =
+                    crate::codec::drops::block_scope(req.block_origins.system.get(sys_idx));
+
                 if guard_modelled.contains(&sys_idx) {
                     continue;
                 }
@@ -697,6 +721,13 @@ impl BedrockWriter {
         let emit_inline_message_cache = message_cache_points.is_none();
         let mut msgs_arr: Vec<serde_json::Value> = Vec::new();
         for (msg_idx, msg) in req.messages.iter().enumerate() {
+            let _message_origins = req
+                .block_origins
+                .messages
+                .get(msg_idx)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+
             let role_str = match msg.role {
                 crate::codec::ir::IrRole::User => keys::USER,
                 crate::codec::ir::IrRole::Assistant => keys::ASSISTANT,
@@ -715,6 +746,9 @@ impl BedrockWriter {
             let stashed_here =
                 stashed_ir_indices([message_doc_video, message_guard_content], Some(msg_idx));
             for (block_idx, block) in msg.content.iter().enumerate() {
+                let _block_origin =
+                    crate::codec::drops::block_scope(_message_origins.get(block_idx));
+
                 // A block the reader also parked verbatim (`DOC_VIDEO_SENTINEL` / `GUARD_CONTENT_SENTINEL`)
                 // at this (message, block) position. The stash is spliced back below, so writing the
                 // modelled projection too would emit it twice. The verbatim block wins, keeping a
@@ -796,7 +830,9 @@ impl BedrockWriter {
                         ..
                     } => {
                         let mut inner_content: Vec<serde_json::Value> = Vec::new();
-                        for inner_block in content {
+                        for (block_index, inner_block) in content.iter().enumerate() {
+                            let _block_origin = crate::codec::drops::child_scope(block_index);
+
                             match inner_block {
                                 b @ crate::codec::ir::IrBlock::Text { .. }
                                     if b.as_search_result().is_some() =>

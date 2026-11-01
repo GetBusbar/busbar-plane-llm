@@ -118,6 +118,26 @@ leaf_op! {
     fn taps_usage(&self) -> bool {
         true
     }
+    fn extract_usage(
+        &self,
+        _host: &dyn busbar_contract::codec::CodecHost,
+        _ingress: &str,
+        body: &[u8],
+    ) -> Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault>
+    {
+        let value: Value = crate::codec::json::parse(body)
+            .map_err(|_| busbar_contract::codec::UsageTapFault::Decode)?;
+        Ok(read_embeddings_usage(&value))
+    }
+    fn recover_response_billing(
+        &self,
+        _host: &dyn busbar_contract::codec::CodecHost,
+        body: &[u8],
+    ) -> Option<busbar_contract::billing::Billing> {
+        let value: Value = crate::codec::json::parse(body).ok()?;
+        read_embeddings_usage(&value).map(busbar_contract::billing::Billing::Tokens)
+    }
+
 }
 
 /// IR to Cohere v2 embed request wire ([`CohereEmbeddings::write_request`]).
@@ -224,6 +244,27 @@ leaf_op! {
     fn taps_usage(&self) -> bool {
         true
     }
+    fn extract_usage(
+        &self,
+        _host: &dyn busbar_contract::codec::CodecHost,
+        _ingress: &str,
+        body: &[u8],
+    ) -> Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault>
+    {
+        crate::codec::rerank_wire::extract_usage(body, super::VENDOR_NAME)
+    }
+    fn recover_response_billing(
+        &self,
+        _host: &dyn busbar_contract::codec::CodecHost,
+        body: &[u8],
+    ) -> Option<busbar_contract::billing::Billing> {
+        let value: Value = crate::codec::json::parse(body).ok()?;
+        crate::codec::ir::rerank::RerankResp {
+            search_units: crate::codec::rerank_wire::read_search_units(&value, super::VENDOR_NAME),
+            ..Default::default()
+        }.billing()
+    }
+
 }
 
 /// IR to Cohere v2 rerank request wire ([`CohereRerank::write_request`]).
@@ -286,12 +327,14 @@ pub fn read_embeddings_request(
     let texts = wire
         .get(TEXTS)
         .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(|x| x.as_str().map(str::to_string))
-                .collect::<Vec<_>>()
+        .ok_or_else(|| IngressReject::BadRequest("embed request requires `texts`".into()))?
+        .iter()
+        .map(|text| {
+            text.as_str().map(str::to_string).ok_or_else(|| {
+                IngressReject::BadRequest("embed texts entries must be strings".into())
+            })
         })
-        .unwrap_or_default();
+        .collect::<Result<Vec<_>, _>>()?;
     if texts.is_empty() {
         return Err(IngressReject::BadRequest(
             "embed request requires `texts`".into(),
@@ -331,6 +374,23 @@ pub fn read_embeddings_request(
     })
 }
 
+fn read_embeddings_usage(value: &Value) -> Option<busbar_contract::billing::TokenUsage> {
+    crate::codec::usage_count::billed_count_opt(
+        value
+            .get(keys::META)
+            .and_then(|m| m.get(keys::BILLED_UNITS)),
+        keys::INPUT_TOKENS,
+    )
+    .unwrap_or_else(|unreadable| {
+        crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
+        None
+    })
+    .map(|n| busbar_contract::billing::TokenUsage {
+        input: n,
+        ..Default::default()
+    })
+}
+
 /// Wire to concrete `EmbeddingsResp`, shared by the leaf-op handle and the `leaf_codec` read dispatch.
 pub fn read_embeddings_response(
     wire: &[u8],
@@ -351,6 +411,7 @@ pub fn read_embeddings_response(
         })
         .collect();
     let count = arrays.iter().map(|(_, a)| a.len()).max().unwrap_or(0);
+    let malformed = || CodecError::Malformed("invalid Cohere embedding vector".into());
     let embeddings: Vec<EmbeddingItem> = (0..count)
         .map(|idx| {
             let mut item = EmbeddingItem {
@@ -358,46 +419,43 @@ pub fn read_embeddings_response(
                 ..Default::default()
             };
             for (enc, arr) in &arrays {
-                let Some(cell) = arr.get(idx) else { continue };
+                let cell = arr.get(idx).ok_or_else(malformed)?;
                 let vd = match enc {
-                    EncFmt::Float => cell.as_array().map(|f| {
-                        VectorData::Float(
-                            f.iter()
-                                .filter_map(|x| x.as_f64().map(|n| n as f32))
-                                .collect(),
-                        )
-                    }),
-                    EncFmt::Base64 => cell.as_str().map(|s| VectorData::Base64(s.to_string())),
-                    // int8/uint8/binary/ubinary arrive as JSON integer arrays.
-                    _ => cell.as_array().map(|f| {
-                        VectorData::Int(
-                            f.iter()
-                                .filter_map(|x| x.as_i64().map(|n| n as i32))
-                                .collect(),
-                        )
-                    }),
+                    EncFmt::Float => VectorData::Float(
+                        cell.as_array()
+                            .ok_or_else(malformed)?
+                            .iter()
+                            .map(|value| {
+                                let number = value.as_f64().ok_or_else(malformed)? as f32;
+                                number.is_finite().then_some(number).ok_or_else(malformed)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ),
+                    EncFmt::Base64 => {
+                        VectorData::Base64(cell.as_str().ok_or_else(malformed)?.to_string())
+                    }
+                    // Reject values the IR cannot represent; filtering or narrowing would corrupt dimensions.
+                    _ => VectorData::Int(
+                        cell.as_array()
+                            .ok_or_else(malformed)?
+                            .iter()
+                            .map(|value| {
+                                value
+                                    .as_i64()
+                                    .and_then(|number| i32::try_from(number).ok())
+                                    .ok_or_else(malformed)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ),
                 };
-                if let Some(vd) = vd {
-                    item.vectors.insert(*enc, vd);
-                }
+                item.vectors.insert(*enc, vd);
             }
-            item
+            Ok(item)
         })
-        .collect();
+        .collect::<Result<_, CodecError>>()?;
     // Billed count: absent or `null` is no usage; an unreadable one is refused alone
     // (`refused_count`) and bills nothing, while the vectors are served.
-    let usage = crate::codec::usage_count::billed_count_opt(
-        v.get(keys::META).and_then(|m| m.get(keys::BILLED_UNITS)),
-        keys::INPUT_TOKENS,
-    )
-    .unwrap_or_else(|unreadable| {
-        crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
-        None
-    })
-    .map(|n| busbar_contract::billing::TokenUsage {
-        input: n,
-        ..Default::default()
-    });
+    let usage = read_embeddings_usage(&v);
     Ok(EmbeddingsResp {
         id: v.get(keys::ID).and_then(Value::as_str).map(str::to_string),
         embeddings,
@@ -418,7 +476,8 @@ pub fn read_rerank_request(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let documents = crate::codec::rerank_wire::read_documents(wire.get(keys::DOCUMENTS));
+    let documents = crate::codec::rerank_wire::read_documents(wire.get(keys::DOCUMENTS))
+        .map_err(|message| IngressReject::BadRequest(message.into()))?;
     if query.is_empty() || documents.is_empty() {
         return Err(IngressReject::BadRequest(
             "rerank request requires `query` and `documents`".into(),
@@ -453,17 +512,11 @@ pub fn read_rerank_response(
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
     Ok(crate::codec::ir::rerank::RerankResp {
         id: v.get(keys::ID).and_then(Value::as_str).map(str::to_string),
-        results: crate::codec::rerank_wire::read_results(v.get(keys::RESULTS)),
+        results: crate::codec::rerank_wire::read_results(v.get(keys::RESULTS))
+            .map_err(|message| CodecError::Malformed(message.into()))?,
         // The priced quantity (`RerankResp::billing`). Absent or `null` is `None` (the flat marker);
         // an unreadable count is refused alone (`refused_count`) and the ranking is served on the flat marker.
-        search_units: crate::codec::usage_count::billed_count_opt(
-            v.get(keys::META).and_then(|m| m.get(keys::BILLED_UNITS)),
-            keys::SEARCH_UNITS,
-        )
-        .unwrap_or_else(|unreadable| {
-            crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
-            None
-        }),
+        search_units: crate::codec::rerank_wire::read_search_units(&v, super::VENDOR_NAME),
         ..Default::default()
     })
 }

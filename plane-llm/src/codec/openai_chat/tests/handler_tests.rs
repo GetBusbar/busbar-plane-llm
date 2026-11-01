@@ -373,6 +373,36 @@ fn multipart_empty_boundary_is_rejected_not_amplified() {
 }
 
 #[test]
+fn transcription_uses_the_disposition_name_after_filename() {
+    let audio = b"\xff\x00RIFFDATA";
+    for disposition in [
+        "Content-Disposition: form-data; filename=\"a.wav\"; name=\"file\"",
+        "content-disposition: form-data; filename=\"a;\\\"b.wav\"; NaMe = \"file\"",
+        "Content-Disposition: form-data; filename=\"a.wav\"; name=\"fi\\le\"",
+    ] {
+        let mut body = format!(
+            "--B\r\nX-Note: name=\"decoy\"\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-1\r\n--B\r\n{disposition}\r\nContent-Type: audio/wav\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(audio);
+        body.extend_from_slice(b"\r\n--B--\r\n");
+        let request = super::super::super::leaf_codec::transcription_read_request(
+            "openai",
+            &body,
+            "multipart/form-data; boundary=B",
+        )
+        .expect("field name is independent of the filename and unrelated headers");
+        assert_eq!(request.model, "whisper-1", "{disposition}");
+        let audio = request.audio.expect("file part");
+        assert_eq!(audio.mime_type, "audio/wav");
+        match audio.payload {
+            MediaPayload::Bytes(bytes) => assert_eq!(bytes.as_ref(), b"\xff\x00RIFFDATA"),
+            other => panic!("expected raw audio bytes, got {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn transcription_egress_carries_language_prompt_and_format() {
     // A cross-protocol transcription (e.g. Gemini ingress -> OpenAI egress) must not silently
     // drop the caller's language hint, prompt, or response_format on the multipart body.

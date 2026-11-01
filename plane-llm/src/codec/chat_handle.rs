@@ -425,7 +425,14 @@ impl IrHandle for ChatReqHandle {
                 if !writer.carries_image_detail() {
                     warn_dropped_image_details(&self.0);
                 }
-                EgressWire::Json(writer.write_request_for_lane(host, &self.0, model, &self.1))
+                match writer.try_write_request_for_lane(host, &self.0, model, &self.1) {
+                    Ok(value) => EgressWire::Json(value),
+                    Err(error) => EgressWire::Unrepresentable {
+                        reason: error
+                            .provider_signal
+                            .unwrap_or_else(|| "request encoding failed".into()),
+                    },
+                }
             })
             .unwrap_or_else(|| EgressWire::Bytes(SlabBytes::default()))
     }
@@ -488,7 +495,10 @@ impl IrHandle for ChatRespHandle {
         }
         // Chat `write_response_value == Some(Value)` is Json.
         match super::proto_codec::protocol_for(ingress_protocol) {
-            Some(p) => TranslatedResponse::Json(p.writer().write_response(host, &self.0)),
+            Some(p) => match p.writer().try_write_response(host, &self.0) {
+                Ok(value) => TranslatedResponse::Json(value),
+                Err(_) => TranslatedResponse::Untranslatable,
+            },
             None => TranslatedResponse::IngressUnsupported,
         }
     }
@@ -565,6 +575,9 @@ impl OperationHandler for ChatOperation {
         match p.reader().read_response(host, &v) {
             Ok(ir) => Ok(Some(ir.usage.to_token_usage())),
             Err(e) => {
+                if let Some(usage) = p.reader().recover_response_usage(&v) {
+                    return Ok(Some(usage));
+                }
                 ::tracing::debug!(diag = %busbar_contract::diagnostic::USAGE_TAP_DECODE_FAILED.banner(),
                     protocol = ingress_protocol,
                     error = ?e,
@@ -574,6 +587,24 @@ impl OperationHandler for ChatOperation {
                 Err(UsageTapFault::Decode)
             }
         }
+    }
+
+    fn recover_response_billing(
+        &self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        body: &[u8],
+    ) -> Option<Billing> {
+        let body = crate::codec::json::parse::<Value>(body).ok()?;
+        let protocol = self.proto()?;
+        let reader = protocol.reader();
+        // Match the relay's existing reported-failure refund. Recovery of content/parse failures
+        // keeps reported work, but an upstream-declared failure remains unbillable.
+        if reader.read_response(host, &body).is_err_and(|error| {
+            error.provider_signal.as_deref() != Some(crate::codec::framework::SIGNAL_IR_PARSE)
+        }) {
+            return None;
+        }
+        reader.recover_response_usage(&body).map(Billing::Tokens)
     }
 
     fn read_request_value(&self, v: &Value) -> Result<Box<dyn IrHandle>, IngressReject> {

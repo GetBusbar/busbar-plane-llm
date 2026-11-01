@@ -13,8 +13,8 @@ use crate::codec::ir::{
 };
 use serde_json::{json, Value};
 
-/// A Gemini request read, then put through the cross-protocol seam as a foreign (`anthropic`)
-/// ingress would be — so `extra` is cleared and only TYPED slots reach the writer.
+/// A Gemini request read, then put through the cross-protocol seam so `extra` is cleared
+/// and only typed slots reach the writer.
 fn read_then_seam(body: &Value) -> IrRequest {
     read_then_seam_from("gemini", body)
 }
@@ -30,7 +30,7 @@ fn read_then_seam_from(ingress: &str, body: &Value) -> IrRequest {
         &mut ir,
         &busbar_contract::ir::egress_prep::EgressPrep {
             thought_signature_fill: false,
-            ingress_protocol: "anthropic",
+            ingress_protocol: ingress,
             egress_requires_max_tokens: false,
             lane_default_max_tokens: None,
             global_default_max_tokens: 4096,

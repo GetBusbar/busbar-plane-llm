@@ -20,29 +20,80 @@ fn text_of(v: &Value) -> Option<String> {
     })
 }
 
-/// `documents[]` -> the texts to rank. Bare strings and `{text}` objects both normalize to strings;
-/// an entry that is neither is skipped.
-pub fn read_documents(v: Option<&Value>) -> Vec<String> {
-    v.and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(text_of).collect())
-        .unwrap_or_default()
+/// `documents[]` -> texts in the original order. A malformed entry refuses the request:
+/// removing it would change the indices the provider returns for every later document.
+pub fn read_documents(v: Option<&Value>) -> Result<Vec<String>, &'static str> {
+    let entries = v
+        .and_then(Value::as_array)
+        .ok_or("rerank documents must be an array")?;
+    entries
+        .iter()
+        .map(|entry| text_of(entry).ok_or("rerank document must be text or a text object"))
+        .collect()
 }
 
-/// `results[] -> [{index, relevance_score, document?}]`. `document` is the ranked text echoed when
-/// the request set `return_documents`; one wire returns it as a `{text}` object, another as a bare
-/// string — both are accepted, anything else is `None`.
-pub fn read_results(v: Option<&Value>) -> Vec<RerankResult> {
-    v.and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(|x| {
-                    Some(RerankResult {
-                        index: x.get(keys::INDEX).and_then(Value::as_u64)? as usize,
-                        relevance_score: x.get(keys::RELEVANCE_SCORE).and_then(Value::as_f64)?,
-                        document: x.get(keys::DOCUMENT).and_then(text_of),
-                    })
-                })
-                .collect()
+/// Read every ranked result, refusing malformed entries instead of silently shortening the ranking.
+pub fn read_results(v: Option<&Value>) -> Result<Vec<RerankResult>, &'static str> {
+    let entries = v
+        .and_then(Value::as_array)
+        .ok_or("rerank results must be an array")?;
+    entries
+        .iter()
+        .map(|entry| {
+            let index = entry
+                .get(keys::INDEX)
+                .and_then(Value::as_u64)
+                .and_then(|n| usize::try_from(n).ok())
+                .ok_or("rerank result requires an integer index")?;
+            let relevance_score = entry
+                .get(keys::RELEVANCE_SCORE)
+                .and_then(Value::as_f64)
+                .ok_or("rerank result requires a numeric relevance_score")?;
+            let document = match entry.get(keys::DOCUMENT) {
+                None | Some(Value::Null) => None,
+                Some(document) => Some(
+                    text_of(document)
+                        .ok_or("rerank result document must be text or a text object")?,
+                ),
+            };
+            Ok(RerankResult {
+                index,
+                relevance_score,
+                document,
+            })
         })
-        .unwrap_or_default()
+        .collect()
+}
+
+/// Search units are independent of the ranked payload. Keep them readable even when a malformed
+/// ranking must be refused, without estimating a missing or unreadable count.
+pub fn read_search_units(value: &Value, protocol: &'static str) -> Option<u64> {
+    crate::codec::usage_count::billed_count_opt(
+        value
+            .get(keys::META)
+            .and_then(|meta| meta.get(keys::BILLED_UNITS)),
+        keys::SEARCH_UNITS,
+    )
+    .unwrap_or_else(|unreadable| {
+        crate::codec::usage_count::refused_count(protocol, &unreadable);
+        None
+    })
+}
+
+/// The token-usage tap's existing open-unit carrier, using the same class as `RerankResp::billing`.
+pub fn extract_usage(
+    body: &[u8],
+    protocol: &'static str,
+) -> Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault> {
+    let value: Value = crate::codec::json::parse(body)
+        .map_err(|_| busbar_contract::codec::UsageTapFault::Decode)?;
+    Ok(read_search_units(&value, protocol).map(|count| {
+        let mut usage = busbar_contract::billing::TokenUsage::default();
+        if count != 0 {
+            usage
+                .open_units
+                .insert(crate::codec::ir::rerank::SEARCH_UNITS_CLASS.into(), count);
+        }
+        usage
+    }))
 }

@@ -117,14 +117,6 @@ fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
-fn header_attr(headers: &str, attr: &str) -> Option<String> {
-    let key = format!("{attr}=\"");
-    let i = headers.find(&key)? + key.len();
-    let rest = &headers[i..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
-}
-
 /// Sanitize a client-supplied MIME type before it enters the IR: a MIME type is `type/subtype`
 /// plus optional `; param=value`, all printable ASCII. A CR/LF or other control char here is a
 /// header-injection vector — on a cross-protocol transcription hop the value is written verbatim
@@ -145,70 +137,36 @@ fn sanitize_mime_type(raw: &str) -> String {
     }
 }
 
-/// Decode a `MediaPayload::B64` audio blob for egress. Every reader that stores a `B64` payload now
-/// validates the base64 at its trust boundary (gemini inline_data ingress + gemini speech response),
-/// so an invalid string here is an IR-invariant violation, not normal input. Decode defensively:
-/// on the should-be-unreachable failure, log loudly rather than silently substitute empty audio.
-fn decode_ir_b64(s: &str) -> SlabBytes {
-    base64_decode(s).unwrap_or_else(|| {
+/// Decode an audio blob at the egress boundary. A failed decode is an unwritable-body sentinel,
+/// never an empty audio part in an otherwise successful form or response.
+fn decode_ir_b64(s: &str) -> Option<SlabBytes> {
+    let decoded = base64_decode(s);
+    if decoded.is_none() {
         tracing::error!(
             "B64 audio payload in the IR failed to decode at egress — a reader's base64 \
-             validation invariant was violated; emitting empty audio"
+             validation invariant was violated; refusing the audio write"
         );
-        SlabBytes::default()
-    })
+    }
+    decoded
 }
 
 /// Minimal byte-level `multipart/form-data` parser: enough for the OpenAI audio form (a `model` text
 /// part + a binary `file` part). Boundary comes from the content-type; file bytes are preserved raw
 /// (never lossily UTF-8'd) so audio survives the ingress→IR hop.
 fn parse_multipart<'a>(body: &'a [u8], content_type: &str) -> Vec<MultipartField<'a>> {
-    let Some(boundary) = content_type.split("boundary=").nth(1) else {
+    let Some(parts) = crate::exchange::multipart::multipart_segments(content_type, body) else {
         return Vec::new();
     };
-    // The boundary token ends at the next Content-Type parameter: `boundary=abc; charset=utf-8` is
-    // spec-legal (RFC 2046) and must yield `abc`, not `abc; charset=utf-8` (which matches no real
-    // delimiter and silently drops every part). Cut at the first `;`, then trim and unquote.
-    let boundary = boundary.split(';').next().unwrap_or(boundary);
-    let boundary = boundary.trim().trim_matches('"');
-    // A real boundary is >=1 char; an empty (or absent) one is malformed. Reject it up front rather
-    // than scan for the degenerate `--` delimiter. (Amplification is separately bounded by the
-    // single-pass segment walk below, which stores no per-offset Vec.)
-    if boundary.is_empty() {
-        return Vec::new();
-    }
-    let delim = format!("--{boundary}");
-    let delim_b = delim.as_bytes();
-    // Single pass, tracking ONLY the previous delimiter offset — a short boundary against a body of
-    // pure delimiter bytes used to push ~body/dl offsets into a `positions` Vec (heap amplification,
-    // e.g. ~90 MB from a 32 MiB body with a 1-char boundary). Processing each segment as its closing
-    // delimiter is found keeps memory bounded by the parsed fields, whatever the boundary length.
+    // Segments borrow the upload; only the handful of field headers is allocated.
     // The OpenAI audio form carries a handful of named parts (model, file, language, prompt,
     // response_format). Cap the field count so a crafted body of hundreds of thousands of minimal
     // parts (short boundary) can't amplify into a large Vec of heap-allocated fields; a real request
     // never approaches this, and extra parts we don't model are ignored anyway.
     const MAX_MULTIPART_PARTS: usize = 64;
-    let mut fields = Vec::new();
-    let (n, dl) = (body.len(), delim_b.len());
-    let mut i = 0;
-    let mut prev: Option<usize> = None;
-    while i + dl <= n {
-        if &body[i..i + dl] == delim_b {
-            if let Some(p) = prev {
-                if let Some(field) = parse_multipart_segment(&body[p + dl..i]) {
-                    fields.push(field);
-                    if fields.len() >= MAX_MULTIPART_PARTS {
-                        break;
-                    }
-                }
-            }
-            prev = Some(i);
-            i += dl;
-        } else {
-            i += 1;
-        }
-    }
-    fields
+    parts
+        .filter_map(parse_multipart_segment)
+        .take(MAX_MULTIPART_PARTS)
+        .collect()
 }
 
 /// Parse ONE multipart segment (the bytes between two delimiters) into a field, or `None` if it has
@@ -221,12 +179,12 @@ fn parse_multipart_segment(seg: &[u8]) -> Option<MultipartField<'_>> {
     if value.ends_with(b"\r\n") {
         value = &value[..value.len() - 2];
     }
-    let name = header_attr(&headers, keys::NAME)?;
-    let content_type = headers.lines().find_map(|l| {
-        let l = l.trim();
-        l.strip_prefix("Content-Type:")
-            .or_else(|| l.strip_prefix("content-type:"))
-            .map(|v| v.trim().to_string())
+    let name = crate::exchange::multipart::multipart_field_name(&headers)?.into_owned();
+    let content_type = headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim()
+            .eq_ignore_ascii_case("content-type")
+            .then(|| value.trim().to_string())
     });
     Some(MultipartField {
         name,
@@ -338,7 +296,12 @@ pub fn write_transcription_request(r: &TranscriptionReq) -> Bytes {
     if let Some(blob) = &r.audio {
         let bytes = match &blob.payload {
             MediaPayload::Bytes(b) => b.clone(),
-            MediaPayload::B64(s) => decode_ir_b64(s),
+            MediaPayload::B64(s) => {
+                let Some(decoded) = decode_ir_b64(s) else {
+                    return Bytes::new();
+                };
+                decoded
+            }
         };
         // Sanitize at the EGRESS boundary too: mime_type can enter the IR from ANY ingress
         // reader (e.g. Gemini inline_data), not just the OpenAI multipart parser, so sanitizing
@@ -529,9 +492,14 @@ pub fn write_speech_response(r: &SpeechResp) -> WireBody {
     };
     let bytes = match &blob.payload {
         MediaPayload::Bytes(b) => b.clone(),
-        MediaPayload::B64(s) => decode_ir_b64(s),
+        MediaPayload::B64(s) => {
+            let Some(decoded) = decode_ir_b64(s) else {
+                return WireBody::json(SlabBytes::default());
+            };
+            decoded
+        }
     };
-    WireBody::typed(bytes, &blob.mime_type)
+    WireBody::typed(bytes, &sanitize_mime_type(&blob.mime_type))
 }
 
 // -------------------------------------------------- embeddings OperationHandler (real codec, cross-protocol)

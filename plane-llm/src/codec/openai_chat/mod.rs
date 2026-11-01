@@ -460,15 +460,16 @@ const BASE62: &[u8; 62] = crate::codec::dialect::BASE62_ALPHABET;
 ///
 /// The suffix comes entirely from the OS CSPRNG (~142 bits, collision-free in practice) with no
 /// process counter: a counter leaves predictable characters, a structural tell native fully random
-/// ids lack. Never panics: on entropy failure the buffer keeps its '0' fill.
+/// ids lack. Entropy failure refuses synthesis, including a partly filled token.
 ///
 /// The token is drawn by `dialect::fill_base62` (rejection sampling, so the characters are uniform).
-fn synth_completion_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
+fn synth_completion_id(host: &dyn busbar_contract::codec::CodecHost) -> Result<String, IrError> {
     let mut token = [b'0'; COMPLETION_ID_TOKEN_LEN];
-    crate::codec::dialect::fill_base62(host, &mut token, BASE62);
-    // `token` is ASCII base62, always valid UTF-8; the fallback keeps the path panic-free.
-    let token = std::str::from_utf8(&token).unwrap_or("000000000000000000000000");
-    format!("{COMPLETION_ID_PREFIX}{token}")
+    if !crate::codec::dialect::fill_base62(host, &mut token, BASE62) {
+        return Err(entropy_error());
+    }
+    let token = std::str::from_utf8(&token).map_err(|_| entropy_error())?;
+    Ok(format!("{COMPLETION_ID_PREFIX}{token}"))
 }
 
 /// The `error.code` token OpenAI-compatible upstreams use for a rate limit. The specific token
@@ -1256,8 +1257,17 @@ impl OpenAiWriter {
     /// The stream's chunk `id`, first wins: the id already captured, else `mint()` captured and
     /// returned, so a duplicate opening chunk re-states what the client latched. A poisoned lock
     /// degrades to the freshly minted id.
-    fn carried_chunk_id(&self, mint: impl FnOnce() -> String) -> String {
-        self.stream.lock().chunk_id.get_or_insert_with(mint).clone()
+    fn carried_chunk_id(
+        &self,
+        mint: impl FnOnce() -> Result<String, IrError>,
+    ) -> Result<String, IrError> {
+        let mut stream = self.stream.lock();
+        if let Some(id) = &stream.chunk_id {
+            return Ok(id.clone());
+        }
+        let id = mint()?;
+        stream.chunk_id = Some(id.clone());
+        Ok(id)
     }
 
     /// Remember that the text block at `index` is a refusal (IR-02).

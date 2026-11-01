@@ -62,7 +62,10 @@ impl ProtocolWriter for OpenAiWriter {
         let system_role = req
             .system_role
             .map_or(keys::SYSTEM, crate::codec::ir::IrSystemRole::as_str);
-        for block in &req.system {
+        for (block_index, block) in req.system.iter().enumerate() {
+            let _block_origin =
+                crate::codec::drops::block_scope(req.block_origins.system.get(block_index));
+
             let text: &str = match block {
                 crate::codec::ir::IrBlock::Text { text, .. } => text,
                 crate::codec::ir::IrBlock::Thinking { text, .. } => text,
@@ -95,6 +98,13 @@ impl ProtocolWriter for OpenAiWriter {
 
         // Add regular messages
         for (msg_idx, msg) in req.messages.iter().enumerate() {
+            let _message_origins = req
+                .block_origins
+                .messages
+                .get(msg_idx)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+
             let role_str = match msg.role {
                 crate::codec::ir::IrRole::User => keys::USER,
                 crate::codec::ir::IrRole::Assistant => keys::ASSISTANT,
@@ -107,7 +117,10 @@ impl ProtocolWriter for OpenAiWriter {
             } else {
                 let mut content_arr: Vec<serde_json::Value> = Vec::new();
 
-                for block in &msg.content {
+                for (block_index, block) in msg.content.iter().enumerate() {
+                    let _block_origin =
+                        crate::codec::drops::block_scope(_message_origins.get(block_index));
+
                     match block {
                         // A refusal in replayed assistant history is Chat's `refusal` part
                         // (assistant content only; any other role keeps it as text).
@@ -220,7 +233,10 @@ impl ProtocolWriter for OpenAiWriter {
             // on another role is legal in the IR, and gating on assistant silently dropped it.
             {
                 let mut tool_calls_arr: Vec<serde_json::Value> = Vec::new();
-                for block in &msg.content {
+                for (block_index, block) in msg.content.iter().enumerate() {
+                    let _block_origin =
+                        crate::codec::drops::block_scope(_message_origins.get(block_index));
+
                     if let crate::codec::ir::IrBlock::ToolUse {
                         id, name, input, ..
                     } = block
@@ -255,7 +271,10 @@ impl ProtocolWriter for OpenAiWriter {
                 .any(|b| matches!(b, crate::codec::ir::IrBlock::ToolResult { .. }));
             if has_tool_result {
                 let mut emitted_tool_result = false;
-                for block in &msg.content {
+                for (block_index, block) in msg.content.iter().enumerate() {
+                    let _block_origin =
+                        crate::codec::drops::block_scope(_message_origins.get(block_index));
+
                     if let crate::codec::ir::IrBlock::ToolResult {
                         tool_use_id,
                         content,
@@ -273,16 +292,26 @@ impl ProtocolWriter for OpenAiWriter {
                         if !content.is_empty() {
                             let text_parts: Vec<String> = content
                                 .iter()
-                                .filter_map(|b| match b {
-                                    crate::codec::ir::IrBlock::Text { text, .. } => {
-                                        Some(text.clone())
+                                .enumerate()
+                                .filter_map(|(index, b)| {
+                                    let _origin = crate::codec::drops::child_scope(index);
+                                    match b {
+                                        crate::codec::ir::IrBlock::Text { text, .. } => {
+                                            Some(text.clone())
+                                        }
+                                        // Preserve structured JSON as text, without a separator.
+                                        crate::codec::ir::IrBlock::Json(v) => Some(v.to_string()),
+                                        // Other children have no slot in string content.
+                                        _ => {
+                                            crate::codec::drops::writer_drop!(
+                                                crate::codec::drops::block(b.kind_name()),
+                                                &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                                                [],
+                                                "dropping non-text block inside a tool result on OpenAI Chat egress: tool content carries text only"
+                                            );
+                                            None
+                                        }
                                     }
-                                    // A structured-json block (Bedrock `{"json":…}`) is written as
-                                    // its serialized JSON string; dropping it left the model an
-                                    // empty tool result.
-                                    crate::codec::ir::IrBlock::Json(v) => Some(v.to_string()),
-                                    // An image / media / other block has no slot in string content.
-                                    _ => None,
                                 })
                                 .collect();
 
@@ -568,7 +597,18 @@ impl ProtocolWriter for OpenAiWriter {
         host: &dyn busbar_contract::codec::CodecHost,
         ev: &IrStreamEvent,
     ) -> Option<(String, serde_json::Value)> {
-        match ev {
+        match self.try_write_response_events(host, ev) {
+            Ok(frames) => frames.into_iter().next(),
+            Err(_) => Some(("".into(), self.encoding_failure(host))),
+        }
+    }
+
+    fn try_write_response_events(
+        &self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        ev: &IrStreamEvent,
+    ) -> Result<Vec<(String, serde_json::Value)>, IrError> {
+        let frame = match ev {
             IrStreamEvent::MessageStart {
                 role,
                 id,
@@ -580,15 +620,18 @@ impl ProtocolWriter for OpenAiWriter {
                     crate::codec::ir::IrRole::Assistant => keys::ASSISTANT,
                     crate::codec::ir::IrRole::User
                     | crate::codec::ir::IrRole::System
-                    | crate::codec::ir::IrRole::Tool => return None,
+                    | crate::codec::ir::IrRole::Tool => return Ok(Vec::new()),
                 };
                 let delta_obj = serde_json::json!({ (keys::ROLE): openai_role });
                 // The opening chunk carries the stream identity (`id`, `created`, `model`); the SDKs
                 // latch it from the first chunk that supplies it. With none from the backend
                 // (cross-protocol), synthesize a correct id/created. The first opening chunk decides
                 // the id; a duplicate replays it.
-                let chunk_id = self
-                    .carried_chunk_id(|| id.clone().unwrap_or_else(|| synth_completion_id(host)));
+                let chunk_id = self.carried_chunk_id(|| {
+                    id.clone()
+                        .map(Ok)
+                        .unwrap_or_else(|| synth_completion_id(host))
+                })?;
                 let chunk_created = created.unwrap_or_else(|| host_now(host));
                 // `model` is required and non-nullable in the chunk schema; a backend IR with
                 // `model: None` (e.g. Bedrock) falls back to DEFAULT_MODEL, since a model-less chunk
@@ -683,7 +726,7 @@ impl ProtocolWriter for OpenAiWriter {
                     let annotations =
                         super::super::url_citation_wire::chat_url_annotations("", 0, cits);
                     if annotations.is_empty() {
-                        return None;
+                        return Ok(Vec::new());
                     }
                     delta_chunk(serde_json::json!({ (keys::ANNOTATIONS): annotations }))
                 }
@@ -832,7 +875,8 @@ impl ProtocolWriter for OpenAiWriter {
                 });
                 Some(("".to_string(), error_obj))
             }
-        }
+        };
+        Ok(frame.into_iter().collect())
     }
 
     fn new_stream_framing(&self) -> Box<dyn super::StreamFraming> {
@@ -917,6 +961,15 @@ impl ProtocolWriter for OpenAiWriter {
         host: &dyn busbar_contract::codec::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> serde_json::Value {
+        self.try_write_response(host, resp)
+            .unwrap_or_else(|_| self.encoding_failure(host))
+    }
+
+    fn try_write_response(
+        &self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        resp: &crate::codec::ir::IrResponse,
+    ) -> Result<serde_json::Value, IrError> {
         let mut obj = serde_json::Map::new();
 
         // Collect the assistant text parts once: their presence decides whether `content` is null,
@@ -932,7 +985,10 @@ impl ProtocolWriter for OpenAiWriter {
 
         // ToolUse blocks become tool_calls (not in content)
         let mut tool_calls_arr: Vec<serde_json::Value> = Vec::new();
-        for block in &resp.content {
+        for (block_index, block) in resp.content.iter().enumerate() {
+            let _block_origin =
+                crate::codec::drops::block_scope(resp.block_origins.response.get(block_index));
+
             if let crate::codec::ir::IrBlock::ToolUse {
                 id, name, input, ..
             } = block
@@ -954,7 +1010,10 @@ impl ProtocolWriter for OpenAiWriter {
         // writer can populate) and not collapsed into content. This runs only cross-protocol
         // (same-protocol relays raw bytes and keeps `reasoning_content`), so only reasoning from
         // another source is affected. A `warn!` per non-empty block makes the loss observable.
-        for block in &resp.content {
+        for (block_index, block) in resp.content.iter().enumerate() {
+            let _block_origin =
+                crate::codec::drops::block_scope(resp.block_origins.response.get(block_index));
+
             if let crate::codec::ir::IrBlock::Thinking { text, redacted, .. } = block {
                 if !text.is_empty() {
                     crate::codec::drops::writer_drop!(
@@ -1028,11 +1087,23 @@ impl ProtocolWriter for OpenAiWriter {
         // `annotations` for a completion with no sources, so a hardcoded `[]` is a tell.
         let mut base = 0usize;
         let mut annotations: Vec<serde_json::Value> = Vec::new();
-        for block in &resp.content {
+        for (block_index, block) in resp.content.iter().enumerate() {
+            let _block_origin =
+                crate::codec::drops::block_scope(resp.block_origins.response.get(block_index));
+
             if let crate::codec::ir::IrBlock::Text {
-                text, citations, ..
+                text,
+                citations,
+                refusal,
+                ..
             } = block
             {
+                if *refusal
+                    || (!flagged
+                        && resp.stop_reason == Some(crate::codec::ir::IrStopReason::Refusal))
+                {
+                    continue;
+                }
                 annotations.extend(super::super::url_citation_wire::chat_url_annotations(
                     text, base, citations,
                 ));
@@ -1075,7 +1146,11 @@ impl ProtocolWriter for OpenAiWriter {
         // Identity fields, in native order (`id`, `object`, `created`, `model`,
         // `system_fingerprint`, `choices`, `usage`). The SDKs require all but `system_fingerprint`.
         // When the IR field is `None` (cross-protocol) a correct value is synthesized.
-        let id = resp.id.clone().unwrap_or_else(|| synth_completion_id(host));
+        let id = resp
+            .id
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(|| synth_completion_id(host))?;
         obj.insert(keys::ID.to_string(), serde_json::json!(id));
         obj.insert(keys::OBJECT.to_string(), serde_json::json!(OBJ_COMPLETION));
         let created = resp.created.unwrap_or_else(|| host_now(host));
@@ -1193,6 +1268,6 @@ impl ProtocolWriter for OpenAiWriter {
             obj.insert(keys::SERVICE_TIER.to_string(), serde_json::json!(tier));
         }
 
-        serde_json::Value::Object(obj)
+        Ok(serde_json::Value::Object(obj))
     }
 }

@@ -175,7 +175,7 @@ fn bench_same_proto_short_circuit() {
 
     // Build one realistic OpenAI SSE stream and one bedrock binary eventstream, each as a Vec of
     // per-feed chunks (one frame per chunk — the per-feed latency unit).
-    let openai_frames: Vec<Vec<u8>> = (0..32)
+    let mut openai_frames: Vec<Vec<u8>> = (0..32)
             .map(|i| {
                 format!(
                     "data: {{\"id\":\"chatcmpl-b\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{{\"index\":0,\"delta\":{{\"content\":\"tok{i} \"}},\"finish_reason\":null}}]}}\n\n"
@@ -183,15 +183,25 @@ fn bench_same_proto_short_circuit() {
                 .into_bytes()
             })
             .collect();
-    let bedrock_frames: Vec<Vec<u8>> = (0..32)
-        .map(|i| {
-            encode_frame(
-                "contentBlockDelta",
-                format!("{{\"contentBlockIndex\":0,\"delta\":{{\"text\":\"tok{i} \"}}}}")
-                    .as_bytes(),
-            )
-        })
-        .collect();
+    openai_frames.extend([
+        b"data: {\"id\":\"chatcmpl-b\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n".to_vec(),
+        b"data: {\"id\":\"chatcmpl-b\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[],\"usage\":{\"prompt_tokens\":13,\"completion_tokens\":32,\"total_tokens\":45}}\n\n".to_vec(),
+        b"data: [DONE]\n\n".to_vec(),
+    ]);
+    let mut bedrock_frames = vec![encode_frame("messageStart", br#"{"role":"assistant"}"#)];
+    bedrock_frames.extend((0..32).map(|i| {
+        encode_frame(
+            "contentBlockDelta",
+            format!("{{\"contentBlockIndex\":0,\"delta\":{{\"text\":\"tok{i} \"}}}}").as_bytes(),
+        )
+    }));
+    bedrock_frames.extend([
+        encode_frame("messageStop", br#"{"stopReason":"end_turn"}"#),
+        encode_frame(
+            "metadata",
+            br#"{"usage":{"inputTokens":31,"outputTokens":32},"metrics":{"latencyMs":5}}"#,
+        ),
+    ]);
 
     // Raw verbatim memcpy floor (what `FirstByteBody` did on the legacy `translate == None` path).
     fn bench_memcpy(frames: &[Vec<u8>], iters: u64) -> f64 {
@@ -229,10 +239,60 @@ fn bench_same_proto_short_circuit() {
     // (label, short-circuit ctor, RE-SERIALIZE baseline ctor, frames)
     // The re-serialize baseline is a CROSS-proto translator over the SAME egress frames — it runs
     // the full reader→writer→reframe pipeline, which is exactly the cost the short-circuit elides.
-    let openai_sc = || StreamTranslate::new_same_proto("openai").unwrap();
-    let openai_xproto = || StreamTranslate::new("openai", "anthropic").unwrap();
+    let openai_sc = || {
+        let mut translator = StreamTranslate::new_same_proto("openai").unwrap();
+        translator.set_client_include_usage(true);
+        translator
+    };
+    let openai_xproto = || StreamTranslate::new("anthropic", "openai").unwrap();
     let bedrock_sc = || StreamTranslate::new_same_proto("bedrock").unwrap();
     let bedrock_xproto = || StreamTranslate::new("anthropic", "bedrock").unwrap(); // bedrock EGRESS frames
+
+    // Before timing, prove both constructors read these actual egress frames, retain all the text,
+    // and expose the stated counts at the production billing tap.
+    for (ctor, frames, input) in [
+        (
+            &openai_sc as &dyn Fn() -> StreamTranslate,
+            &openai_frames,
+            13,
+        ),
+        (
+            &openai_xproto as &dyn Fn() -> StreamTranslate,
+            &openai_frames,
+            13,
+        ),
+        (
+            &bedrock_sc as &dyn Fn() -> StreamTranslate,
+            &bedrock_frames,
+            31,
+        ),
+        (
+            &bedrock_xproto as &dyn Fn() -> StreamTranslate,
+            &bedrock_frames,
+            31,
+        ),
+    ] {
+        let mut translator = ctor();
+        let mut output = Vec::new();
+        for frame in frames {
+            output.extend(translator.feed(crate::codec::test_host::HOST, frame));
+        }
+        output.extend(translator.finish(crate::codec::test_host::HOST));
+        assert!(!translator.aborted());
+        assert!(translator.terminal_error().is_none());
+        assert!(!translator.local_encoding_failure());
+        for index in 0..32 {
+            let text = format!("tok{index} ");
+            assert!(output
+                .windows(text.len())
+                .any(|bytes| bytes == text.as_bytes()));
+        }
+        let billed = translator
+            .usage()
+            .expect("the stream supplies real usage")
+            .to_token_usage();
+        assert_eq!((billed.input, billed.output), (input, 32));
+    }
 
     // Warm up.
     let _ = bench_memcpy(&openai_frames, 2_000);

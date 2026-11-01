@@ -1,6 +1,8 @@
 //! Rung 2 of the model ladder: the `model` form field of a multipart arrival, read as a document. The
 //! arrival reading is the plane's, and there is one of it.
 
+use std::borrow::Cow;
+
 /// The first occurrence of `needle` in `hay`.
 fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || needle.len() > hay.len() {
@@ -17,76 +19,162 @@ fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
 /// The parameter is matched as a whole key, not by substring, so a `boundary` inside another
 /// parameter's quoted value is not mistaken for it; the value may be quoted and is unquoted (RFC 2045).
 fn multipart_boundary(content_type: &str) -> Option<String> {
-    for param in split_params(content_type).skip(1) {
-        let (key, value) = param.split_once('=')?;
-        if key.trim().eq_ignore_ascii_case("boundary") {
-            let v = value.trim();
-            let v = v
-                .strip_prefix('"')
-                .and_then(|r| r.strip_suffix('"'))
-                .unwrap_or(v);
-            return (!v.is_empty()).then(|| v.to_string());
-        }
-    }
-    None
+    parameter(content_type, "boundary")
+        .filter(|value| !value.is_empty())
+        .map(Cow::into_owned)
 }
 
 /// Split a header value on `;`, ignoring separators inside a quoted string (a naive `split(';')` cuts
 /// `filename="a;b"` in half and invents a parameter). The first item is the value's own token
 /// (`multipart/form-data`), which the boundary search skips.
 fn split_params(value: &str) -> impl Iterator<Item = &str> {
-    let mut out = Vec::new();
-    let (mut start, mut quoted) = (0usize, false);
-    for (i, c) in value.char_indices() {
+    let (mut quoted, mut escaped) = (false, false);
+    value.split(move |c| {
+        if escaped {
+            escaped = false;
+            return false;
+        }
         match c {
+            '\\' if quoted => escaped = true,
             '"' => quoted = !quoted,
-            ';' if !quoted => {
-                out.push(&value[start..i]);
-                start = i + 1;
-            }
+            ';' if !quoted => return true,
             _ => {}
         }
-    }
-    out.push(&value[start..]);
-    out.into_iter()
+        false
+    })
 }
 
-/// Whether a part's header block declares the form field `model`: the `name` parameter of
-/// `Content-Disposition` matched as a whole key against a whole value, never a substring of the block.
-/// `filename="model"` is a different parameter; a `name` inside another part's body is not a header
-/// and never reaches here (the caller hands over only bytes the boundary said were headers).
-fn part_is_model(headers: &[u8]) -> bool {
-    let Ok(text) = std::str::from_utf8(headers) else {
-        // A header block is ASCII by construction. One that is not is not a header block this
-        // reader will guess at.
-        return false;
-    };
-    // Header field lines are unfolded here only as far as the split: a folded `Content-Disposition`
-    // is not something any client emits for a form part, and a continuation line that failed to
-    // match simply makes this part not-the-model, which is the safe direction.
-    for line in text.split("\r\n") {
+fn parameter_value(value: &str) -> Option<Cow<'_, str>> {
+    let value = value.trim();
+    if !value.starts_with('"') {
+        let token = !value.is_empty()
+            && value
+                .bytes()
+                .all(|b| b.is_ascii_graphic() && !b"()<>@,;:\\\"/[]?=".contains(&b));
+        return token.then_some(Cow::Borrowed(value));
+    }
+    let inner = value.strip_prefix('"')?.strip_suffix('"')?;
+    if !inner.contains('\\') {
+        return (!inner.contains('"') && !inner.chars().any(|c| c.is_control() && c != '\t'))
+            .then_some(Cow::Borrowed(inner));
+    }
+    let mut decoded = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        let c = match c {
+            '\\' => chars.next()?,
+            '"' => return None,
+            c => c,
+        };
+        if c.is_control() && c != '\t' {
+            return None;
+        }
+        decoded.push(c);
+    }
+    Some(Cow::Owned(decoded))
+}
+
+fn parameter<'a>(value: &'a str, attribute: &str) -> Option<Cow<'a, str>> {
+    let mut found = None;
+    for param in split_params(value).skip(1) {
+        let Some((key, value)) = param.split_once('=') else {
+            continue;
+        };
+        if key.trim().eq_ignore_ascii_case(attribute) {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(parameter_value(value)?);
+        }
+    }
+    found
+}
+
+/// Only the whole `name` parameter of Content-Disposition names a field. A filename, quoted
+/// semicolon or another header cannot supply it. Admission and transcription share this reading.
+pub(crate) fn multipart_field_name(headers: &str) -> Option<Cow<'_, str>> {
+    for line in headers.split("\r\n") {
         let Some((name, value)) = line.split_once(':') else {
             continue;
         };
-        if !name.trim().eq_ignore_ascii_case("content-disposition") {
-            continue;
-        }
-        for param in split_params(value).skip(1) {
-            let Some((key, v)) = param.split_once('=') else {
-                continue;
-            };
-            if !key.trim().eq_ignore_ascii_case("name") {
-                continue;
-            }
-            let v = v.trim();
-            let v = v
-                .strip_prefix('"')
-                .and_then(|r| r.strip_suffix('"'))
-                .unwrap_or(v);
-            return v == "model";
+        if name.trim().eq_ignore_ascii_case("content-disposition") {
+            return parameter(value, "name");
         }
     }
-    false
+    None
+}
+
+fn part_is_model(headers: &[u8]) -> Option<bool> {
+    let headers = std::str::from_utf8(headers).ok()?;
+    Some(multipart_field_name(headers)? == "model")
+}
+
+/// Borrowed multipart segments, excluding delimiter lines but retaining the CRLF before each
+/// delimiter. The complete upload is already available at arrival; walking it requires no audio
+/// copy or per-part allocation. Admission and transcription decoding use the same framing.
+pub(crate) struct MultipartSegments<'a> {
+    body: &'a [u8],
+    delimiter: String,
+    next: Option<usize>,
+    closed: bool,
+}
+
+impl MultipartSegments<'_> {
+    fn delimiter_after(&self, mut at: usize) -> Option<(usize, usize, bool)> {
+        while at < self.body.len() {
+            let start = at + find_sub(&self.body[at..], self.delimiter.as_bytes())?;
+            at = start + self.delimiter.len();
+            if start != 0 && !self.body[..start].ends_with(b"\r\n") {
+                continue;
+            }
+            let closing = self.body[at..].starts_with(b"--");
+            let mut end = at + if closing { 2 } else { 0 };
+            while self
+                .body
+                .get(end)
+                .is_some_and(|b| matches!(b, b' ' | b'\t'))
+            {
+                end += 1;
+            }
+            if self.body[end..].starts_with(b"\r\n") {
+                return Some((start, end + 2, closing));
+            }
+            if closing && end == self.body.len() {
+                return Some((start, end, true));
+            }
+            // A prefix such as `--boundarySuffix` or `--boundary--Suffix` is payload.
+        }
+        None
+    }
+}
+
+impl<'a> Iterator for MultipartSegments<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let start = self.next.take()?;
+        let (end, after, closing) = self.delimiter_after(start)?;
+        self.closed = closing;
+        self.next = (!closing).then_some(after);
+        Some(&self.body[start..end])
+    }
+}
+
+pub(crate) fn multipart_segments<'a>(
+    content_type: &str,
+    body: &'a [u8],
+) -> Option<MultipartSegments<'a>> {
+    let boundary = multipart_boundary(content_type)?;
+    let mut parts = MultipartSegments {
+        body,
+        delimiter: format!("--{boundary}"),
+        next: None,
+        closed: false,
+    };
+    let (_, after, closing) = parts.delimiter_after(0)?;
+    parts.closed = closing;
+    parts.next = (!closing).then_some(after);
+    Some(parts)
 }
 
 /// Rung 2 of the model ladder: the `model` form field of a multipart arrival, read as a document.
@@ -101,74 +189,29 @@ fn part_is_model(headers: &[u8]) -> bool {
 /// takes, so busbar cannot know the model. It falls to the ladder's floor and gets the missing-model
 /// refusal, before the door, costing the caller nothing.
 ///
-/// The 64 KiB bound stays: far larger than any run of text form fields before the audio blob, and it
-/// stops a walk of megabytes of binary looking for a delimiter. A `model` part beyond it is not found,
-/// the same safe direction (a refusal, never a different model).
+/// The complete form must be checked: a duplicate model after a large audio part is just as
+/// ambiguous as an adjacent duplicate. Only the selected text value is copied, never the audio.
 ///
 /// Public so every reader of the arrival calls this rung rather than carrying a second copy: two
 /// readings of one wire are two answers waiting to disagree.
 pub fn multipart_model(content_type: &str, body: &[u8]) -> Option<String> {
-    const HEAD: usize = 64 * 1024;
-    let boundary = multipart_boundary(content_type)?;
-    let head = &body[..body.len().min(HEAD)];
-
-    // Every part after the first is opened by CRLF + `--boundary`; the first by `--boundary` at the
-    // body's start (an optional preamble may precede it, then it too is CRLF-prefixed). Both are one
-    // delimiter with an optional CRLF in front, so the walk searches the dashed form and accepts it
-    // only at offset zero or right after a CRLF.
-    let dashed = format!("--{boundary}");
-    let closing = format!("\r\n--{boundary}");
-    let mut found: Option<String> = None;
-    let mut at = 0usize;
-
-    while at < head.len() {
-        let Some(rel) = find_sub(&head[at..], dashed.as_bytes()) else {
-            break;
-        };
-        let abs = at + rel;
-        // A `--boundary` that is not at a line start is text that happens to look like a delimiter.
-        if abs != 0 && !head[..abs].ends_with(b"\r\n") {
-            at = abs + dashed.len();
-            continue;
-        }
-        let after = abs + dashed.len();
-        let rest = &head[after..];
-        if rest.starts_with(b"--") {
-            // The closing delimiter. Everything past it is the epilogue.
-            break;
-        }
-        // A delimiter line may carry linear whitespace before its CRLF; anything else is not a
-        // delimiter line, and a document this reader cannot follow is a document it does not guess
-        // at.
-        let Some(line_end) = find_sub(rest, b"\r\n") else {
-            break;
-        };
-        if rest[..line_end].iter().any(|b| !matches!(b, b' ' | b'\t')) {
-            at = after;
-            continue;
-        }
-        let hdr_at = after + line_end + 2;
-        // The part's header block ends at the blank line. A part whose block does not close inside
-        // the head is a part this read does not reach.
-        let Some(hdr_len) = find_sub(&head[hdr_at..], b"\r\n\r\n") else {
-            break;
-        };
-        let body_at = hdr_at + hdr_len + 4;
-        let Some(body_len) = find_sub(&head[body_at..], closing.as_bytes()) else {
-            break;
-        };
-        if part_is_model(&head[hdr_at..hdr_at + hdr_len]) {
+    let mut parts = multipart_segments(content_type, body)?;
+    let mut found: Option<&[u8]> = None;
+    for part in parts.by_ref() {
+        let hdr_len = find_sub(part, b"\r\n\r\n")?;
+        if part_is_model(&part[..hdr_len])? {
             if found.is_some() {
                 // Two `model` parts: no model, rather than a guess at which one is billed.
                 return None;
             }
-            found = Some(
-                String::from_utf8_lossy(&head[body_at..body_at + body_len])
-                    .trim()
-                    .to_string(),
-            );
+            let value = &part[hdr_len + 4..];
+            found = Some(value.strip_suffix(b"\r\n").unwrap_or(value));
         }
-        at = body_at + body_len + 2;
     }
-    found.filter(|m| !m.is_empty())
+    if !parts.closed {
+        return None;
+    }
+    found
+        .map(|value| String::from_utf8_lossy(value).trim().to_string())
+        .filter(|m| !m.is_empty())
 }

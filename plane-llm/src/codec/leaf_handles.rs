@@ -29,11 +29,11 @@ fn slab(body: Bytes) -> SlabBytes {
 }
 
 /// The refusal a transcription writer's empty write becomes: a request always carries its model, so
-/// a writer that wrote nothing refused it (an audio part carrying its form's delimiter). Refused at
+/// a writer that wrote nothing refused it (invalid audio or a form delimiter in its bytes). Refused at
 /// the seam, never sent upstream as an empty body.
 fn unwritable(egress_proto: &str) -> String {
     format!(
-        "this request cannot be written onto {egress_proto}: its audio carries the delimiter of \
+        "this request cannot be written onto {egress_proto}: its audio cannot be represented in \
          the form it would be sent in"
     )
 }
@@ -43,7 +43,7 @@ fn unwritable(egress_proto: &str) -> String {
 /// the ingress dialect's answer (JSON, else the typed bytes).
 macro_rules! leaf_handles {
     ($req:ident($req_ir:ty), $resp:ident($resp_ir:ty), $verb:ident, $write_req:ident, $write_resp:ident,
-     stream: $stream:tt, req_billing: $req_billing:tt, resp_billing: $resp_billing:tt, refuse_empty: $refuse:tt) => {
+     stream: $stream:tt, req_billing: $req_billing:tt, resp_billing: $resp_billing:tt, refuse_empty: $refuse:tt, refuse_empty_response: $resp_refuse:tt) => {
         pub struct $req(pub $req_ir);
         pub struct $resp(pub $resp_ir);
         impl Sealed for $req {}
@@ -98,6 +98,7 @@ macro_rules! leaf_handles {
                     return TranslatedResponse::IngressUnsupported;
                 }
                 let wb = super::leaf_codec::$write_resp(ingress_proto, &self.0);
+                leaf_handles!(@refuse_response $resp_refuse wb);
                 match serde_json::from_slice::<Value>(&wb.bytes) {
                     Ok(v) => TranslatedResponse::Json(v),
                     Err(_) => TranslatedResponse::Typed(wb),
@@ -112,7 +113,9 @@ macro_rules! leaf_handles {
                 if !serves_op {
                     return TranslatedResponse::Untranslatable;
                 }
-                TranslatedResponse::Typed(super::leaf_codec::$write_resp(ingress_proto, &self.0))
+                let wb = super::leaf_codec::$write_resp(ingress_proto, &self.0);
+                leaf_handles!(@refuse_response $resp_refuse wb);
+                TranslatedResponse::Typed(wb)
             }
         }
     };
@@ -138,6 +141,12 @@ macro_rules! leaf_handles {
         }
     };
     (@refuse no $bytes:ident $proto:ident) => {};
+    (@refuse_response no $wire:ident) => {};
+    (@refuse_response yes $wire:ident) => {
+        if $wire.bytes.is_empty() {
+            return TranslatedResponse::Untranslatable;
+        }
+    };
     (@refuse yes $bytes:ident $proto:ident) => {
         if $bytes.is_empty() {
             return EgressWire::Unrepresentable {
@@ -149,21 +158,21 @@ macro_rules! leaf_handles {
 
 leaf_handles!(EmbeddingsReqHandle(EmbeddingsReq), EmbeddingsRespHandle(EmbeddingsResp), EMBEDDINGS,
     embeddings_write_request, embeddings_write_response,
-    stream: none, req_billing: none, resp_billing: own, refuse_empty: no);
+    stream: none, req_billing: none, resp_billing: own, refuse_empty: no, refuse_empty_response: no);
 leaf_handles!(ImageReqHandle(ImageReq), ImageRespHandle(ImageResp), IMAGE,
     image_write_request, image_write_response,
-    stream: none, req_billing: none, resp_billing: own, refuse_empty: no);
+    stream: none, req_billing: none, resp_billing: own, refuse_empty: no, refuse_empty_response: no);
 leaf_handles!(RerankReqHandle(RerankReq), RerankRespHandle(RerankResp), RERANK,
     rerank_write_request, rerank_write_response,
-    stream: none, req_billing: none, resp_billing: own, refuse_empty: no);
+    stream: none, req_billing: none, resp_billing: own, refuse_empty: no, refuse_empty_response: no);
 leaf_handles!(ModerationReqHandle(ModerationReq), ModerationRespHandle(ModerationResp), MODERATION,
     moderation_write_request, moderation_write_response,
-    stream: none, req_billing: none, resp_billing: flat, refuse_empty: no);
+    stream: none, req_billing: none, resp_billing: flat, refuse_empty: no, refuse_empty_response: no);
 leaf_handles!(TranscriptionReqHandle(TranscriptionReq), TranscriptionRespHandle(TranscriptionResp), TRANSCRIPTION,
     transcription_write_request, transcription_write_response,
-    stream: field, req_billing: none, resp_billing: own, refuse_empty: yes);
+    stream: field, req_billing: none, resp_billing: own, refuse_empty: yes, refuse_empty_response: no);
 // Speech meters at the request seam (`SpeechReq::billing`: the input's exact character count),
 // knowable here and never from the opaque audio answer.
 leaf_handles!(SpeechReqHandle(SpeechReq), SpeechRespHandle(SpeechResp), SPEECH,
     speech_write_request, speech_write_response,
-    stream: field, req_billing: own, resp_billing: own, refuse_empty: no);
+    stream: field, req_billing: own, resp_billing: own, refuse_empty: no, refuse_empty_response: yes);

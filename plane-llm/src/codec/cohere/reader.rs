@@ -108,6 +108,7 @@ impl ProtocolReader for CohereReader {
         let obj = body.as_object().ok_or_else(ir_parse_error)?;
 
         let mut extra = serde_json::Map::new();
+        let mut block_origins = crate::codec::ir::IrBlockOrigins::default();
         let mut system_blocks: Vec<crate::codec::ir::IrBlock> = Vec::new();
         // `system`-role entries folded out of `messages`, keeping `message_count` the raw wire array length.
         let mut system_turns_folded: usize = 0;
@@ -147,7 +148,14 @@ impl ProtocolReader for CohereReader {
                     let blocks_before = system_blocks.len();
                     if let Some(content_val) = msg_val.get(keys::CONTENT) {
                         if let Some(s) = content_val.as_str() {
-                            system_blocks.push(crate::codec::ir::IrBlock::text(s.to_string()));
+                            {
+                                block_origins
+                                    .system
+                                    .push(crate::codec::ir::IrBlockOrigin::at(
+                                        &SOURCE_MESSAGE_CONTENT,
+                                    ));
+                                system_blocks.push(crate::codec::ir::IrBlock::text(s.to_string()))
+                            };
                         } else if let Some(arr) = content_val.as_array() {
                             for block_val in arr {
                                 if let Some(bo) = block_val.as_object() {
@@ -157,9 +165,16 @@ impl ProtocolReader for CohereReader {
                                         if let Some(text) =
                                             bo.get(keys::TEXT).and_then(|t| t.as_str())
                                         {
-                                            system_blocks.push(crate::codec::ir::IrBlock::text(
-                                                text.to_string(),
-                                            ));
+                                            {
+                                                block_origins.system.push(
+                                                    crate::codec::ir::IrBlockOrigin::at(
+                                                        &SOURCE_MESSAGE_TEXT,
+                                                    ),
+                                                );
+                                                system_blocks.push(crate::codec::ir::IrBlock::text(
+                                                    text.to_string(),
+                                                ))
+                                            };
                                         }
                                     } else {
                                         // Cohere's system message is text-only, so a non-text block has no
@@ -192,6 +207,7 @@ impl ProtocolReader for CohereReader {
                 }
 
                 let mut msg_content = Vec::new();
+                let mut msg_origins = Vec::new();
                 // The generic content loop must not run for the Tool role: tool content is consumed
                 // by the dedicated Tool branch below into the ToolResult. Running it too decoded the same
                 // `content` into stray top-level Text blocks, so one tool message produced both a Text
@@ -201,9 +217,14 @@ impl ProtocolReader for CohereReader {
                 if role != crate::codec::ir::IrRole::Tool {
                     if let Some(content_val) = msg_val.get(keys::CONTENT) {
                         if content_val.is_string() {
-                            msg_content.push(crate::codec::ir::IrBlock::text(
-                                content_val.as_str().unwrap_or("").to_string(),
-                            ));
+                            {
+                                msg_origins.push(crate::codec::ir::IrBlockOrigin::at(
+                                    &SOURCE_MESSAGE_CONTENT,
+                                ));
+                                msg_content.push(crate::codec::ir::IrBlock::text(
+                                    content_val.as_str().unwrap_or("").to_string(),
+                                ))
+                            };
                         } else if let Some(arr) = content_val.as_array() {
                             for block_val in arr {
                                 if let Some(block_obj) = block_val.as_object() {
@@ -212,9 +233,18 @@ impl ProtocolReader for CohereReader {
                                             if let Some(text) =
                                                 block_obj.get(keys::TEXT).and_then(|t| t.as_str())
                                             {
-                                                msg_content.push(crate::codec::ir::IrBlock::text(
-                                                    text.to_string(),
-                                                ));
+                                                {
+                                                    msg_origins.push(
+                                                        crate::codec::ir::IrBlockOrigin::at(
+                                                            &SOURCE_MESSAGE_TEXT,
+                                                        ),
+                                                    );
+                                                    msg_content.push(
+                                                        crate::codec::ir::IrBlock::text(
+                                                            text.to_string(),
+                                                        ),
+                                                    )
+                                                };
                                             }
                                         }
                                         // Cohere v2 multimodal input: an image part
@@ -230,7 +260,13 @@ impl ProtocolReader for CohereReader {
                                                 .and_then(|iu| iu.get(keys::URL))
                                                 .and_then(|u| u.as_str())
                                             {
-                                                msg_content.push(crate::codec::ir::IrBlock::Image {
+                                                {
+                                                    msg_origins.push(
+                                                        crate::codec::ir::IrBlockOrigin::at(
+                                                            &SOURCE_MESSAGE_IMAGE,
+                                                        ),
+                                                    );
+                                                    msg_content.push(crate::codec::ir::IrBlock::Image {
                                                     source:
                                                         super::super::ir_encode::parse_image_url(
                                                             url,
@@ -240,14 +276,22 @@ impl ProtocolReader for CohereReader {
                                                     detail: read_cohere_image_detail(
                                                         block_obj.get(keys::IMAGE_URL),
                                                     ),
-                                                });
+                                                })
+                                                };
                                             }
                                         }
                                         // A `{"type":"document","document":{id?, data}}` part (COH-04):
                                         // read into the IR's document Media (see `read_cohere_document`).
                                         Some(keys::DOCUMENT) => {
                                             if let Some(doc) = block_obj.get(keys::DOCUMENT) {
-                                                msg_content.push(read_cohere_document(doc));
+                                                {
+                                                    msg_origins.push(
+                                                        crate::codec::ir::IrBlockOrigin::at(
+                                                            &SOURCE_MESSAGE_DOCUMENT,
+                                                        ),
+                                                    );
+                                                    msg_content.push(read_cohere_document(doc))
+                                                };
                                             }
                                         }
                                         // An assistant turn replaying a reasoning model's
@@ -260,16 +304,23 @@ impl ProtocolReader for CohereReader {
                                                 .and_then(|t| t.as_str())
                                                 .filter(|s| !s.is_empty())
                                             {
-                                                msg_content.push(
-                                                    crate::codec::ir::IrBlock::Thinking {
-                                                        text: text.to_string(),
-                                                        signature: None,
-                                                        redacted: false,
-                                                        cache_control: None,
-                                                        kind: None,
-                                                        signature_origin: None,
-                                                    },
-                                                );
+                                                {
+                                                    msg_origins.push(
+                                                        crate::codec::ir::IrBlockOrigin::at(
+                                                            &SOURCE_MESSAGE_THINKING,
+                                                        ),
+                                                    );
+                                                    msg_content.push(
+                                                        crate::codec::ir::IrBlock::Thinking {
+                                                            text: text.to_string(),
+                                                            signature: None,
+                                                            redacted: false,
+                                                            cache_control: None,
+                                                            kind: None,
+                                                            signature_origin: None,
+                                                        },
+                                                    )
+                                                };
                                             }
                                         }
                                         _ => {}
@@ -287,17 +338,23 @@ impl ProtocolReader for CohereReader {
                 if role == crate::codec::ir::IrRole::Assistant {
                     if let Some(plan) = msg_val.get(TOOL_PLAN).and_then(|p| p.as_str()) {
                         if !plan.is_empty() {
-                            msg_content.insert(
-                                0,
-                                crate::codec::ir::IrBlock::Thinking {
-                                    text: plan.to_string(),
-                                    signature: None,
-                                    redacted: false,
-                                    cache_control: None,
-                                    kind: None,
-                                    signature_origin: None,
-                                },
-                            );
+                            {
+                                msg_origins.insert(
+                                    0,
+                                    crate::codec::ir::IrBlockOrigin::at(&SOURCE_MESSAGE_TOOL_PLAN),
+                                );
+                                msg_content.insert(
+                                    0,
+                                    crate::codec::ir::IrBlock::Thinking {
+                                        text: plan.to_string(),
+                                        signature: None,
+                                        redacted: false,
+                                        cache_control: None,
+                                        kind: None,
+                                        signature_origin: None,
+                                    },
+                                )
+                            };
                         }
                     }
                 }
@@ -320,51 +377,62 @@ impl ProtocolReader for CohereReader {
                                 // COH-17 request side: a grounded turn with no text part carries its
                                 // citations on an empty text block, as the response reader does; a
                                 // dialect that rejects empty text (Anthropic, Bedrock, Gemini) omits it.
-                                msg_content.push(crate::codec::ir::IrBlock::Text {
-                                    text: String::new(),
-                                    cache_control: None,
-                                    citations: cits,
-                                    refusal: false,
-                                });
+                                {
+                                    msg_origins.push(crate::codec::ir::IrBlockOrigin::at(
+                                        &SOURCE_MESSAGE_CITATIONS,
+                                    ));
+                                    msg_content.push(crate::codec::ir::IrBlock::Text {
+                                        text: String::new(),
+                                        cache_control: None,
+                                        citations: cits,
+                                        refusal: false,
+                                    })
+                                };
                             }
                         }
                     }
                 }
 
                 if role == crate::codec::ir::IrRole::Assistant {
-                    if let Some(tool_calls) = msg_val.get(keys::TOOL_CALLS) {
-                        if let Some(tc_arr) = tool_calls.as_array() {
-                            for tc_val in tc_arr {
-                                if let Some(func_obj) = tc_val.get(keys::FUNCTION) {
-                                    // A tool call needs a non-empty string `id`, the key the egress
-                                    // dialect uses to pair the tool result. Reject rather than invent one.
-                                    let id = tc_val
-                                        .get(keys::ID)
-                                        .and_then(|v| v.as_str())
-                                        .filter(|s| !s.is_empty())
-                                        .ok_or_else(ir_parse_error)?
-                                        .to_string();
-                                    let name = func_obj
-                                        .get(keys::NAME)
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("")
-                                        .to_string();
-                                    let arguments = func_obj
-                                        .get(keys::ARGUMENTS)
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("{}");
-                                    let input = crate::codec::json::parse_str(arguments).unwrap_or(
-                                        serde_json::Value::String(arguments.to_string()),
-                                    );
-                                    msg_content.push(crate::codec::ir::IrBlock::ToolUse {
-                                        id,
-                                        name,
-                                        input,
-                                        cache_control: None,
-                                        thought_signature: None,
-                                    });
+                    if let Some(tool_calls) = msg_val
+                        .get(keys::TOOL_CALLS)
+                        .filter(|value| !value.is_null())
+                    {
+                        let calls = tool_calls.as_array().ok_or_else(ir_parse_error)?;
+                        for call in calls {
+                            let function = call
+                                .get(keys::FUNCTION)
+                                .and_then(|v| v.as_object())
+                                .ok_or_else(ir_parse_error)?;
+                            let nonempty = |value: Option<&serde_json::Value>| {
+                                value
+                                    .and_then(|v| v.as_str())
+                                    .filter(|value| !value.is_empty())
+                                    .map(String::from)
+                                    .ok_or_else(ir_parse_error)
+                            };
+                            let id = nonempty(call.get(keys::ID))?;
+                            let name = nonempty(function.get(keys::NAME))?;
+                            let input = match function.get(keys::ARGUMENTS) {
+                                None | Some(serde_json::Value::Null) => serde_json::json!({}),
+                                Some(value) => {
+                                    let arguments = value.as_str().ok_or_else(ir_parse_error)?;
+                                    crate::codec::json::parse_str(arguments)
+                                        .map_err(|_| ir_parse_error())?
                                 }
-                            }
+                            };
+                            {
+                                msg_origins.push(crate::codec::ir::IrBlockOrigin::at(
+                                    &SOURCE_MESSAGE_TOOL_CALL,
+                                ));
+                                msg_content.push(crate::codec::ir::IrBlock::ToolUse {
+                                    id,
+                                    name,
+                                    input,
+                                    cache_control: None,
+                                    thought_signature: None,
+                                })
+                            };
                         }
                     }
                 }
@@ -373,133 +441,170 @@ impl ProtocolReader for CohereReader {
                     let tool_call_id = msg_val
                         .get(keys::TOOL_CALL_ID)
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
+                        .filter(|id| !id.is_empty())
+                        .ok_or_else(ir_parse_error)?
                         .to_string();
-                    let content_text = if let Some(content_val) = msg_val.get(keys::CONTENT) {
+                    let mut result_content = Vec::new();
+                    let mut result_origins = Vec::new();
+                    let mut content_text = String::new();
+                    if let Some(content_val) = msg_val.get(keys::CONTENT) {
                         if let Some(arr) = content_val.as_array() {
-                            // Tool content is an array (bare strings are accepted). The native shape is
-                            // typed objects (`[{"type":"text",...}]`, `[{"type":"document",...}]`): pull
-                            // `text` from text blocks and JSON-serialize other typed blocks so their
-                            // content is preserved, mirroring the user/assistant text decoding above.
-                            arr.iter()
-                                .filter_map(|b| {
-                                    if let Some(s) = b.as_str() {
-                                        Some(s.to_string())
-                                    } else if let Some(bo) = b.as_object() {
-                                        if bo.get(keys::TYPE).and_then(|t| t.as_str())
-                                            == Some(keys::TEXT)
-                                        {
-                                            bo.get(keys::TEXT)
-                                                .and_then(|t| t.as_str())
-                                                .map(String::from)
-                                        } else if bo.contains_key(keys::DOCUMENT) {
-                                            // A `document` part is captured structurally below
-                                            // (`doc_blocks`); serializing it into this text join once made
-                                            // the model see escaped JSON syntax instead of the document.
-                                            // Nothing here.
-                                            None
-                                        } else {
-                                            // Preserve any other non-text typed block verbatim.
-                                            crate::codec::json::to_string(b).ok()
-                                        }
+                            // Join adjacent text without separators, flushing it before each
+                            // document so interleaved parts retain their original positions.
+                            for b in arr {
+                                let text = if let Some(s) = b.as_str() {
+                                    Some(s.to_owned())
+                                } else if let Some(bo) = b.as_object() {
+                                    if bo.get(keys::TYPE).and_then(|t| t.as_str())
+                                        == Some(keys::TEXT)
+                                    {
+                                        bo.get(keys::TEXT)
+                                            .and_then(|t| t.as_str())
+                                            .map(String::from)
+                                    } else if bo.contains_key(keys::DOCUMENT) {
+                                        None
                                     } else {
-                                        // Non-string, non-object array element: serialized so nothing is lost.
                                         crate::codec::json::to_string(b).ok()
                                     }
-                                })
-                                .collect::<Vec<_>>()
-                                // Concatenated with no separator: the OpenAI/Anthropic writers join text
-                                // blocks with `""`, so a space would corrupt content split across blocks on
-                                // a Cohere to OpenAI to Cohere round trip (a phantom space per boundary).
-                                .join("")
+                                } else {
+                                    crate::codec::json::to_string(b).ok()
+                                };
+                                if let Some(text) = text {
+                                    content_text.push_str(&text);
+                                }
+                                if let Some(doc) = b.get(keys::DOCUMENT) {
+                                    if !content_text.is_empty() {
+                                        {
+                                            result_origins.push(
+                                                crate::codec::ir::IrBlockOrigin::at(
+                                                    &SOURCE_MESSAGE_CONTENT,
+                                                ),
+                                            );
+                                            result_content.push(crate::codec::ir::IrBlock::text(
+                                                std::mem::take(&mut content_text),
+                                            ))
+                                        };
+                                    }
+                                    {
+                                        result_origins.push(crate::codec::ir::IrBlockOrigin::at(
+                                            &SOURCE_MESSAGE_DOCUMENT,
+                                        ));
+                                        result_content.push(read_cohere_tool_result_document(doc))
+                                    };
+                                }
+                            }
                         } else if let Some(s) = content_val.as_str() {
-                            s.to_string()
+                            content_text.push_str(s);
                         } else {
-                            crate::codec::json::to_string(content_val).unwrap_or_default()
+                            content_text =
+                                crate::codec::json::to_string(content_val).unwrap_or_default();
                         }
-                    } else {
-                        String::new()
-                    };
-                    let mut result_content: Vec<crate::codec::ir::IrBlock> = Vec::new();
-                    if !content_text.is_empty() {
-                        result_content.push(crate::codec::ir::IrBlock::text(content_text));
                     }
-                    // `document` parts are captured structurally, not folded into the text join (which
-                    // made the model read escaped JSON). A tool-result document is the tool's output: its
-                    // JSON `data` reads into the IR `Json` block (string `data` into `Text`), the carrier
-                    // every writer projects in a tool result. It once rode the opaque cohere `Vendor`
-                    // escape every foreign writer drops, so an Anthropic backend saw an empty tool result
-                    // (the ANT-17 follow-up). The document `id` is a Cohere citation handle with no
-                    // foreign analog; only a document with no readable `data` keeps the `Vendor` escape.
-                    if let Some(arr) = msg_val.get(keys::CONTENT).and_then(|c| c.as_array()) {
-                        for b in arr {
-                            let Some(doc) = b.get(keys::DOCUMENT) else {
-                                continue;
-                            };
-                            result_content.push(read_cohere_tool_result_document(doc));
-                        }
+                    if !content_text.is_empty() {
+                        {
+                            result_origins
+                                .push(crate::codec::ir::IrBlockOrigin::at(&SOURCE_MESSAGE_CONTENT));
+                            result_content.push(crate::codec::ir::IrBlock::text(content_text))
+                        };
                     }
                     // A tool result with no parts still needs one empty text block: writers project its
                     // content, and an empty vec would emit a result with no content.
                     if result_content.is_empty() {
-                        result_content.push(crate::codec::ir::IrBlock::text(String::new()));
+                        {
+                            result_origins.push(if msg_val.get(keys::CONTENT).is_some() {
+                                crate::codec::ir::IrBlockOrigin::at(&SOURCE_MESSAGE_CONTENT)
+                            } else {
+                                crate::codec::ir::IrBlockOrigin::default()
+                            });
+                            result_content.push(crate::codec::ir::IrBlock::text(String::new()))
+                        };
                     }
-                    msg_content.push(crate::codec::ir::IrBlock::ToolResult {
-                        tool_use_id: tool_call_id,
-                        content: result_content,
-                        is_error: false,
-                        cache_control: None,
-                    });
+                    {
+                        msg_origins.push(crate::codec::ir::IrBlockOrigin {
+                            source: msg_val.get(keys::CONTENT).map(|_| &SOURCE_MESSAGE_CONTENT),
+                            children: result_origins,
+                        });
+                        msg_content.push(crate::codec::ir::IrBlock::ToolResult {
+                            tool_use_id: tool_call_id,
+                            content: result_content,
+                            is_error: false,
+                            cache_control: None,
+                        })
+                    };
                 }
 
-                messages.push(crate::codec::ir::IrMessage {
-                    role,
-                    content: msg_content,
-                });
+                {
+                    block_origins.messages.push(msg_origins);
+                    messages.push(crate::codec::ir::IrMessage {
+                        role,
+                        content: msg_content,
+                    })
+                };
             }
         } else {
             return Err(ir_parse_error());
         }
 
         let mut tools: Vec<crate::codec::ir::IrTool> = Vec::new();
-        if let Some(tools_arr) = obj.get(keys::TOOLS).and_then(|v| v.as_array()) {
+        if let Some(tools_value) = obj.get(keys::TOOLS).filter(|value| !value.is_null()) {
+            let tools_arr = tools_value.as_array().ok_or_else(ir_parse_error)?;
             for tool_val in tools_arr {
-                if let Some(func_obj) = tool_val.get(keys::FUNCTION) {
-                    let name = func_obj
-                        .get(keys::NAME)
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let description = func_obj
-                        .get(keys::DESCRIPTION)
-                        .and_then(|v| v.as_str().map(String::from));
-                    let input_schema = func_obj
-                        .get(keys::PARAMETERS)
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null);
-                    tools.push(crate::codec::ir::IrTool {
-                        name,
-                        description,
-                        input_schema,
-                        cache_control: None,
-                        hosted: None,
-                        strict: None,
-                    });
-                }
+                let func_obj = tool_val
+                    .get(keys::FUNCTION)
+                    .and_then(|v| v.as_object())
+                    .ok_or_else(ir_parse_error)?;
+                let name = func_obj
+                    .get(keys::NAME)
+                    .and_then(|v| v.as_str())
+                    .filter(|name| !name.is_empty())
+                    .ok_or_else(ir_parse_error)?
+                    .to_string();
+                let description = func_obj
+                    .get(keys::DESCRIPTION)
+                    .and_then(|v| v.as_str().map(String::from));
+                let input_schema = func_obj
+                    .get(keys::PARAMETERS)
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                tools.push(crate::codec::ir::IrTool {
+                    name,
+                    description,
+                    input_schema,
+                    cache_control: None,
+                    hosted: None,
+                    strict: None,
+                });
             }
         }
 
-        // `u32::try_from`, not `as u32`: a `max_tokens` above `u32::MAX` would wrap to a nonsense cap
-        // forwarded to Cohere. Out of range is `None`, as in the Gemini reader; the `v > 0` filter
-        // rejects zero/negative first.
+        // Refuse a malformed output cap instead of silently removing it from the request.
+        // Checked conversion preserves the existing u32 IR representation without narrowing.
         let max_tokens = obj
             .get(keys::MAX_TOKENS)
-            .and_then(|v| v.as_i64())
-            .filter(|&v| v > 0)
-            .and_then(|v| u32::try_from(v).ok());
+            .filter(|value| !value.is_null())
+            .map(|value| {
+                value
+                    .as_u64()
+                    .filter(|value| *value > 0)
+                    .and_then(|value| u32::try_from(value).ok())
+                    .ok_or_else(ir_parse_error)
+            })
+            .transpose()?;
         // temperature, `p`, `k`, stop_sequences, penalties and seed are map-file rows, read below.
         // Cohere v2 `tool_choice` is a top-level enum string (REQUIRED/NONE), promoted to the IR union.
         let tool_choice = read_cohere_tool_choice(obj.get(keys::TOOL_CHOICE));
+        if obj
+            .get(keys::TOOL_CHOICE)
+            .is_some_and(|value| !value.is_null())
+            && tool_choice.is_none()
+        {
+            // The IR's documented policy keeps unknown native choices as Auto. Make that
+            // degradation visible instead of silently losing the caller's constraint.
+            tracing::warn!(
+                field = "tool_choice",
+                "unrecognized Cohere tool_choice uses the documented automatic tool policy"
+            );
+        }
         let stream = obj
             .get(keys::STREAM)
             .and_then(|v| v.as_bool())
@@ -547,22 +652,34 @@ impl ProtocolReader for CohereReader {
         // which the seam clears, so a foreign model answered ungrounded. The Cohere writer lifts text
         // documents back into `documents` (COH-18). A non-array `documents` stays in `extra`.
         if let Some(docs) = obj.get(keys::DOCUMENTS).and_then(|d| d.as_array()) {
-            let blocks: Vec<crate::codec::ir::IrBlock> =
-                docs.iter().map(read_cohere_document).collect();
+            let mut document_origins = Vec::new();
+            let blocks: Vec<crate::codec::ir::IrBlock> = docs
+                .iter()
+                .map(|document| {
+                    document_origins.push(crate::codec::ir::IrBlockOrigin::at(
+                        &SOURCE_GROUNDING_DOCUMENT,
+                    ));
+                    read_cohere_document(document)
+                })
+                .collect();
             match messages
-                .iter_mut()
-                .find(|m| m.role == crate::codec::ir::IrRole::User)
+                .iter()
+                .position(|m| m.role == crate::codec::ir::IrRole::User)
             {
                 Some(first_user) => {
-                    first_user.content.splice(0..0, blocks);
+                    messages[first_user].content.splice(0..0, blocks);
+                    block_origins.messages[first_user].splice(0..0, document_origins);
                 }
-                None if !blocks.is_empty() => messages.insert(
-                    0,
-                    crate::codec::ir::IrMessage {
-                        role: crate::codec::ir::IrRole::User,
-                        content: blocks,
-                    },
-                ),
+                None if !blocks.is_empty() => {
+                    block_origins.messages.insert(0, document_origins);
+                    messages.insert(
+                        0,
+                        crate::codec::ir::IrMessage {
+                            role: crate::codec::ir::IrRole::User,
+                            content: blocks,
+                        },
+                    );
+                }
                 None => {}
             }
             extra.remove(keys::DOCUMENTS);
@@ -575,6 +692,7 @@ impl ProtocolReader for CohereReader {
         }
 
         let mut ir = crate::codec::ir::IrRequest {
+            block_origins,
             reasoning,
             // Request `logprobs` (bool) promoted so the ask carries cross-protocol.
             logprobs,
@@ -596,7 +714,7 @@ impl ProtocolReader for CohereReader {
 
     fn read_response_events(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn busbar_contract::codec::CodecHost,
         _event_type: &str,
         data: &serde_json::Value,
         state: &mut crate::codec::ir::StreamDecodeState,
@@ -612,13 +730,13 @@ impl ProtocolReader for CohereReader {
                 if !state.started {
                     state.started = true;
                     // The response `id` rides the top-level message-start frame: captured for
-                    // same-protocol passthrough, else synthesized shape-valid. Cohere has no stream `created`.
+                    // passthrough. A missing identity stays absent until a writer needs to mint it;
+                    // decoding usage must not require entropy. Cohere has no stream `created`.
                     let id = data
                         .get(keys::ID)
                         .and_then(|v| v.as_str())
                         .filter(|s| !s.is_empty())
-                        .map(String::from)
-                        .or_else(|| Some(synthesize_cohere_id(host)));
+                        .map(String::from);
                     out.push(IrStreamEvent::MessageStart {
                         role: crate::codec::ir::IrRole::Assistant,
                         usage: None,
@@ -651,7 +769,9 @@ impl ProtocolReader for CohereReader {
             {
                 if cohere_open_thinking_index(state).is_none() {
                     cohere_close_text_slot(state, &mut out);
-                    if let Some(index) = cohere_open_thinking_block(state, &mut out) {
+                    if let Some(index) =
+                        cohere_open_thinking_block(state, &mut out, &SOURCE_STREAM_THINKING_START)
+                    {
                         if let Some(text) = data
                             .get(keys::DELTA)
                             .and_then(|d| d.get(keys::MESSAGE))
@@ -681,7 +801,7 @@ impl ProtocolReader for CohereReader {
                     Some(index) => Some(index),
                     None => {
                         cohere_close_text_slot(state, &mut out);
-                        cohere_open_thinking_block(state, &mut out)
+                        cohere_open_thinking_block(state, &mut out, &SOURCE_STREAM_THINKING_DELTA)
                     }
                 };
                 if let Some(index) = index.filter(|_| !text.is_empty()) {
@@ -703,6 +823,10 @@ impl ProtocolReader for CohereReader {
                 if !state.text_block_open {
                     state.text_block_open = true;
                     let ti = cohere_text_ir_index(state);
+                    state.block_origins.insert(
+                        ti,
+                        crate::codec::ir::IrBlockOrigin::at(&SOURCE_STREAM_TEXT_START),
+                    );
                     out.push(IrStreamEvent::BlockStart {
                         index: ti,
                         block: crate::codec::ir::IrBlockMeta::Text,
@@ -718,6 +842,10 @@ impl ProtocolReader for CohereReader {
                 let text_idx = cohere_text_ir_index(state);
                 if !state.text_block_open {
                     state.text_block_open = true;
+                    state.block_origins.insert(
+                        text_idx,
+                        crate::codec::ir::IrBlockOrigin::at(&SOURCE_STREAM_TEXT_DELTA),
+                    );
                     out.push(IrStreamEvent::BlockStart {
                         index: text_idx,
                         block: crate::codec::ir::IrBlockMeta::Text,
@@ -801,6 +929,10 @@ impl ProtocolReader for CohereReader {
                 if !state.text_block_open {
                     state.text_block_open = true;
                     state.thinking_block_open = true;
+                    state.block_origins.insert(
+                        plan_idx,
+                        crate::codec::ir::IrBlockOrigin::at(&SOURCE_STREAM_TOOL_PLAN),
+                    );
                     out.push(IrStreamEvent::BlockStart {
                         index: plan_idx,
                         block: crate::codec::ir::IrBlockMeta::Thinking { kind: None },
@@ -945,6 +1077,10 @@ impl ProtocolReader for CohereReader {
                 // BlockStart would add a spurious opening frame) or a new frame past the cap (untracked, its
                 // delta/end would be dropped, so a BlockStart would orphan it). Emit only when freshly tracked.
                 if let Some(ir_idx) = cohere_assign_tool_ir_index(state, frame_idx) {
+                    state.block_origins.insert(
+                        ir_idx,
+                        crate::codec::ir::IrBlockOrigin::at(&SOURCE_STREAM_TOOL_CALL),
+                    );
                     out.push(IrStreamEvent::BlockStart {
                         index: ir_idx,
                         block: crate::codec::ir::IrBlockMeta::ToolUse { id, name },
@@ -1059,13 +1195,14 @@ impl ProtocolReader for CohereReader {
 
     fn read_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn busbar_contract::codec::CodecHost,
         body: &serde_json::Value,
     ) -> Result<crate::codec::ir::IrResponse, IrError> {
         let obj = body.as_object().ok_or_else(ir_parse_error)?;
         let message_val = obj.get(keys::MESSAGE).ok_or_else(ir_parse_error)?;
 
         let mut content: Vec<crate::codec::ir::IrBlock> = Vec::new();
+        let mut block_origins = crate::codec::ir::IrBlockOrigins::default();
         // Cohere v2's internal pre-tool-call plan is in `message.tool_plan` (a string, distinct from
         // `content[]`). It lands in the IR reasoning carrier (`Thinking`), not Text: as a leading Text it
         // was content injection, since every cross-protocol hop showed the model's internal plan to
@@ -1074,14 +1211,21 @@ impl ProtocolReader for CohereReader {
         // it back into `tool_plan`. Writers with no reasoning slot drop it, correctly.
         if let Some(plan) = message_val.get(TOOL_PLAN).and_then(|p| p.as_str()) {
             if !plan.is_empty() {
-                content.push(crate::codec::ir::IrBlock::Thinking {
-                    text: plan.to_string(),
-                    signature: None,
-                    redacted: false,
-                    cache_control: None,
-                    kind: None,
-                    signature_origin: None,
-                });
+                {
+                    block_origins
+                        .response
+                        .push(crate::codec::ir::IrBlockOrigin::at(
+                            &SOURCE_RESPONSE_TOOL_PLAN,
+                        ));
+                    content.push(crate::codec::ir::IrBlock::Thinking {
+                        text: plan.to_string(),
+                        signature: None,
+                        redacted: false,
+                        cache_control: None,
+                        kind: None,
+                        signature_origin: None,
+                    })
+                };
             }
         }
         // Grounding citations. Cohere's offsets are character offsets into the assembled content text,
@@ -1098,12 +1242,17 @@ impl ProtocolReader for CohereReader {
                     match block_obj.get(keys::TYPE).and_then(|t| t.as_str()) {
                         Some(keys::TEXT) => {
                             if let Some(text) = block_obj.get(keys::TEXT).and_then(|t| t.as_str()) {
-                                content.push(crate::codec::ir::IrBlock::Text {
-                                    text: text.to_string(),
-                                    cache_control: None,
-                                    citations: std::mem::take(&mut citations_pending),
-                                    refusal: false,
-                                });
+                                {
+                                    block_origins.response.push(
+                                        crate::codec::ir::IrBlockOrigin::at(&SOURCE_RESPONSE_TEXT),
+                                    );
+                                    content.push(crate::codec::ir::IrBlock::Text {
+                                        text: text.to_string(),
+                                        cache_control: None,
+                                        citations: std::mem::take(&mut citations_pending),
+                                        refusal: false,
+                                    })
+                                };
                             }
                         }
                         // A reasoning model's `{"type":"thinking","thinking":"…"}` part is the IR Thinking
@@ -1114,14 +1263,21 @@ impl ProtocolReader for CohereReader {
                                 .and_then(|t| t.as_str())
                                 .filter(|s| !s.is_empty())
                             {
-                                content.push(crate::codec::ir::IrBlock::Thinking {
-                                    text: text.to_string(),
-                                    signature: None,
-                                    redacted: false,
-                                    cache_control: None,
-                                    kind: None,
-                                    signature_origin: None,
-                                });
+                                {
+                                    block_origins.response.push(
+                                        crate::codec::ir::IrBlockOrigin::at(
+                                            &SOURCE_RESPONSE_THINKING,
+                                        ),
+                                    );
+                                    content.push(crate::codec::ir::IrBlock::Thinking {
+                                        text: text.to_string(),
+                                        signature: None,
+                                        redacted: false,
+                                        cache_control: None,
+                                        kind: None,
+                                        signature_origin: None,
+                                    })
+                                };
                             }
                         }
                         _ => {}
@@ -1132,12 +1288,19 @@ impl ProtocolReader for CohereReader {
         // Citations with no text block to ride (a grounded turn with no text part) were once lost with
         // the pending list (COH-17). They ride an empty text block after the content, ahead of the tool calls.
         if !citations_pending.is_empty() {
-            content.push(crate::codec::ir::IrBlock::Text {
-                text: String::new(),
-                cache_control: None,
-                citations: std::mem::take(&mut citations_pending),
-                refusal: false,
-            });
+            {
+                block_origins
+                    .response
+                    .push(crate::codec::ir::IrBlockOrigin::at(
+                        &SOURCE_RESPONSE_CITATIONS,
+                    ));
+                content.push(crate::codec::ir::IrBlock::Text {
+                    text: String::new(),
+                    cache_control: None,
+                    citations: std::mem::take(&mut citations_pending),
+                    refusal: false,
+                })
+            };
         }
 
         if let Some(tool_calls_arr) = message_val.get(keys::TOOL_CALLS).and_then(|t| t.as_array()) {
@@ -1159,13 +1322,20 @@ impl ProtocolReader for CohereReader {
                         .unwrap_or("{}");
                     let input = crate::codec::json::parse_str(arguments)
                         .unwrap_or(serde_json::Value::String(arguments.to_string()));
-                    content.push(crate::codec::ir::IrBlock::ToolUse {
-                        id,
-                        name,
-                        input,
-                        cache_control: None,
-                        thought_signature: None,
-                    });
+                    {
+                        block_origins
+                            .response
+                            .push(crate::codec::ir::IrBlockOrigin::at(
+                                &SOURCE_RESPONSE_TOOL_CALL,
+                            ));
+                        content.push(crate::codec::ir::IrBlock::ToolUse {
+                            id,
+                            name,
+                            input,
+                            cache_control: None,
+                            thought_signature: None,
+                        })
+                    };
                 }
             }
         }
@@ -1203,16 +1373,17 @@ impl ProtocolReader for CohereReader {
             .map(String::from);
 
         // Capture the response identity so Cohere to Cohere passthrough preserves it. v2 responses carry
-        // an opaque UUID-like `id`; if omitted, a shape-valid one is synthesized so a native SDK always
-        // sees a string. v2 has no `created`, `system_fingerprint` or `stop_sequence`: those stay `None`.
+        // an opaque UUID-like `id`; if omitted it stays absent in the IR. Identity synthesis belongs
+        // to the fallible writer after the caller has captured usage. v2 has no `created`,
+        // `system_fingerprint` or `stop_sequence`: those stay `None`.
         let id = obj
             .get(keys::ID)
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
-            .map(String::from)
-            .or_else(|| Some(synthesize_cohere_id(host)));
+            .map(String::from);
 
         Ok(crate::codec::ir::IrResponse {
+            block_origins,
             logprobs,
             role: crate::codec::ir::IrRole::Assistant,
             content,
@@ -1280,3 +1451,79 @@ fn read_cohere_usage(
 #[cfg(test)]
 #[path = "tests/unreadable_count_refusal_tests.rs"]
 mod unreadable_count_refusal_tests;
+
+#[cfg(test)]
+mod native_stream_origin_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn actual_stream_creation_sites_never_claim_buffered_answer_containers() {
+        let host = crate::codec::test_host::HOST;
+        for (frame, path) in [
+            (
+                json!({"type": "content-start", "delta": {"message": {"content": {"type": "thinking", "thinking": "thought"}}}}),
+                "content-start.delta.message.content",
+            ),
+            (
+                json!({"type": "content-delta", "delta": {"message": {"content": {"thinking": "thought"}}}}),
+                "content-delta.delta.message.content",
+            ),
+            (json!({"type": "content-start"}), "content-start"),
+            (json!({"type": "content-delta"}), "content-delta"),
+            (json!({"type": "tool-plan-delta"}), "tool-plan-delta"),
+            (
+                json!({"type": "tool-call-start", "index": 0, "delta": {"message": {"tool_calls": {"id": "fixture-call", "function": {"name": "fixture_tool"}}}}}),
+                "tool-call-start",
+            ),
+        ] {
+            let mut state = crate::codec::ir::StreamDecodeState::default();
+            let events = CohereReader.read_response_events(
+                host,
+                frame
+                    .get(keys::TYPE)
+                    .and_then(|value| value.as_str())
+                    .unwrap(),
+                &frame,
+                &mut state,
+            );
+            let index = events
+                .iter()
+                .find_map(|event| match event {
+                    IrStreamEvent::BlockStart { index, .. } => Some(index),
+                    _ => None,
+                })
+                .expect("existing native creation branch");
+            let source = state.block_origins.get(index).unwrap().source.unwrap();
+            assert_eq!(source.dialect, "cohere");
+            assert_eq!(source.path, path);
+        }
+    }
+
+    #[test]
+    fn missing_tool_content_keeps_synthesized_child_origin_explicitly_unknown() {
+        let request = CohereReader
+            .read_request(&json!({"messages": [
+                {"role": "tool", "tool_call_id": "fixture-call"}
+            ]}))
+            .expect("native request");
+        let origin = request
+            .block_origins
+            .messages
+            .first()
+            .unwrap()
+            .first()
+            .unwrap();
+        assert!(origin.source.is_none());
+        assert!(origin.children.first().unwrap().source.is_none());
+        let mut state = crate::codec::ir::StreamDecodeState::default();
+        let ignored = CohereReader.read_response_events(
+            crate::codec::test_host::HOST,
+            "future_fixture",
+            &json!({"type": "future_fixture"}),
+            &mut state,
+        );
+        assert!(ignored.is_empty());
+        assert!(state.block_origins.is_empty());
+    }
+}

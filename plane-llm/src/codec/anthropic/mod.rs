@@ -525,8 +525,8 @@ fn find_stashed_block(
     i: usize,
 ) -> Option<serde_json::Value> {
     sentinel.iter().find_map(|entry| {
-        let em = entry.get(keys::M)?.as_u64()? as usize;
-        let ei = entry.get(keys::I)?.as_u64()? as usize;
+        let em = usize::try_from(entry.get(keys::M)?.as_u64()?).ok()?;
+        let ei = usize::try_from(entry.get(keys::I)?.as_u64()?).ok()?;
         (em == m && ei == i && !is_insert(entry))
             .then(|| entry.get(keys::BLOCK).cloned())
             .flatten()
@@ -544,8 +544,8 @@ fn stashed_inserts(sentinel: &[serde_json::Value], m: usize) -> Vec<(usize, serd
         .iter()
         .filter(|entry| is_insert(entry))
         .filter_map(|entry| {
-            let em = entry.get(keys::M)?.as_u64()? as usize;
-            let ei = entry.get(keys::I)?.as_u64()? as usize;
+            let em = usize::try_from(entry.get(keys::M)?.as_u64()?).ok()?;
+            let ei = usize::try_from(entry.get(keys::I)?.as_u64()?).ok()?;
             (em == m)
                 .then(|| Some((ei, entry.get(keys::BLOCK)?.clone())))
                 .flatten()
@@ -642,16 +642,16 @@ const STATUS_ANTHROPIC_OVERLOADED: u16 = 529;
 
 /// Upper bound on an upstream-supplied streaming block index. The index flows into the IR and then
 /// into writers that allocate against it, so a hostile backend sending up to `u64::MAX` could drive
-/// a pathological allocation; every read site clamps to this, as the Bedrock, OpenAI and Cohere
-/// readers do with their own caps.
+/// a pathological allocation. An oversized index is refused rather than aliased to another block.
 const MAX_ANTHROPIC_BLOCK_INDEX: u64 = 1023;
 
-/// A streaming event's `index`, clamped to `MAX_ANTHROPIC_BLOCK_INDEX`. `None` (the event is
+/// A streaming event's `index`, bounded by `MAX_ANTHROPIC_BLOCK_INDEX`. `None` (the event is
 /// dropped) when it is missing or non-numeric; unlike the Bedrock reader, which defaults to 0.
 fn read_clamped_block_index(data: &serde_json::Value) -> Option<usize> {
     data.get(keys::INDEX)
         .and_then(|i| i.as_u64())
-        .map(|v| v.min(MAX_ANTHROPIC_BLOCK_INDEX) as usize)
+        .filter(|index| *index <= MAX_ANTHROPIC_BLOCK_INDEX)
+        .and_then(|index| usize::try_from(index).ok())
 }
 
 #[derive(Clone)]
@@ -696,7 +696,7 @@ fn warn_hosted_record_dropped() {
 /// `thinking` gets `signature: ""` (matching the `content_block_start` seed). A value the source
 /// reported is left untouched.
 fn write_response_block(block: &crate::codec::ir::IrBlock) -> serde_json::Value {
-    let mut val = write_block(block);
+    let mut val = write_block_in_context(block, true);
     if let Some(obj) = val.as_object_mut() {
         match obj.get(keys::TYPE).and_then(|t| t.as_str()) {
             Some(keys::TEXT) => {
@@ -725,14 +725,17 @@ fn read_cache_control(
     val: Option<&serde_json::Value>,
 ) -> Result<Option<crate::codec::ir::CacheControl>, IrError> {
     let Some(cc_val) = val else { return Ok(None) };
-    let Some(cc_obj) = cc_val.as_object() else {
+    if cc_val.is_null() {
         return Ok(None);
+    }
+    let Some(cc_obj) = cc_val.as_object() else {
+        return Err(ir_parse_error());
     };
     match cc_obj.get(keys::TYPE).and_then(|t| t.as_str()) {
         Some(CACHE_KIND_EPHEMERAL) => Ok(Some(crate::codec::ir::CacheControl {
             kind: crate::codec::ir::CacheKind::Ephemeral,
         })),
-        None => Ok(None),
+        None => Err(ir_parse_error()),
         Some(_) => Err(ir_parse_error()),
     }
 }
@@ -756,11 +759,13 @@ fn read_anthropic_tool_choice(
         keys::AUTO => Some(crate::codec::ir::IrToolChoice::Auto),
         keys::NONE_WORD => Some(crate::codec::ir::IrToolChoice::None),
         keys::ANY => Some(crate::codec::ir::IrToolChoice::Required),
-        keys::TOOL => obj.get(keys::NAME).and_then(|n| n.as_str()).map(|name| {
-            crate::codec::ir::IrToolChoice::Tool {
+        keys::TOOL => obj
+            .get(keys::NAME)
+            .and_then(|n| n.as_str())
+            .filter(|name| !name.is_empty())
+            .map(|name| crate::codec::ir::IrToolChoice::Tool {
                 name: name.to_string(),
-            }
-        }),
+            }),
         _ => None,
     }
 }
@@ -874,6 +879,10 @@ fn write_anthropic_stop_details(
 }
 
 fn write_block(block: &crate::codec::ir::IrBlock) -> serde_json::Value {
+    write_block_in_context(block, false)
+}
+
+fn write_block_in_context(block: &crate::codec::ir::IrBlock, response: bool) -> serde_json::Value {
     // Search-result slot: a RAG passage read from a Converse `searchResult` (or an Anthropic
     // `search_result` whose parked raw block `write_message` did not splice) re-emits natively.
     if let Some(sr) = block.as_search_result() {
@@ -898,8 +907,19 @@ fn write_block(block: &crate::codec::ir::IrBlock) -> serde_json::Value {
                 obj.insert(CACHE_CONTROL.to_string(), cc_val);
             }
             if !citations.is_empty() {
-                let arr: Vec<serde_json::Value> = citations.iter().map(write_citation).collect();
-                obj.insert(keys::CITATIONS.to_string(), serde_json::Value::Array(arr));
+                let arr: Vec<serde_json::Value> = citations
+                    .iter()
+                    .filter_map(|citation| {
+                        if response {
+                            write_response_citation(citation)
+                        } else {
+                            write_citation(citation)
+                        }
+                    })
+                    .collect();
+                if !arr.is_empty() {
+                    obj.insert(keys::CITATIONS.to_string(), serde_json::Value::Array(arr));
+                }
             }
             serde_json::Value::Object(obj)
         }
@@ -978,17 +998,20 @@ fn write_block(block: &crate::codec::ir::IrBlock) -> serde_json::Value {
                 // result left with nothing is the empty-string content Anthropic accepts.
                 let kept: Vec<serde_json::Value> = content
                     .iter()
-                    .filter(|b| attachment_is_sendable(b))
-                    .filter(
-                        |b| !matches!(b, crate::codec::ir::IrBlock::Text { text, .. } if text.is_empty()),
-                    )
-                    .map(|b| match b {
+                    .enumerate()
+                    .filter_map(|(index, b)| crate::codec::drops::with_child_origin(index, || {
+                        if !attachment_is_sendable(b)
+                            || matches!(b, crate::codec::ir::IrBlock::Text { text, .. } if text.is_empty()) {
+                            return None;
+                        }
+                        Some(match b {
                         crate::codec::ir::IrBlock::Json(v) => serde_json::json!({
                             (keys::TYPE): keys::TEXT,
                             (keys::TEXT): serde_json::to_string(v).unwrap_or_default(),
                         }),
                         other => write_block(other),
-                    })
+                        })
+                    }))
                     .collect();
                 if kept.is_empty() {
                     obj.insert(keys::CONTENT.to_string(), serde_json::json!(""));
@@ -1308,6 +1331,7 @@ fn write_message(
     msg: &crate::codec::ir::IrMessage,
     m: usize,
     unmodeled_sentinel: &[serde_json::Value],
+    origins: &[crate::codec::ir::IrBlockOrigin],
 ) -> serde_json::Value {
     let role_str = match msg.role {
         crate::codec::ir::IrRole::User => keys::USER,
@@ -1338,7 +1362,7 @@ fn write_message(
         .peekable();
     let mut raw = 0usize;
     let mut blocks: Vec<serde_json::Value> = Vec::with_capacity(msg.content.len());
-    for block in &msg.content {
+    for (block_index, block) in msg.content.iter().enumerate() {
         while inserts.peek().is_some_and(|(at, _)| *at <= raw) {
             if let Some((_, b)) = inserts.next() {
                 blocks.push(b);
@@ -1347,51 +1371,60 @@ fn write_message(
         }
         let i = raw;
         raw += 1;
-        let written: Option<serde_json::Value> = 'block: {
-            if let crate::codec::ir::IrBlock::Thinking {
-                signature,
-                redacted: false,
-                signature_origin,
-                ..
-            } = block
-            {
-                // A signature minted by another vendor is not valid on Anthropic (400, as for a
-                // missing one). Only an Anthropic-origin or unknown-origin signature is sent.
-                let foreign = signature_origin
-                    .is_some_and(|o| o != crate::codec::ir::IrSignatureOrigin::Anthropic);
-                if signature.is_none() || foreign {
-                    dropped_unsigned_thinking += 1;
+        let written: Option<serde_json::Value> =
+            crate::codec::drops::with_block_origin(origins.get(block_index), || 'block: {
+                if let crate::codec::ir::IrBlock::Thinking {
+                    signature,
+                    redacted: false,
+                    signature_origin,
+                    ..
+                } = block
+                {
+                    // A signature minted by another vendor is not valid on Anthropic (400, as for a
+                    // missing one). Only an Anthropic-origin or unknown-origin signature is sent.
+                    let foreign = signature_origin
+                        .is_some_and(|o| o != crate::codec::ir::IrSignatureOrigin::Anthropic);
+                    if signature.is_none() || foreign {
+                        dropped_unsigned_thinking += 1;
+                        if crate::codec::drops::is_open() {
+                            crate::codec::drops::writer_drop!(
+                                crate::codec::drops::THINKING,
+                                &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                                [],
+                                "dropping an assistant thinking block with no Anthropic signature"
+                            );
+                        }
+                        break 'block None;
+                    }
+                }
+                if !attachment_is_sendable(block) {
                     break 'block None;
                 }
-            }
-            if !attachment_is_sendable(block) {
-                break 'block None;
-            }
-            if block.is_citation_carrier() {
-                crate::codec::drops::writer_drop!(
+                if block.is_citation_carrier() {
+                    crate::codec::drops::writer_drop!(
                     crate::codec::drops::TEXT,
                     &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
                     [],
                     "dropping citations with no text on Anthropic egress: an empty text block is \
                      rejected (COH-17)"
                 );
-                break 'block None;
-            }
-            // A parked block (e.g. a `document` with `context`) at this raw position: splice the
-            // original back over its IR projection.
-            if let Some(original) = find_stashed_block(unmodeled_sentinel, m, i) {
-                break 'block Some(original);
-            }
-            if let crate::codec::ir::IrBlock::HostedToolRecord { .. } = block {
-                warn_hosted_record_dropped();
-                break 'block None;
-            }
-            Some(write_block(block))
-        };
+                    break 'block None;
+                }
+                // A parked block (e.g. a `document` with `context`) at this raw position: splice the
+                // original back over its IR projection.
+                if let Some(original) = find_stashed_block(unmodeled_sentinel, m, i) {
+                    break 'block Some(original);
+                }
+                if let crate::codec::ir::IrBlock::HostedToolRecord { .. } = block {
+                    warn_hosted_record_dropped();
+                    break 'block None;
+                }
+                Some(write_block(block))
+            });
         blocks.extend(written);
     }
     blocks.extend(inserts.map(|(_, b)| b));
-    if dropped_unsigned_thinking > 0 {
+    if dropped_unsigned_thinking > 0 && !crate::codec::drops::is_open() {
         crate::codec::drops::writer_drop!(
             crate::codec::drops::THINKING,
             &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
@@ -1461,7 +1494,10 @@ pub struct AnthropicWriter {
 /// An Anthropic stream's per-stream state (see [`AnthropicWriter`]).
 #[derive(Clone)]
 struct AnthropicStream {
+    wire_indices: std::collections::BTreeMap<usize, usize>,
     open_block_indices: std::collections::BTreeSet<usize>,
+    tool_input_started: std::collections::BTreeSet<usize>,
+    invalid_tool_input: bool,
     /// This stream's `message.id`, minted once and replayed on every later `message_start`. The
     /// Anthropic reader emits `MessageStart` 1:1 with the upstream frame, so a duplicate can reach
     /// this writer; a native id is fixed for the life of the message, so the first one wins.
@@ -1475,7 +1511,10 @@ struct AnthropicStream {
 #[allow(clippy::declare_interior_mutable_const)]
 pub const AnthropicWriter: AnthropicWriter = AnthropicWriter {
     stream: StreamCell::new(AnthropicStream {
+        wire_indices: std::collections::BTreeMap::new(),
         open_block_indices: std::collections::BTreeSet::new(),
+        tool_input_started: std::collections::BTreeSet::new(),
+        invalid_tool_input: false,
         message_id: None,
     }),
 };
@@ -1489,18 +1528,47 @@ pub(crate) fn anthropic_writer() -> AnthropicWriter {
 }
 
 impl AnthropicWriter {
+    /// Only blocks with an Anthropic projection consume a native content index.
+    fn compact_frames(
+        &self,
+        mut frames: Vec<(String, serde_json::Value)>,
+    ) -> Vec<(String, serde_json::Value)> {
+        let mut stream = self.stream.lock();
+        for (event, frame) in &mut frames {
+            let Some(index) = frame
+                .get(keys::INDEX)
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|index| usize::try_from(index).ok())
+            else {
+                continue;
+            };
+            if event == EVT_CONTENT_BLOCK_START && !stream.wire_indices.contains_key(&index) {
+                let next = stream.wire_indices.len();
+                stream.wire_indices.insert(index, next);
+            }
+            if let Some(wire_index) = stream.wire_indices.get(&index) {
+                frame[keys::INDEX] = serde_json::json!(wire_index);
+            }
+        }
+        frames
+    }
     /// THE STREAM'S `message.id`: the first one wins.
     ///
     /// Returns the id already captured for this stream if there is one, otherwise captures and
     /// returns `mint()`. A duplicate `message_start` therefore re-states the identity the client
     /// already has instead of announcing a second one. Lock poisoning degrades to the freshly
     /// minted id rather than panicking on the request path.
-    fn carried_message_id(&self, mint: impl FnOnce() -> String) -> String {
-        self.stream
-            .lock()
-            .message_id
-            .get_or_insert_with(mint)
-            .clone()
+    fn carried_message_id(
+        &self,
+        mint: impl FnOnce() -> Result<String, IrError>,
+    ) -> Result<String, IrError> {
+        let mut stream = self.stream.lock();
+        if let Some(id) = &stream.message_id {
+            return Ok(id.clone());
+        }
+        let id = mint()?;
+        stream.message_id = Some(id.clone());
+        Ok(id)
     }
 
     /// Record that a `content_block_start` was WRITTEN for IR block `index`, so it owes a closing

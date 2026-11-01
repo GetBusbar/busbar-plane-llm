@@ -5,6 +5,14 @@ use crate::codec::keys;
 #[path = "tests/remaining_gemini_tests.rs"]
 mod remaining_gemini_tests;
 
+fn tool_overflow_error() -> busbar_contract::protocol::IrError {
+    busbar_contract::protocol::IrError {
+        class: StatusClass::ServerError,
+        provider_signal: Some("tool arguments exceed the translation limit".to_string()),
+        retry_after: None,
+    }
+}
+
 /// One streamed `GenerateContentResponse` frame carrying `part` as the model's only part.
 fn model_part_frame(part: serde_json::Value) -> (String, serde_json::Value) {
     (
@@ -122,22 +130,27 @@ impl ProtocolWriter for GeminiWriter {
             let parts: Vec<_> = req
                 .system
                 .iter()
-                .filter_map(|block| match block {
-                    crate::codec::ir::IrBlock::Text { text, .. } => {
-                        Some(serde_json::json!({ (keys::TEXT): text }))
-                    }
-                    // Gemini's systemInstruction.parts carries text only. Drop any non-Text system
-                    // block WITH a warn (matching cohere's warn for the same case) rather than
-                    // vanishing silently — a system array with a non-text block is degenerate.
-                    _ => {
-                        crate::codec::drops::writer_drop!(
+                .enumerate()
+                .filter_map(|(block_index, block)| {
+                    let _block_origin =
+                        crate::codec::drops::block_scope(req.block_origins.system.get(block_index));
+                    match block {
+                        crate::codec::ir::IrBlock::Text { text, .. } => {
+                            Some(serde_json::json!({ (keys::TEXT): text }))
+                        }
+                        // Gemini's systemInstruction.parts carries text only. Drop any non-Text system
+                        // block WITH a warn (matching cohere's warn for the same case) rather than
+                        // vanishing silently — a system array with a non-text block is degenerate.
+                        _ => {
+                            crate::codec::drops::writer_drop!(
                             crate::codec::drops::block(block.kind_name()),
                             &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
                             [],
                             "dropping non-text system block on Gemini egress: systemInstruction \
                              carries text only"
                         );
-                        None
+                            None
+                        }
                     }
                 })
                 .collect();
@@ -167,8 +180,18 @@ impl ProtocolWriter for GeminiWriter {
         // which preserves the same-protocol case where `tool_use_id` already IS the function name.
         let mut tool_name_by_id: std::collections::HashMap<&str, &str> =
             std::collections::HashMap::new();
-        for msg in &req.messages {
-            for block in &msg.content {
+        for (message_index, msg) in req.messages.iter().enumerate() {
+            let _message_origins = req
+                .block_origins
+                .messages
+                .get(message_index)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+
+            for (block_index, block) in msg.content.iter().enumerate() {
+                let _block_origin =
+                    crate::codec::drops::block_scope(_message_origins.get(block_index));
+
                 if let crate::codec::ir::IrBlock::ToolUse { id, name, .. } = block {
                     if !id.is_empty() {
                         tool_name_by_id.insert(id.as_str(), name.as_str());
@@ -179,7 +202,14 @@ impl ProtocolWriter for GeminiWriter {
 
         // messages → contents (Assistant→"model", User→"user")
         let mut contents_arr: Vec<serde_json::Value> = Vec::new();
-        for msg in &req.messages {
+        for (message_index, msg) in req.messages.iter().enumerate() {
+            let _message_origins = req
+                .block_origins
+                .messages
+                .get(message_index)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+
             let role_str = match msg.role {
                 crate::codec::ir::IrRole::User => keys::USER,
                 crate::codec::ir::IrRole::Assistant => keys::MODEL,
@@ -195,7 +225,10 @@ impl ProtocolWriter for GeminiWriter {
             };
 
             let mut parts_arr: Vec<serde_json::Value> = Vec::new();
-            for block in &msg.content {
+            for (block_index, block) in msg.content.iter().enumerate() {
+                let _block_origin =
+                    crate::codec::drops::block_scope(_message_origins.get(block_index));
+
                 match block {
                     // COH-17: an empty text part carrying only citations has no Gemini form.
                     b @ crate::codec::ir::IrBlock::Text { .. } if b.is_citation_carrier() => {}
@@ -317,7 +350,7 @@ impl ProtocolWriter for GeminiWriter {
                         // An image / document the tool returned rides Gemini's multimodal
                         // `functionResponse.parts` (GEM-06) instead of vanishing.
                         let media_parts: Vec<serde_json::Value> =
-                            content.iter().filter_map(write_gemini_media_part).collect();
+                            content.iter().enumerate().filter_map(|(index, block)| crate::codec::drops::with_child_origin(index, || write_gemini_media_part(block))).collect();
                         if !media_parts.is_empty() {
                             fr_obj.insert(FIELD_PARTS.to_string(), serde_json::Value::Array(media_parts));
                         }
@@ -881,6 +914,25 @@ impl ProtocolWriter for GeminiWriter {
         }
     }
 
+    fn try_write_response_events(
+        &self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        event: &IrStreamEvent,
+    ) -> Result<Vec<(String, serde_json::Value)>, busbar_contract::protocol::IrError> {
+        if let IrStreamEvent::BlockStop { index } = event {
+            let mut stream = self.stream.lock();
+            if let Some(position) = stream
+                .open_tools
+                .iter()
+                .position(|tool| tool.index == *index && tool.overflowed)
+            {
+                stream.open_tools.remove(position);
+                return Err(tool_overflow_error());
+            }
+        }
+        Ok(self.write_response_event(host, event).into_iter().collect())
+    }
+
     fn write_response_event(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -950,6 +1002,7 @@ impl ProtocolWriter for GeminiWriter {
                                 entry.id = id.clone();
                                 entry.name = name.clone();
                                 entry.args.clear();
+                                entry.overflowed = false;
                             }
                             // A NEW index is refused once `MAX_GEMINI_TOOL_FRAMES` blocks are
                             // already open: the per-block byte cap below bounds how large one
@@ -966,6 +1019,7 @@ impl ProtocolWriter for GeminiWriter {
                                 id: id.clone(),
                                 name: name.clone(),
                                 args: String::new(),
+                                overflowed: false,
                             }),
                         }
                     }
@@ -986,19 +1040,21 @@ impl ProtocolWriter for GeminiWriter {
                     // Record the answer text so a streamed citation that follows converts against it
                     // (GEM-16). A block's start is where its first text landed.
                     // The copy is bounded by this stream's `translate_cap` (the same live limit the
-                    // tool-argument buffer holds): a fragment that would cross it is not recorded, so
-                    // a citation past that point anchors against the text held, clamping to its end.
+                    // tool-argument buffer holds): stop recording at the first oversized fragment,
+                    // preserving a prefix so later citation offsets clamp to its end.
                     {
                         let mut stream = self.stream.lock();
                         let cap = stream.translate_cap;
                         let st = &mut stream.stream_text;
-                        if st.text.len().saturating_add(text.len()) <= cap {
+                        if !st.truncated && st.text.len().saturating_add(text.len()) <= cap {
                             let start = st.text.len();
                             if !st.block_starts.iter().any(|(i, _)| i == index) {
                                 st.block_starts.push((*index, start));
                             }
                             extend_char_marks(&mut st.marks, &mut st.chars, start, text);
                             st.text.push_str(text);
+                        } else {
+                            st.truncated = true;
                         }
                     }
                     Some(model_part_frame(serde_json::json!({(keys::TEXT): text})))
@@ -1033,23 +1089,22 @@ impl ProtocolWriter for GeminiWriter {
                 // row 155) so this plugin never reaches the host. A read per fragment is one atomic
                 // load.
                 //
-                // Once appending a fragment would cross the cap, that fragment (and every subsequent one
-                // for this block) is dropped whole rather than sliced at the boundary: the buffer is
-                // already guaranteed-unparseable JSON at that point either way, so a partial fragment
-                // buys nothing — this mirrors `MAX_GEMINI_TOOL_FRAMES`'s own stop-growing (not abort)
-                // policy. The resulting truncated buffer fails to parse as JSON on `BlockStop` and
-                // degrades to the pre-existing `args: {}` fallback there (established for ANY
-                // unparseable accumulation, cap-truncated or not) — the call is never lost and its name
-                // always survives, so this introduces no new failure mode.
+                // Overflow is sticky for this block. A later small fragment must not turn the
+                // retained prefix into different runnable arguments. BlockStop reports the existing
+                // protocol-shaped server error for a translation failure instead of executing a
+                // call whose arguments were lost.
                 crate::codec::ir::IrDelta::InputJsonDelta(json_str) => {
                     {
                         let mut stream = self.stream.lock();
                         let cap = stream.translate_cap;
-                        if let Some(GeminiOpenTool { args, .. }) =
-                            stream.open_tools.iter_mut().find(|t| t.index == *index)
+                        if let Some(GeminiOpenTool {
+                            args, overflowed, ..
+                        }) = stream.open_tools.iter_mut().find(|t| t.index == *index)
                         {
-                            if args.len().saturating_add(json_str.len()) <= cap {
+                            if !*overflowed && args.len().saturating_add(json_str.len()) <= cap {
                                 args.push_str(json_str);
+                            } else {
+                                *overflowed = true;
                             }
                         }
                     }
@@ -1179,10 +1234,17 @@ impl ProtocolWriter for GeminiWriter {
                     let guard = &mut self.stream.lock().open_tools;
                     guard.iter().position(|t| t.index == *index).map(|pos| {
                         let t = guard.remove(pos);
-                        (t.id, t.name, t.args)
+                        (t.id, t.name, t.args, t.overflowed)
                     })
                 };
-                flushed.map(|(id, name, args_str)| {
+                if flushed
+                    .as_ref()
+                    .is_some_and(|(_, _, _, overflowed)| *overflowed)
+                {
+                    return self
+                        .write_response_event(host, &IrStreamEvent::Error(tool_overflow_error()));
+                }
+                flushed.map(|(id, name, args_str, _)| {
                     // Parse the fully reassembled arg string. An empty buffer (zero-arg call) or an
                     // unparseable accumulation degrades to `{}` rather than panicking — the args are
                     // best-effort, but the single-part `{name, ...}` shape and the name are always
@@ -1194,7 +1256,12 @@ impl ProtocolWriter for GeminiWriter {
                             .unwrap_or_else(|_| serde_json::json!({}))
                     };
                     // The streamed call's id, as on the buffered path (GEM-08).
-                    model_part_frame(function_call_part(&id, &name, args, None))
+                    model_part_frame(function_call_part(
+                        &id,
+                        &name,
+                        coerce_tool_args(&args),
+                        None,
+                    ))
                 })
             }
 
@@ -1290,7 +1357,10 @@ impl ProtocolWriter for GeminiWriter {
         let mut citation_sources: Vec<serde_json::Value> = Vec::new();
         let mut byte_prefix: i64 = 0;
 
-        for block in &resp.content {
+        for (block_index, block) in resp.content.iter().enumerate() {
+            let _block_origin =
+                crate::codec::drops::block_scope(resp.block_origins.response.get(block_index));
+
             match block {
                 crate::codec::ir::IrBlock::Text {
                     text, citations, ..
@@ -1364,11 +1434,13 @@ impl ProtocolWriter for GeminiWriter {
                     parts_arr.push(serde_json::Value::Object(part));
                 }
 
-                // Image/Media/ToolResult not supported in response OUTPUT (a model does not emit
-                // an attachment back on this surface), so nothing is lost by omitting them here.
                 crate::codec::ir::IrBlock::Image { .. }
-                | crate::codec::ir::IrBlock::Media { .. }
-                | crate::codec::ir::IrBlock::ToolResult { .. }
+                | crate::codec::ir::IrBlock::Media { .. } => {
+                    if let Some(part) = super::write_gemini_media_part(block) {
+                        parts_arr.push(part);
+                    }
+                }
+                crate::codec::ir::IrBlock::ToolResult { .. }
                 | crate::codec::ir::IrBlock::Json(_)
                 | crate::codec::ir::IrBlock::HostedToolRecord { .. } => {}
             }

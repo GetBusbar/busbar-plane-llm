@@ -35,7 +35,8 @@ impl ProtocolWriter for AnthropicWriter {
             if obj.contains_key(super::REQUEST_ID) {
                 obj.insert(
                     super::REQUEST_ID.to_string(),
-                    serde_json::Value::String(super::request_id_from_entropy(entropy)),
+                    super::request_id_from_entropy(entropy)
+                        .map_or(serde_json::Value::Null, serde_json::Value::String),
                 );
             }
         }
@@ -166,27 +167,71 @@ impl ProtocolWriter for AnthropicWriter {
 
     fn write_request_for_lane(
         &self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        req: &crate::codec::ir::IrRequest,
+        model: &str,
+        caps: &LaneCaps,
+    ) -> serde_json::Value {
+        self.try_write_request_for_lane(host, req, model, caps)
+            .unwrap_or_else(|error| {
+                self.write_error(
+                    host,
+                    400,
+                    ERR_TYPE_INVALID_REQUEST,
+                    error
+                        .provider_signal
+                        .as_deref()
+                        .unwrap_or(INVALID_TOOL_INPUT),
+                )
+            })
+    }
+
+    fn try_write_request_for_lane(
+        &self,
         _host: &dyn busbar_contract::codec::CodecHost,
         req: &crate::codec::ir::IrRequest,
         _model: &str,
         caps: &LaneCaps,
-    ) -> serde_json::Value {
+    ) -> Result<serde_json::Value, IrError> {
+        validate_tool_inputs(&req.system)?;
+        for message in &req.messages {
+            validate_tool_inputs(&message.content)?;
+        }
         let mut out = serde_json::Map::new();
         // There is no `system` role inside `messages`. Anthropic's reader promotes a wire system
         // message into `req.system`, but a cross-protocol IR can still carry an `IrRole::System`
         // message; fold its blocks into the top-level system array so `write_message` never
         // emits `role:"system"` (a 400).
-        let mut system_blocks: Vec<&crate::codec::ir::IrBlock> = req.system.iter().collect();
-        for msg in &req.messages {
+        let mut system_blocks: Vec<serde_json::Value> = req
+            .system
+            .iter()
+            .enumerate()
+            .map(|(index, block)| {
+                crate::codec::drops::with_block_origin(req.block_origins.system.get(index), || {
+                    write_block(block)
+                })
+            })
+            .collect();
+        for (message_index, msg) in req.messages.iter().enumerate() {
+            let _message_origins = req
+                .block_origins
+                .messages
+                .get(message_index)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+
             if msg.role == crate::codec::ir::IrRole::System {
-                system_blocks.extend(msg.content.iter());
+                system_blocks.extend(msg.content.iter().enumerate().map(|(index, block)| {
+                    crate::codec::drops::with_block_origin(_message_origins.get(index), || {
+                        write_block(block)
+                    })
+                }));
             }
         }
         if !system_blocks.is_empty() {
-            let system_array: Vec<_> = system_blocks.into_iter().map(write_block).collect();
             out.insert(
                 keys::SYSTEM.to_string(),
-                serde_json::Value::Array(system_array),
+                serde_json::Value::Array(system_blocks),
             );
         }
         // Splice back raw blocks `read_request` parked because the IR cannot model them (see
@@ -201,9 +246,20 @@ impl ProtocolWriter for AnthropicWriter {
         let messages_array: Vec<_> = req
             .messages
             .iter()
-            .filter(|msg| msg.role != crate::codec::ir::IrRole::System)
             .enumerate()
-            .map(|(m, msg)| write_message(msg, m, unmodeled_sentinel))
+            .filter(|(_, msg)| msg.role != crate::codec::ir::IrRole::System)
+            .map(|(m, msg)| {
+                write_message(
+                    msg,
+                    m,
+                    unmodeled_sentinel,
+                    req.block_origins
+                        .messages
+                        .get(m)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]),
+                )
+            })
             .collect();
         out.insert(
             keys::MESSAGES.to_string(),
@@ -496,7 +552,7 @@ impl ProtocolWriter for AnthropicWriter {
             }
             out.insert(key.clone(), value.clone());
         }
-        serde_json::Value::Object(out)
+        Ok(serde_json::Value::Object(out))
     }
 
     fn write_response_event(
@@ -504,7 +560,18 @@ impl ProtocolWriter for AnthropicWriter {
         host: &dyn busbar_contract::codec::CodecHost,
         ev: &IrStreamEvent,
     ) -> Option<(String, serde_json::Value)> {
-        match ev {
+        match self.try_write_response_events(host, ev) {
+            Ok(frames) => frames.into_iter().next(),
+            Err(_) => Some(("error".into(), self.encoding_failure(host))),
+        }
+    }
+
+    fn try_write_response_events(
+        &self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        ev: &IrStreamEvent,
+    ) -> Result<Vec<(String, serde_json::Value)>, IrError> {
+        let frame = match ev {
             IrStreamEvent::MessageStart {
                 role,
                 usage,
@@ -515,7 +582,7 @@ impl ProtocolWriter for AnthropicWriter {
                 let role_str = match role {
                     crate::codec::ir::IrRole::User => keys::USER,
                     crate::codec::ir::IrRole::Assistant => keys::ASSISTANT,
-                    _ => return None,
+                    _ => return Ok(Vec::new()),
                 };
                 let mut msg_obj = serde_json::Map::new();
                 // `message_start.message` is a skeleton Message an SDK reads
@@ -524,8 +591,9 @@ impl ProtocolWriter for AnthropicWriter {
                 // carried none: this runs only on the cross-protocol path, where `StreamTranslate`
                 // strips the foreign `id`, and a degenerate `{role,usage}` message_start fails SDK
                 // decoding. The first `message_start` decides the stream's id; a duplicate replays it.
-                let msg_id = self
-                    .carried_message_id(|| id.clone().unwrap_or_else(|| synth_message_id(host)));
+                let msg_id = self.carried_message_id(|| {
+                    id.clone().map(Ok).unwrap_or_else(|| synth_message_id(host))
+                })?;
                 msg_obj.insert(keys::ID.to_string(), serde_json::json!(msg_id));
                 msg_obj.insert(keys::TYPE.to_string(), serde_json::json!(keys::MESSAGE));
                 msg_obj.insert(keys::ROLE.to_string(), serde_json::json!(role_str));
@@ -591,7 +659,7 @@ impl ProtocolWriter for AnthropicWriter {
                     // `BlockStop` consults, and a stream that ends before the delta (truncation, an
                     // upstream error, `close_open_blocks`) would otherwise close a block the client
                     // never saw opened. The delta that writes the start marks it open.
-                    IrBlockMeta::RedactedThinking => return None,
+                    IrBlockMeta::RedactedThinking => return Ok(Vec::new()),
                     IrBlockMeta::ToolUse { id, name } => {
                         serde_json::json!({
                             (keys::TYPE): STOP_TOOL_USE,
@@ -605,9 +673,22 @@ impl ProtocolWriter for AnthropicWriter {
                     // `content_block` union has no `image` member, so an `image` frame is one no
                     // client can deserialize. Emit no frame and do not mark the index open, so the
                     // paired `BlockStop` stays silent.
-                    IrBlockMeta::Image => return None,
+                    IrBlockMeta::Image => {
+                        crate::codec::drops::writer_drop!(
+                            crate::codec::drops::IMAGE,
+                            &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                            [],
+                            "dropping image/attachment output block on Anthropic response egress: an Anthropic assistant message has no image or document response block"
+                        );
+                        return Ok(Vec::new());
+                    }
                 };
-                self.mark_block_open(*index);
+                if !self.mark_block_open(*index) {
+                    return Ok(Vec::new());
+                }
+                if matches!(block, IrBlockMeta::ToolUse { .. }) {
+                    self.stream.lock().tool_input_started.remove(index);
+                }
                 let mut data_obj = serde_json::Map::new();
                 data_obj.insert(
                     keys::TYPE.to_string(),
@@ -629,6 +710,19 @@ impl ProtocolWriter for AnthropicWriter {
                         serde_json::json!({ (keys::TYPE): DELTA_TYPE_THINKING, (keys::THINKING): thinking })
                     }
                     IrDelta::InputJsonDelta(json) => {
+                        if let Some(first) = json
+                            .bytes()
+                            .find(|byte| !matches!(*byte, b' ' | b'\t' | b'\r' | b'\n'))
+                        {
+                            let mut stream = self.stream.lock();
+                            if !stream.tool_input_started.contains(index) {
+                                if first != b'{' {
+                                    stream.invalid_tool_input = true;
+                                    return Err(invalid_tool_input());
+                                }
+                                stream.tool_input_started.insert(*index);
+                            }
+                        }
                         serde_json::json!({ (keys::TYPE): DELTA_TYPE_INPUT_JSON, (super::PARTIAL_JSON): json })
                     }
                     IrDelta::SignatureDelta(sig) => {
@@ -639,13 +733,13 @@ impl ProtocolWriter for AnthropicWriter {
                     // this delta emits the block's sole start, a `redacted_thinking`
                     // content_block_start carrying the bytes; `BlockStop` then closes it. This
                     // preserves the blob a later turn must replay for extended-thinking continuity.
-                    IrDelta::MediaDelta(_) => return None,
+                    IrDelta::MediaDelta(_) => return Ok(Vec::new()),
                     IrDelta::RedactedReasoningDelta(bytes) => {
                         // Writing the start and marking the index open are one decision.
                         // `mark_block_open` reports whether the index was newly opened, so a second
                         // redacted delta adds no duplicate start.
                         if !self.mark_block_open(*index) {
-                            return None;
+                            return Ok(Vec::new());
                         }
                         let mut data_obj = serde_json::Map::new();
                         data_obj.insert(
@@ -660,13 +754,13 @@ impl ProtocolWriter for AnthropicWriter {
                                 (keys::DATA): bytes,
                             }),
                         );
-                        return Some((
+                        return Ok(self.compact_frames(vec![(
                             EVT_CONTENT_BLOCK_START.to_string(),
                             serde_json::Value::Object(data_obj),
-                        ));
+                        )]));
                     }
                     // Anthropic has no logprobs: lossy by target, emit nothing.
-                    IrDelta::LogprobsDelta(_) => return None,
+                    IrDelta::LogprobsDelta(_) => return Ok(Vec::new()),
                     // Streaming citation: each carried citation is its own `citations_delta` (the
                     // wire carries one `citation` per delta). `write_citation` re-emits a
                     // byte-exact Anthropic `raw` verbatim and otherwise synthesizes the object from
@@ -677,7 +771,12 @@ impl ProtocolWriter for AnthropicWriter {
                         // `StreamTranslate` splits a multi-citation delta upstream, so each call sees
                         // one. An empty vec emits no event. A vec of >1 cannot occur via the framer;
                         // defensively take the first.
-                        let c = citations.first()?;
+                        let Some(c) = citations.first() else {
+                            return Ok(Vec::new());
+                        };
+                        let Some(citation) = write_response_citation(c) else {
+                            return Ok(Vec::new());
+                        };
                         let mut data_obj = serde_json::Map::new();
                         data_obj.insert(
                             keys::TYPE.to_string(),
@@ -688,13 +787,13 @@ impl ProtocolWriter for AnthropicWriter {
                             keys::DELTA.to_string(),
                             serde_json::json!({
                                 (keys::TYPE): DELTA_TYPE_CITATIONS,
-                                (keys::CITATION): write_citation(c),
+                                (keys::CITATION): citation,
                             }),
                         );
-                        return Some((
+                        return Ok(self.compact_frames(vec![(
                             EVT_CONTENT_BLOCK_DELTA.to_string(),
                             serde_json::Value::Object(data_obj),
-                        ));
+                        )]));
                     }
                 };
                 let mut data_obj = serde_json::Map::new();
@@ -712,8 +811,9 @@ impl ProtocolWriter for AnthropicWriter {
             // An untracked index is a block whose start had no projection (Image); closing it would
             // orphan a `content_block_stop`.
             IrStreamEvent::BlockStop { index } => {
+                self.stream.lock().tool_input_started.remove(index);
                 if !self.take_block_open(*index) {
-                    return None;
+                    return Ok(Vec::new());
                 }
                 let mut data_obj = serde_json::Map::new();
                 data_obj.insert(
@@ -813,14 +913,15 @@ impl ProtocolWriter for AnthropicWriter {
                 // `request_id`; the buffered `error_envelope` mints one and so does this event.
                 data_obj.insert(
                     super::REQUEST_ID.to_string(),
-                    serde_json::json!(synth_request_id(host)),
+                    serde_json::json!(synth_request_id(host).ok()),
                 );
                 Some((
                     keys::ERROR_WORD.to_string(),
                     serde_json::Value::Object(data_obj),
                 ))
             }
-        }
+        };
+        Ok(self.compact_frames(frame.into_iter().collect()))
     }
 
     fn write_response(
@@ -828,6 +929,25 @@ impl ProtocolWriter for AnthropicWriter {
         host: &dyn busbar_contract::codec::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> serde_json::Value {
+        self.try_write_response(host, resp).unwrap_or_else(|error| {
+            self.write_error(
+                host,
+                500,
+                ERR_TYPE_API_ERROR,
+                error
+                    .provider_signal
+                    .as_deref()
+                    .unwrap_or("response encoding failed"),
+            )
+        })
+    }
+
+    fn try_write_response(
+        &self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        resp: &crate::codec::ir::IrResponse,
+    ) -> Result<serde_json::Value, IrError> {
+        validate_tool_inputs(&resp.content)?;
         let mut obj = serde_json::Map::new();
 
         // id: `Message.id` is a required `msg_<rand>` string, so emit it unconditionally. A source
@@ -835,7 +955,11 @@ impl ProtocolWriter for AnthropicWriter {
         // neither id nor created) is synthesized via `synth_message_id`. This is safe because
         // `write_response` runs only on the cross-protocol path; same-protocol non-stream relays
         // the raw body.
-        let id = resp.id.clone().unwrap_or_else(|| synth_message_id(host));
+        let id = resp
+            .id
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(|| synth_message_id(host))?;
         obj.insert(keys::ID.to_string(), serde_json::json!(id));
 
         // type/role are constant for a Messages API response ("message"/"assistant").
@@ -855,28 +979,33 @@ impl ProtocolWriter for AnthropicWriter {
         let content_array: Vec<serde_json::Value> = resp
             .content
             .iter()
-            .filter_map(|block| match block {
-                crate::codec::ir::IrBlock::Image { .. }
-                | crate::codec::ir::IrBlock::Media { .. } => {
-                    crate::codec::drops::writer_drop!(
+            .enumerate()
+            .filter_map(|(block_index, block)| {
+                let _block_origin =
+                    crate::codec::drops::block_scope(resp.block_origins.response.get(block_index));
+                match block {
+                    crate::codec::ir::IrBlock::Image { .. }
+                    | crate::codec::ir::IrBlock::Media { .. } => {
+                        crate::codec::drops::writer_drop!(
                         crate::codec::drops::IMAGE,
                         &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
                         [],
                         "dropping image/attachment output block on Anthropic response egress: an \
                          Anthropic assistant message has no image or document response block"
                     );
-                    None
+                        None
+                    }
+                    crate::codec::ir::IrBlock::Json(v) => Some(serde_json::json!({
+                        (keys::TYPE): keys::TEXT,
+                        (keys::TEXT): serde_json::to_string(v).unwrap_or_default(),
+                        (keys::CITATIONS): null,
+                    })),
+                    crate::codec::ir::IrBlock::HostedToolRecord { .. } => {
+                        super::warn_hosted_record_dropped();
+                        None
+                    }
+                    other => Some(write_response_block(other)),
                 }
-                crate::codec::ir::IrBlock::Json(v) => Some(serde_json::json!({
-                    (keys::TYPE): keys::TEXT,
-                    (keys::TEXT): serde_json::to_string(v).unwrap_or_default(),
-                    (keys::CITATIONS): null,
-                })),
-                crate::codec::ir::IrBlock::HostedToolRecord { .. } => {
-                    super::warn_hosted_record_dropped();
-                    None
-                }
-                other => Some(write_response_block(other)),
             })
             .collect();
         obj.insert(
@@ -924,8 +1053,40 @@ impl ProtocolWriter for AnthropicWriter {
             write_usage_object(Some(&resp.usage)),
         );
 
-        serde_json::Value::Object(obj)
+        Ok(serde_json::Value::Object(obj))
     }
+
+    fn encoding_failure(&self, host: &dyn busbar_contract::codec::CodecHost) -> serde_json::Value {
+        let message = if self.stream.lock().invalid_tool_input {
+            INVALID_TOOL_INPUT
+        } else {
+            "identifier entropy unavailable"
+        };
+        self.write_error(host, 500, ERR_TYPE_API_ERROR, message)
+    }
+}
+
+const INVALID_TOOL_INPUT: &str = "Anthropic tool input must be a JSON object";
+
+fn invalid_tool_input() -> IrError {
+    IrError {
+        class: StatusClass::ServerError,
+        provider_signal: Some(INVALID_TOOL_INPUT.into()),
+        retry_after: None,
+    }
+}
+
+fn validate_tool_inputs(blocks: &[crate::codec::ir::IrBlock]) -> Result<(), IrError> {
+    for block in blocks {
+        match block {
+            crate::codec::ir::IrBlock::ToolUse { input, .. } if !input.is_object() => {
+                return Err(invalid_tool_input())
+            }
+            crate::codec::ir::IrBlock::ToolResult { content, .. } => validate_tool_inputs(content)?,
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// The nine `error.type` tokens of Anthropic's published ErrorResponse.

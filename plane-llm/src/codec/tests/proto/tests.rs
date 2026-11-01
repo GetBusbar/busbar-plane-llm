@@ -1235,6 +1235,45 @@ fn test_openai_request_roundtrip_identity() {
     );
 }
 
+fn assert_written_openai_tool_arguments(
+    roundtrip: &serde_json::Value,
+    expected: &serde_json::Value,
+) {
+    let messages = roundtrip["messages"]
+        .as_array()
+        .expect("the writer emits messages");
+    let call = messages
+        .iter()
+        .filter(|message| message["role"] == "assistant")
+        .flat_map(|message| {
+            message
+                .get("tool_calls")
+                .and_then(|calls| calls.as_array())
+                .into_iter()
+                .flatten()
+        })
+        .find(|call| call["id"] == "call_123")
+        .expect("the writer emits the assistant's actual tool call");
+    assert_eq!(call["type"], "function");
+    let function = call["function"]
+        .as_object()
+        .expect("the emitted tool call has a function");
+    assert_eq!(
+        function.get("name"),
+        Some(&serde_json::json!("get_weather"))
+    );
+    let arguments = function
+        .get("arguments")
+        .and_then(|value| value.as_str())
+        .expect("the emitted function arguments are a JSON string");
+    let parsed: serde_json::Value =
+        serde_json::from_str(arguments).expect("arguments parse as JSON");
+    assert_eq!(
+        &parsed, expected,
+        "the writer preserves the parsed arguments"
+    );
+}
+
 #[test]
 fn test_openai_tool_call_arguments_string_to_value() {
     let protocol = crate::codec::proto_codec::protocol_for("openai").expect("openai should exist");
@@ -1278,28 +1317,10 @@ fn test_openai_tool_call_arguments_string_to_value() {
 
     let roundtrip = writer.write_request(crate::codec::test_host::HOST, &ir);
 
-    // Re-parse the arguments from roundtrip and compare parsed values
-    if let Some(msgs) = roundtrip.get("messages").and_then(|v| v.as_array()) {
-        for msg_val in msgs {
-            if let Some(tc_arr) = msg_val.get("tool_calls").and_then(|v| v.as_array()) {
-                for tc_val in tc_arr {
-                    if let Some(func) = tc_val.get("function") {
-                        let args_str = func.get("arguments").and_then(|a| a.as_str()).unwrap_or("");
-                        let roundtrip_args: serde_json::Value =
-                            serde_json::from_str(args_str).expect("args should parse");
-
-                        // Original parsed value
-                        let orig_input = &ir.messages[0].content[0];
-                        if let crate::codec::ir::IrBlock::ToolUse { input, .. } = orig_input {
-                            assert_eq!(roundtrip_args, *input, "parsed arguments must match");
-                        } else {
-                            panic!("expected ToolUse block");
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let crate::codec::ir::IrBlock::ToolUse { input, .. } = &ir.messages[0].content[0] else {
+        panic!("expected the parsed ToolUse block");
+    };
+    assert_written_openai_tool_arguments(&roundtrip, input);
 }
 
 #[test]
@@ -2038,34 +2059,10 @@ mod ir_property_tests {
 
         // Write and re-parse arguments from roundtrip
         let roundtrip = writer.write_request(crate::codec::test_host::HOST, &ir);
-        if let Some(msgs) = roundtrip.get("messages").and_then(|v| v.as_array()) {
-            for msg_val in msgs {
-                if let Some(tc_arr) = msg_val.get("tool_calls").and_then(|v| v.as_array()) {
-                    for tc_val in tc_arr {
-                        if let Some(func) = tc_val.get("function") {
-                            let args_str =
-                                func.get("arguments").and_then(|a| a.as_str()).unwrap_or("");
-
-                            // Re-parse the serialized string and compare parsed values
-                            let roundtrip_args: serde_json::Value =
-                                serde_json::from_str(args_str).expect("args should parse");
-
-                            // Compare with original parsed value
-                            if let crate::codec::ir::IrBlock::ToolUse { input, .. } =
-                                &ir.messages[0].content[0]
-                            {
-                                assert_eq!(
-                                    roundtrip_args, *input,
-                                    "re-serialized arguments must equal original parsed Value"
-                                );
-                            } else {
-                                panic!("expected ToolUse block");
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let crate::codec::ir::IrBlock::ToolUse { input, .. } = &ir.messages[0].content[0] else {
+            panic!("expected the parsed ToolUse block");
+        };
+        assert_written_openai_tool_arguments(&roundtrip, input);
     }
 
     // ============================================================================

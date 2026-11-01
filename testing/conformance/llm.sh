@@ -10,8 +10,8 @@
 # .busbar-ref pin) with THIS checkout's plane-llm swapped in, record the LLM cells of
 # testing/shadow-oracle/cells.json, and validate the recording. The first suite line to run does it and
 # caches the result under $CARGO_TARGET_DIR/llm-conformance/<key>/; the other five read it. The key is the
-# pin + this checkout's plane-llm and harness content, so a line that runs alone does the whole run itself
-# and a stale cache can never answer for different code.
+# pin + this checkout's plane-llm, inherited workspace inputs and harness content, so a line that runs
+# alone does the whole run itself and a stale cache can never answer for different code.
 #
 #   1. CONTROL           testing/llm-conformance/selftest.sh: known-good vendor/1.5.5 fixtures validate
 #   2. NEGATIVE CONTROL  the same selftest plants bad responses, streams and gaps; each MUST be refused
@@ -93,10 +93,11 @@ mode=verdict; [ "${1:-}" = --subject ] && mode=subject
 dialect="${CONFORMANCE_SUITE#llm-}"
 case "$dialect" in anthropic|openai|responses|gemini|bedrock|cohere) ;; *) say "unknown suite $CONFORMANCE_SUITE"; exit 2 ;; esac
 
-# The cache key: everything the answer depends on.
+# The path crate inherits workspace package/dependency settings from the root manifest; root lock
+# changes also invalidate prior evidence. Keep those inputs in the same key as its own sources.
 key="$( { printf 'pin=%s\n' "$BUSBAR_PIN"
-          git -C "$repo" ls-files -s -- plane-llm testing/llm-conformance testing/conformance/requirements-llm.txt testing/conformance/llm.sh
-          git -C "$repo" diff HEAD -- plane-llm testing/llm-conformance testing/conformance/requirements-llm.txt testing/conformance/llm.sh
+          git -C "$repo" ls-files -s -- Cargo.toml Cargo.lock plane-llm testing/llm-conformance testing/conformance/requirements-llm.txt testing/conformance/llm.sh
+          git -C "$repo" diff HEAD -- Cargo.toml Cargo.lock plane-llm testing/llm-conformance testing/conformance/requirements-llm.txt testing/conformance/llm.sh
         } | sha | cut -c1-16)"
 D="$TGT/llm-conformance/$key"
 mkdir -p "$D"

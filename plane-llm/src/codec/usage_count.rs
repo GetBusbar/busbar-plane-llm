@@ -18,9 +18,9 @@
 /// Rejected, never rounded (rounding would invent a ledger row, which this module exists to prevent):
 /// - a fractional value (`27.5`);
 /// - a negative value, infinity and NaN;
-/// - anything at or above 2^53, even if "integral": past it an `f64` cannot represent consecutive
-///   integers, so `fract() == 0.0` is trivially true and proves nothing, and no honest token count
-///   approaches it. (Tighter than `u64::MAX` on purpose.)
+/// - float spellings at or above 2^53, even if "integral": past it an `f64` cannot represent
+///   consecutive integers, so `fract() == 0.0` proves nothing. Integer spellings stay exact and
+///   are accepted through `u64::MAX`.
 pub fn read_count_u64(v: &serde_json::Value) -> Option<u64> {
     if let Some(u) = v.as_u64() {
         return Some(u);
@@ -268,6 +268,26 @@ pub fn refused_count(protocol: &'static str, unreadable: &UnreadableCount) {
     );
 }
 
+/// Attribution is already included in a billed total: an unreadable split stays unknown,
+/// while its diagnostic must remain visible without refusing or changing that total.
+fn recorded_optional(
+    protocol: &'static str,
+    read: Result<Option<u64>, UnreadableCount>,
+) -> Option<u64> {
+    match read {
+        Ok(count) => count,
+        Err(unreadable) => {
+            tracing::warn!(
+                protocol,
+                field = unreadable.field,
+                spelling = %unreadable.spelling,
+                "recorded usage attribution is unreadable: recorded as unknown; billed totals stay as reported"
+            );
+            None
+        }
+    }
+}
+
 /// The one usage reader. Walks a dialect's usage table over one wire usage object (`None` when
 /// absent) and builds the IR usage it states, each row under [`billed_count`]'s contract (absent is
 /// zero or `None`, readable is the count, present-but-unreadable is refused).
@@ -307,7 +327,7 @@ pub fn read_usage(
                 *s = kept(up.map_or(Ok(0), |u| billed_count(u, field)).map(Some));
             }
             CountRead::Opt(path) => *s = kept(opt(usage, path)),
-            CountRead::Lenient(path) => *s = at(usage, path).and_then(read_count_u64),
+            CountRead::Lenient(path) => *s = recorded_optional(protocol, opt(usage, path)),
             // A refused slice or term moves nothing: the total it adjusts stands as read.
             CountRead::Less(path) => {
                 if let Some(n) = kept(opt(usage, path)) {
@@ -346,14 +366,11 @@ pub fn read_usage(
                 value,
                 count,
             } => {
-                *s = at(usage, list)
-                    .and_then(|l| l.as_array())
-                    .and_then(|l| {
-                        l.iter()
-                            .find(|e| e.get(key).and_then(|k| k.as_str()) == Some(value))
-                    })
-                    .and_then(|e| e.get(count))
-                    .and_then(read_count_u64);
+                let entry = at(usage, list).and_then(|l| l.as_array()).and_then(|l| {
+                    l.iter()
+                        .find(|e| e.get(key).and_then(|k| k.as_str()) == Some(value))
+                });
+                *s = recorded_optional(protocol, billed_count_opt(entry, count));
             }
         }
     }
@@ -436,8 +453,11 @@ pub fn stated_total_note(
     if summed_total == reported_total {
         return None;
     }
-    let unaccounted = i64::try_from(reported_total).unwrap_or(i64::MAX)
-        - i64::try_from(summed_total).unwrap_or(i64::MAX);
+    let unaccounted = if reported_total > summed_total {
+        i64::try_from(reported_total - summed_total).unwrap_or(i64::MAX)
+    } else {
+        i64::try_from(summed_total - reported_total).map_or(i64::MIN, |gap| -gap)
+    };
     tracing::warn!(
         protocol,
         identity,

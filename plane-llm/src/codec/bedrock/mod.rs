@@ -865,7 +865,10 @@ fn bedrock_media_block(
         // fetch: it rides the opaque `Vendor` escape and only this writer re-emits it.
         None => crate::codec::ir::IrImageSource::Vendor {
             vendor: VENDOR_NAME,
-            value: source.cloned().unwrap_or_else(|| serde_json::json!({})),
+            value: serde_json::json!({
+                (keys::FORMAT): format,
+                (keys::SOURCE): source.cloned().unwrap_or_else(|| serde_json::json!({})),
+            }),
         },
     };
     // IR-12: a `DocumentBlock` carries `citations: {enabled}` and a free-text `context`; a
@@ -980,7 +983,7 @@ fn bedrock_media_content_block(
             serde_json::json!({ (keys::BYTES): data })
         }
         crate::codec::ir::IrImageSource::Vendor { vendor, value } if *vendor == VENDOR_NAME => {
-            value.clone()
+            value.get(keys::SOURCE).unwrap_or(value).clone()
         }
         crate::codec::ir::IrImageSource::Url(_)
         | crate::codec::ir::IrImageSource::Vendor { .. } => {
@@ -994,17 +997,56 @@ fn bedrock_media_content_block(
             return None;
         }
     };
+    let format = match source {
+        crate::codec::ir::IrImageSource::Vendor { vendor, value }
+            if *vendor == VENDOR_NAME && value.get(keys::SOURCE).is_some() =>
+        {
+            value
+                .get(keys::FORMAT)
+                .and_then(|value| value.as_str())
+                .filter(|format| !format.is_empty())
+                .unwrap_or(format)
+        }
+        _ => format,
+    };
     let mut block = serde_json::Map::new();
     block.insert(keys::FORMAT.to_string(), serde_json::json!(format));
     // Converse requires `name` on a document block; cross-protocol attachments often have none
     // (Gemini `inlineData`), so synthesize one rather than send a block AWS rejects.
     if kind == crate::codec::ir::IrMediaKind::Document {
+        // Keep the existing neutral label when a source filename cannot be a native document
+        // label. This does not add a filename limit or reject the attachment.
+        let usable = name.filter(|name| {
+            let mut whitespace = false;
+            !name.is_empty()
+                && name.chars().all(|ch| {
+                    let repeated_whitespace = whitespace && ch.is_whitespace();
+                    whitespace = ch.is_whitespace();
+                    !repeated_whitespace
+                        && (ch.is_alphanumeric()
+                            || ch.is_whitespace()
+                            || matches!(ch, '-' | '(' | ')' | '[' | ']'))
+                })
+        });
+        if name.is_some() && usable.is_none() {
+            crate::codec::drops::writer_drop!(
+                crate::codec::drops::member("name"),
+                &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                [],
+                "replacing an unrepresentable Bedrock document name with the existing neutral attachment label"
+            );
+        }
         block.insert(
             keys::NAME.to_string(),
-            serde_json::json!(name.unwrap_or("attachment")),
+            serde_json::json!(usable.unwrap_or("attachment")),
         );
-    } else if let Some(n) = name {
-        block.insert(keys::NAME.to_string(), serde_json::json!(n));
+    } else if name.is_some() {
+        crate::codec::drops::writer_drop!(
+            crate::codec::drops::member("name"),
+            &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+            [],
+            "dropping video attachment name on Bedrock egress: VideoBlock carries only format and source"
+        );
     }
     block.insert(keys::SOURCE.to_string(), wire_source);
     // IR-12: citation switch and context ride `DocumentBlock` natively; a `VideoBlock` has none, so
@@ -1914,7 +1956,13 @@ impl super::proto_codec::StreamFraming for BedrockStreamFraming {
 /// `CohereWriter`'s guard (`cohere/mod.rs`).
 #[derive(Clone)]
 pub struct BedrockWriter {
-    open_block_indices: StreamCell<std::collections::BTreeSet<usize>>,
+    stream: StreamCell<BedrockStream>,
+}
+
+#[derive(Clone)]
+struct BedrockStream {
+    open_block_indices: std::collections::BTreeSet<usize>,
+    block_indices: crate::codec::proto_codec::EmittedBlockIndices,
 }
 
 /// Value-namespace constructor for [`BedrockWriter`], mirroring `CohereWriter`'s. `protocol_for`
@@ -1924,21 +1972,41 @@ pub struct BedrockWriter {
 #[allow(non_upper_case_globals)]
 #[allow(clippy::declare_interior_mutable_const)]
 pub const BedrockWriter: BedrockWriter = BedrockWriter {
-    open_block_indices: StreamCell::new(std::collections::BTreeSet::new()),
+    stream: StreamCell::new(BedrockStream {
+        open_block_indices: std::collections::BTreeSet::new(),
+        block_indices: crate::codec::proto_codec::EmittedBlockIndices::new(),
+    }),
 };
 
 impl BedrockWriter {
+    fn begin_stream(&self) {
+        let mut stream = self.stream.lock();
+        if stream.block_indices.begin() {
+            stream.open_block_indices.clear();
+        }
+    }
+
+    fn finish_stream(&self) {
+        self.stream.lock().block_indices.finish();
+    }
+
+    fn wire_index(&self, index: usize) -> usize {
+        self.stream.lock().block_indices.wire(index)
+    }
+
     /// Record that block `index` was opened and owes a `contentBlockStop` (Text/Thinking open
     /// implicitly, ToolUse emits a start). A poisoned lock is a no-op.
-    fn mark_block_open(&self, index: usize) {
-        self.open_block_indices.lock().insert(index);
+    fn mark_block_open(&self, index: usize) -> usize {
+        let mut stream = self.stream.lock();
+        stream.open_block_indices.insert(index);
+        stream.block_indices.open(index)
     }
 
     /// True and forget `index` if the block was opened (its `BlockStop` must emit
     /// `contentBlockStop`); false if never opened (e.g. `Image`), then `BlockStop` emits nothing.
     /// A poisoned lock gives `false`.
     fn take_block_open(&self, index: usize) -> bool {
-        self.open_block_indices.lock().remove(&index)
+        self.stream.lock().open_block_indices.remove(&index)
     }
 }
 
@@ -1995,7 +2063,8 @@ pub fn bedrock_response_to_eventstream(
     // `read_response_events`. `index` advances only when a block emits frames (not `enumerate()`):
     // ToolResult/Image/Json emit nothing and would leave a gap a native stream never has.
     let mut index = 0usize;
-    for block in ir.content.iter() {
+    for (source_index, block) in ir.content.iter().enumerate() {
+        let _origin = crate::codec::drops::block_scope(ir.block_origins.response.get(source_index));
         match block {
             IrBlock::Text {
                 text, citations, ..

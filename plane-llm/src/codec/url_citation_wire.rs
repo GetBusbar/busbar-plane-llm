@@ -120,11 +120,12 @@ fn citation_span(text: &str, base: usize, c: &crate::codec::ir::IrCitation) -> O
             .as_deref()
             .filter(|q| !q.is_empty())
             .and_then(|q| {
-                // `str::find` and `q.len()` are byte offsets; the IR contract is characters (see
-                // `IrCitation::start_index`). `find` returns a char boundary so the slice is valid;
-                // only the emitted span needs converting.
+                // `str::find` returns byte offsets; the IR contract is characters (see
+                // `IrCitation::start_index`). Advance past the first start, including overlapping
+                // matches, at a character boundary; only the emitted span needs converting.
                 let first = text.find(q)?;
-                if text[first + q.len()..].contains(q) {
+                let next_start = first + text[first..].chars().next()?.len_utf8();
+                if text[next_start..].contains(q) {
                     return None;
                 }
                 let start_ch = text[..first].chars().count();

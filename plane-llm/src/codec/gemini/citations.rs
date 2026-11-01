@@ -149,14 +149,211 @@ pub(super) fn read_gemini_streamed_citations(
     candidate: &serde_json::Value,
     text: &str,
     marks: &[usize],
-) -> Vec<crate::codec::ir::IrCitation> {
-    read_citations_at(
-        candidate,
-        &Anchor {
-            text: Some(text),
-            index: std::cell::OnceCell::from(GeminiCharIndex::from_marks(text, marks)),
-        },
-    )
+    state: &mut GeminiCitationState,
+    sources_emitted: &mut usize,
+) -> Result<Vec<crate::codec::ir::IrCitation>, Vec<crate::codec::ir::IrCitation>> {
+    let anchor = Anchor {
+        text: Some(text),
+        index: std::cell::OnceCell::from(GeminiCharIndex::from_marks(text, marks)),
+    };
+    // citationSources is cumulative; groundingChunks is incremental. They cannot share a watermark.
+    let legacy = serde_json::json!({
+        (FIELD_CITATION_METADATA): candidate.get(FIELD_CITATION_METADATA)
+    });
+    let all_sources = read_citations_at(&legacy, &anchor);
+    let mut out = all_sources
+        .get(*sources_emitted..)
+        .unwrap_or_default()
+        .to_vec();
+    *sources_emitted = (*sources_emitted).max(all_sources.len());
+    if state.overflowed {
+        return state.retention_loss(out);
+    }
+    let gm = candidate.get(FIELD_GROUNDING_METADATA);
+    let new_chunks = gm
+        .and_then(|g| g.get(FIELD_GROUNDING_CHUNKS))
+        .and_then(|v| v.as_array());
+    let mut accepted_chunks = Vec::new();
+    for chunk in new_chunks.into_iter().flatten() {
+        if !state.retain(chunk_size(chunk)) {
+            break;
+        }
+        state.chunks.push(chunk.clone());
+        accepted_chunks.push(chunk.clone());
+    }
+    let mut supports = Vec::new();
+    for support in gm
+        .and_then(|g| g.get("groundingSupports"))
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let identity = serde_json::json!({
+            "segment": support.get("segment"),
+            "groundingChunkIndices": support.get("groundingChunkIndices"),
+        });
+        let bytes = chunk_size(&identity);
+        if bytes > MAX_GROUNDING_CLONE_BYTES {
+            state.retain(bytes);
+            break;
+        }
+        let Ok(key) = crate::codec::json::to_string(&identity) else {
+            state.overflowed = true;
+            break;
+        };
+        if state.supports.contains(&key) {
+            continue;
+        }
+        if !state.retain(key.len()) {
+            break;
+        }
+        state.supports.insert(key);
+        supports.push(identity);
+    }
+    if state.overflowed {
+        return state.retention_loss(out);
+    }
+    if !supports.is_empty() {
+        let candidate =
+            serde_json::json!({(FIELD_GROUNDING_METADATA): {"groundingSupports": supports}});
+        out.extend(grounding_citations_at(
+            &candidate,
+            &anchor,
+            Some(&state.chunks),
+            Some(&|part, offset, end| state.byte_offset(part, offset, end)),
+        ));
+    } else if gm
+        .and_then(|g| g.get("groundingSupports"))
+        .and_then(|v| v.as_array())
+        .is_none_or(Vec::is_empty)
+    {
+        // Newly announced sources without a support are provenance once; never replay the registry.
+        let candidate = serde_json::json!({(FIELD_GROUNDING_METADATA): {(FIELD_GROUNDING_CHUNKS): accepted_chunks}});
+        out.extend(grounding_citations_at(&candidate, &anchor, None, None));
+    }
+    Ok(out)
+}
+
+#[derive(Debug, Clone)]
+struct PartSpan {
+    part_start: usize,
+    answer_start: usize,
+    bytes: usize,
+    char_start: usize,
+    chars: usize,
+    block: usize,
+    block_start: usize,
+}
+
+/// Private Gemini stream state: the wire's global chunk registry and Part-to-answer coordinates.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct GeminiCitationState {
+    chunks: Vec<serde_json::Value>,
+    supports: std::collections::BTreeSet<String>,
+    parts: std::collections::BTreeMap<usize, Vec<PartSpan>>,
+    blocks: std::collections::BTreeMap<usize, (usize, usize, usize)>,
+    retained_bytes: usize,
+    overflowed: bool,
+    loss_reported: bool,
+}
+
+impl GeminiCitationState {
+    fn retention_loss(
+        &mut self,
+        citations: Vec<crate::codec::ir::IrCitation>,
+    ) -> Result<Vec<crate::codec::ir::IrCitation>, Vec<crate::codec::ir::IrCitation>> {
+        if self.loss_reported {
+            Ok(citations)
+        } else {
+            self.loss_reported = true;
+            Err(citations)
+        }
+    }
+
+    fn retain(&mut self, bytes: usize) -> bool {
+        self.retained_bytes = self.retained_bytes.saturating_add(bytes);
+        self.overflowed |= self.retained_bytes > MAX_GROUNDING_CLONE_BYTES;
+        !self.overflowed
+    }
+
+    pub(super) fn record_part(
+        &mut self,
+        part: usize,
+        answer: (usize, usize),
+        block: (usize, usize),
+        length: (usize, usize),
+    ) {
+        let (answer_start, char_start) = answer;
+        let (block, block_start) = block;
+        let (bytes, chars) = length;
+        if self.overflowed {
+            return;
+        }
+        if let Some(last) = self.parts.get_mut(&part).and_then(|p| p.last_mut()) {
+            if last.answer_start + last.bytes == answer_start && last.block == block {
+                last.bytes += bytes;
+                last.chars += chars;
+                self.blocks.insert(
+                    last.char_start,
+                    (last.char_start + last.chars, last.block, last.block_start),
+                );
+                return;
+            }
+        }
+        if !self.retain(
+            std::mem::size_of::<PartSpan>() + std::mem::size_of::<(usize, usize, usize, usize)>(),
+        ) {
+            return;
+        }
+        let spans = self.parts.entry(part).or_default();
+        let part_start = spans.last().map_or(0, |s| s.part_start + s.bytes);
+        spans.push(PartSpan {
+            part_start,
+            answer_start,
+            bytes,
+            char_start,
+            chars,
+            block,
+            block_start,
+        });
+        self.blocks
+            .insert(char_start, (char_start + chars, block, block_start));
+    }
+
+    fn byte_offset(&self, part: usize, offset: i64, end: bool) -> Option<i64> {
+        let Some(spans) = self.parts.get(&part) else {
+            // A metadata-first chunk has no text anchor yet, matching the earlier read path.
+            return (part == 0 && self.parts.is_empty()).then_some(offset);
+        };
+        let offset = usize::try_from(offset.max(0)).ok()?;
+        // At a discontiguous fragment boundary, a start belongs to the next fragment while an
+        // exclusive end belongs to the preceding one.
+        let span = spans
+            .get(spans.partition_point(|s| {
+                if end {
+                    offset > s.part_start + s.bytes
+                } else {
+                    offset >= s.part_start + s.bytes
+                }
+            }))
+            .or_else(|| spans.last())?;
+        Some((span.answer_start + offset.saturating_sub(span.part_start).min(span.bytes)) as i64)
+    }
+
+    pub(super) fn owner(&self, char_offset: i64) -> Option<(usize, usize)> {
+        let char_offset = usize::try_from(char_offset.max(0)).ok()?;
+        self.blocks
+            .range(..=char_offset)
+            .next_back()
+            .filter(|(_, (end, _, _))| char_offset < *end)
+            .map(|(_, (_, block, start))| (*block, *start))
+    }
+}
+
+fn chunk_size(value: &serde_json::Value) -> usize {
+    let mut count = ByteCount(0);
+    let _ = serde_json::to_writer(&mut count, value);
+    count.0
 }
 
 /// The text a candidate's offsets convert against, indexed on first use (once for both citation
@@ -191,7 +388,7 @@ fn read_citations_at(
     let Some(sources) = sources else {
         // No `citationMetadata`, but a grounded answer carries its sources in the other slot: fall
         // through to it (returning empty stripped every grounded answer's sources for foreign clients).
-        return grounding_citations_at(candidate, anchor);
+        return grounding_citations_at(candidate, anchor, None, None);
     };
     // One pass over the anchor text for the whole candidate, not one per offset.
     let char_index = anchor.index();
@@ -231,7 +428,7 @@ fn read_citations_at(
         .collect();
     // A response can carry both slots (a grounded answer that also cites its own corpus): append, so
     // neither set is dropped.
-    out.extend(grounding_citations_at(candidate, anchor));
+    out.extend(grounding_citations_at(candidate, anchor, None, None));
     out
 }
 
@@ -280,21 +477,24 @@ pub(super) fn read_gemini_grounding_citations(
     candidate: &serde_json::Value,
     anchor_text: Option<&str>,
 ) -> Vec<crate::codec::ir::IrCitation> {
-    grounding_citations_at(candidate, &Anchor::text(anchor_text))
+    grounding_citations_at(candidate, &Anchor::text(anchor_text), None, None)
 }
 
 fn grounding_citations_at(
     candidate: &serde_json::Value,
     anchor: &Anchor<'_>,
+    accumulated_chunks: Option<&[serde_json::Value]>,
+    part_offset: Option<&dyn Fn(usize, i64, bool) -> Option<i64>>,
 ) -> Vec<crate::codec::ir::IrCitation> {
     let Some(gm) = candidate.get(FIELD_GROUNDING_METADATA) else {
         return Vec::new();
     };
-    let chunks = gm
-        .get(FIELD_GROUNDING_CHUNKS)
-        .and_then(|c| c.as_array())
-        .map(Vec::as_slice)
-        .unwrap_or_default();
+    let chunks = accumulated_chunks.unwrap_or_else(|| {
+        gm.get(FIELD_GROUNDING_CHUNKS)
+            .and_then(|c| c.as_array())
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    });
     if chunks.is_empty() {
         return Vec::new();
     }
@@ -330,14 +530,31 @@ fn grounding_citations_at(
                 .map(str::to_string),
         )
     };
-    // `segment.startIndex`/`endIndex` are byte offsets into the full text, as in `citationSources[]`:
-    // same helper, and with no anchor leave the wire value rather than mislabel bytes as characters.
-    // One pass over the anchor text for the whole block.
+    // Grounding segments name a Part, with byte offsets inside that Part. The corpus citation
+    // slot above instead names offsets in the whole answer. Convert the two coordinate systems
+    // separately, including non-text/thought Parts in the wire's partIndex numbering.
+    let parts = candidate
+        .get(keys::CONTENT)
+        .and_then(|c| c.get(FIELD_PARTS))
+        .and_then(|v| v.as_array());
+    let mut prefix = 0usize;
+    let part_starts: Option<Vec<Option<(usize, usize)>>> = parts.map(|parts| {
+        parts
+            .iter()
+            .map(|part| {
+                let text = part
+                    .get(keys::TEXT)
+                    .and_then(|v| v.as_str())
+                    .filter(|_| part.get(FIELD_THOUGHT).and_then(|v| v.as_bool()) != Some(true));
+                text.map(|text| {
+                    let start = prefix;
+                    prefix += text.len();
+                    (start, text.len())
+                })
+            })
+            .collect()
+    });
     let char_index = anchor.index();
-    let convert = |b: Option<i64>| match char_index {
-        Some(idx) => b.map(|b| idx.char_offset(b)),
-        None => b,
-    };
 
     let supports = gm
         .get("groundingSupports")
@@ -349,15 +566,39 @@ fn grounding_citations_at(
     let mut cloned_bytes = 0usize;
     'supports: for support in supports {
         let segment = support.get("segment");
+        let part = segment
+            .and_then(|s| s.get("partIndex"))
+            .map_or(Some(0), |v| {
+                v.as_u64().and_then(|i| usize::try_from(i).ok())
+            });
+        let convert = |offset: Option<i64>, end: bool| {
+            offset.and_then(|offset| {
+                let part = part?;
+                let absolute = if let Some(convert) = part_offset {
+                    convert(part, offset, end)?
+                } else if let Some(parts) = &part_starts {
+                    let (prefix, len) = parts.get(part).copied().flatten()?;
+                    (prefix
+                        + usize::try_from(offset.max(0))
+                            .unwrap_or(usize::MAX)
+                            .min(len)) as i64
+                } else {
+                    offset
+                };
+                Some(char_index.map_or(absolute, |idx| idx.char_offset(absolute)))
+            })
+        };
         let start = convert(
             segment
                 .and_then(|s| s.get(FIELD_START_INDEX))
                 .and_then(|v| v.as_i64()),
+            false,
         );
         let end = convert(
             segment
                 .and_then(|s| s.get(FIELD_END_INDEX))
                 .and_then(|v| v.as_i64()),
+            true,
         );
         let cited_text = segment
             .and_then(|s| s.get(keys::TEXT))
@@ -412,7 +653,7 @@ fn grounding_citations_at(
             });
         }
     }
-    if out.is_empty() {
+    if supports.is_empty() {
         // Sources with no support spans are still provenance (each chunk cloned once, same budget).
         for chunk in chunks {
             cloned_bytes = cloned_bytes.saturating_add(chunk_bytes(chunk));

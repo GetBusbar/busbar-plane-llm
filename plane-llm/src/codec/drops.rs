@@ -130,8 +130,8 @@ pub enum At {
     /// `path` is an IR member's name: on a request, the caller's wire path for it ([`wire_path`],
     /// read from the listed IR names' rows, or `path`'s own when the list is empty).
     Slot(&'static [&'static str]),
-    /// `path` is an IR block kind: the source dialect's content-block container
-    /// ([`Blocks::at`]), the block's kind in the source dialect's spelling as the warn's `kind`.
+    /// `path` is an IR block kind. The current reader-carried block origin names the native
+    /// container; absent metadata is explicitly reported as an IR-only origin.
     Block,
 }
 
@@ -286,31 +286,6 @@ pub fn resolve(dialect: &str, name: &str, rows: &[&str]) -> Option<String> {
     .flatten()
 }
 
-/// A content block of the IR kind `kind` in the dialect `dialect`'s `direction` grammar: its
-/// container path (notation A) and its kind as the dialect spells it; `None` for either the
-/// dialect does not declare.
-pub fn block_path(
-    dialect: &str,
-    direction: Direction,
-    kind: &str,
-) -> (Option<String>, Option<&'static str>) {
-    crate::codec::proto_codec::with_reader(dialect, |r| {
-        let grammar = match direction {
-            Direction::Request => r.grammar().request_blocks,
-            Direction::Response => r.grammar().response_blocks,
-        };
-        let at = grammar.first().map(|g| g.at.join("."));
-        let spelled = r
-            .grammar()
-            .block_kinds
-            .iter()
-            .find(|(ir, _)| *ir == kind)
-            .map(|(_, wire)| *wire);
-        (at, spelled)
-    })
-    .unwrap_or((None, None))
-}
-
 /// The CALLER's wire path for the IR name `name`, for a drop warned outside [`note`] (a writer's
 /// control warn): on an open request attempt, [`wire_path`] in the caller's dialect; else `name`.
 pub fn caller_path(name: &str) -> String {
@@ -332,6 +307,62 @@ struct Open {
     ingress: String,
     egress: String,
     paths: Vec<String>,
+    block_origin: Option<crate::codec::ir::IrBlockOrigin>,
+}
+
+/// The diagnostic origin for one synchronous writer projection. It cannot cross threads.
+pub(crate) struct BlockScope {
+    outer: Option<Option<crate::codec::ir::IrBlockOrigin>>,
+    not_send: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+impl Drop for BlockScope {
+    fn drop(&mut self) {
+        if let Some(outer) = self.outer.take() {
+            OPEN.with(|slot| {
+                if let Some(open) = slot.borrow_mut().as_mut() {
+                    open.block_origin = outer;
+                }
+            });
+        }
+    }
+}
+
+pub(crate) fn block_scope(origin: Option<&crate::codec::ir::IrBlockOrigin>) -> BlockScope {
+    BlockScope {
+        outer: OPEN.with(|slot| {
+            slot.borrow_mut()
+                .as_mut()
+                .map(|open| std::mem::replace(&mut open.block_origin, origin.cloned()))
+        }),
+        not_send: std::marker::PhantomData,
+    }
+}
+
+/// Run a writer's projection of one block with its captured origin. Scope exit restores the
+/// enclosing block even on early return or unwind.
+pub fn with_block_origin<T>(
+    origin: Option<&crate::codec::ir::IrBlockOrigin>,
+    f: impl FnOnce() -> T,
+) -> T {
+    let _scope = block_scope(origin);
+    f()
+}
+
+/// Project the exact child entry retained by the reader, without deriving a native path from
+/// the child's kind or from the enclosing target protocol.
+pub(crate) fn child_scope(index: usize) -> BlockScope {
+    let origin = OPEN.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .and_then(|open| open.block_origin.as_ref()?.children.get(index).cloned())
+    });
+    block_scope(origin.as_ref())
+}
+
+pub fn with_child_origin<T>(index: usize, f: impl FnOnce() -> T) -> T {
+    let _scope = child_scope(index);
+    f()
 }
 
 thread_local! {
@@ -361,6 +392,7 @@ impl ScopeGuard {
             ingress: seam.ingress.to_string(),
             egress: seam.egress.to_string(),
             paths,
+            block_origin: None,
         };
         ScopeGuard {
             outer: Some(OPEN.with(|o| o.replace(Some(open)))),
@@ -409,61 +441,75 @@ pub fn scope<T>(seam: Seam<'_>, f: impl FnOnce() -> T) -> (T, Vec<String>) {
     (out, paths)
 }
 
-/// Drop one member on the open attempt: one warn naming its wire path (first time that path drops)
-/// and the path kept for the audit. Outside an attempt nothing is dropped or said.
+/// A caller-authored IR block may have no native source metadata. Keep that absence explicit;
+/// a grammar or normalized variant cannot recover the native container that supplied it.
+const UNATTRIBUTED_BLOCK_PATH: &str = "ir.block.kind";
+const UNATTRIBUTED_BLOCK_DETAIL: &str = "native block source metadata is unavailable";
+
+/// Drop one member on the open attempt: one warn naming its captured native path (first time
+/// that path drops), retained for the audit. Missing block provenance is explicitly IR-only.
+/// Outside an attempt nothing is dropped or said.
 pub fn note(d: Dropped) {
-    OPEN.with(|o| {
-        let mut o = o.borrow_mut();
-        let Some(open) = o.as_mut() else {
-            return;
-        };
-        // The source side: the caller's bytes on a request, the far end's on an answer.
-        let source = match open.direction {
-            Direction::Request => open.ingress.as_str(),
-            Direction::Response => open.egress.as_str(),
-        };
-        let mut kind = None;
-        let d = match d.at {
-            At::Slot(rows) if open.direction == Direction::Request => Dropped {
-                path: Cow::Owned(wire_path(source, &d.path, rows)),
+    // Resolve paths and emit tracing events without borrowing the thread-local state. A subscriber
+    // may inspect or add a drop on this same thread while handling the diagnostic.
+    let context = OPEN.with(|slot| {
+        slot.borrow().as_ref().map(|open| {
+            (
+                open.direction,
+                open.ingress.clone(),
+                open.egress.clone(),
+                open.block_origin.as_ref().and_then(|origin| origin.source),
+            )
+        })
+    });
+    let Some((direction, ingress, egress, block_origin)) = context else {
+        return;
+    };
+    let source = match direction {
+        Direction::Request => ingress.as_str(),
+        Direction::Response => egress.as_str(),
+    };
+    let d = match d.at {
+        At::Slot(rows) if direction == Direction::Request => Dropped {
+            path: Cow::Owned(wire_path(source, &d.path, rows)),
+            ..d
+        },
+        At::Block => match block_origin {
+            Some(origin) => Dropped {
+                path: Cow::Borrowed(origin.path),
                 ..d
             },
-            At::Block => {
-                let (at, spelled) = block_path(source, open.direction, &d.path);
-                kind = Some(spelled.map(Cow::Borrowed).unwrap_or_else(|| d.path.clone()));
-                Dropped {
-                    path: at.map(Cow::Owned).unwrap_or_else(|| d.path.clone()),
-                    ..d
-                }
-            }
-            _ => d,
+            None => Dropped {
+                path: Cow::Owned(format!("{UNATTRIBUTED_BLOCK_PATH}={}", d.path)),
+                message: Cow::Owned(format!("{}; {UNATTRIBUTED_BLOCK_DETAIL}", d.message)),
+                ..d
+            },
+        },
+        _ => d,
+    };
+    let added = OPEN.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let Some(open) = slot.as_mut() else {
+            return false;
         };
-        if open.paths.iter().any(|p| p.as_str() == d.path.as_ref()) {
-            return;
+        if open
+            .paths
+            .iter()
+            .any(|path| path.as_str() == d.path.as_ref())
+        {
+            return false;
         }
-        match kind {
-            Some(kind) => busbar_contract::diag_warn!(
-                d.diag,
-                direction = open.direction.as_str(),
-                ingress = %open.ingress,
-                egress = %open.egress,
-                path = %d.path,
-                kind = %kind,
-                "{}",
-                d.message
-            ),
-            None => busbar_contract::diag_warn!(
-                d.diag,
-                direction = open.direction.as_str(),
-                ingress = %open.ingress,
-                egress = %open.egress,
-                path = %d.path,
-                "{}",
-                d.message
-            ),
-        }
-        open.paths.push(d.path.into_owned());
+        // Record before invoking a subscriber: a reentrant report of this same path is a duplicate.
+        open.paths.push(d.path.to_string());
+        true
     });
+    if !added {
+        return;
+    }
+    busbar_contract::diag_warn!(
+        d.diag, direction = direction.as_str(), ingress = %ingress, egress = %egress,
+        path = %d.path, "{}", d.message
+    );
 }
 
 /// What a member a reader parks in `extra` holds of the caller's request, beside the members it

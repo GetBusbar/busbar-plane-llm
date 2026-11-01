@@ -88,70 +88,125 @@ pub(super) fn is_anthropic_citation_shape(raw: &serde_json::Value) -> bool {
 /// is emitted verbatim, so Anthropic to IR to Anthropic is byte-exact; only when it is absent
 /// (a citation synthesized on a cross-protocol hop) is the object built from the neutral fields,
 /// with `kind` choosing the variant and its field names.
-pub(super) fn write_citation(c: &crate::codec::ir::IrCitation) -> serde_json::Value {
+pub(super) fn write_citation(c: &crate::codec::ir::IrCitation) -> Option<serde_json::Value> {
+    write_citation_in_context(c, false)
+}
+
+fn write_citation_in_context(
+    c: &crate::codec::ir::IrCitation,
+    response: bool,
+) -> Option<serde_json::Value> {
+    let written = representable_citation(c, response);
+    if written.is_none() {
+        crate::codec::drops::writer_drop!(
+            crate::codec::drops::member("citations"),
+            &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+            [],
+            "dropping a citation on Anthropic egress: its required source coordinates or opaque index are unavailable"
+        );
+    }
+    written
+}
+
+pub(super) fn write_response_citation(
+    c: &crate::codec::ir::IrCitation,
+) -> Option<serde_json::Value> {
+    let mut written = write_citation_in_context(c, true)?;
+    // Native raw citations keep the relay's verbatim contract. Only a synthesized response
+    // needs the nullable member that is absent from the request citation schema.
+    if !c.raw.as_ref().is_some_and(is_anthropic_citation_shape)
+        && matches!(
+            written.get(keys::TYPE).and_then(|v| v.as_str()),
+            Some(CITATION_TYPE_CHAR | CITATION_TYPE_PAGE | CITATION_TYPE_CONTENT_BLOCK)
+        )
+    {
+        written
+            .as_object_mut()?
+            .entry(keys::FILE_ID)
+            .or_insert(serde_json::Value::Null);
+    }
+    Some(written)
+}
+
+fn representable_citation(
+    c: &crate::codec::ir::IrCitation,
+    response: bool,
+) -> Option<serde_json::Value> {
     // Re-emit `raw` verbatim only when it is an Anthropic citation (an Anthropic `type` tag); a
     // foreign `raw` (e.g. Gemini `uri`/`startIndex`) falls through to the built shape.
     if let Some(raw) = &c.raw {
         if is_anthropic_citation_shape(raw) {
-            return raw.clone();
+            return Some(raw.clone());
         }
     }
     let mut obj = serde_json::Map::new();
     let kind = c.kind.as_deref().unwrap_or(CITATION_TYPE_WEB_SEARCH);
     obj.insert(keys::TYPE.to_string(), serde_json::json!(kind));
-    if let Some(t) = &c.cited_text {
-        obj.insert(super::CITED_TEXT.to_string(), serde_json::json!(t));
-    }
+    obj.insert(
+        super::CITED_TEXT.to_string(),
+        serde_json::json!(c.cited_text.as_ref()?),
+    );
     match kind {
         CITATION_TYPE_PAGE => document_location(
             c,
             &mut obj,
             super::START_PAGE_NUMBER,
             super::END_PAGE_NUMBER,
-        ),
+            response,
+        )?,
         CITATION_TYPE_CONTENT_BLOCK => document_location(
             c,
             &mut obj,
             super::START_BLOCK_INDEX,
             super::END_BLOCK_INDEX,
-        ),
+            response,
+        )?,
         // A search-result citation names its passage by `source` + `search_result_index` and its
         // span by content-block indices; char-location names would not read as one.
         CITATION_TYPE_SEARCH_RESULT => {
-            if let Some(u) = &c.url {
-                obj.insert(keys::SOURCE.to_string(), serde_json::json!(u));
-            }
-            if let Some(t) = &c.title {
-                obj.insert(keys::TITLE.to_string(), serde_json::json!(t));
-            }
-            if let Some(di) = c.document_index {
-                obj.insert(
-                    super::SEARCH_RESULT_INDEX.to_string(),
-                    serde_json::json!(di),
-                );
-            }
-            if let Some(s) = c.start_index {
-                obj.insert(super::START_BLOCK_INDEX.to_string(), serde_json::json!(s));
-            }
-            if let Some(e) = c.end_index {
-                obj.insert(super::END_BLOCK_INDEX.to_string(), serde_json::json!(e));
-            }
+            let index = c.document_index.filter(|index| *index >= 0)?;
+            let start = c.start_index.filter(|index| *index >= 0)?;
+            let end = c.end_index.filter(|index| *index > start)?;
+            obj.insert(keys::SOURCE.to_string(), serde_json::json!(c.url.as_ref()?));
+            obj.insert(keys::TITLE.to_string(), serde_json::json!(c.title));
+            obj.insert(
+                super::SEARCH_RESULT_INDEX.to_string(),
+                serde_json::json!(index),
+            );
+            obj.insert(
+                super::START_BLOCK_INDEX.to_string(),
+                serde_json::json!(start),
+            );
+            obj.insert(super::END_BLOCK_INDEX.to_string(), serde_json::json!(end));
         }
         CITATION_TYPE_WEB_SEARCH => {
-            if let Some(u) = &c.url {
-                obj.insert(keys::URL.to_string(), serde_json::json!(u));
+            if c.title
+                .as_ref()
+                .is_some_and(|title| title.chars().count() > 512 || (!response && title.is_empty()))
+            {
+                return None;
             }
-            if let Some(t) = &c.title {
-                obj.insert(keys::TITLE.to_string(), serde_json::json!(t));
+            let url = c.url.as_ref()?;
+            if !response && url.is_empty() {
+                return None;
             }
-            if let Some(ei) = &c.encrypted_index {
-                obj.insert(super::ENCRYPTED_INDEX.to_string(), serde_json::json!(ei));
-            }
+            obj.insert(keys::URL.to_string(), serde_json::json!(url));
+            obj.insert(keys::TITLE.to_string(), serde_json::json!(c.title));
+            obj.insert(
+                super::ENCRYPTED_INDEX.to_string(),
+                serde_json::json!(c.encrypted_index.as_ref()?),
+            );
         }
-        // "char_location" and any unknown/None kind default to the char-location field names.
-        _ => document_location(c, &mut obj, super::START_CHAR_INDEX, super::END_CHAR_INDEX),
+        CITATION_TYPE_CHAR => document_location(
+            c,
+            &mut obj,
+            super::START_CHAR_INDEX,
+            super::END_CHAR_INDEX,
+            response,
+        )?,
+        _ => return None,
     }
-    serde_json::Value::Object(obj)
+    Some(serde_json::Value::Object(obj))
 }
 
 /// The members every Anthropic document-location variant shares — `document_index`,
@@ -161,17 +216,32 @@ fn document_location(
     obj: &mut serde_json::Map<String, serde_json::Value>,
     start_key: &str,
     end_key: &str,
-) {
-    if let Some(di) = c.document_index {
-        obj.insert(super::DOCUMENT_INDEX.to_string(), serde_json::json!(di));
+    response: bool,
+) -> Option<()> {
+    if !response
+        && c.title
+            .as_ref()
+            .is_some_and(|title| title.is_empty() || title.chars().count() > 500)
+    {
+        return None;
     }
-    if let Some(t) = &c.title {
-        obj.insert(super::DOCUMENT_TITLE.to_string(), serde_json::json!(t));
+    let index = c.document_index.filter(|index| *index >= 0)?;
+    let minimum = if start_key == super::START_PAGE_NUMBER {
+        1
+    } else {
+        0
+    };
+    let start = c.start_index.filter(|index| *index >= minimum)?;
+    let end = c.end_index?;
+    if start_key == super::START_BLOCK_INDEX && end <= start {
+        return None;
     }
-    if let Some(s) = c.start_index {
-        obj.insert(start_key.to_string(), serde_json::json!(s));
-    }
-    if let Some(e) = c.end_index {
-        obj.insert(end_key.to_string(), serde_json::json!(e));
-    }
+    obj.insert(super::DOCUMENT_INDEX.to_string(), serde_json::json!(index));
+    obj.insert(
+        super::DOCUMENT_TITLE.to_string(),
+        serde_json::json!(c.title),
+    );
+    obj.insert(start_key.to_string(), serde_json::json!(start));
+    obj.insert(end_key.to_string(), serde_json::json!(end));
+    Some(())
 }

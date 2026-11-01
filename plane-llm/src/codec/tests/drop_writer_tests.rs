@@ -653,6 +653,7 @@ fn equal_vendor_images_from_distinct_native_containers_keep_distinct_drop_paths(
         .is_some());
     }
 }
+
 #[test]
 fn text_only_tool_writers_report_the_actual_child_and_preserve_adjacent_text() {
     let body = json!({"model": "fixture-model", "input": [

@@ -197,8 +197,8 @@ pub struct Reply {
     /// ended clean): a caller leaving while its last window is still being written bills the units
     /// stated, as one leaving mid-relay does (L1#5). A relayed end that failed after the caller's first
     /// byte yet bills what the far end reported (a failed generation, an aborted translation) sets it
-    /// too, as does a whole answer handed to the caller (a delivery, or a failed generation keeping its
-    /// usage): its body may span several windows and its units bill however many the caller read.
+    /// too, as does a whole answer handed to the caller (a delivery, a failed generation, or a local
+    /// translation failure retaining reported usage): its body may span several windows.
     ended_partial: bool,
     /// A streamed answer over the invoke envelope, re-framed into its carried dialect's events
     /// before it is read ([`invoke::Transcoder`]).
@@ -432,13 +432,12 @@ impl Reply {
                     .iter()
                     .map(|(n, v)| (n.as_slice(), v.as_slice()))
                     .collect();
-                let piece = whole_piece(host, ctx, status, &body, &far_head, at);
-                // A whole answer that reaches the caller bills what it reported whether or not the
-                // caller stays for its last window: a buffered translated answer is billed before a
-                // byte is written, so a caller leaving mid-body bills its units (the delivered answer
-                // and the failed generation keeping its usage). An end that delivers nothing bills nothing.
-                self.ended_partial = piece.verdict == Verdict::Ok
-                    || piece.fault == Some(Fault::Transient(FAILED_GENERATION));
+                let (piece, keeps_reported_usage) =
+                    whole_piece(host, ctx, status, &body, &far_head, at);
+                // Keep the whole end's reported work across output windows, including a local
+                // rendering failure after that work completed. An end with no retained usage
+                // keeps its failure disposition; the host's delivered-byte billing rule still applies.
+                self.ended_partial = keeps_reported_usage;
                 piece
             }
             State::Relay { relay, head, units } => {
@@ -533,8 +532,8 @@ impl Reply {
         last && matches!(self.state, State::Whole { .. })
     }
 
-    /// The caller had a usable part of a success answer when it left (see [`relay::Relay::partial`]):
-    /// its cancel bills the units the answer stated so far.
+    /// The answer retains its reported work on cancellation: a usable relay, or a whole answer
+    /// retaining usage through delivery failure. The host still requires delivered bytes to bill.
     #[must_use]
     pub fn partial(&self) -> bool {
         match &self.state {
@@ -650,7 +649,7 @@ fn whole_piece<'a>(
     body: &[u8],
     far_head: HeadFields<'_>,
     at: At,
-) -> Piece<'a> {
+) -> (Piece<'a>, bool) {
     let mut w = whole::translate(
         host,
         &whole::WholeCtx {
@@ -674,6 +673,11 @@ fn whole_piece<'a>(
         wire::token_usage_of(&w.usage).as_ref(),
         wire::open_units_of(&w.usage),
     );
+    let keeps_reported_usage = matches!(
+        w.end,
+        whole::WholeEnd::Delivered | whole::WholeEnd::FailedGeneration
+    ) || (w.end == whole::WholeEnd::NotTranslatable
+        && w.usage.is_some());
     let dropped = match w.end {
         whole::WholeEnd::Delivered => std::mem::take(&mut w.dropped),
         _ => Vec::new(),
@@ -690,9 +694,10 @@ fn whole_piece<'a>(
         whole::WholeEnd::IngressUnsupported | whole::WholeEnd::OverCap => (Verdict::Hard, None),
     };
     let synthesized = w.end == whole::WholeEnd::Delivered && w.synthesized;
-    Piece {
+    let piece = Piece {
         dropped,
         synthesized,
         ..answered(w.answer, units, verdict, fault)
-    }
+    };
+    (piece, keeps_reported_usage)
 }

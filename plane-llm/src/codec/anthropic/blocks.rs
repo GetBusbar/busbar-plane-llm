@@ -7,15 +7,257 @@ use super::*;
 use crate::codec::dialect::ir_parse_error;
 use crate::codec::keys;
 
+type BlockOrigin = crate::codec::ir::IrBlockOrigin;
+type BlockSource = crate::codec::ir::IrBlockSource;
+
+#[derive(Clone, Copy)]
+pub(super) enum OriginSite {
+    System,
+    Message,
+    Response,
+    ToolResult,
+}
+
+const SYSTEM_STRING: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "system",
+};
+const SYSTEM_BLOCK: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "system[]",
+};
+const MESSAGE_STRING: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content",
+};
+const MESSAGE_BLOCK: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content[]",
+};
+const RESPONSE_BLOCK: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "content[]",
+};
+const RESULT_STRING: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content[].type=tool_result.content",
+};
+const RESULT_BLOCK: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content[].type=tool_result.content[]",
+};
+const SYSTEM_THINKING: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "system[].type=thinking",
+};
+const SYSTEM_REDACTED: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "system[].type=redacted_thinking",
+};
+const MESSAGE_THINKING: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content[].type=thinking",
+};
+const MESSAGE_REDACTED: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content[].type=redacted_thinking",
+};
+const MESSAGE_TOOL_RESULT: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content[].type=tool_result",
+};
+const MESSAGE_TOOL_USE: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content[].type=tool_use",
+};
+const MESSAGE_IMAGE: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content[].type=image",
+};
+const MESSAGE_DOCUMENT: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content[].type=document",
+};
+const MESSAGE_SEARCH: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content[].type=search_result",
+};
+const RESPONSE_THINKING: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "content[].type=thinking",
+};
+const RESPONSE_REDACTED: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "content[].type=redacted_thinking",
+};
+const RESPONSE_TOOL_USE: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "content[].type=tool_use",
+};
+const RESPONSE_IMAGE: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "content[].type=image",
+};
+const STREAM_TEXT: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "content_block_start.content_block.type=text",
+};
+const STREAM_THINKING: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "content_block_start.content_block.type=thinking",
+};
+const STREAM_REDACTED: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "content_block_start.content_block.type=redacted_thinking",
+};
+const STREAM_TOOL_USE: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "content_block_start.content_block.type=tool_use",
+};
+const STREAM_IMAGE: BlockSource = BlockSource {
+    dialect: VENDOR_NAME,
+    path: "content_block_start.content_block.type=image",
+};
+
+pub(super) fn stream_block_origin(kind: &str) -> Option<BlockOrigin> {
+    let source = match kind {
+        keys::TEXT => &STREAM_TEXT,
+        keys::THINKING => &STREAM_THINKING,
+        BLOCK_TYPE_REDACTED_THINKING => &STREAM_REDACTED,
+        STOP_TOOL_USE => &STREAM_TOOL_USE,
+        keys::IMAGE => &STREAM_IMAGE,
+        _ => return None,
+    };
+    Some(BlockOrigin::at(source))
+}
+
+pub(super) fn string_origin(site: OriginSite) -> BlockOrigin {
+    BlockOrigin::at(match site {
+        OriginSite::System => &SYSTEM_STRING,
+        OriginSite::Message => &MESSAGE_STRING,
+        OriginSite::Response => &RESPONSE_BLOCK,
+        OriginSite::ToolResult => &RESULT_STRING,
+    })
+}
+
+const UNREAD_SYSTEM_DOCUMENT_PATH: &str = "system[].type=document";
+const UNREAD_MESSAGE_DOCUMENT_PATH: &str = "messages[].content[].type=document";
+const UNREAD_RESPONSE_DOCUMENT_PATH: &str = "content[].type=document";
+const UNREAD_RESULT_DOCUMENT_PATH: &str =
+    "messages[].content[].type=tool_result.content[].type=document";
+
+fn unread_document_path(site: OriginSite) -> &'static str {
+    match site {
+        OriginSite::System => UNREAD_SYSTEM_DOCUMENT_PATH,
+        OriginSite::Message => UNREAD_MESSAGE_DOCUMENT_PATH,
+        OriginSite::Response => UNREAD_RESPONSE_DOCUMENT_PATH,
+        OriginSite::ToolResult => UNREAD_RESULT_DOCUMENT_PATH,
+    }
+}
+
+// Called alongside the native decoder, before any reordering or system-message fold. The
+// surviving wire member, rather than the normalized IR variant, selects the source path.
+pub(super) fn read_blocks_with_origins(
+    arr: &[serde_json::Value],
+    site: OriginSite,
+) -> Result<(Vec<crate::codec::ir::IrBlock>, Vec<BlockOrigin>), IrError> {
+    let mut blocks = Vec::with_capacity(arr.len());
+    let mut origins = Vec::with_capacity(arr.len());
+    for block_val in arr {
+        if is_read_into_ir(block_val) {
+            let (block, origin) = read_block_with_origin(block_val, site)?;
+            blocks.push(block);
+            origins.push(origin);
+        } else if block_val.get(keys::TYPE).and_then(|v| v.as_str()) == Some(BLOCK_TYPE_DOCUMENT) {
+            crate::codec::drops::note(crate::codec::drops::Dropped::new(
+                unread_document_path(site),
+                &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                "dropping an Anthropic `document` block with no `source` on the cross-protocol seam: it carries no payload to translate (nothing is put in its place)",
+            ));
+        }
+    }
+    Ok((blocks, origins))
+}
+
+pub(super) fn read_message_with_origins(
+    msg_val: &serde_json::Value,
+) -> Result<(crate::codec::ir::IrMessage, Vec<BlockOrigin>), IrError> {
+    let obj = msg_val.as_object().ok_or_else(ir_parse_error)?;
+
+    let role_str = obj.get(keys::ROLE).and_then(|v| v.as_str()).unwrap_or("");
+    let role = match role_str {
+        keys::USER => crate::codec::ir::IrRole::User,
+        keys::ASSISTANT => crate::codec::ir::IrRole::Assistant,
+        keys::SYSTEM => crate::codec::ir::IrRole::System,
+        _ => return Err(ir_parse_error()),
+    };
+
+    let content_val = obj.get(keys::CONTENT).unwrap_or(&serde_json::Value::Null);
+    // `content` is legally a string or an array (absent/`null` is an empty turn). Any other present
+    // type is a violation the lenient fallback below would swallow into an empty Text block: 400.
+    if !content_val.is_null() && !content_val.is_string() && !content_val.is_array() {
+        return Err(ir_parse_error());
+    }
+    let (content, origins) = if let Some(arr) = content_val.as_array() {
+        read_blocks_with_origins(arr, OriginSite::Message)?
+    } else {
+        (
+            vec![crate::codec::ir::IrBlock::text(
+                content_val.as_str().unwrap_or("").to_string(),
+            )],
+            vec![if content_val.is_string() {
+                string_origin(OriginSite::Message)
+            } else {
+                BlockOrigin::default()
+            }],
+        )
+    };
+
+    Ok((crate::codec::ir::IrMessage { role, content }, origins))
+}
+
+fn block_origin(value: &serde_json::Value, site: OriginSite) -> BlockOrigin {
+    let kind = value.get(keys::TYPE).and_then(|v| v.as_str());
+    let source = match (site, kind) {
+        (OriginSite::System, Some(keys::THINKING)) => &SYSTEM_THINKING,
+        (OriginSite::System, Some(BLOCK_TYPE_REDACTED_THINKING)) => &SYSTEM_REDACTED,
+        (OriginSite::System, _) => &SYSTEM_BLOCK,
+        (OriginSite::Message, Some(keys::THINKING)) => &MESSAGE_THINKING,
+        (OriginSite::Message, Some(BLOCK_TYPE_REDACTED_THINKING)) => &MESSAGE_REDACTED,
+        (OriginSite::Message, Some(super::TOOL_RESULT)) => &MESSAGE_TOOL_RESULT,
+        (OriginSite::Message, Some(STOP_TOOL_USE)) => &MESSAGE_TOOL_USE,
+        (OriginSite::Message, Some(keys::IMAGE)) => &MESSAGE_IMAGE,
+        (OriginSite::Message, Some(BLOCK_TYPE_DOCUMENT)) => &MESSAGE_DOCUMENT,
+        (OriginSite::Message, Some(BLOCK_TYPE_SEARCH_RESULT)) => &MESSAGE_SEARCH,
+        (OriginSite::Message, _) => &MESSAGE_BLOCK,
+        (OriginSite::Response, Some(keys::THINKING)) => &RESPONSE_THINKING,
+        (OriginSite::Response, Some(BLOCK_TYPE_REDACTED_THINKING)) => &RESPONSE_REDACTED,
+        (OriginSite::Response, Some(STOP_TOOL_USE)) => &RESPONSE_TOOL_USE,
+        (OriginSite::Response, Some(keys::IMAGE)) => &RESPONSE_IMAGE,
+        (OriginSite::Response, _) => &RESPONSE_BLOCK,
+        (OriginSite::ToolResult, _) => &RESULT_BLOCK,
+    };
+    BlockOrigin::at(source)
+}
+
 // Helper functions for IR mapping (used by read_request/write_request)
+#[cfg(test)]
 pub(super) fn read_block(
     block_val: &serde_json::Value,
 ) -> Result<crate::codec::ir::IrBlock, IrError> {
+    read_block_with_origin(block_val, OriginSite::Message).map(|(block, _)| block)
+}
+
+pub(super) fn read_block_with_origin(
+    block_val: &serde_json::Value,
+    site: OriginSite,
+) -> Result<(crate::codec::ir::IrBlock, BlockOrigin), IrError> {
     let obj = block_val.as_object().ok_or_else(ir_parse_error)?;
 
     let block_type = obj.get(keys::TYPE).and_then(|v| v.as_str()).unwrap_or("");
 
-    match block_type {
+    let mut origin = block_origin(block_val, site);
+    let block = match block_type {
         keys::TEXT => {
             let text = obj
                 .get(keys::TEXT)
@@ -94,12 +336,23 @@ pub(super) fn read_block(
             let tool_use_id = obj
                 .get(super::TOOL_USE_ID)
                 .and_then(|v| v.as_str())
-                .unwrap_or("")
+                .filter(|id| !id.is_empty())
+                .ok_or_else(ir_parse_error)?
                 .to_string();
             let content_val = obj.get(keys::CONTENT).unwrap_or(&serde_json::Value::Null);
             let content = if let Some(arr) = content_val.as_array() {
-                read_blocks(arr)?
+                let (blocks, origins) = read_blocks_with_origins(arr, OriginSite::ToolResult)?;
+                origin.children = origins;
+                blocks
             } else {
+                if !content_val.is_null() && !content_val.is_string() {
+                    return Err(ir_parse_error());
+                }
+                origin.children.push(if content_val.is_string() {
+                    string_origin(OriginSite::ToolResult)
+                } else {
+                    BlockOrigin::default()
+                });
                 vec![crate::codec::ir::IrBlock::text(
                     content_val.as_str().unwrap_or("").to_string(),
                 )]
@@ -108,6 +361,12 @@ pub(super) fn read_block(
                 .get(super::IS_ERROR)
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            if obj
+                .get(super::IS_ERROR)
+                .is_some_and(|value| !value.is_null() && !value.is_boolean())
+            {
+                return Err(ir_parse_error());
+            }
             let cache_control = read_cache_control(obj.get(super::CACHE_CONTROL))?;
             Ok(crate::codec::ir::IrBlock::ToolResult {
                 tool_use_id,
@@ -319,13 +578,14 @@ pub(super) fn read_block(
         WEB_SEARCH_TOOL_RESULT => Ok(read_web_search_tool_result(obj)),
         // A kind the IR does not model never reaches here: [`read_blocks`] leaves it out.
         _ => Err(ir_parse_error()),
-    }
+    }?;
+    Ok((block, origin))
 }
 
-/// Whether [`read_block`] reads `block_val` into the IR: a kind in [`BLOCK_KINDS`] that carries a
+/// Whether [`read_block_with_origin`] reads `block_val` into the IR: a kind in [`BLOCK_KINDS`] that carries a
 /// payload. Another kind and a `document` with no `source` are not read, and nothing stands in for
 /// them. A same-dialect write splices the raw block back ([`ANTHROPIC_UNMODELED_BLOCKS_SENTINEL`]);
-/// a translate attempt drops it, named. A non-object is read (and refused by [`read_block`]).
+/// a translate attempt drops it, named. A non-object is read (and refused by [`read_block_with_origin`]).
 pub(super) fn is_read_into_ir(block_val: &serde_json::Value) -> bool {
     let Some(obj) = block_val.as_object() else {
         return true;
@@ -337,53 +597,11 @@ pub(super) fn is_read_into_ir(block_val: &serde_json::Value) -> bool {
 /// Read a content-block array into the IR: every block [`is_read_into_ir`] keeps, in order. A
 /// `document` with no `source` goes through the one drop path; an unmodelled kind is named by the
 /// grammar walk at the seam.
+#[cfg(test)]
 pub(super) fn read_blocks(
     arr: &[serde_json::Value],
 ) -> Result<Vec<crate::codec::ir::IrBlock>, IrError> {
-    let mut out = Vec::with_capacity(arr.len());
-    for block_val in arr {
-        if is_read_into_ir(block_val) {
-            out.push(read_block(block_val)?);
-        } else if block_val.get(keys::TYPE).and_then(|v| v.as_str()) == Some(BLOCK_TYPE_DOCUMENT) {
-            crate::codec::drops::note(crate::codec::drops::Dropped::new(
-                "messages[].content[].type=document",
-                &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                "dropping an Anthropic `document` block with no `source` on the cross-protocol \
-                 seam: it carries no payload to translate (nothing is put in its place)",
-            ));
-        }
-    }
-    Ok(out)
-}
-
-pub(super) fn read_message(
-    msg_val: &serde_json::Value,
-) -> Result<crate::codec::ir::IrMessage, IrError> {
-    let obj = msg_val.as_object().ok_or_else(ir_parse_error)?;
-
-    let role_str = obj.get(keys::ROLE).and_then(|v| v.as_str()).unwrap_or("");
-    let role = match role_str {
-        keys::USER => crate::codec::ir::IrRole::User,
-        keys::ASSISTANT => crate::codec::ir::IrRole::Assistant,
-        keys::SYSTEM => crate::codec::ir::IrRole::System,
-        _ => return Err(ir_parse_error()),
-    };
-
-    let content_val = obj.get(keys::CONTENT).unwrap_or(&serde_json::Value::Null);
-    // `content` is legally a string or an array (absent/`null` is an empty turn). Any other present
-    // type is a violation the lenient fallback below would swallow into an empty Text block: 400.
-    if !content_val.is_null() && !content_val.is_string() && !content_val.is_array() {
-        return Err(ir_parse_error());
-    }
-    let content = if let Some(arr) = content_val.as_array() {
-        read_blocks(arr)?
-    } else {
-        vec![crate::codec::ir::IrBlock::text(
-            content_val.as_str().unwrap_or("").to_string(),
-        )]
-    };
-
-    Ok(crate::codec::ir::IrMessage { role, content })
+    read_blocks_with_origins(arr, OriginSite::Message).map(|(blocks, _)| blocks)
 }
 
 pub(super) fn read_tool(tool_val: &serde_json::Value) -> Result<crate::codec::ir::IrTool, IrError> {
@@ -467,3 +685,155 @@ fn read_web_search_tool_result(
 
 /// The error member of a `web_search_tool_result_error` content.
 const ERROR_CODE: &str = "error_code";
+
+#[cfg(test)]
+mod origin_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn creation_keeps_filtered_children_and_folded_system_origins_paired() {
+        let request = AnthropicReader.read_request(&json!({
+            "model": "fixture-model",
+            "system": "same text",
+            "messages": [
+                {"role": "system", "content": "same text"},
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "fixture-call", "content": [
+                    {"type": "future_fixture", "payload": true},
+                    {"type": "text", "text": "answer"},
+                    {"type": "document"}
+                ]}]}
+            ]
+        })).expect("native request");
+        let system_paths: Vec<_> = request
+            .block_origins
+            .system
+            .iter()
+            .map(|origin| origin.source.unwrap().path)
+            .collect();
+        assert_eq!(system_paths, vec![SYSTEM_STRING.path, MESSAGE_STRING.path]);
+        assert_eq!(request.system.len(), system_paths.len());
+        assert_eq!(
+            request.system_folds,
+            vec![crate::codec::ir::IrSystemFold {
+                before: 0,
+                role: crate::codec::ir::IrSystemRole::System,
+                blocks: 1..2,
+            }]
+        );
+        let result = request.messages.first().unwrap().content.first().unwrap();
+        let crate::codec::ir::IrBlock::ToolResult { content, .. } = result else {
+            panic!("fixture tool result")
+        };
+        let origin = request
+            .block_origins
+            .messages
+            .first()
+            .unwrap()
+            .first()
+            .unwrap();
+        assert_eq!(origin.source.unwrap().path, MESSAGE_TOOL_RESULT.path);
+        assert_eq!(content.len(), origin.children.len());
+        let child_paths: Vec<_> = origin
+            .children
+            .iter()
+            .map(|origin| origin.source.unwrap().path)
+            .collect();
+        assert_eq!(child_paths, vec![RESULT_BLOCK.path]);
+    }
+
+    #[test]
+    fn direct_response_reader_captures_native_reasoning_tag() {
+        let response = AnthropicReader
+            .read_response(
+                crate::codec::test_host::HOST,
+                &json!({
+                    "role": "assistant", "content": [
+                        {"type": "thinking", "thinking": "fixture thought"},
+                        {"type": "text", "text": "fixture answer"}
+                    ]
+                }),
+            )
+            .expect("native response");
+        let paths: Vec<_> = response
+            .block_origins
+            .response
+            .iter()
+            .map(|origin| origin.source.unwrap().path)
+            .collect();
+        assert_eq!(response.content.len(), paths.len());
+        assert_eq!(paths, vec![RESPONSE_THINKING.path, RESPONSE_BLOCK.path]);
+    }
+    #[test]
+    fn native_stream_origins_follow_emitted_start_indices_and_suppression() {
+        let host = crate::codec::test_host::HOST;
+        for (block, source) in [
+            (json!({"type": "text", "text": ""}), &STREAM_TEXT),
+            (
+                json!({"type": "thinking", "thinking": ""}),
+                &STREAM_THINKING,
+            ),
+            (
+                json!({"type": "redacted_thinking", "data": "fixture-opaque"}),
+                &STREAM_REDACTED,
+            ),
+            (
+                json!({"type": "tool_use", "id": "fixture-call", "name": "fixture_tool"}),
+                &STREAM_TOOL_USE,
+            ),
+        ] {
+            let mut state = crate::codec::ir::StreamDecodeState::default();
+            let events = AnthropicReader.read_response_events(
+                host,
+                EVT_CONTENT_BLOCK_START,
+                &json!({"index": 0, "content_block": block}),
+                &mut state,
+            );
+            let index = events
+                .iter()
+                .find_map(|event| match event {
+                    IrStreamEvent::BlockStart { index, .. } => Some(index),
+                    _ => None,
+                })
+                .expect("native block start");
+            assert_eq!(
+                state.block_origins.get(index).unwrap().source.unwrap().path,
+                source.path
+            );
+        }
+        let mut state = crate::codec::ir::StreamDecodeState::default();
+        let unknown = AnthropicReader.read_response_events(
+            host,
+            EVT_CONTENT_BLOCK_START,
+            &json!({"index": 0, "content_block": {"type": "future_fixture"}}),
+            &mut state,
+        );
+        assert!(unknown.is_empty());
+        assert!(state.block_origins.is_empty());
+    }
+    #[test]
+    fn absent_document_payload_is_reported_at_the_actual_native_decode_site() {
+        let (_, paths) = crate::codec::drops::scope(
+            crate::codec::drops::Seam {
+                direction: crate::codec::drops::Direction::Request,
+                ingress: "anthropic",
+                egress: "openai",
+            },
+            || {
+                AnthropicReader.read_request(&json!({
+            "system": [{"type": "document"}],
+            "messages": [{"role": "user", "content": [{
+                "type": "tool_result", "tool_use_id": "fixture-call", "content": [{"type": "document"}]
+            }]}]
+        })).expect("missing document payload is omitted")
+            },
+        );
+        assert_eq!(
+            paths,
+            [
+                "system[].type=document",
+                "messages[].content[].type=tool_result.content[].type=document"
+            ]
+        );
+    }
+}

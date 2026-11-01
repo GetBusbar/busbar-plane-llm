@@ -173,8 +173,8 @@ pub fn read_cohere_citations(citations: &serde_json::Value) -> Vec<crate::codec:
         let doc = first_source.and_then(|s| s.get(keys::DOCUMENT));
         out.push(crate::codec::ir::IrCitation {
             domain: None,
-            // Character spans into the answer text: Anthropic's `char_location`, the neutral `kind` vocabulary.
-            kind: Some("char_location".to_string()),
+            // These spans locate the answer, like OpenAI/Gemini citations, not a source document.
+            kind: Some("web_search_result_location".to_string()),
             cited_text,
             title: doc
                 .and_then(|d| d.get(keys::TITLE))
@@ -236,6 +236,29 @@ fn write_cohere_citation(c: &crate::codec::ir::IrCitation) -> serde_json::Value 
     serde_json::Value::Object(obj)
 }
 
+/// A projected citation must carry some meaning in the target wire; never substitute `{}` for
+/// a foreign citation whose fields this writer cannot represent. This is an IR projection rule,
+/// not a claim that every optional field in the upstream SDK is schema-required.
+fn citation_representable(citation: &crate::codec::ir::IrCitation) -> bool {
+    citation
+        .raw
+        .as_ref()
+        .is_some_and(|raw| raw.get(keys::START).is_some() || raw.get(SOURCES).is_some())
+        || citation.start_index.is_some()
+        || citation.end_index.is_some()
+        || [&citation.cited_text, &citation.url, &citation.title]
+            .iter()
+            .any(|value| value.as_ref().is_some_and(|value| !value.is_empty()))
+}
+
+fn response_projection_error() -> IrError {
+    IrError {
+        class: busbar_contract::upstream::StatusClass::ServerError,
+        provider_signal: Some("Cohere response loses tool or citation meaning".into()),
+        retry_after: None,
+    }
+}
+
 /// The `vendor` tag on an [`crate::codec::ir::IrImageSource::Vendor`] this protocol produces: a Cohere
 /// v2 tool-result `document`, whose `data` is an arbitrary string map, not bytes with a mime type,
 /// so it has no neutral base64/url form. Only this writer re-emits it; a foreign writer drops it with a warn.
@@ -263,6 +286,95 @@ const SOURCES: &str = "sources";
 
 const STRICT_TOOLS: &str = "strict_tools";
 
+// Native diagnostic origins are declared at the reader branches that create or fold blocks.
+const SOURCE_GROUNDING_DOCUMENT: crate::codec::ir::IrBlockSource =
+    crate::codec::ir::IrBlockSource {
+        dialect: VENDOR_NAME,
+        path: "documents[]",
+    };
+const SOURCE_MESSAGE_CONTENT: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content",
+};
+const SOURCE_MESSAGE_TEXT: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content[].type=text",
+};
+const SOURCE_MESSAGE_IMAGE: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content[].type=image_url",
+};
+const SOURCE_MESSAGE_DOCUMENT: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content[].type=document",
+};
+const SOURCE_MESSAGE_THINKING: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].content[].type=thinking",
+};
+const SOURCE_MESSAGE_TOOL_PLAN: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].tool_plan",
+};
+const SOURCE_MESSAGE_CITATIONS: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].citations",
+};
+const SOURCE_MESSAGE_TOOL_CALL: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "messages[].tool_calls[]",
+};
+const SOURCE_RESPONSE_TOOL_PLAN: crate::codec::ir::IrBlockSource =
+    crate::codec::ir::IrBlockSource {
+        dialect: VENDOR_NAME,
+        path: "message.tool_plan",
+    };
+const SOURCE_RESPONSE_TEXT: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "message.content[].type=text",
+};
+const SOURCE_RESPONSE_THINKING: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "message.content[].type=thinking",
+};
+const SOURCE_RESPONSE_CITATIONS: crate::codec::ir::IrBlockSource =
+    crate::codec::ir::IrBlockSource {
+        dialect: VENDOR_NAME,
+        path: "message.citations",
+    };
+const SOURCE_RESPONSE_TOOL_CALL: crate::codec::ir::IrBlockSource =
+    crate::codec::ir::IrBlockSource {
+        dialect: VENDOR_NAME,
+        path: "message.tool_calls[]",
+    };
+// Some compatible stream frames open an empty IR block without a payload subtree. Their
+// source is the actual native event container, never an invented buffered-answer member.
+const SOURCE_STREAM_THINKING_START: crate::codec::ir::IrBlockSource =
+    crate::codec::ir::IrBlockSource {
+        dialect: VENDOR_NAME,
+        path: "content-start.delta.message.content",
+    };
+const SOURCE_STREAM_THINKING_DELTA: crate::codec::ir::IrBlockSource =
+    crate::codec::ir::IrBlockSource {
+        dialect: VENDOR_NAME,
+        path: "content-delta.delta.message.content",
+    };
+const SOURCE_STREAM_TEXT_START: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "content-start",
+};
+const SOURCE_STREAM_TEXT_DELTA: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "content-delta",
+};
+const SOURCE_STREAM_TOOL_PLAN: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "tool-plan-delta",
+};
+const SOURCE_STREAM_TOOL_CALL: crate::codec::ir::IrBlockSource = crate::codec::ir::IrBlockSource {
+    dialect: VENDOR_NAME,
+    path: "tool-call-start",
+};
 /// The Cohere v2 request content grammar (`codec::drops`). A part of any other kind is named as
 /// dropped on a translate attempt.
 const REQUEST_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::Blocks {
@@ -647,6 +759,7 @@ fn read_cohere_logprob(item: &serde_json::Value) -> Option<crate::codec::ir::IrT
         token: text.to_string(),
         logprob,
         bytes: None,
+        bytes_null: false,
         top: Vec::new(),
     })
 }
@@ -734,35 +847,18 @@ fn format_uuid_layout(bytes: &[u8; 16]) -> String {
 /// version nibble forced to `4` and the variant bits to `10xx`, with no embedded timestamp (an
 /// earlier `secs << 32` layout leaked the server clock). There is no counter overlay: it would leave
 /// predictable bytes a random v4 never has, and 122 random bits are collision-free in practice.
-/// Never panics: on entropy failure the buffer stays zeroed and the stamping still yields a
-/// well-formed (if non-random) v4.
-fn synthesize_cohere_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
+/// Entropy failure refuses identity synthesis; bytes from a failed draw are never accepted.
+fn synthesize_cohere_id(host: &dyn busbar_contract::codec::CodecHost) -> Result<String, IrError> {
     let mut bytes = [0u8; 16];
-    // Host CSPRNG; failure is ignored (no panic on the request path), as stamping below still gives a valid v4.
-    let _ = host.fill_entropy(&mut bytes);
+    if !host.fill_entropy(&mut bytes) {
+        return Err(entropy_error());
+    }
 
     // RFC-4122 v4: byte 6 high nibble = 4 (group 3); byte 8 top two bits = 10 (group 4).
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
 
-    format_uuid_layout(&bytes)
-}
-
-/// Whether a mid-stream `IrError`'s `provider_signal` names a content-moderation stop (so the
-/// Cohere-ingress writer ends with `ERROR_TOXIC`, not generic `ERROR`). The IR `Error` arrives from
-/// any upstream, so the text is not Cohere-specific: we recognise the canonical moderation tokens
-/// busbar's readers normalise to (`safety`, the IR stop reason), the native Cohere `ERROR_TOXIC` and
-/// the common provider words for a moderation or content-policy stop. Anything else is an
-/// infrastructure-class error and maps to `ERROR`. An exhaustive boolean classifier with no
-/// catch-all hiding an unhandled case.
-fn cohere_error_is_content_moderation(signal: &str) -> bool {
-    let s = signal.to_ascii_lowercase();
-    s.contains("toxic")
-        || s.contains("safety")
-        || s.contains("moderation")
-        || s.contains("content_policy")
-        || s.contains("content-policy")
-        || s.contains("content_filter")
+    Ok(format_uuid_layout(&bytes))
 }
 
 /// Number of genuine tool frames currently recorded in `state.open_tools` (excludes the
@@ -867,10 +963,14 @@ fn cohere_open_thinking_index(state: &crate::codec::ir::StreamDecodeState) -> Op
 fn cohere_open_thinking_block(
     state: &mut crate::codec::ir::StreamDecodeState,
     out: &mut Vec<IrStreamEvent>,
+    source: &'static crate::codec::ir::IrBlockSource,
 ) -> Option<usize> {
     let seen = state.tool_ir_index.range(THINKING_FRAME_BASE..).count();
     let index = cohere_assign_tool_ir_index(state, THINKING_FRAME_BASE.saturating_add(seen))?;
     state.thinking_block_open = true;
+    state
+        .block_origins
+        .insert(index, crate::codec::ir::IrBlockOrigin::at(source));
     out.push(IrStreamEvent::BlockStart {
         index,
         block: crate::codec::ir::IrBlockMeta::Thinking { kind: None },
@@ -960,6 +1060,7 @@ pub struct CohereWriter {
 /// A Cohere stream's per-stream state (see [`CohereWriter`]).
 #[derive(Clone)]
 struct CohereStream {
+    block_indices: crate::codec::proto_codec::EmittedBlockIndices,
     /// IR block indices for which this writer emitted a `tool-call-start` frame. The IR
     /// `BlockStop` carries only the integer index (no block kind), but a native Cohere v2 stream
     /// closes a tool-call block with `tool-call-end` and a text-content block with `content-end`.
@@ -1003,6 +1104,7 @@ struct CohereStream {
 #[allow(clippy::declare_interior_mutable_const)]
 pub const CohereWriter: CohereWriter = CohereWriter {
     stream: StreamCell::new(CohereStream {
+        block_indices: crate::codec::proto_codec::EmittedBlockIndices::new(),
         open_tool_indices: std::collections::BTreeSet::new(),
         open_text_indices: std::collections::BTreeSet::new(),
         stream_id: None,
@@ -1010,23 +1112,46 @@ pub const CohereWriter: CohereWriter = CohereWriter {
 };
 
 impl CohereWriter {
+    fn begin_stream(&self) {
+        let mut stream = self.stream.lock();
+        if stream.block_indices.begin() {
+            stream.open_tool_indices.clear();
+            stream.open_text_indices.clear();
+            stream.stream_id = None;
+        }
+    }
+
+    fn finish_stream(&self) {
+        self.stream.lock().block_indices.finish();
+    }
+
+    fn wire_index(&self, index: usize) -> usize {
+        self.stream.lock().block_indices.wire(index)
+    }
+
     /// THE STREAM'S `id`: the first one wins. Returns the id already captured for this stream if
-    /// there is one, otherwise captures and returns `mint()`, so a duplicate `message-start`
-    /// re-states the identity the client already has. Lock poisoning degrades to the freshly minted
-    /// id rather than panicking on the request path.
-    fn carried_stream_id(&self, mint: impl FnOnce() -> String) -> String {
-        self.stream
-            .lock()
-            .stream_id
-            .get_or_insert_with(mint)
-            .clone()
+    /// there is one, otherwise captures a successful `mint()`. A failed draw leaves no identity
+    /// cached, and a duplicate `message-start` re-states the identity the client already has.
+    fn carried_stream_id(
+        &self,
+        mint: impl FnOnce() -> Result<String, IrError>,
+    ) -> Result<String, IrError> {
+        let mut stream = self.stream.lock();
+        if let Some(id) = &stream.stream_id {
+            return Ok(id.clone());
+        }
+        let id = mint()?;
+        stream.stream_id = Some(id.clone());
+        Ok(id)
     }
 
     /// Record that a `tool-call-start` frame was emitted at IR block `index`, so the matching
     /// `BlockStop` closes it with `tool-call-end` rather than `content-end`. Lock poisoning degrades
     /// to a no-op rather than panicking on the request path.
-    fn mark_tool_open(&self, index: usize) {
-        self.stream.lock().open_tool_indices.insert(index);
+    fn mark_tool_open(&self, index: usize) -> usize {
+        let mut stream = self.stream.lock();
+        stream.open_tool_indices.insert(index);
+        stream.block_indices.open(index)
     }
 
     /// Return true and forget `index` if it was a previously-opened tool-call block; false if no
@@ -1041,8 +1166,10 @@ impl CohereWriter {
     /// `BlockStop` emits `content-end` for it. Cross-protocol blocks that emit no opening frame
     /// (redacted thinking / Image) are never recorded, so their `BlockStop` stays silent. Lock poisoning
     /// degrades to a no-op rather than panicking on the request path.
-    fn mark_text_open(&self, index: usize) {
-        self.stream.lock().open_text_indices.insert(index);
+    fn mark_text_open(&self, index: usize) -> usize {
+        let mut stream = self.stream.lock();
+        stream.open_text_indices.insert(index);
+        stream.block_indices.open(index)
     }
 
     /// Return true and forget `index` if a `content-start` was emitted for that text block; false if

@@ -198,11 +198,15 @@ pub fn translate(
             }
         }
     }
+    let recovered_usage = refused
+        .as_ref()
+        .and_then(|_| egress_op)
+        .and_then(|handler| handler.recover_response_billing(host, bytes));
     Whole {
         refused,
         ..whole(
             WholeEnd::NotTranslatable,
-            None,
+            recovered_usage,
             internal(host, ctx.ingress, 500),
         )
     }
@@ -235,8 +239,16 @@ fn opaque(
             ctx.translate_cap,
         )
         .map_err(|e| format!("{e:?}"))?;
-    let TranslatedResponse::Typed(wire) = answered else {
-        return Ok(None);
+    let wire = match answered {
+        TranslatedResponse::Typed(wire) => wire,
+        TranslatedResponse::Untranslatable => {
+            return Ok(Some(whole(
+                WholeEnd::NotTranslatable,
+                usage,
+                internal(host, ctx.ingress, 500),
+            )))
+        }
+        _ => return Ok(None),
     };
     Ok(Some(whole(
         WholeEnd::Delivered,
@@ -261,9 +273,10 @@ fn json(
     ingress_serves: bool,
     rv: &Value,
 ) -> Result<Option<Whole>, String> {
+    let checked = crate::codec::proto_codec::CheckedEntropy::new(host);
     let read = || {
         let answered = eh.translate_response(
-            host,
+            &checked,
             TranslateRespInput::Json(rv),
             ingress_serves,
             ctx.ingress,
@@ -292,6 +305,16 @@ fn json(
         drops::scope(seam, read)
     };
     let (usage, answered) = answered.map_err(|e| format!("{e:?}"))?;
+    // A buffered-to-stream writer returns through an infallible contract handle. Retain its
+    // entropy refusal here too: failed delivery is not a successful 200 or a refund of work the
+    // far end already executed and reported.
+    if checked.failed() {
+        return Ok(Some(whole(
+            WholeEnd::NotTranslatable,
+            usage,
+            internal(host, ctx.ingress, 500),
+        )));
+    }
     let delivers = matches!(
         answered,
         TranslatedResponse::StreamFrames(_)
@@ -362,7 +385,11 @@ fn json(
             };
             whole(WholeEnd::Delivered, usage, answer)
         }
-        TranslatedResponse::Untranslatable => return Ok(None),
+        TranslatedResponse::Untranslatable => whole(
+            WholeEnd::NotTranslatable,
+            usage,
+            internal(host, ctx.ingress, 500),
+        ),
     };
     if w.end == WholeEnd::Delivered {
         w.dropped = dropped;

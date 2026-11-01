@@ -2,6 +2,52 @@ use super::*;
 use crate::codec::dialect::ir_parse_error;
 use crate::codec::ir_encode::{synth_response_tool_call_id, tool_input_from_arguments};
 
+// Responses uses the existing index map to remember emitted refusal items after their
+// blocks close. Keys are bounded by the same output-index clamp as the other item arms;
+// terminal snapshots and refusal.done must not replay text already delivered by deltas.
+fn emit_refusal_text(
+    index: usize,
+    text: &str,
+    snapshot: bool,
+    source: &'static crate::codec::ir::IrBlockSource,
+    state: &mut crate::codec::ir::StreamDecodeState,
+    out: &mut Vec<IrStreamEvent>,
+) {
+    if text.is_empty() {
+        return;
+    }
+    state.refusal_seen = true;
+    let seen = state.tool_ir_index.contains_key(&index);
+    let text_key = index + TEXT_INDEX_KEY_OFFSET;
+    if (snapshot && seen) || (seen && !state.open_tools.contains(&text_key)) {
+        return;
+    }
+    if !seen {
+        // Preserve the existing collision and open-block limits. A refusal cannot append
+        // to an ordinary text/tool block whose BlockStart did not identify it as refusal.
+        if state.open_tools.contains(&index)
+            || state.open_tools.contains(&text_key)
+            || state.open_tools.len() >= MAX_OPEN_TOOLS
+        {
+            return;
+        }
+        state.open_tools.insert(text_key);
+        state.tool_ir_index.insert(index, index);
+        state
+            .block_origins
+            .insert(index, crate::codec::ir::IrBlockOrigin::at(source));
+        out.push(IrStreamEvent::BlockStart {
+            index,
+            block: crate::codec::ir::IrBlockMeta::Text,
+            refusal: true,
+        });
+    }
+    out.push(IrStreamEvent::BlockDelta {
+        index,
+        delta: crate::codec::ir::IrDelta::TextDelta(text.to_string()),
+    });
+}
+
 fn close_open_blocks(
     out: &mut Vec<IrStreamEvent>,
     state: &mut crate::codec::ir::StreamDecodeState,
@@ -51,6 +97,20 @@ static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
 };
 
 impl ProtocolReader for ResponsesReader {
+    fn recover_response_usage(
+        &self,
+        body: &serde_json::Value,
+    ) -> Option<busbar_contract::billing::TokenUsage> {
+        let usage = body.get(keys::USAGE).filter(|usage| usage.is_object())?;
+        // Reported usage is independent of whether content decoding succeeded. Refund decisions
+        // remain with the existing billable-usage callers, rather than erasing these observations.
+        Some(
+            read_responses_usage(Some(usage), Some(body))
+                .ok()?
+                .to_token_usage(),
+        )
+    }
+
     fn recover_truncated_usage(&self, tail: &[u8]) -> Option<busbar_contract::billing::TokenUsage> {
         let v = super::super::usage_tail::isolate_tail_usage_object(tail, b"\"usage\"")?;
         // Every count is read through `USAGE`: an unreadable one is refused alone and bills nothing,
@@ -147,6 +207,7 @@ impl ProtocolReader for ResponsesReader {
 
         let mut extra = serde_json::Map::new();
         let mut system_blocks: Vec<crate::codec::ir::IrBlock> = Vec::new();
+        let mut block_origins = crate::codec::ir::IrBlockOrigins::default();
         // `system`/`developer` items folded out of `input` (the top-level `instructions` string is
         // not counted), keeping `message_count` the raw `input` length on `IrFacts::shape()`.
         let mut system_turns_folded: usize = 0;
@@ -159,6 +220,9 @@ impl ProtocolReader for ResponsesReader {
             if !instructions.is_empty() {
                 saw_instructions = true;
                 system_blocks.push(crate::codec::ir::IrBlock::text(instructions.to_string()));
+                block_origins
+                    .system
+                    .push(crate::codec::ir::IrBlockOrigin::at(&origin::INSTRUCTIONS));
             }
         }
 
@@ -182,6 +246,11 @@ impl ProtocolReader for ResponsesReader {
                         refusal: false,
                     }],
                 });
+                block_origins
+                    .messages
+                    .push(vec![crate::codec::ir::IrBlockOrigin::at(
+                        &origin::INPUT_STRING,
+                    )]);
             } else if let Some(arr) = input_val.as_array() {
                 for item in arr {
                     match item.get(keys::TYPE).and_then(|t| t.as_str()) {
@@ -200,6 +269,11 @@ impl ProtocolReader for ResponsesReader {
                                     refusal: false,
                                 }],
                             });
+                            block_origins
+                                .messages
+                                .push(vec![crate::codec::ir::IrBlockOrigin::at(
+                                    &origin::INPUT_TEXT,
+                                )]);
                         }
                         Some(INPUT_IMAGE) => {
                             // An `input_image` may reference an uploaded file by `file_id` instead of
@@ -210,6 +284,9 @@ impl ProtocolReader for ResponsesReader {
                                     role: crate::codec::ir::IrRole::User,
                                     content: vec![block],
                                 });
+                                block_origins.messages.push(vec![
+                                    crate::codec::ir::IrBlockOrigin::at(&origin::INPUT_IMAGE_ITEM),
+                                ]);
                             }
                         }
                         Some(CONTENT_TYPE_OUTPUT_TEXT) => {
@@ -233,6 +310,11 @@ impl ProtocolReader for ResponsesReader {
                                     refusal: false,
                                 }],
                             });
+                            block_origins
+                                .messages
+                                .push(vec![crate::codec::ir::IrBlockOrigin::at(
+                                    &origin::OUTPUT_TEXT_INPUT,
+                                )]);
                         }
                         Some(ITEM_TYPE_FUNCTION_CALL) => {
                             // A function-call item needs a non-empty string `call_id`, the key its
@@ -262,6 +344,11 @@ impl ProtocolReader for ResponsesReader {
                                     thought_signature: None,
                                 }],
                             });
+                            block_origins
+                                .messages
+                                .push(vec![crate::codec::ir::IrBlockOrigin::at(
+                                    &origin::FUNCTION_CALL_INPUT,
+                                )]);
                         }
                         Some(FUNCTION_CALL_OUTPUT) => {
                             let call_id = item
@@ -270,16 +357,17 @@ impl ProtocolReader for ResponsesReader {
                                 .unwrap_or("")
                                 .to_string();
                             let output_val = item.get(keys::OUTPUT);
-                            let content_blocks: Vec<crate::codec::ir::IrBlock> = match output_val {
-                                Some(serde_json::Value::String(out_str)) => {
-                                    vec![crate::codec::ir::IrBlock::text(out_str.clone())]
+                            let (content_blocks, child_origins) = match output_val {
+                                Some(serde_json::Value::String(text)) => (
+                                    vec![crate::codec::ir::IrBlock::text(text.clone())],
+                                    vec![crate::codec::ir::IrBlockOrigin::at(
+                                        &origin::TOOL_OUTPUT_STRING,
+                                    )],
+                                ),
+                                Some(serde_json::Value::Array(arr)) => {
+                                    responses_parts_with_origins(arr, origin::PartSite::ToolOutput)
                                 }
-                                _ => output_val
-                                    .and_then(|o| o.as_array())
-                                    .map(|arr| {
-                                        arr.iter().filter_map(|b| responses_block(b).ok()).collect()
-                                    })
-                                    .unwrap_or_default(),
+                                _ => (Vec::new(), Vec::new()),
                             };
 
                             messages.push(crate::codec::ir::IrMessage {
@@ -291,6 +379,12 @@ impl ProtocolReader for ResponsesReader {
                                     cache_control: None,
                                 }],
                             });
+                            block_origins
+                                .messages
+                                .push(vec![crate::codec::ir::IrBlockOrigin {
+                                    source: Some(&origin::FUNCTION_OUTPUT_INPUT),
+                                    children: child_origins,
+                                }]);
                         }
                         Some(ITEM_TYPE_MESSAGE) => {
                             // Typed `{"type":"message","role":...,"content":[...]}` items are the SDK's
@@ -325,7 +419,11 @@ impl ProtocolReader for ResponsesReader {
                                 saw_system |= role_str == keys::SYSTEM;
                                 saw_developer |= role_str == keys::DEVELOPER;
                                 let blocks_before = system_blocks.len();
-                                push_system_content(&mut system_blocks, item.get(keys::CONTENT));
+                                push_system_content(
+                                    &mut system_blocks,
+                                    &mut block_origins.system,
+                                    item.get(keys::CONTENT),
+                                );
                                 crate::codec::ir::IrSystemFold::record(
                                     &mut system_folds,
                                     messages.len(),
@@ -346,13 +444,14 @@ impl ProtocolReader for ResponsesReader {
                             };
                             if let Some(role) = role {
                                 // `content` is a typed-block array or a bare string; both are handled.
-                                if let Some(msg_content) =
+                                if let Some((msg_content, origins)) =
                                     message_content_blocks(item.get(keys::CONTENT))
                                 {
                                     messages.push(crate::codec::ir::IrMessage {
                                         role,
                                         content: msg_content,
                                     });
+                                    block_origins.messages.push(origins);
                                 }
                             }
                         }
@@ -403,6 +502,9 @@ impl ProtocolReader for ResponsesReader {
                                         signature_origin,
                                     }],
                                 });
+                                block_origins.messages.push(vec![
+                                    crate::codec::ir::IrBlockOrigin::at(&origin::REASONING_INPUT),
+                                ]);
                             }
                         }
                         Some(_) | None => {}
@@ -438,7 +540,11 @@ impl ProtocolReader for ResponsesReader {
                             saw_system |= role_str == keys::SYSTEM;
                             saw_developer |= role_str == keys::DEVELOPER;
                             let blocks_before = system_blocks.len();
-                            push_system_content(&mut system_blocks, content_val);
+                            push_system_content(
+                                &mut system_blocks,
+                                &mut block_origins.system,
+                                content_val,
+                            );
                             crate::codec::ir::IrSystemFold::record(
                                 &mut system_folds,
                                 messages.len(),
@@ -460,11 +566,12 @@ impl ProtocolReader for ResponsesReader {
                         };
 
                         // Typed-block array or bare string, via `message_content_blocks`.
-                        if let Some(msg_content) = message_content_blocks(content_val) {
+                        if let Some((msg_content, origins)) = message_content_blocks(content_val) {
                             messages.push(crate::codec::ir::IrMessage {
                                 role,
                                 content: msg_content,
                             });
+                            block_origins.messages.push(origins);
                         }
                     }
                 }
@@ -645,6 +752,7 @@ impl ProtocolReader for ResponsesReader {
             user,
             parallel_tool_calls,
             system: system_blocks,
+            block_origins,
             system_turns_folded,
             system_folds,
             messages,
@@ -747,6 +855,10 @@ impl ProtocolReader for ResponsesReader {
                                 || state.open_tools.contains(&(idx + TEXT_INDEX_KEY_OFFSET));
                             if !already_open && state.open_tools.len() < MAX_OPEN_TOOLS {
                                 state.open_tools.insert(idx);
+                                state.block_origins.insert(
+                                    idx,
+                                    crate::codec::ir::IrBlockOrigin::at(&origin::STREAM_FUNCTION),
+                                );
                                 out.push(IrStreamEvent::BlockStart {
                                     index: idx,
                                     block: crate::codec::ir::IrBlockMeta::ToolUse {
@@ -770,6 +882,10 @@ impl ProtocolReader for ResponsesReader {
                                 || state.open_tools.contains(&(idx + TEXT_INDEX_KEY_OFFSET));
                             if !already_open && state.open_tools.len() < MAX_OPEN_TOOLS {
                                 state.open_tools.insert(idx);
+                                state.block_origins.insert(
+                                    idx,
+                                    crate::codec::ir::IrBlockOrigin::at(&origin::STREAM_REASONING),
+                                );
                                 out.push(IrStreamEvent::BlockStart {
                                     index: idx,
                                     // IR-17: what the added item already says (usually unknown; its
@@ -816,6 +932,14 @@ impl ProtocolReader for ResponsesReader {
                         } else {
                             crate::codec::ir::IrThinkingKind::Summary
                         };
+                        let source = if event_type == EVT_REASONING_TEXT_DELTA {
+                            &origin::STREAM_REASONING_TEXT
+                        } else {
+                            &origin::STREAM_REASONING_SUMMARY
+                        };
+                        state
+                            .block_origins
+                            .insert(idx, crate::codec::ir::IrBlockOrigin::at(source));
                         out.push(IrStreamEvent::BlockStart {
                             index: idx,
                             block: crate::codec::ir::IrBlockMeta::Thinking { kind: Some(kind) },
@@ -868,6 +992,10 @@ impl ProtocolReader for ResponsesReader {
                             return out;
                         }
                         state.open_tools.insert(text_key);
+                        state.block_origins.insert(
+                            idx,
+                            crate::codec::ir::IrBlockOrigin::at(&origin::STREAM_TEXT),
+                        );
                         out.push(IrStreamEvent::BlockStart {
                             index: idx,
                             block: crate::codec::ir::IrBlockMeta::Text,
@@ -888,6 +1016,28 @@ impl ProtocolReader for ResponsesReader {
                             delta: crate::codec::ir::IrDelta::LogprobsDelta(lps),
                         });
                     }
+                }
+            }
+
+            EVT_REFUSAL_DELTA | EVT_REFUSAL_DONE => {
+                let idx = data
+                    .get(OUTPUT_INDEX)
+                    .and_then(|i| i.as_u64())
+                    .map_or(0, |v| (v as usize).min(MAX_OUTPUT_INDEX));
+                let done = event_type == EVT_REFUSAL_DONE;
+                let field = if done { keys::REFUSAL } else { keys::DELTA };
+                let text = data.get(field).and_then(|v| v.as_str()).unwrap_or("");
+                let source = if done {
+                    &origin::STREAM_REFUSAL_DONE
+                } else {
+                    &origin::STREAM_REFUSAL_DELTA
+                };
+                emit_refusal_text(idx, text, done, source, state, &mut out);
+                if done
+                    && state.tool_ir_index.contains_key(&idx)
+                    && state.open_tools.remove(&(idx + TEXT_INDEX_KEY_OFFSET))
+                {
+                    out.push(IrStreamEvent::BlockStop { index: idx });
                 }
             }
 
@@ -1092,12 +1242,8 @@ impl ProtocolReader for ResponsesReader {
                         stop_reason
                     };
 
-                    // Refusal override, as in `read_response`. A streamed refusal arrives only in this
-                    // terminal frame as an `output[].content[]` `{type:"refusal"}` part (status stays
-                    // `completed`), never via `output_text.delta`. Emit it as a Text block (closed by
-                    // `close_open_blocks`) and promote end_turn to Refusal. Anthropic/Bedrock have no
-                    // refusal part: plain text plus a `refusal` stop.
-                    let mut saw_refusal = false;
+                    // The terminal body is a fallback for items with no refusal events.
+                    // Retained per-item history suppresses snapshots of already-closed deltas.
                     if let Some(items) = response_obj.get(keys::OUTPUT).and_then(|o| o.as_array()) {
                         for (item_pos, item) in items.iter().enumerate() {
                             let Some(content) = item.get(keys::CONTENT).and_then(|c| c.as_array())
@@ -1110,40 +1256,30 @@ impl ProtocolReader for ResponsesReader {
                                 {
                                     continue;
                                 }
-                                let Some(text) = block
-                                    .get(keys::REFUSAL)
-                                    .and_then(|r| r.as_str())
-                                    .filter(|s| !s.is_empty())
-                                else {
-                                    continue;
-                                };
-                                saw_refusal = true;
-                                // Open a Text block at this item's index unless already open
-                                // (defensive) or the per-stream block cap is reached.
-                                let idx = item_pos.min(MAX_OUTPUT_INDEX);
-                                let text_key = idx + TEXT_INDEX_KEY_OFFSET;
-                                if !state.open_tools.contains(&idx)
-                                    && !state.open_tools.contains(&text_key)
-                                    && state.open_tools.len() < MAX_OPEN_TOOLS
+                                if let Some(text) =
+                                    block.get(keys::REFUSAL).and_then(|r| r.as_str())
                                 {
-                                    state.open_tools.insert(text_key);
-                                    // IR-02: the block is the refusal, as the buffered read says.
-                                    out.push(IrStreamEvent::BlockStart {
-                                        index: idx,
-                                        block: crate::codec::ir::IrBlockMeta::Text,
-                                        refusal: true,
-                                    });
-                                    out.push(IrStreamEvent::BlockDelta {
-                                        index: idx,
-                                        delta: crate::codec::ir::IrDelta::TextDelta(
-                                            text.to_string(),
-                                        ),
-                                    });
+                                    emit_refusal_text(
+                                        item_pos.min(MAX_OUTPUT_INDEX),
+                                        text,
+                                        true,
+                                        match event_type {
+                                            EVT_RESPONSE_COMPLETED => {
+                                                &origin::STREAM_REFUSAL_COMPLETED_SNAPSHOT
+                                            }
+                                            EVT_RESPONSE_FAILED => {
+                                                &origin::STREAM_REFUSAL_FAILED_SNAPSHOT
+                                            }
+                                            _ => &origin::STREAM_REFUSAL_INCOMPLETE_SNAPSHOT,
+                                        },
+                                        state,
+                                        &mut out,
+                                    );
                                 }
                             }
                         }
                     }
-                    let stop_reason = if saw_refusal
+                    let stop_reason = if state.refusal_seen
                         && stop_reason == Some(crate::codec::ir::IrStopReason::EndTurn)
                     {
                         Some(crate::codec::ir::IrStopReason::Refusal)
@@ -1208,8 +1344,12 @@ impl ProtocolReader for ResponsesReader {
                     // from the event name; a bodyless `incomplete` has no reason to surface, so None
                     // (as in the body-present arm and `read_response`). Only `completed` is end_turn.
                     // `failed` is handled above.
-                    let stop_reason = (event_type == EVT_RESPONSE_COMPLETED)
-                        .then_some(crate::codec::ir::IrStopReason::EndTurn);
+                    let stop_reason =
+                        (event_type == EVT_RESPONSE_COMPLETED).then_some(if state.refusal_seen {
+                            crate::codec::ir::IrStopReason::Refusal
+                        } else {
+                            crate::codec::ir::IrStopReason::EndTurn
+                        });
                     let usage = crate::codec::ir::IrUsage::default();
                     close_open_blocks(&mut out, state);
                     out.push(IrStreamEvent::MessageDelta {
@@ -1291,6 +1431,7 @@ impl ProtocolReader for ResponsesReader {
         };
 
         let mut content: Vec<crate::codec::ir::IrBlock> = Vec::new();
+        let mut block_origins = crate::codec::ir::IrBlockOrigins::default();
         // A refusal rides a `refusal` content part with `status:"completed"`; tracked here to
         // promote `stop_reason` to `Refusal` below.
         let mut saw_refusal = false;
@@ -1334,6 +1475,11 @@ impl ProtocolReader for ResponsesReader {
                                             citations,
                                             refusal: false,
                                         });
+                                        block_origins.response.push(
+                                            crate::codec::ir::IrBlockOrigin::at(
+                                                &origin::RESPONSE_TEXT,
+                                            ),
+                                        );
                                     }
                                 } else if block_type == keys::REFUSAL {
                                     // A model refusal rides a `{type:"refusal"}` content part. Carried
@@ -1351,6 +1497,11 @@ impl ProtocolReader for ResponsesReader {
                                             citations: Vec::new(),
                                             refusal: true,
                                         });
+                                        block_origins.response.push(
+                                            crate::codec::ir::IrBlockOrigin::at(
+                                                &origin::RESPONSE_REFUSAL,
+                                            ),
+                                        );
                                     }
                                 }
                             }
@@ -1384,6 +1535,11 @@ impl ProtocolReader for ResponsesReader {
                             cache_control: None,
                             thought_signature: None,
                         });
+                        block_origins
+                            .response
+                            .push(crate::codec::ir::IrBlockOrigin::at(
+                                &origin::RESPONSE_FUNCTION,
+                            ));
                     }
 
                     // REASONING: a `reasoning` output item becomes an `IrBlock::Thinking`. The text is
@@ -1416,12 +1572,22 @@ impl ProtocolReader for ResponsesReader {
                                 kind: super::slots::reasoning_kind(item),
                                 signature_origin,
                             });
+                            block_origins
+                                .response
+                                .push(crate::codec::ir::IrBlockOrigin::at(
+                                    &origin::RESPONSE_REASONING,
+                                ));
                         }
                     }
 
                     // A provider-run web search: the IR hosted web-search record, sources as results.
                     super::ITEM_TYPE_WEB_SEARCH_CALL => {
                         content.push(super::read_web_search_call(item));
+                        block_origins
+                            .response
+                            .push(crate::codec::ir::IrBlockOrigin::at(
+                                &origin::RESPONSE_WEB_SEARCH,
+                            ));
                     }
                     // Other hosted-tool output items (`file_search_call`, `code_interpreter_call`,
                     // `computer_call`, `mcp_call`, ...) have no neutral IR representation or
@@ -1536,6 +1702,7 @@ impl ProtocolReader for ResponsesReader {
         }
 
         Ok(crate::codec::ir::IrResponse {
+            block_origins,
             logprobs,
             role: crate::codec::ir::IrRole::Assistant,
             content,
