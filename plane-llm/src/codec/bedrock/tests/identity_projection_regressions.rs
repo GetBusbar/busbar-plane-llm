@@ -91,7 +91,6 @@ fn streamed_citations_use_the_same_source_projection() {
     let mut emitted = false;
     for event in &events {
         if let Some((_, out)) = writer.write_response_event(host, event) {
-            let out: serde_json::Value = serde_json::from_str(&out).unwrap();
             if out.get("delta").is_some() {
                 assert_eq!(out["delta"]["citation"], citation);
                 emitted = true;

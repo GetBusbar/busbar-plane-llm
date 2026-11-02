@@ -308,9 +308,9 @@ fn lost_url_images_warn_once_audit_and_preserve_paid_work() {
         assert_eq!(
             whole.dropped,
             if drop {
-                vec!["ir.images[].url"]
+                vec!["ir.images[].url", "data"]
             } else {
-                vec![]
+                vec!["data"]
             }
         );
         assert_eq!(cap.count("path=ir.images[].url"), usize::from(drop));
@@ -446,6 +446,14 @@ fn dropped_image_urls_keep_recorded_token_usage_and_no_image_charge() {
     assert_eq!((usage.input, usage.output), (0, 0));
     assert_eq!(usage.residual_units.get("image.input_tokens"), Some(&17));
     assert_eq!(usage.residual_units.get("image.output_tokens"), Some(&19));
-    assert_eq!(whole.dropped, ["ir.images[].url"]);
+    assert_eq!(
+        whole.dropped,
+        [
+            "ir.images[].url",
+            "data",
+            "usage.input_tokens",
+            "usage.output_tokens"
+        ]
+    );
     assert!(!cap.contains("SECRET"));
 }
