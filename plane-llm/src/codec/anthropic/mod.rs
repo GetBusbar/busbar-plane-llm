@@ -70,7 +70,10 @@ fn models_list_envelope(names: &[&str]) -> serde_json::Value {
                 (keys::TYPE): keys::MODEL,
                 (keys::ID): id,
                 "display_name": id,
-                "created_at": "1970-01-01T00:00:00Z"
+                "created_at": "1970-01-01T00:00:00Z",
+                "capabilities": null,
+                "max_input_tokens": null,
+                "max_tokens": null
             })
         })
         .collect();

@@ -259,11 +259,11 @@ pub(super) fn read_block_with_origin(
     let mut origin = block_origin(block_val, site);
     let block = match block_type {
         keys::TEXT => {
-            let text = obj
-                .get(keys::TEXT)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            let text = match obj.get(keys::TEXT) {
+                Some(value) => value.as_str().ok_or_else(ir_parse_error)?,
+                None => "",
+            }
+            .to_string();
             // Parse cache_control - object form: {"type": "ephemeral"}
             let cache_control = read_cache_control(obj.get(super::CACHE_CONTROL))?;
             let citations = obj
