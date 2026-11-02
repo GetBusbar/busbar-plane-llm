@@ -2375,3 +2375,7 @@ fn read_guardrail_verdicts(
 #[cfg(test)]
 #[path = "tests/search_result_slot_tests.rs"]
 mod search_result_slot_tests;
+
+#[cfg(test)]
+#[path = "tests/identity_projection_regressions.rs"]
+mod identity_projection_regressions;
