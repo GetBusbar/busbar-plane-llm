@@ -631,6 +631,13 @@ fn the_translate_cap_the_settings_carry_is_the_one_the_door_enforces() {
 /// expands for a plugin's own image.
 struct TestCapture;
 impl CaptureHome for TestCapture {
+    fn retention() -> &'static busbar_contract::abi::sdk::capture::CaptureRetention {
+        static RETENTION: std::sync::OnceLock<
+            busbar_contract::abi::sdk::capture::CaptureRetention,
+        > = std::sync::OnceLock::new();
+        RETENTION.get_or_init(Default::default)
+    }
+
     fn with<R>(f: impl FnOnce(&mut CaptureSlot) -> R) -> R {
         thread_local! {
             static SLOT: std::cell::RefCell<CaptureSlot> =
