@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use busbar_contract::operation::OpVerb;
 use busbar_contract::upstream::{Disposition, RawUpstreamError, StatusClass};
 use busbar_plane_llm::exchange::reply::failure::{
-    auth_failure, judge, normalize, relay_verbatim, FarError,
+    FarError, auth_failure, judge, normalize, relay_verbatim,
 };
 use busbar_plane_llm::exchange::reply::wire::head_field;
 use serde_json::Value;
@@ -300,10 +300,12 @@ fn a_verbatim_relay_carries_every_far_field_but_the_governed_ones() {
         "a plane never invents a head field: {:?}",
         anthropic.fields
     );
-    assert!(anthropic
-        .fields
-        .iter()
-        .any(|(n, _)| n == "openai-organization"));
+    assert!(
+        anthropic
+            .fields
+            .iter()
+            .any(|(n, _)| n == "openai-organization")
+    );
     for dialect in [
         "openai",
         "anthropic",
@@ -1048,13 +1050,19 @@ fn a_translated_stream_names_each_unmapped_path_once() {
         vec!["type=zz_future".to_string()]
     );
 
-    // A Responses refusal streamed as its own event: the stream reader does not carry it.
-    let mut far = far_stream("responses");
-    far.extend_from_slice(
-        b"event: response.refusal.delta\ndata: {\"type\":\"response.refusal.delta\",\"item_id\":\"m1\",\"output_index\":0,\"content_index\":0,\"delta\":\"no\",\"sequence_number\":99}\n\n",
+    // A genuinely unknown Responses event remains a once-only wire-path drop. Refusal events
+    // are mapped by the Responses reader and have their own positive relay witness below.
+    let mut far = Vec::new();
+    for _ in 0..2 {
+        far.extend_from_slice(
+            b"event: response.zz_future\ndata: {\"type\":\"response.zz_future\",\"x\":1}\n\n",
+        );
+    }
+    far.extend_from_slice(&far_stream("responses"));
+    assert_eq!(
+        stream_drops("openai", "responses", &far),
+        vec!["type=response.zz_future".to_string()]
     );
-    assert!(stream_drops("openai", "responses", &far)
-        .contains(&"type=response.refusal.delta".to_string()));
 
     // Bedrock's frames are keyed by their event name.
     let mut far =
@@ -1064,6 +1072,86 @@ fn a_translated_stream_names_each_unmapped_path_once() {
         stream_drops("anthropic", "bedrock", &far),
         vec!["zzNeverHeardOf".to_string()]
     );
+}
+
+/// Responses refusal events are mapped content: the actual relay carries each text delta into
+/// Chat's refusal field, without treating it as plain content or an unmapped wire-path loss.
+#[test]
+fn a_translated_responses_refusal_keeps_its_text_usage_and_has_no_drop() {
+    let events = [
+        (
+            "response.created",
+            serde_json::json!({"type":"response.created", "response":{
+            "id":"resp-refusal", "object":"response", "created_at":1, "model":"m-1",
+            "status":"in_progress", "output":[]}}),
+        ),
+        (
+            "response.refusal.delta",
+            serde_json::json!({"type":"response.refusal.delta",
+            "item_id":"m1", "output_index":0, "content_index":0, "delta":"no", "sequence_number":1}),
+        ),
+        (
+            "response.refusal.delta",
+            serde_json::json!({"type":"response.refusal.delta",
+            "item_id":"m1", "output_index":0, "content_index":0, "delta":" thanks", "sequence_number":2}),
+        ),
+        (
+            "response.refusal.done",
+            serde_json::json!({"type":"response.refusal.done",
+            "item_id":"m1", "output_index":0, "content_index":0, "refusal":"no thanks", "sequence_number":3}),
+        ),
+        (
+            "response.completed",
+            serde_json::json!({"type":"response.completed", "sequence_number":4,
+            "response":{"id":"resp-refusal", "object":"response", "created_at":1, "model":"m-1",
+                "status":"completed", "output":[{"type":"message", "id":"m1", "role":"assistant",
+                    "status":"completed", "content":[{"type":"refusal", "refusal":"no thanks"}]}],
+                "usage":{"input_tokens":7, "output_tokens":9, "total_tokens":16}}}),
+        ),
+    ];
+    let mut far = Vec::new();
+    for (name, data) in events {
+        far.extend_from_slice(format!("event: {name}\ndata: {data}\n\n").as_bytes());
+    }
+    let mut ctx = relay_ctx("openai", "responses", true);
+    ctx.client_include_usage = true;
+    let mut relay = Relay::new(ctx);
+    let mut bytes = Vec::new();
+    for piece in far.chunks(7) {
+        if let (Fed::Bytes(part), _) = relay.feed(HOST, piece) {
+            bytes.extend_from_slice(&part);
+        }
+    }
+    let end = relay.end(HOST);
+    bytes.extend_from_slice(&end.bytes);
+    let text = String::from_utf8(bytes).expect("Chat SSE is UTF-8");
+    let chunks: Vec<Value> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter(|data| *data != "[DONE]")
+        .map(|data| serde_json::from_str(data).expect("each Chat data frame is valid JSON"))
+        .collect();
+    let refusal: String = chunks
+        .iter()
+        .filter_map(|chunk| {
+            chunk
+                .pointer("/choices/0/delta/refusal")
+                .and_then(Value::as_str)
+        })
+        .collect();
+    assert_eq!(refusal, "no thanks", "{text}");
+    assert!(
+        chunks.iter().all(|chunk| chunk
+            .pointer("/choices/0/delta/content")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)),
+        "{text}"
+    );
+    assert!(end.dropped.is_empty(), "{:?}", end.dropped);
+    assert!(!end.failed, "{end:?}");
+    assert!(end.stream_fault.is_none(), "{end:?}");
+    let usage = end.usage.expect("reported usage is retained");
+    assert_eq!((usage.input, usage.output), (7, 9));
 }
 
 /// A same-dialect stream is a relay: its reader is a tap and drops nothing, whatever it carries.
@@ -1088,7 +1176,7 @@ mod rehomed_answers {
     use busbar_plane_llm::codec::eventstream;
     use busbar_plane_llm::exchange::arrive::PathModel;
     use busbar_plane_llm::exchange::attempt::StreamIntent;
-    use busbar_plane_llm::exchange::reply::{failure, wire, Piece};
+    use busbar_plane_llm::exchange::reply::{Piece, failure, wire};
     use busbar_plane_llm::plane_door::breaker_fault;
     use serde_json::json;
 
@@ -2085,10 +2173,11 @@ mod rehomed_answers {
         let body = chat_completion("hello there");
         let read = answer(&ctx, 200, JSON_HEAD, &[&body], false);
         assert_eq!(read.status, 200);
-        assert!(read
-            .value("content-type")
-            .unwrap_or_default()
-            .starts_with("application/json"));
+        assert!(
+            read.value("content-type")
+                .unwrap_or_default()
+                .starts_with("application/json")
+        );
         let id = read.value("x-amzn-requestid").unwrap_or_default();
         assert!(is_uuid(&id), "{id}");
         let converse = read.json();
@@ -2111,10 +2200,11 @@ mod rehomed_answers {
         let far = chat_stream_events();
         let read = answer(&ctx, 200, SSE_HEAD, &[&far], false);
         assert_eq!(read.status, 200);
-        assert!(read
-            .value("content-type")
-            .unwrap_or_default()
-            .starts_with(EVENTSTREAM));
+        assert!(
+            read.value("content-type")
+                .unwrap_or_default()
+                .starts_with(EVENTSTREAM)
+        );
         let id = read.value("x-amzn-requestid").unwrap_or_default();
         assert!(is_uuid(&id), "{id}");
         let (names, left) = eventstream_names(&read.body);
@@ -2160,10 +2250,11 @@ mod rehomed_answers {
         let pieces: Vec<&[u8]> = far.chunks(23).collect();
         let read = answer(&ctx, 200, head, &pieces, false);
         assert_eq!(read.status, 200);
-        assert!(read
-            .value("content-type")
-            .unwrap_or_default()
-            .starts_with(EVENTSTREAM));
+        assert!(
+            read.value("content-type")
+                .unwrap_or_default()
+                .starts_with(EVENTSTREAM)
+        );
         assert_eq!(read.count("x-amzn-requestid"), 1, "{:?}", read.fields);
         assert_eq!(
             read.value("x-amzn-requestid").as_deref(),
@@ -2202,10 +2293,11 @@ mod rehomed_answers {
         let body = br#"{"output":{"message":{"role":"assistant","content":[{"text":"hi there"}]}},"stopReason":"end_turn","usage":{"inputTokens":5,"outputTokens":3,"totalTokens":8}}"#;
         let read = answer(&ctx, 200, head, &[body], false);
         assert_eq!(read.status, 200);
-        assert!(read
-            .value("content-type")
-            .unwrap_or_default()
-            .starts_with("application/json"));
+        assert!(
+            read.value("content-type")
+                .unwrap_or_default()
+                .starts_with("application/json")
+        );
         assert_eq!(read.count("x-amzn-requestid"), 1, "{:?}", read.fields);
         assert_eq!(
             read.value("x-amzn-requestid").as_deref(),
@@ -2247,10 +2339,11 @@ mod rehomed_answers {
         let far = converse_frames(&[("messageStart", br#"{"role":"assistant"}"#)]);
         let read = answer(&ctx, 200, head, &[&far], true);
         assert_eq!(read.status, 200);
-        assert!(read
-            .value("content-type")
-            .unwrap_or_default()
-            .starts_with(EVENTSTREAM));
+        assert!(
+            read.value("content-type")
+                .unwrap_or_default()
+                .starts_with(EVENTSTREAM)
+        );
         assert_binary_exception_tail(&read);
         assert_eq!(read.end().fault, Some(Fault::Transient("mid-stream")));
     }
@@ -2306,15 +2399,18 @@ mod rehomed_answers {
         let far = chat_stream_events();
         let read = answer(&ctx, 200, SSE_HEAD, &[&far], false);
         assert_eq!(read.status, 200);
-        assert!(read
-            .value("content-type")
-            .unwrap_or_default()
-            .starts_with("text/event-stream"));
+        assert!(
+            read.value("content-type")
+                .unwrap_or_default()
+                .starts_with("text/event-stream")
+        );
         let payloads = sse_payloads(&read.text());
         assert!(!payloads.is_empty());
-        assert!(payloads
-            .iter()
-            .any(|frame| frame.get("candidates").is_some()));
+        assert!(
+            payloads
+                .iter()
+                .any(|frame| frame.get("candidates").is_some())
+        );
         assert!(payloads.iter().all(|frame| frame.get("choices").is_none()));
     }
 
@@ -2330,10 +2426,11 @@ mod rehomed_answers {
         let far = b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n";
         let read = answer(&ctx, 200, SSE_HEAD, &[far], true);
         assert_eq!(read.status, 200);
-        assert!(read
-            .value("content-type")
-            .unwrap_or_default()
-            .starts_with("text/event-stream"));
+        assert!(
+            read.value("content-type")
+                .unwrap_or_default()
+                .starts_with("text/event-stream")
+        );
         let text = read.text();
         assert!(!text.contains("event:"), "{text}");
         assert!(!text.contains("chat.completion.chunk"), "{text}");
@@ -2355,10 +2452,11 @@ mod rehomed_answers {
         let far = b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n";
         let read = answer(&ctx, 200, SSE_HEAD, &[far], true);
         assert_eq!(read.status, 200);
-        assert!(read
-            .value("content-type")
-            .unwrap_or_default()
-            .starts_with("application/json"));
+        assert!(
+            read.value("content-type")
+                .unwrap_or_default()
+                .starts_with("application/json")
+        );
         let text = read.text();
         assert!(
             !text.contains("event:") && !text.contains("data:"),
@@ -2458,10 +2556,11 @@ mod rehomed_answers {
         ]);
         let read = answer(&ctx, 200, SSE_HEAD, &[&far], false);
         assert_eq!(read.status, 200);
-        assert!(read
-            .value("content-type")
-            .unwrap_or_default()
-            .starts_with("text/event-stream"));
+        assert!(
+            read.value("content-type")
+                .unwrap_or_default()
+                .starts_with("text/event-stream")
+        );
         let text = read.text();
         assert!(!text.contains("event:"), "{text}");
         assert!(text.contains("[DONE]"), "{text}");
@@ -2488,10 +2587,11 @@ mod rehomed_answers {
         let far = chat_stream_events();
         let read = answer(&ctx, 200, SSE_HEAD, &[&far], false);
         assert_eq!(read.status, 200);
-        assert!(read
-            .value("content-type")
-            .unwrap_or_default()
-            .starts_with("text/event-stream"));
+        assert!(
+            read.value("content-type")
+                .unwrap_or_default()
+                .starts_with("text/event-stream")
+        );
         let text = read.text();
         assert!(!text.contains("chat.completion.chunk"), "{text}");
         let types: Vec<String> = sse_payloads(&text)
@@ -2522,10 +2622,11 @@ mod rehomed_answers {
         let far = chat_stream_events();
         let read = answer(&ctx, 200, SSE_HEAD, &[&far], false);
         assert_eq!(read.status, 200);
-        assert!(read
-            .value("content-type")
-            .unwrap_or_default()
-            .starts_with("text/event-stream"));
+        assert!(
+            read.value("content-type")
+                .unwrap_or_default()
+                .starts_with("text/event-stream")
+        );
         let text = read.text();
         assert!(!text.contains("chat.completion.chunk"), "{text}");
         let events: Vec<String> = sse_frames(&text)
@@ -5163,9 +5264,11 @@ fn malformed_anthropic_answer_keeps_reported_usage_at_the_reply_boundary() {
         no_report.usage, None,
         "nested metadata is not provider usage"
     );
-    assert!(chat_handler("anthropic")
-        .extract_usage(HOST, "anthropic", nested)
-        .is_err());
+    assert!(
+        chat_handler("anthropic")
+            .extract_usage(HOST, "anthropic", nested)
+            .is_err()
+    );
     let decoy = br#"{"role":"assistant","content":"malformed","usage":{"input_tokens":17,"output_tokens":9},"metadata":{"usage":{"input_tokens":999,"output_tokens":888}}}"#;
     let reported = whole::translate(HOST, &ctx("openai", "anthropic", false, false), 200, decoy);
     let token = busbar_plane_llm::exchange::reply::wire::token_usage_of(&reported.usage).unwrap();
@@ -5217,7 +5320,7 @@ fn empty_speech_output_is_a_failed_delivery_with_original_flat_billing() {
 #[test]
 fn malformed_rerank_retains_full_billing_variants_and_units() {
     use busbar_contract::billing::Billing;
-    use busbar_plane_llm::exchange::reply::{wire, Units};
+    use busbar_plane_llm::exchange::reply::{Units, wire};
     for value in [
         Some(serde_json::json!(7)),
         Some(serde_json::json!(0)),
