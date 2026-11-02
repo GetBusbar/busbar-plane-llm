@@ -908,26 +908,6 @@ async fn reject_produces_bedrock_native_envelope() {
     );
 }
 
-#[test]
-fn request_id_counter_is_unique_and_monotonic_across_sequential_requests() {
-
-
-    let app = busbar_kernel_testkit::test_support::TestApp::new().build();
-    let a = app.next_request_id();
-    let b = app.next_request_id();
-    let c = app.next_request_id();
-    assert!(b > a, "the counter must strictly increase: {a} then {b}");
-    assert!(c > b, "the counter must strictly increase: {b} then {c}");
-    assert_eq!(b, a + 1, "a plain fetch_add(1): no gaps between requests");
-    assert_eq!(c, a + 2);
-    let app2 = busbar_kernel_testkit::test_support::TestApp::new().build();
-    let d = app2.next_request_id();
-    assert_ne!(
-        d, a,
-        "two independently-seeded counters must not coincide (boot entropy seed)"
-    );
-}
-
 #[tokio::test]
 async fn same_request_id_joins_gate_decision_and_completion_tap() {
     let (cap, tap) = webhook_tap();

@@ -103,20 +103,26 @@ No payload inspection, allocator framework or new fake product is introduced.
   This source ACK is limited to these three shared loader arms; GitHub native execution is pending,
   and it waives no per-product behavior, declaration, callback, TLS or guard assertion.
 
-## Root composition hooks intentionally held
+## Root composition source transfer
 
-Exact root migration ACK is pending. Existing references remain in their original source:
+The request-id counter test is relocated, with all five original assertions and messages,
+to the actual private production component:
+`crates/busbar-kernel/src/state/request_id.rs::tests::request_id_counter_is_unique_and_monotonic_across_sequential_requests`.
+Kernel owner SOURCE_PEER_ACK authorizes this relocation at
+2720cb75d6fb66dcc3981373f2fac902bf101e57 (license follow-up 2674c54e5c).
+The production App delegates to the extracted actual seed/fetch_add(Relaxed) helper; reviewer
+confirmed seed-body and assertions byte-identical. Component native proof remains pending;
+this is not an all-kernel-green claim. Only the duplicated TestApp-based source test is removed.
 
-- tests/on_driver/seam.rs::request_id_counter_is_unique_and_monotonic_across_sequential_requests:
-  two TestApp::build calls; a,b,c strictly increase and differ by exactly one; an independent
-  boot seed's first value d differs from a. Replace only with an actual root AppState composition.
-- tests/on_driver/projection.rs::hook_content_uncapped_by_default_and_omits_whole_when_opted_in:
-  LIMITS_TEST_LOCK protects actual global content-limit transitions from default 0 (full 200000
-  characters) to 64KiB and back, including the whole-body omission branches. Preserve the shared
-  root lock across all limit-mutating tests; a private replacement lock would weaken exclusion.
-
-These root-owned consumers are not native package tests. Neither is deleted, skipped, renamed
-away or replaced by a fake composition. Root source transfer was requested from finish_kernel.
+`tests/on_driver/projection.rs::hook_content_uncapped_by_default_and_omits_whole_when_opted_in`
+now isolates its actual global-limit mutations in a child of the same root test executable,
+selected by the full current harness name with --exact and a function-specific environment marker.
+The parent requires successful exit plus exactly one passed, zero failed and zero ignored in the
+child's test summary; diagnostic failures include both stdout and stderr. The child executes
+ALL original actual-composition hook/projection/default-limit/64KiB/reset assertions unchanged.
+No private lock, shared test framework, fake composition or coverage skip replaces the old kit lock.
+This root-only source follow-up does not change native own-crate tests; exact new-head root
+qualification remains separate from the immutable c69 native evidence.
 
 Validation: cargo fmt --all -- --check and git diff --check pass. No build ran without the
 resource coordinator's lane approval. Native compilation/live execution, final SDK compatibility,

@@ -844,7 +844,25 @@ async fn size_signal_and_projection_agree_on_tool_role_content() {
 #[tokio::test]
 async fn hook_content_uncapped_by_default_and_omits_whole_when_opted_in() {
 
-    let _lock = busbar_kernel_testkit::limits::LIMITS_TEST_LOCK.lock().await;
+    // This test mutates the process-wide hook limit. Run its complete original body in
+    // its own process so unrelated root tests cannot observe or alter that limit.
+    const CHILD: &str = "BUSBAR_LLM_HOOK_CONTENT_PROJECTION_LIMIT_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let test_name = std::thread::current()
+            .name()
+            .expect("the root test harness names this test")
+            .to_owned();
+        let output = std::process::Command::new(std::env::current_exe().expect("root test executable"))
+            .args(["--exact", &test_name, "--nocapture", "--color=never"])
+            .env(CHILD, "1")
+            .output()
+            .expect("run the complete hook projection test in an isolated root process");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "isolated {test_name} failed: status={}\nstdout={stdout}\nstderr={stderr}", output.status);
+        assert!(stdout.contains("test result: ok. 1 passed; 0 failed; 0 ignored;"), "isolated {test_name} must execute exactly one passing test, without ignored coverage\nstdout={stdout}\nstderr={stderr}");
+        return;
+    }
     let big = "x".repeat(200_000);
     let body = json!({"messages": [{"role": "user", "content": big}]});
 
