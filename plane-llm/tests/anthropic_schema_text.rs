@@ -243,7 +243,7 @@ fn native_anthropic_wrong_typed_text_still_relays_byte_for_byte() {
         .outcome
         .expect("native relay does not invoke the IR reader");
     assert!(out.pristine);
-    assert_eq!(out.bytes, raw);
+    assert_eq!(out.bytes.as_ref(), raw.as_slice());
 }
 
 #[test]
