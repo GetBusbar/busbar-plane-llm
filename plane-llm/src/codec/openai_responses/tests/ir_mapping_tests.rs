@@ -552,6 +552,47 @@ fn rsp12_top_level_error_event_fails_and_closes_the_stream() {
 
 // ─────────────────────────────────────── RSP-14 ───────────────────────────────────────
 
+#[test]
+fn rsp12_upstream_error_discards_a_deferred_tool_without_making_it_runnable() {
+    let raw = sse(&[
+        responses_created(),
+        (
+            "response.output_item.added",
+            serde_json::json!({
+                "type":"response.output_item.added", "output_index":0,
+                "item":{"type":"function_call", "id":"fc_native", "call_id":"call_native", "name":"send", "arguments":""}
+            }),
+        ),
+        (
+            "response.function_call_arguments.delta",
+            serde_json::json!({
+                "type":"response.function_call_arguments.delta", "output_index":0, "delta":"{\"recipient\":\"someone\"}"
+            }),
+        ),
+        (
+            "error",
+            serde_json::json!({"type":"error", "code":"server_error", "message":"failed"}),
+        ),
+    ]);
+    let (out, terminal_error) = xstream("responses", "gemini", &raw);
+    assert_eq!(terminal_error.as_deref(), Some("server_error"));
+    let payloads = sse_payloads(&out);
+    assert!(
+        payloads
+            .iter()
+            .any(|frame| frame["error"]["status"] == "INTERNAL"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("functionCall"),
+        "a provider failure cannot execute a deferred call: {out}"
+    );
+    assert!(
+        !out.contains("finishReason"),
+        "a failure cannot become a successful stop: {out}"
+    );
+}
+
 /// RSP-14: `reasoning.effort: "xhigh"` is carried as the IR's top effort rung, not dropped.
 #[test]
 fn rsp14_xhigh_effort_is_carried_as_high() {

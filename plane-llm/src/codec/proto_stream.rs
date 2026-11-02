@@ -115,7 +115,9 @@ pub struct StreamTranslate {
     /// terminal frame was never closed by the egress reader (truncated upstream, or a terminal branch
     /// that does not drain every block, e.g. cohere `message-end` closes only text). Synthesized
     /// closes route through `emit_ir_event` so each writer applies its own projection.
-    open_blocks: std::collections::BTreeSet<usize>,
+    /// The value marks a deferred tool call, whose stop may make it runnable and must therefore
+    /// be discarded if the provider fails before completing the response.
+    open_blocks: std::collections::BTreeMap<usize, bool>,
     /// Test-only: counts frames that reached the `crate::codec::json::parse_str` DOM parse in the
     /// SSE loop, proving the same-proto read probe elides the parse for frames with no usage or
     /// failure. Compiled out of non-test builds.
@@ -185,7 +187,7 @@ impl StreamTranslate {
             upstream_error: false,
             pending_terminal: None,
             pending_stop: false,
-            open_blocks: std::collections::BTreeSet::new(),
+            open_blocks: std::collections::BTreeMap::new(),
             #[cfg(test)]
             decode_calls: std::cell::Cell::new(0),
         })
@@ -340,7 +342,7 @@ impl StreamTranslate {
         // message is recorded so the stream-end arms treat the stream as failed (no token billing,
         // breaker transient), from the reader's structured decode, not a brace-scan of output bytes.
         if let crate::codec::ir::IrStreamEvent::Error(err) = &ev {
-            self.close_open_blocks(host, out);
+            self.close_failed_blocks(host, out);
             self.upstream_error = true;
             self.pending_terminal = None;
             self.pending_stop = false;
@@ -652,8 +654,11 @@ impl StreamTranslate {
         // afterwards would never record it, the terminal drain would not close it, and on a truncated
         // cohere-to-gemini stream the tool call would be silently deleted. Track the IR intent.
         match ev {
-            crate::codec::ir::IrStreamEvent::BlockStart { index, .. } => {
-                self.open_blocks.insert(*index);
+            crate::codec::ir::IrStreamEvent::BlockStart { index, block, .. } => {
+                self.open_blocks.insert(
+                    *index,
+                    matches!(block, crate::codec::ir::IrBlockMeta::ToolUse { .. }),
+                );
             }
             crate::codec::ir::IrStreamEvent::BlockStop { index } => {
                 self.open_blocks.remove(index);
@@ -755,12 +760,30 @@ impl StreamTranslate {
         host: &dyn busbar_contract::codec::CodecHost,
         out: &mut Vec<u8>,
     ) {
-        for index in std::mem::take(&mut self.open_blocks) {
+        for (index, _) in std::mem::take(&mut self.open_blocks) {
             self.emit_ir_event(
                 host,
                 &crate::codec::ir::IrStreamEvent::BlockStop { index },
                 out,
             );
+        }
+    }
+
+    /// Close already-visible non-tool blocks on an upstream failure. Stopping a deferred tool
+    /// can emit a runnable call, so discard those entries instead of completing them.
+    fn close_failed_blocks(
+        &mut self,
+        host: &dyn busbar_contract::codec::CodecHost,
+        out: &mut Vec<u8>,
+    ) {
+        for (index, tool) in std::mem::take(&mut self.open_blocks) {
+            if !tool {
+                self.emit_ir_event(
+                    host,
+                    &crate::codec::ir::IrStreamEvent::BlockStop { index },
+                    out,
+                );
+            }
         }
     }
 

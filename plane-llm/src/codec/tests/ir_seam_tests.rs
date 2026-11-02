@@ -156,8 +156,11 @@ fn translated_upstream_failure_is_terminal_even_with_open_blocks_or_deferred_suc
             if ingress == "bedrock" {
                 let frames = crate::codec::eventstream::drain_frames(&mut failed);
                 assert!(failed.is_empty());
-                assert_eq!(frames.len(), 1);
-                assert_eq!(frames[0].0, "serviceUnavailableException");
+                assert_eq!(frames.len(), if deferred_success { 1 } else { 2 });
+                if !deferred_success {
+                    assert_eq!(frames[0].0, "contentBlockStop");
+                }
+                assert_eq!(frames.last().unwrap().0, "serviceUnavailableException");
             }
             let tail = stream.finish(host);
             if ingress == "openai" {

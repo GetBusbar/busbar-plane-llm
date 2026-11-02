@@ -891,20 +891,40 @@ fn coh17_citations_without_a_text_part_still_reach_the_client() {
         },
         "usage": {"tokens": {"input_tokens": 3, "output_tokens": 1}}
     });
-    // Bedrock can carry the quoted source without an Anthropic-only encrypted search index.
-    let out = translate_response("cohere", "bedrock", &body);
-    let content = &out["output"]["message"]["content"];
+    // Native Cohere retains the quoted source even though no answer text was supplied.
+    let native = translate_response("cohere", "cohere", &body);
     assert_eq!(
-        content[0]["citationsContent"]["content"][0]["text"], "",
+        native["message"]["citations"], body["message"]["citations"],
+        "{native}"
+    );
+    assert_eq!(
+        native["message"]["tool_calls"][0]["function"]["name"], "f",
+        "{native}"
+    );
+
+    // Gemini can retain the source's title alongside the tool call without inventing answer
+    // text or converting these unanchored answer offsets into document coordinates.
+    let out = translate_response("cohere", "gemini", &body);
+    let source = &out["candidates"][0]["citationMetadata"]["citationSources"][0];
+    assert_eq!(source["title"], "t", "{out}");
+    assert!(
+        source.get("startIndex").is_none() && source.get("endIndex").is_none(),
         "{out}"
     );
     assert_eq!(
-        content[0]["citationsContent"]["citations"][0]["sourceContent"][0]["text"], "hello",
+        out["candidates"][0]["content"]["parts"][0]["functionCall"]["name"], "f",
         "{out}"
     );
-    assert_eq!(content[1]["toolUse"]["name"], "f", "{out}");
-    assert_eq!(out["usage"]["inputTokens"], 3, "{out}");
-    assert_eq!(out["usage"]["outputTokens"], 1, "{out}");
+    assert_eq!(
+        out["candidates"][0]["content"]["parts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "a citation quote must not become invented answer text: {out}"
+    );
+    assert_eq!(out["usageMetadata"]["promptTokenCount"], 3, "{out}");
+    assert_eq!(out["usageMetadata"]["candidatesTokenCount"], 1, "{out}");
 
     let (out, dropped) = crate::codec::drops::scope(
         crate::codec::drops::Seam {
