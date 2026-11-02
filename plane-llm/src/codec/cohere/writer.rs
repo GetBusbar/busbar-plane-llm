@@ -577,8 +577,9 @@ impl ProtocolWriter for CohereWriter {
         if let Some(max_tokens) = req.max_tokens {
             out.insert(keys::MAX_TOKENS.to_string(), serde_json::json!(max_tokens));
         }
-        // temperature (clamped to [0.0, 1.0]), `p`, `k`, stop_sequences (capped at 5), the penalties
-        // and seed: rows of the mapping file. Emitted before the `extra` overlay (the reader pulled
+        // Temperature and penalties (clamped to [0.0, 1.0]), `p` (clamped to [0.01, 0.99]), `k`,
+        // stop_sequences (capped at 5) and seed: rows of the mapping file. Changed numeric values
+        // WARN + audit on the cross-dialect seam. Emitted before the `extra` overlay (the reader pulled
         // these keys out of extra, so there is no double-emit on a same-protocol passthrough).
         crate::codec::carry::write_fields(
             super::map::REQUEST,

@@ -34,15 +34,15 @@ pub(crate) const ROWS_BLOCKS: &[Field] = &[
 
 /// Row group `penalties`.
 pub(crate) const ROWS_PENALTIES: &[Field] = &[
-    row(&["frequency_penalty"], Slot::FrequencyPenalty, ValueCodec::Plain),
-    row(&["presence_penalty"], Slot::PresencePenalty, ValueCodec::Plain),
+    row(&["frequency_penalty"], Slot::FrequencyPenalty, ValueCodec::Plain).clamp(0.0, 1.0, "clamping frequency_penalty to Cohere's [0.0, 1.0] range; the clamped value is forwarded and diverges from the caller's request", true),
+    row(&["presence_penalty"], Slot::PresencePenalty, ValueCodec::Plain).clamp(0.0, 1.0, "clamping presence_penalty to Cohere's [0.0, 1.0] range; the clamped value is forwarded and diverges from the caller's request", true),
     row(&["seed"], Slot::Seed, ValueCodec::Plain),
 ];
 
 /// Row group `sampling`.
 pub(crate) const ROWS_SAMPLING: &[Field] = &[
     row(&["temperature"], Slot::Temperature, ValueCodec::Plain).clamp(0.0, 1.0, "clamping temperature to Cohere's [0.0, 1.0] range; the requested value was outside it (e.g. an OpenAI/Responses value up to 2.0) and would 400 — the forwarded value diverges from the caller's request", true),
-    row(&["p"], Slot::TopP, ValueCodec::Plain),
+    row(&["p"], Slot::TopP, ValueCodec::Plain).clamp(0.01, 0.99, "clamping top_p (Cohere native p) to Cohere's [0.01, 0.99] range; the clamped value is forwarded and diverges from the caller's request", true),
     row(&["k"], Slot::TopK, ValueCodec::Plain),
     row(&["stop_sequences"], Slot::Stop, ValueCodec::Plain).cap(5, "Cohere"),
 ];

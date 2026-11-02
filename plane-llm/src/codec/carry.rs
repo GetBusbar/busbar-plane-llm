@@ -179,9 +179,11 @@ pub struct Field {
     pub drop_if: Option<DropIf>,
 }
 
-/// The clamp a row applies on write (`clamp`, `clamp_warn`, `clamp_parameter` in the mapping file):
-/// the temperature clamp. The warn, emitted only when the clamp changed the value, carries
-/// `requested_temperature` / `clamped_temperature` (and `parameter`, when `parameter`).
+/// The numeric range a row applies on write (`clamp`, `clamp_warn`, `clamp_parameter`). A changed
+/// value warns through the existing drop path. Temperature retains its legacy
+/// `requested_temperature` / `clamped_temperature` fields; other slots use `requested_value` /
+/// `clamped_value` and name the slot and both values in the message, which survives a drop scope.
+/// `parameter` controls the structured parameter field on direct writes, for either form.
 #[derive(Clone, Copy)]
 pub struct Clamp {
     pub min: f64,
@@ -227,7 +229,9 @@ impl Field {
         self
     }
 
-    /// `clamp = [min, max]`, `clamp_warn`, `clamp_parameter`.
+    /// `clamp = [min, max]`, `clamp_warn`, `clamp_parameter`: clamp finite numeric writes, warning
+    /// only when changed. `parameter` adds the slot's name as a structured field; temperature
+    /// keeps its legacy value fields, while other slots also carry the safe numeric change in text.
     pub const fn clamp(mut self, min: f64, max: f64, warn: &'static str, parameter: bool) -> Field {
         self.clamp = Some(Clamp {
             min,
@@ -547,25 +551,53 @@ pub fn write_fields(table: Table, req: &IrRequest, egress: Egress, out: &mut Map
             // A clamp keeps its behaviour and always warns, on the one drop path.
             let at = crate::codec::drops::member(f.slot.name());
             let diag = &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS;
-            if changed && c.parameter {
+            if f.slot == Slot::Temperature {
+                if changed && c.parameter {
+                    crate::codec::drops::writer_drop!(
+                        at,
+                        diag,
+                        [
+                            requested_temperature = n,
+                            clamped_temperature = clamped,
+                            parameter = "temperature",
+                        ],
+                        "{}",
+                        c.warn
+                    );
+                } else if changed {
+                    crate::codec::drops::writer_drop!(
+                        at,
+                        diag,
+                        [requested_temperature = n, clamped_temperature = clamped,],
+                        "{}",
+                        c.warn
+                    );
+                }
+            } else if changed && c.parameter {
                 crate::codec::drops::writer_drop!(
                     at,
                     diag,
                     [
-                        requested_temperature = n,
-                        clamped_temperature = clamped,
-                        parameter = "temperature",
+                        requested_value = n,
+                        clamped_value = clamped,
+                        parameter = f.slot.name(),
                     ],
-                    "{}",
-                    c.warn
+                    "{}; parameter={}, requested_value={}, clamped_value={}",
+                    c.warn,
+                    f.slot.name(),
+                    n,
+                    clamped
                 );
             } else if changed {
                 crate::codec::drops::writer_drop!(
                     at,
                     diag,
-                    [requested_temperature = n, clamped_temperature = clamped,],
-                    "{}",
-                    c.warn
+                    [requested_value = n, clamped_value = clamped,],
+                    "{}; parameter={}, requested_value={}, clamped_value={}",
+                    c.warn,
+                    f.slot.name(),
+                    n,
+                    clamped
                 );
             }
             v = Value::from(clamped);

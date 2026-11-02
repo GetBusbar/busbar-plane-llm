@@ -22,18 +22,20 @@ drop_warn = "dropping a request control on Cohere egress: Cohere v2 /chat has no
 "response_format" = { prim = "response_format" }
 "logprobs" = { prim = "logprobs" }
 
-# Cohere v2 names top_p `p` and top_k `k`. Temperature is clamped to Cohere's [0.0, 1.0] (it 400s
-# above). 1.5.4 silent-degrade: a stop list past Cohere's cap of 5 is truncated, not refused.
+# Cohere v2 names top_p `p` and top_k `k`. On cross-dialect writes, temperature is clamped to
+# [0.0, 1.0] and p to [0.01, 0.99], with WARN + audit when changed. Native relay keeps its bytes.
+# 1.5.4 silent-degrade: a stop list past Cohere's cap of 5 is truncated, not refused.
 [rows.sampling]
 "temperature" = { ir = "temperature", clamp = [0.0, 1.0], clamp_warn = "clamping temperature to Cohere's [0.0, 1.0] range; the requested value was outside it (e.g. an OpenAI/Responses value up to 2.0) and would 400 — the forwarded value diverges from the caller's request", clamp_parameter = true }
-"p" = { ir = "top_p" }
+"p" = { ir = "top_p", clamp = [0.01, 0.99], clamp_warn = "clamping top_p (Cohere native p) to Cohere's [0.01, 0.99] range; the clamped value is forwarded and diverges from the caller's request", clamp_parameter = true }
 "k" = { ir = "top_k" }
 "stop_sequences" = { ir = "stop", cap = 5 }
 
-# Sampling Cohere v2 spells as OpenAI Chat does.
+# Cohere v2 spells these as OpenAI Chat does, but penalties accept only [0.0, 1.0]. Cross-dialect
+# writes clamp to that range with WARN + audit; native relay does not normalize the caller's bytes.
 [rows.penalties]
-"frequency_penalty" = { ir = "frequency_penalty" }
-"presence_penalty" = { ir = "presence_penalty" }
+"frequency_penalty" = { ir = "frequency_penalty", clamp = [0.0, 1.0], clamp_warn = "clamping frequency_penalty to Cohere's [0.0, 1.0] range; the clamped value is forwarded and diverges from the caller's request", clamp_parameter = true }
+"presence_penalty" = { ir = "presence_penalty", clamp = [0.0, 1.0], clamp_warn = "clamping presence_penalty to Cohere's [0.0, 1.0] range; the clamped value is forwarded and diverges from the caller's request", clamp_parameter = true }
 "seed" = { ir = "seed" }
 
 # The request members inside the message, tool and config structure that the dialect's own code
