@@ -15,7 +15,6 @@ fn whitespace(buf: &[u8], mut at: usize) -> usize {
 }
 
 /// Locate one complete value lexically. The caller validates that exact span as JSON before
-
 fn complete_value_end(buf: &[u8], start: usize) -> Option<usize> {
     let first = *buf.get(start)?;
     let mut depth = 0usize;
@@ -59,7 +58,6 @@ fn complete_value_end(buf: &[u8], start: usize) -> Option<usize> {
 }
 
 /// Recover a complete object-valued root `key` from the original response prefix. Every earlier
-
 pub fn isolate_tail_usage_object(tail: &[u8], key: &[u8]) -> Option<serde_json::Value> {
     let expected: String = serde_json::from_slice(key).ok()?;
     let mut at = whitespace(tail, 0);
@@ -108,15 +106,12 @@ pub fn isolate_tail_usage_object(tail: &[u8], key: &[u8]) -> Option<serde_json::
 mod root_tests;
 
 /// The longest string value [`StopKeyScanner`] reads. A stop-reason token is a short enum member
-
 const MAX_TOKEN_BYTES: usize = 64;
 
 /// The longest stop-reason key (quotes included) [`StopKeyScanner`] looks for; the bound lets it
-
 pub const MAX_STOP_KEY_BYTES: usize = 32;
 
 /// The deepest container nesting [`StopKeyScanner`] tracks kinds of. A stop field sits a few levels
-
 const MAX_TRACKED_DEPTH: u16 = 64;
 
 /// A dialect's non-stream stop-reason field, located structurally: member `key` (quotes included,
@@ -175,7 +170,6 @@ pub struct StopKeyScanner {
 
 impl StopKeyScanner {
     /// A scanner for `key`. `None` for an empty or unquoted key, one longer than
-
     pub fn new(key: StopKey) -> Option<Self> {
         let k = key.key;
         let well_formed = k.len() > 2

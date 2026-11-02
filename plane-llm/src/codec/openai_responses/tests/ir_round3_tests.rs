@@ -52,7 +52,6 @@ fn sse_payloads(out: &str) -> Vec<serde_json::Value> {
 }
 
 /// A streamed Gemini thought reaches the Responses summary.
-
 #[test]
 fn item16_gemini_thought_streams_into_the_responses_summary() {
     let mut t = crate::codec::proto_stream::StreamTranslate::new("responses", "gemini")

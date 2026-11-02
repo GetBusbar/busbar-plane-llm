@@ -577,7 +577,6 @@ fn test_write_response_event() {
 }
 
 /// Regression: `extract_error` must read the machine-readable error type from the AWS `__type`
-
 #[test]
 fn test_extract_error_structured_type_from_type_field() {
     let reader = BedrockReader;
@@ -593,7 +592,6 @@ fn test_extract_error_structured_type_from_type_field() {
 }
 
 /// `__type` is sometimes serialised as a shape ARN suffix
-
 #[test]
 fn test_extract_error_strips_type_arn_prefix() {
     let reader = BedrockReader;
@@ -628,7 +626,6 @@ fn test_extract_error_non_json_body() {
 }
 
 /// A ConverseStream that ends after `messageStop` WITHOUT a trailing `metadata` event
-
 #[test]
 fn test_stream_metadata_less_defers_terminator() {
     use crate::codec::ir::IrStreamEvent;
@@ -673,7 +670,6 @@ fn test_stream_metadata_less_defers_terminator() {
 }
 
 /// Exactly one terminal MessageStop is emitted across the full happy-path sequence
-
 #[test]
 fn test_stream_emits_single_message_stop_with_metadata() {
     use crate::codec::ir::IrStreamEvent;
@@ -703,7 +699,6 @@ fn test_stream_emits_single_message_stop_with_metadata() {
 }
 
 /// The native Bedrock Converse error envelope is a flat `{"__type", "message"}` body (the exact
-
 #[test]
 fn test_write_error_native_bedrock_shape() {
     let writer = BedrockWriter;
@@ -766,7 +761,6 @@ fn a_spent_budget_is_400_service_quota_exceeded_not_a_retryable_throttle() {
 }
 
 /// Kind → Bedrock exception-name mapping covers the common categories and falls back to a real
-
 #[test]
 fn test_error_kind_to_bedrock_type_mapping() {
     assert_eq!(
@@ -799,7 +793,6 @@ fn test_error_kind_to_bedrock_type_mapping() {
 }
 
 /// The native error envelope round-trips back through `extract_error`: a Bedrock SDK (and the
-
 #[test]
 fn test_write_error_roundtrips_through_extract_error() {
     let writer = BedrockWriter;
@@ -817,7 +810,6 @@ fn test_write_error_roundtrips_through_extract_error() {
 }
 
 /// Same-protocol passthrough fidelity: reading a native Converse response and writing it back
-
 #[test]
 fn test_response_identity_same_protocol_roundtrip_no_synth() {
     let reader = BedrockReader;
@@ -867,7 +859,6 @@ fn test_response_identity_same_protocol_roundtrip_no_synth() {
 }
 
 /// A stream MessageDelta with `stop_reason = None` (the usage-only trailing
-
 #[test]
 fn test_write_response_event_usage_delta_is_metadata_frame() {
     let writer = BedrockWriter;
@@ -926,7 +917,6 @@ fn test_write_response_event_usage_delta_is_metadata_frame() {
 }
 
 /// A text BlockStart must emit NO frame. AWS Bedrock ConverseStream's
-
 #[test]
 fn test_write_response_event_text_block_start_emits_no_frame() {
     let writer = BedrockWriter;
@@ -957,7 +947,6 @@ fn test_write_response_event_text_block_start_emits_no_frame() {
 }
 
 /// A mid-stream Bedrock exception event (`internalServerException` etc.)
-
 #[test]
 fn test_stream_decode_surfaces_midstream_exception() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -1024,7 +1013,6 @@ fn test_stream_decode_surfaces_midstream_exception() {
 }
 
 /// `bedrock_image_block` must never emit `format: ""`, and never relabel an image as a format it
-
 #[test]
 fn test_bedrock_image_block_empty_subtype_is_dropped() {
     assert!(
@@ -1065,7 +1053,6 @@ fn test_bedrock_image_block_empty_subtype_is_dropped() {
 }
 
 /// The injected `stream` flag on a Bedrock-INGRESS converse-stream request
-
 #[test]
 fn test_read_request_honors_injected_stream_flag() {
     let reader = BedrockReader;
@@ -1091,7 +1078,6 @@ fn test_read_request_honors_injected_stream_flag() {
 }
 
 /// A System-role message that escapes the caller's system extraction is
-
 #[test]
 fn test_write_request_skips_system_role_message() {
     let writer = BedrockWriter;
@@ -1140,7 +1126,6 @@ fn test_write_request_skips_system_role_message() {
 }
 
 /// A non-Text block inside a ToolResult must be re-encoded faithfully
-
 #[test]
 fn test_write_request_tool_result_preserves_non_text_content() {
     let writer = BedrockWriter;
@@ -1188,7 +1173,6 @@ fn test_write_request_tool_result_preserves_non_text_content() {
 }
 
 /// A stream Error event names a REAL Converse exception (mapped from the IR
-
 #[test]
 fn test_write_response_event_error_names_real_exception() {
     let writer = BedrockWriter;
@@ -1226,7 +1210,6 @@ fn test_write_response_event_error_names_real_exception() {
 }
 
 /// Unmodeled top-level request fields must be collected into `extra` so a
-
 #[test]
 fn test_read_request_collects_unmodeled_fields_into_extra() {
     let reader = BedrockReader;
@@ -1286,7 +1269,6 @@ fn test_read_request_collects_unmodeled_fields_into_extra() {
 }
 
 /// A full passthrough — read a native Converse request carrying
-
 #[test]
 fn test_request_passthrough_preserves_unmodeled_fields() {
     let reader = BedrockReader;
@@ -1302,7 +1284,6 @@ fn test_request_passthrough_preserves_unmodeled_fields() {
 }
 
 /// `toolConfig.toolChoice` (the force-tool-use control:
-
 #[test]
 fn test_request_passthrough_preserves_tool_choice() {
     let reader = BedrockReader;
@@ -1353,7 +1334,6 @@ fn test_request_passthrough_preserves_tool_choice() {
 }
 
 /// On the CROSS-protocol seam `extra` is cleared, so a writer driven
-
 #[test]
 fn test_write_request_tool_config_cross_protocol_and_empty() {
     let writer = BedrockWriter;
@@ -1394,7 +1374,6 @@ fn test_write_request_tool_config_cross_protocol_and_empty() {
 }
 
 /// A text block that opens at index > 0 (after a preceding tool-use block,
-
 #[test]
 fn test_stream_text_block_after_tool_not_dropped() {
     use crate::codec::ir::IrStreamEvent;
@@ -1462,7 +1441,6 @@ fn test_stream_text_block_after_tool_not_dropped() {
 }
 
 /// A `contentBlockStart` whose `start` object carries an UNRECOGNIZED key
-
 #[test]
 fn test_stream_unrecognized_start_does_not_open_text() {
     use crate::codec::ir::IrStreamEvent;
@@ -1520,7 +1498,6 @@ fn test_stream_unrecognized_start_does_not_open_text() {
 }
 
 /// A usage-only delta's `metadata` frame carries the real `usage` but does
-
 #[test]
 fn test_write_response_event_metadata_no_fabricated_metrics() {
     let writer = BedrockWriter;
@@ -1553,7 +1530,6 @@ fn test_write_response_event_metadata_no_fabricated_metrics() {
 }
 
 /// `totalTokens` is computed with a saturating
-
 #[test]
 fn test_write_response_event_total_tokens_saturates() {
     let writer = BedrockWriter;
@@ -1595,7 +1571,6 @@ fn test_write_response_event_total_tokens_saturates() {
 }
 
 /// `bedrock/writer.rs`'s `BlockStop` arm is unconditional even though `BlockStart` suppresses the
-
 #[test]
 fn bedrock_writer_image_block_stop_is_suppressed() {
     let writer = BedrockWriter;
@@ -1625,7 +1600,6 @@ fn bedrock_writer_image_block_stop_is_suppressed() {
 }
 
 /// `bedrock_response_to_eventstream` (buffered 2xx → synthesized
-
 #[test]
 fn eventstream_emits_reasoning_content_for_thinking_block() {
     let resp = crate::codec::ir::IrResponse {
@@ -1665,7 +1639,6 @@ fn eventstream_emits_reasoning_content_for_thinking_block() {
 }
 
 /// `bedrock_response_to_eventstream` derives `contentBlockIndex` from `enumerate()` over ALL
-
 #[test]
 fn eventstream_content_block_index_is_contiguous_when_a_block_is_skipped() {
     let resp = crate::codec::ir::IrResponse {
@@ -1711,7 +1684,6 @@ fn eventstream_content_block_index_is_contiguous_when_a_block_is_skipped() {
 }
 
 /// REGRESSION PROOF: no orphaned start or stop. Only `ToolUse` projects a `contentBlockStart`
-
 #[test]
 fn eventstream_every_content_block_start_has_exactly_one_stop() {
     let resp = crate::codec::ir::IrResponse {
@@ -1807,7 +1779,6 @@ fn eventstream_every_content_block_start_has_exactly_one_stop() {
 }
 
 /// The buffered Converse `totalTokens`
-
 #[test]
 fn test_write_response_total_tokens_saturates() {
     let writer = BedrockWriter;
@@ -1844,7 +1815,6 @@ fn test_write_response_total_tokens_saturates() {
 }
 
 /// An assistant response carrying
-
 #[test]
 fn test_write_response_projects_image_block() {
     let writer = BedrockWriter;
@@ -1894,7 +1864,6 @@ fn test_write_response_projects_image_block() {
 }
 
 /// A response whose blocks are ALL
-
 #[test]
 fn test_write_response_empty_content_emits_placeholder() {
     let writer = BedrockWriter;
@@ -1935,7 +1904,6 @@ fn test_write_response_empty_content_emits_placeholder() {
 }
 
 /// An `inferenceConfig` carrying sub-fields this reader
-
 #[test]
 fn test_inference_config_passthrough_preserves_unmodeled_subfields() {
     let reader = BedrockReader;
@@ -1992,7 +1960,6 @@ fn test_inference_config_passthrough_preserves_unmodeled_subfields() {
 }
 
 /// `top_k` (a first-class IR field) must reach a Bedrock egress via
-
 #[test]
 fn test_top_k_reaches_bedrock_via_additional_model_request_fields() {
     let writer = BedrockWriter;
@@ -2036,7 +2003,6 @@ fn test_top_k_reaches_bedrock_via_additional_model_request_fields() {
 }
 
 /// Losslessness (top_k spelling preservation): a native Bedrock->Bedrock passthrough whose body
-
 #[test]
 fn test_top_k_camel_spelling_round_trips_and_cross_protocol_stays_snake() {
     let reader = BedrockReader;
@@ -2096,7 +2062,6 @@ fn test_top_k_camel_spelling_round_trips_and_cross_protocol_stays_snake() {
 }
 
 /// PF (non-silent clamp): the Bedrock temperature clamp helper signals when it changes the value
-
 #[test]
 fn test_clamp_temperature_for_bedrock_signals_on_change() {
     assert_eq!(crate::codec::carry::clamp(1.8, 0.0, 1.0), (1.0, true));
@@ -2109,7 +2074,6 @@ fn test_clamp_temperature_for_bedrock_signals_on_change() {
 }
 
 /// The typed IR fields WIN over a same-named raw `inferenceConfig` entry
-
 #[test]
 fn test_inference_config_typed_fields_override_raw_and_cross_protocol() {
     let writer = BedrockWriter;
@@ -2167,7 +2131,6 @@ fn test_inference_config_typed_fields_override_raw_and_cross_protocol() {
 }
 
 /// A mid-stream `IrError` mapped for the ConverseStream output union must
-
 #[test]
 fn test_stream_exception_only_emits_converse_stream_union_members() {
     let writer = BedrockWriter;
@@ -2254,7 +2217,6 @@ fn test_stream_exception_only_emits_converse_stream_union_members() {
 }
 
 /// A cross-protocol ingress
-
 #[test]
 fn test_write_request_url_sentinel_image_not_emitted_as_base64() {
     let writer = BedrockWriter;
@@ -2319,7 +2281,6 @@ fn test_write_request_url_sentinel_image_not_emitted_as_base64() {
 }
 
 /// A user/assistant turn whose blocks are ALL non-representable on the
-
 #[test]
 fn test_write_request_all_nonrepresentable_turn_kept_with_placeholder() {
     let writer = BedrockWriter;
@@ -2399,7 +2360,6 @@ fn test_write_request_all_nonrepresentable_turn_kept_with_placeholder() {
 }
 
 /// The region is parsed robustly from the
-
 #[test]
 fn test_derive_sigv4_region_shapes() {
     assert_eq!(
@@ -2477,7 +2437,6 @@ fn test_derive_sigv4_region_shapes() {
 }
 
 /// A FIPS host in a non-us-east-1 region signs for THAT region's
-
 #[test]
 fn test_bedrock_sigv4_fips_host_derives_correct_region() {
     let Some(busbar_contract::protocol::EgressScheme::SigV4 {
@@ -2504,7 +2463,6 @@ fn test_bedrock_sigv4_fips_host_derives_correct_region() {
 }
 
 /// A non-derivable host falls back to us-east-1 (signing still
-
 #[test]
 fn test_bedrock_sigv4_undecodable_host_falls_back_to_us_east_1() {
     let Some(busbar_contract::protocol::EgressScheme::SigV4 {
@@ -2522,7 +2480,6 @@ fn test_bedrock_sigv4_undecodable_host_falls_back_to_us_east_1() {
 }
 
 /// A `metadata` frame that lacks a `usage` key
-
 #[test]
 fn test_stream_metadata_without_usage_still_emits_delta_with_stop_reason() {
     use crate::codec::ir::IrStreamEvent;
@@ -2590,7 +2547,6 @@ fn test_stream_metadata_without_usage_still_emits_delta_with_stop_reason() {
 }
 
 /// The same URL-sentinel guard
-
 #[test]
 fn test_write_request_tool_result_url_sentinel_image_dropped() {
     let writer = BedrockWriter;
@@ -2637,7 +2593,6 @@ fn test_write_request_tool_result_url_sentinel_image_dropped() {
 }
 
 /// A `maxTokens` value above u32::MAX must be
-
 #[test]
 fn test_read_request_max_tokens_overflow_dropped_not_truncated() {
     let reader = BedrockReader;
@@ -2669,7 +2624,6 @@ fn test_read_request_max_tokens_overflow_dropped_not_truncated() {
 }
 
 /// A message-level `image` block whose source is
-
 #[test]
 fn test_read_request_image_s3_location_captured() {
     let reader = BedrockReader;
@@ -2720,7 +2674,6 @@ fn test_read_request_image_s3_location_captured() {
 }
 
 /// A Bedrock body carrying an S3-sourced image must
-
 #[test]
 fn test_image_s3_location_round_trip() {
     let reader = BedrockReader;
@@ -2777,7 +2730,6 @@ fn test_image_s3_location_round_trip() {
 }
 
 /// An `image` block inside a `toolResult.content` array
-
 #[test]
 fn test_read_request_tool_result_decodes_image() {
     let reader = BedrockReader;
@@ -2820,7 +2772,6 @@ fn test_read_request_tool_result_decodes_image() {
 }
 
 /// An S3-sourced image inside a toolResult survives
-
 #[test]
 fn test_tool_result_image_s3_round_trip() {
     let reader = BedrockReader;
@@ -2858,7 +2809,6 @@ fn test_tool_result_image_s3_round_trip() {
 }
 
 /// `bedrock_image_block` re-emits `source.s3Location` for a Bedrock-produced
-
 #[test]
 fn test_bedrock_image_block_s3_vendor() {
     let source = crate::codec::ir::IrImageSource::Vendor {
@@ -2897,7 +2847,6 @@ fn test_bedrock_image_block_s3_vendor() {
 }
 
 /// A Converse response `usage` carrying
-
 #[test]
 fn test_read_response_plumbs_cache_tokens() {
     let reader = BedrockReader;
@@ -2928,7 +2877,6 @@ fn test_read_response_plumbs_cache_tokens() {
 }
 
 /// An absent cache field stays `None` (not `Some(0)`), so a no-cache
-
 #[test]
 fn test_read_response_absent_cache_tokens_are_none() {
     let reader = BedrockReader;
@@ -2945,7 +2893,6 @@ fn test_read_response_absent_cache_tokens_are_none() {
 }
 
 /// The `metadata` event's `usage` cache fields must surface on
-
 #[test]
 fn test_read_stream_metadata_plumbs_cache_tokens() {
     use crate::codec::ir::IrStreamEvent;
@@ -2981,7 +2928,6 @@ fn test_read_stream_metadata_plumbs_cache_tokens() {
 }
 
 /// IR usage cache fields must be emitted as
-
 #[test]
 fn test_write_response_emits_cache_tokens_roundtrip() {
     let reader = BedrockReader;
@@ -3025,7 +2971,6 @@ fn test_write_response_emits_cache_tokens_roundtrip() {
 }
 
 /// A `None` cache field is OMITTED, not serialized as `0` — so a no-cache
-
 #[test]
 fn test_write_response_omits_absent_cache_tokens() {
     let writer = BedrockWriter;
@@ -3050,7 +2995,6 @@ fn test_write_response_omits_absent_cache_tokens() {
 }
 
 /// A usage-only MessageDelta carrying cache fields must emit
-
 #[test]
 fn test_write_stream_metadata_emits_cache_tokens() {
     let writer = BedrockWriter;
@@ -3099,7 +3043,6 @@ fn test_write_stream_metadata_emits_cache_tokens() {
 }
 
 /// Native Converse `cachePoint` blocks (the prompt-cache markers) that
-
 #[test]
 fn test_cache_point_round_trip() {
     let reader = BedrockReader;
@@ -3143,7 +3086,6 @@ fn test_cache_point_round_trip() {
 }
 
 /// A `cachePoint` (or `guardContent`) BEFORE a `document` must not make the document be sent twice.
-
 #[test]
 fn a_cache_point_before_a_document_does_not_double_the_document() {
     let reader = BedrockReader;
@@ -3183,7 +3125,6 @@ fn a_cache_point_before_a_document_does_not_double_the_document() {
 }
 
 /// A message whose ONLY content block is a `cachePoint` (no
-
 #[test]
 fn test_cache_point_only_message_round_trip() {
     let reader = BedrockReader;
@@ -3223,7 +3164,6 @@ fn test_cache_point_only_message_round_trip() {
 }
 
 /// A request that NEVER used prompt caching must not gain a stray sentinel key, and its body must
-
 #[test]
 fn test_no_cache_point_no_sentinel() {
     let reader = BedrockReader;
@@ -3247,7 +3187,6 @@ fn test_no_cache_point_no_sentinel() {
 }
 
 /// `splice_cache_points` must NOT panic on a stale/foreign index (e.g. an `extra` that survived
-
 #[test]
 fn test_splice_cache_points_out_of_range_does_not_panic() {
     let mut arr = vec![serde_json::json!({"text": "only block"})];
@@ -3267,7 +3206,6 @@ fn test_splice_cache_points_out_of_range_does_not_panic() {
 }
 
 /// `extract_error` must synthesize the canonical
-
 #[test]
 fn test_extract_error_synthesizes_context_length_exceeded() {
     let reader = BedrockReader;
@@ -3300,7 +3238,6 @@ fn test_extract_error_synthesizes_context_length_exceeded() {
 }
 
 /// The `contentBlockStart` toolUse arm must honor the
-
 #[test]
 fn test_stream_tool_block_start_before_message_start_is_dropped() {
     use crate::codec::ir::IrStreamEvent;
@@ -3357,7 +3294,6 @@ fn test_stream_tool_block_start_before_message_start_is_dropped() {
 }
 
 /// `read_response_events`'s `ET_CONTENT_BLOCK_STOP` arm must NEVER emit a `BlockStop` unless a
-
 #[test]
 fn test_stream_block_stop_before_message_start_is_dropped() {
     use crate::codec::ir::IrStreamEvent;
@@ -3378,7 +3314,6 @@ fn test_stream_block_stop_before_message_start_is_dropped() {
 }
 
 /// A `contentBlockStop` for a tool-use index that never had a matching `contentBlockStart` (e.g. a
-
 #[test]
 fn test_stream_block_stop_for_unopened_tool_index_is_dropped() {
     use crate::codec::ir::IrStreamEvent;
@@ -3407,7 +3342,6 @@ fn test_stream_block_stop_for_unopened_tool_index_is_dropped() {
 }
 
 /// Regression guard on the happy path: a well-formed toolUse `contentBlockStart` followed by its
-
 #[test]
 fn test_stream_block_stop_for_opened_tool_index_still_emits() {
     use crate::codec::ir::IrStreamEvent;
@@ -3445,7 +3379,6 @@ fn test_stream_block_stop_for_opened_tool_index_still_emits() {
 }
 
 /// Two concurrently open tool-use blocks (indices 0 and 1) must each close independently: a STOP
-
 #[test]
 fn test_stream_block_stop_closes_concurrent_tool_blocks_independently() {
     use crate::codec::ir::IrStreamEvent;
@@ -3506,7 +3439,6 @@ fn test_stream_block_stop_closes_concurrent_tool_blocks_independently() {
 }
 
 /// Adversarial-input guard: on a MALFORMED stream that opens a
-
 #[test]
 fn test_stream_block_stop_prefers_indexed_tool_over_stale_text_flag() {
     use crate::codec::ir::IrStreamEvent;
@@ -3564,7 +3496,6 @@ fn test_stream_block_stop_prefers_indexed_tool_over_stale_text_flag() {
 }
 
 /// A native Converse `{"json": <value>}` block
-
 #[test]
 fn test_tool_result_json_block_round_trip() {
     let reader = BedrockReader;
@@ -3602,7 +3533,6 @@ fn test_tool_result_json_block_round_trip() {
 }
 
 /// The upstream-controlled `contentBlockIndex` is
-
 #[test]
 fn test_stream_huge_content_block_index_is_clamped() {
     use crate::codec::ir::IrStreamEvent;
@@ -3681,7 +3611,6 @@ fn test_stream_huge_content_block_index_is_clamped() {
 }
 
 /// The `#[cfg(test)]` `classify`
-
 #[test]
 fn test_classify_third_context_length_pattern_matches_extract_error() {
     let reader = BedrockReader;
@@ -3718,7 +3647,6 @@ fn test_classify_third_context_length_pattern_matches_extract_error() {
 }
 
 /// The `extract_error` context-length
-
 #[test]
 fn test_extract_error_5xx_context_phrasing_not_reclassified() {
     let reader = BedrockReader;
@@ -3753,7 +3681,6 @@ fn test_extract_error_5xx_context_phrasing_not_reclassified() {
 }
 
 /// The `read_response` content loop must
-
 #[test]
 fn test_read_response_carries_image_block() {
     let reader = BedrockReader;
@@ -3824,7 +3751,6 @@ fn test_read_response_carries_image_block() {
 }
 
 /// A native Converse `reasoningContent` (extended-thinking) block in a
-
 #[test]
 fn test_request_reasoning_content_round_trips() {
     let reader = BedrockReader;
@@ -3875,7 +3801,6 @@ fn test_request_reasoning_content_round_trips() {
 }
 
 /// A `reasoningContent` block in a RESPONSE message's `content[]` was
-
 #[test]
 fn test_response_reasoning_content_round_trips() {
     let reader = BedrockReader;
@@ -3952,7 +3877,6 @@ fn test_response_reasoning_content_round_trips() {
 }
 
 /// STREAMING extended-thinking (`reasoningContent` deltas on the
-
 #[test]
 fn test_stream_reasoning_content_round_trips() {
     use crate::codec::ir::{IrBlockMeta, IrDelta, IrStreamEvent};
@@ -4098,7 +4022,6 @@ fn test_stream_reasoning_content_round_trips() {
 }
 
 /// The STREAMING redacted-reasoning case. A `reasoningContent`
-
 #[test]
 fn test_stream_reasoning_redacted_round_trips() {
     use crate::codec::ir::{IrBlockMeta, IrDelta, IrStreamEvent};
@@ -4195,7 +4118,6 @@ fn test_stream_reasoning_redacted_round_trips() {
 }
 
 /// Native Converse `guardContent` (inline Guardrails) blocks that appear
-
 #[test]
 fn test_guard_content_round_trips() {
     let reader = BedrockReader;
@@ -4233,7 +4155,6 @@ fn test_guard_content_round_trips() {
 }
 
 /// When BOTH `cachePoint` and `guardContent` markers occupy DISTINCT
-
 #[test]
 fn test_guard_content_and_cache_point_interleave_preserved() {
     let reader = BedrockReader;
@@ -4261,7 +4182,6 @@ fn test_guard_content_and_cache_point_interleave_preserved() {
 }
 
 /// A `reasoningContent` block carrying neither known member (a hypothetical future union member)
-
 #[test]
 fn test_unknown_reasoning_member_does_not_panic() {
     let reader = BedrockReader;
@@ -4289,7 +4209,6 @@ fn test_unknown_reasoning_member_does_not_panic() {
 }
 
 /// Helper: a minimal IR request carrying only a tool_choice (and one tool so toolConfig is valid).
-
 #[test]
 fn consecutive_user_turns_coalesce_for_alternation() {
     let text_msg = |role, t: &str| crate::codec::ir::IrMessage {
@@ -4386,7 +4305,6 @@ fn tool_choice_req(tc: Option<crate::codec::ir::IrToolChoice>) -> crate::codec::
 }
 
 /// F3 conformance: a `tool_choice` with NO accompanying tools must NOT produce a `toolConfig`.
-
 #[test]
 fn tool_choice_without_tools_emits_no_tool_config() {
     for tc in [
@@ -4408,7 +4326,6 @@ fn tool_choice_without_tools_emits_no_tool_config() {
 }
 
 /// F5 conformance: the common `image/jpg` media_type (and casing variants) must normalize to
-
 #[test]
 fn image_format_jpg_normalizes_to_jpeg() {
     for mt in ["image/jpg", "image/JPG", "image/Jpeg", "image/jpeg"] {
@@ -4439,7 +4356,6 @@ fn image_format_jpg_normalizes_to_jpeg() {
 }
 
 /// Bedrock `toolChoice:{any:{}}` (must call SOME tool) round-trips through the IR's
-
 #[test]
 fn test_bedrock_tool_choice_any_required_roundtrips() {
     let reader = BedrockReader;
@@ -4466,7 +4382,6 @@ fn test_bedrock_tool_choice_any_required_roundtrips() {
 }
 
 /// Bedrock `toolChoice:{tool:{name}}` (forced specific tool) round-trips through the IR's
-
 #[test]
 fn test_bedrock_tool_choice_specific_tool() {
     let reader = BedrockReader;
@@ -4495,7 +4410,6 @@ fn test_bedrock_tool_choice_specific_tool() {
 }
 
 /// `toolChoice.tool` (force a SPECIFIC tool) is documented Anthropic-Claude-only on
-
 #[test]
 fn bedrock_specific_tool_choice_warns_it_is_claude_only() {
     use busbar_test_kit::warn_capture::WarnCapture;
@@ -4525,7 +4439,6 @@ fn bedrock_specific_tool_choice_warns_it_is_claude_only() {
 }
 
 /// `IrToolChoice::None` has no native Bedrock representation, so the writer must omit
-
 #[test]
 fn test_bedrock_tool_choice_none_omitted_on_write() {
     let req = tool_choice_req(Some(crate::codec::ir::IrToolChoice::None));
@@ -4545,7 +4458,6 @@ fn test_bedrock_tool_choice_none_omitted_on_write() {
 }
 
 /// A request with no native `toolChoice` reads back as `tool_choice == None` (no spurious
-
 #[test]
 fn test_bedrock_tool_choice_absent_is_none() {
     let reader = BedrockReader;
@@ -4586,7 +4498,6 @@ fn test_bedrock_writer_clamps_temperature_above_one() {
 }
 
 /// Helper: a bare IR request with the given system / messages / tools and an EMPTY `extra`
-
 fn cache_ctrl_req(
     system: Vec<crate::codec::ir::IrBlock>,
     messages: Vec<crate::codec::ir::IrMessage>,
@@ -4607,7 +4518,6 @@ fn ephemeral() -> Option<crate::codec::ir::CacheControl> {
 }
 
 /// Write: an IR message Text block carrying `cache_control` must emit a Bedrock `cachePoint`
-
 #[test]
 fn test_cache_control_on_message_block_emits_cache_point() {
     let req = cache_ctrl_req(
@@ -4660,7 +4570,6 @@ fn test_cache_control_on_message_block_emits_cache_point() {
 }
 
 /// Write: a system Text block carrying `cache_control` emits a trailing cachePoint in the
-
 #[test]
 fn test_cache_control_on_system_block_emits_cache_point() {
     let req = cache_ctrl_req(
@@ -4687,7 +4596,6 @@ fn test_cache_control_on_system_block_emits_cache_point() {
 }
 
 /// Write: a tool definition carrying `cache_control` emits a `cachePoint` element in the
-
 #[test]
 fn test_cache_control_on_tool_emits_cache_point() {
     let req = cache_ctrl_req(
@@ -4719,7 +4627,6 @@ fn test_cache_control_on_tool_emits_cache_point() {
 }
 
 /// Read: a Bedrock `cachePoint` following a content block must map onto the preceding IR
-
 #[test]
 fn test_cache_point_maps_onto_preceding_block_cache_control() {
     let reader = BedrockReader;
@@ -4790,7 +4697,6 @@ fn test_cache_point_maps_onto_preceding_block_cache_control() {
 }
 
 /// Round-trip, cross-protocol shape: reading a cachePoint-bearing body into the IR and then
-
 #[test]
 fn test_cache_control_round_trip_via_field_only() {
     let reader = BedrockReader;
@@ -4820,7 +4726,6 @@ fn test_cache_control_round_trip_via_field_only() {
 }
 
 /// No double-emit: on the SAME-protocol path the positional stash AND the first-class
-
 #[test]
 fn test_same_protocol_cache_point_no_double_emit() {
     let reader = BedrockReader;
@@ -4852,7 +4757,6 @@ fn test_same_protocol_cache_point_no_double_emit() {
 }
 
 /// Warn path: a malformed image media_type (an empty subtype, an unprefixed word) or one outside
-
 #[test]
 fn test_malformed_media_type_warns_and_drops() {
     for mt in ["image/", "garbage", "image/bmp", "image/svg+xml"] {
@@ -4884,7 +4788,6 @@ fn test_malformed_media_type_warns_and_drops() {
 }
 
 /// A cross-protocol IR carrying a JSON-schema `response_format` reaching a Bedrock lane that declares
-
 #[test]
 fn test_write_request_response_format_projects_output_config() {
     let writer = BedrockWriter;
@@ -4979,7 +4882,6 @@ fn bedrock_stream_framing_emits_one_metadata_delta_then_guards_duplicate() {
 }
 
 /// A CACHE-ONLY stop-delta (`input_tokens == 0 && output_tokens == 0`
-
 #[test]
 fn cache_only_usage_emits_metadata_inline() {
     fn metadata_delta_count(events: &[crate::codec::ir::IrStreamEvent]) -> usize {
@@ -5014,7 +4916,6 @@ fn cache_only_usage_emits_metadata_inline() {
 }
 
 /// F4 coalescing (headline Bedrock behavior): Converse requires STRICTLY ALTERNATING
-
 #[test]
 fn consecutive_tool_result_turns_coalesce_into_single_user_message() {
     let req = crate::codec::ir::IrRequest {
@@ -5086,7 +4987,6 @@ fn consecutive_tool_result_turns_coalesce_into_single_user_message() {
 }
 
 /// An UNKNOWN native `stopReason` maps to `IrStopReason::Other` on read (ir.rs:186), and `Other`
-
 #[test]
 fn unknown_stop_reason_maps_to_other_and_degrades_to_end_turn() {
     assert_eq!(
@@ -5115,7 +5015,6 @@ fn unknown_stop_reason_maps_to_other_and_degrades_to_end_turn() {
 }
 
 /// Bedrock cache tokens are ALREADY ADDITIVE (ir.rs:457): unlike OpenAI/Gemini (which subtract the
-
 #[test]
 fn cache_usage_is_additive_input_not_reduced() {
     let body = serde_json::json!({
@@ -5160,7 +5059,6 @@ fn cache_usage_is_additive_input_not_reduced() {
 }
 
 /// BEDROCK ADDITIVE-CACHE billing guard: the neutral projection the MONEY PATH actually bills from
-
 #[test]
 fn bedrock_input_tier_excludes_cache_at_billing_boundary() {
     let body = serde_json::json!({
@@ -5207,7 +5105,6 @@ fn bedrock_input_tier_excludes_cache_at_billing_boundary() {
 }
 
 /// AWS Converse's `usage.totalTokens` is the TOTAL of every token the call consumed, cache tokens
-
 #[test]
 fn total_tokens_includes_cache_tokens_on_both_write_paths() {
     let wire_total = 10u64 + 5 + 1000 + 200;
@@ -5270,7 +5167,6 @@ fn total_tokens_includes_cache_tokens_on_both_write_paths() {
 }
 
 /// REGRESSION: The native AWS Bedrock ConverseStream `ContentBlockStart$start`
-
 #[test]
 fn test_stream_text_delta_lazily_opens_block_start() {
     use crate::codec::ir::IrStreamEvent;
@@ -5335,7 +5231,6 @@ fn test_stream_text_delta_lazily_opens_block_start() {
 }
 
 /// REGRESSION: The AWS Bedrock Converse `ContentBlock` union includes top-level
-
 #[test]
 fn test_roundtrip_preserves_document_and_video_blocks() {
     let reader = BedrockReader;
@@ -5422,7 +5317,6 @@ fn bedrock_orphan_content_block_delta_before_start_is_dropped() {
 }
 
 /// A same-dialect buffered answer is relayed verbatim in every dialect, Bedrock included: no
-
 #[test]
 fn a_same_dialect_buffered_answer_gets_no_translator_in_any_dialect() {
     for d in [
@@ -5504,7 +5398,6 @@ fn buffered_to_eventstream_metadata_carries_metrics_even_without_timing() {
 }
 
 /// A two-citation delta driven straight at `write_response_events` must emit BOTH citations. The
-
 #[test]
 fn bedrock_writer_emits_every_citation_in_a_multi_citation_delta() {
     let cit = |title: &str| crate::codec::ir::IrCitation {
@@ -5642,7 +5535,6 @@ fn the_tails_sigv4_parameters_restate_the_signing_scheme() {
 }
 
 /// The production request translate steps (reader → egress seam → writer → shim strip), with the
-
 fn rehome_xreq(
     ingress: &'static str,
     egress: &str,

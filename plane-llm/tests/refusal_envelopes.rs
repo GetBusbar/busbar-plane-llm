@@ -15,7 +15,6 @@ const DIALECTS: &[&str] = &[
 ];
 
 /// Drop the minted identifier from an envelope, so two envelopes can be compared on everything else.
-
 fn without_minted_id(bytes: &[u8]) -> String {
     let Ok(mut value) = sonic_rs::from_slice::<serde_json::Value>(bytes) else {
         return String::from_utf8_lossy(bytes).into_owned();
@@ -47,7 +46,6 @@ fn head_value<'a>(fields: &'a [(String, Vec<u8>)], name: &str) -> Option<&'a [u8
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_ingress_error_request_id_header_matches_body`
-
 #[test]
 fn test_anthropic_ingress_error_request_id_header_matches_body() {
     use busbar_contract::protocol::KIND_INVALID_REQUEST;
@@ -88,7 +86,6 @@ fn test_anthropic_ingress_error_request_id_header_matches_body() {
 }
 
 /// LEGACY `crates/busbar-llm/src/unit/tests/audit.rs::every_refusal_class_renders_byte_identically_on_both_paths`
-
 #[test]
 fn every_refusal_class_renders_byte_identically_on_both_paths() {
     use busbar_contract::protocol::{

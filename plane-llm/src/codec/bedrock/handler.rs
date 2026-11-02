@@ -17,7 +17,6 @@ use serde_json::{json, Value};
 
 pub struct BedrockRequestHandler;
 /// This protocol's own chat instance; remove it and the registry arm and chat 404s via the
-
 static CHAT: super::super::chat_handle::ChatOperation =
     super::super::chat_handle::ChatOperation(super::VENDOR_NAME);
 static EMB: BedrockEmbeddings = BedrockEmbeddings;
@@ -25,7 +24,6 @@ static IMG: BedrockImage = BedrockImage;
 static RERANK: BedrockRerank = BedrockRerank;
 
 /// Bedrock's row of the support matrix, as data. A verb absent from it is a genuine gap (the
-
 static CELLS: &[busbar_contract::codec::Cell] = &[
     (OpVerb::CHAT, &CHAT),
     (OpVerb::EMBEDDINGS, &EMB),
@@ -74,7 +72,6 @@ impl RequestHandler for BedrockRequestHandler {
 }
 
 /// Amazon Titan Image Generator via `/model/{id}/invoke`: prompt in, `images[]` (b64) out. The model
-
 struct BedrockImage;
 
 leaf_op! {
@@ -90,7 +87,6 @@ leaf_op! {
 }
 
 /// A request or answer member the InvokeModel writers do not send, dropped with a warn (the one
-
 fn invoke_drop(name: &'static str) {
     crate::codec::drops::writer_drop!(
         crate::codec::drops::member(name),
@@ -102,7 +98,6 @@ fn invoke_drop(name: &'static str) {
 }
 
 /// IR to Titan image request wire ([`BedrockImage::write_request`]): `taskType`, prompt `text` and
-
 pub fn write_image_request(r: &crate::codec::ir::image::ImageReq) -> Bytes {
     let body = json!({
         "taskType": "TEXT_IMAGE",
@@ -143,7 +138,6 @@ pub fn write_image_response(r: &crate::codec::ir::image::ImageResp) -> WireBody 
 }
 
 /// Amazon Titan Embeddings via `/model/{id}/invoke`: `inputText` (+ v2 dims/normalize). The model
-
 struct BedrockEmbeddings;
 
 leaf_op! {
@@ -214,7 +208,6 @@ pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
 }
 
 /// Bedrock rerank models (`cohere.rerank-*`, `amazon.rerank-*`) via `/model/{id}/invoke`:
-
 struct BedrockRerank;
 
 leaf_op! {
@@ -294,7 +287,6 @@ mod tests;
 mod titan_roundtrip_regression_tests;
 
 /// Wire to concrete `ImageReq`, shared by the leaf-op handle and the `leaf_codec` read dispatch so
-
 pub fn read_image_request(
     body: &[u8],
     _content_type: &str,

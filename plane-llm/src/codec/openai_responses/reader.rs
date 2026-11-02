@@ -1463,7 +1463,6 @@ impl ProtocolReader for ResponsesReader {
     }
 
     /// Usage and terminal failures ride the terminal and error events; the reader reads the
-
     fn same_proto_reads(&self, event_type: &str, _payload: &[u8]) -> bool {
         matches!(
             event_type,

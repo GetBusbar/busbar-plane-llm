@@ -119,7 +119,6 @@ fn test_openai_read_fanout_tool_call() {
 }
 
 /// INV-C: a backend that streams `tool_calls[{index:1}]` with NO index 0 (observed from vLLM /
-
 #[test]
 fn openai_sparse_tool_index_does_not_collide_text_onto_tool_block() {
     let reader = OpenAiReader;
@@ -184,7 +183,6 @@ fn openai_sparse_tool_index_does_not_collide_text_onto_tool_block() {
 }
 
 /// INV-C: `tool_calls[{index:1}]`, then a text chunk, then `tool_calls[{index:0}]` (the OTHER
-
 #[test]
 fn openai_tool_index_zero_after_text_does_not_collide() {
     let reader = OpenAiReader;
@@ -219,7 +217,6 @@ fn openai_tool_index_zero_after_text_does_not_collide() {
 }
 
 /// INV-C, the GAP case: a lone `tool_calls[{index:5}]` (no other blocks) must claim IR index 0,
-
 #[test]
 fn openai_sparse_tool_indices_are_dense_from_zero() {
     let reader = OpenAiReader;
@@ -245,7 +242,6 @@ fn openai_sparse_tool_indices_are_dense_from_zero() {
 }
 
 /// REGRESSION PROOF. The current recomputed-base arithmetic happens to land on 2 here, a slot
-
 #[test]
 fn openai_tool_after_finish_chunk_claims_a_fresh_index() {
     let reader = OpenAiReader;

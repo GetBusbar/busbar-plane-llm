@@ -2,7 +2,6 @@ use crate::codec::bedrock::bedrock_response_to_eventstream;
 use crate::codec::ir::{IrBlock, IrResponse, IrRole, IrUsage};
 
 /// A bedrock-ingress ConverseStream request answered by a BUFFERED (non-SSE) 2xx is rewrapped
-
 #[test]
 fn buffered_response_wraps_into_converse_stream_frames() {
     let ir = IrResponse {
@@ -59,7 +58,6 @@ fn buffered_response_wraps_into_converse_stream_frames() {
 }
 
 /// The `IrBlock::ToolUse` arm of `bedrock_response_to_eventstream`
-
 #[test]
 fn buffered_tool_use_wraps_into_converse_stream_tool_frames() {
     let ir = IrResponse {
@@ -125,7 +123,6 @@ fn buffered_tool_use_wraps_into_converse_stream_tool_frames() {
 }
 
 /// A MULTI-block buffered cross-protocol completion (the
-
 #[test]
 fn buffered_multi_block_assigns_distinct_monotonic_content_block_indices() {
     let ir = IrResponse {
@@ -225,7 +222,6 @@ fn buffered_multi_block_assigns_distinct_monotonic_content_block_indices() {
 }
 
 /// A buffered cross-protocol completion whose IR carried a
-
 #[test]
 fn buffered_tool_use_with_absent_stop_reason_defaults_to_tool_use() {
     let ir = IrResponse {
@@ -271,7 +267,6 @@ fn buffered_tool_use_with_absent_stop_reason_defaults_to_tool_use() {
 }
 
 /// The companion to the test above — a TEXT-only completion
-
 #[test]
 fn buffered_text_only_with_absent_stop_reason_defaults_to_end_turn() {
     let ir = IrResponse {
@@ -310,7 +305,6 @@ fn buffered_text_only_with_absent_stop_reason_defaults_to_end_turn() {
 }
 
 /// An EXPLICIT `stop_reason` always wins over the
-
 #[test]
 fn buffered_explicit_stop_reason_overrides_content_default() {
     let ir = IrResponse {

@@ -46,7 +46,6 @@ fn adaptive() -> LaneCaps {
 }
 
 /// BED-10 / IR-16 (buffered): `model_context_window_exceeded` reads as `MaxTokens` PLUS the
-
 #[test]
 fn bed10_context_window_detail_is_read_and_written_buffered() {
     let body = json!({
@@ -80,7 +79,6 @@ fn bed10_context_window_detail_is_read_and_written_buffered() {
 }
 
 /// BED-10 / IR-16 (stream writer + buffered→stream synthesis): the stop-bearing delta carries the
-
 #[test]
 fn bed10_context_window_detail_rides_the_message_stop_frame() {
     let ev = crate::codec::ir::IrStreamEvent::MessageDelta {
@@ -112,7 +110,6 @@ fn bed10_context_window_detail_rides_the_message_stop_frame() {
 }
 
 /// BED-10 / IR-16 and BED-11 (stream reader): the `messageStop` frame's context-window stop and
-
 #[test]
 fn bed10_bed11_stream_stop_detail_and_stop_sequence_are_carried() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -152,7 +149,6 @@ fn bed10_bed11_stream_stop_detail_and_stop_sequence_are_carried() {
 }
 
 /// IR-12: a Converse document's `citations.enabled` and `context` are read into the Media slot and
-
 #[test]
 fn ir12_document_citations_and_context_cross() {
     let body = json!({
@@ -180,7 +176,6 @@ fn ir12_document_citations_and_context_cross() {
 }
 
 /// IR-03: Converse `requestMetadata` reads into the typed metadata, and a foreign caller's metadata
-
 #[test]
 fn ir03_request_metadata_maps_both_ways() {
     let body = json!({
@@ -215,7 +210,6 @@ fn ir03_request_metadata_maps_both_ways() {
 }
 
 /// IR-10: an allowed-tools subset reaches Converse as the listed tools only (the constraint by
-
 #[test]
 fn ir10_allowed_tools_send_only_the_listed_tools() {
     let mut ir = crate::codec::ir::IrRequest {
@@ -248,7 +242,6 @@ fn ir10_allowed_tools_send_only_the_listed_tools() {
 }
 
 /// IR-11 and the request slots with no Converse member: dropped from the wire and REPORTED, so the
-
 #[test]
 fn ir_slots_without_a_converse_member_are_reported_dropped() {
     let ir = crate::codec::ir::IrRequest {
@@ -300,7 +293,6 @@ fn ir_slots_without_a_converse_member_are_reported_dropped() {
 }
 
 /// IR-18: a history reasoning block's signature is attributed from the conversation's model id
-
 #[test]
 fn ir18_signature_origin_is_read_and_a_foreign_signature_is_not_sent() {
     let body = |model: &str| {
@@ -372,7 +364,6 @@ fn ir18_signature_origin_is_read_and_a_foreign_signature_is_not_sent() {
 }
 
 /// A REASONING ASK DOES NOT CROSS INTO OR OUT OF BEDROCK, as in 1.5.5. The writer dropped every
-
 #[test]
 fn a_reasoning_ask_neither_reaches_nor_leaves_bedrock_as_in_1_5_5() {
     let chat = json!({

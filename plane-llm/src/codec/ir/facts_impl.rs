@@ -49,7 +49,6 @@ impl IrFacts for IrRequest {
 }
 
 /// The projection: walk one chat-family IR request into the flat, ordered, protocol-blind item
-
 pub fn project(req: &IrRequest) -> Vec<ContentItem<'_>> {
     let mut out = Vec::new();
     if req.system_folds.is_empty() {
@@ -113,7 +112,6 @@ fn turn<'a>(blocks: &'a [IrBlock], author: &'static str, i: usize, out: &mut Vec
 }
 
 /// The LLM family's author label for a chat role, the exact strings the hook wire has carried. The
-
 fn author_of(role: IrRole) -> &'static str {
     match role {
         IrRole::System => "system",
@@ -124,7 +122,6 @@ fn author_of(role: IrRole) -> &'static str {
 }
 
 /// One level of the block walk. `turn` is `None` for the system slot, where a tool call or result
-
 fn walk<'a>(
     blocks: &'a [IrBlock],
     author: &'static str,

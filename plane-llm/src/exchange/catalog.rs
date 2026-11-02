@@ -8,7 +8,6 @@ use busbar_contract::protocol::ProtocolDecl;
 use crate::codec::DECLS;
 
 /// The path the catalog's detection reads for a `/v1beta` listing: the dialect convention that
-
 const BETA_SNIFF_PATH: &str = "/v1beta/models/";
 /// The path the catalog's detection reads for every other listing.
 const SNIFF_PATH: &str = "/v1/models";
@@ -29,7 +28,6 @@ pub struct ModelsCatalogAnswer {
 }
 
 /// The dialect a listing at `path` answers in, read off the request's head `fields` (lower-case
-
 #[must_use]
 pub fn dialect(path: &str, fields: &[(Vec<u8>, Vec<u8>)]) -> Option<&'static ProtocolDecl> {
     let mut sniff: Vec<(&[u8], &[u8])> = Vec::new();
@@ -62,7 +60,6 @@ pub fn dialect(path: &str, fields: &[(Vec<u8>, Vec<u8>)]) -> Option<&'static Pro
 }
 
 /// RENDER the listing of `names` for a request at `path` with head `fields`: `200`, a JSON body in
-
 #[must_use]
 pub fn render_listing(
     path: &str,

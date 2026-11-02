@@ -8,17 +8,14 @@ use busbar_contract::codec::RequestHandler;
 use busbar_contract::operation::OpVerb;
 
 /// Endpoint paths — each appears on BOTH the egress side (`upstream_path`) and the ingress match
-
 const PATH_RESPONSES: &str = "/v1/responses";
 
 pub struct ResponsesRequestHandler;
 /// This protocol's OWN chat instance — delete this line (and the registry arm) and this
-
 static CHAT: super::super::chat_handle::ChatOperation =
     super::super::chat_handle::ChatOperation(super::VENDOR_NAME);
 
 /// THE RESPONSES API'S ROW OF THE SUPPORT MATRIX — one verb; every other verb is the standard
-
 static CELLS: &[busbar_contract::codec::Cell] = &[(OpVerb::CHAT, &CHAT)];
 
 impl RequestHandler for ResponsesRequestHandler {

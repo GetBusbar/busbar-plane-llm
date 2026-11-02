@@ -105,7 +105,6 @@ pub(super) fn write_bedrock_citation(
 }
 
 /// Read one Converse `Citation` (buffered `citationsContent.citations[]` entry, or streamed
-
 pub(super) fn read_bedrock_citation(c: &serde_json::Value) -> crate::codec::ir::IrCitation {
     let loc = c.get(super::LOCATION);
     let member = |k: &str| loc.and_then(|l| l.get(k)).filter(|v| v.is_object());
@@ -187,7 +186,6 @@ pub(super) fn read_bedrock_citation(c: &serde_json::Value) -> crate::codec::ir::
 }
 
 /// Read a `citationsContent` block (`{content: [{text}], citations: [Citation]}`) into one IR
-
 pub(super) fn read_bedrock_citations_content(v: &serde_json::Value) -> crate::codec::ir::IrBlock {
     let text: String = v
         .get(keys::CONTENT)

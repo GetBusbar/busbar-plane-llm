@@ -24,7 +24,6 @@ fn slab(body: Bytes) -> SlabBytes {
 }
 
 /// The refusal a transcription writer's empty write becomes: a request always carries its model, so
-
 fn unwritable(egress_proto: &str) -> String {
     format!(
         "this request cannot be written onto {egress_proto}: its audio cannot be represented in \
@@ -184,7 +183,6 @@ macro_rules! leaf_handles {
 }
 
 /// A plain foreign transcript has no timing information from which an SRT/VTT document can be
-
 fn transcription_format_refusal(request: &TranscriptionReq, target: &str) -> Option<String> {
     let format = request.response_format.as_deref()?;
     (target != crate::codec::proto_codec::PROTO_OPENAI && matches!(format, "srt" | "vtt"))

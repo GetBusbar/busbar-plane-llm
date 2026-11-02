@@ -7,7 +7,6 @@ use super::*;
 use serde_json::{json, Value};
 
 /// The production REQUEST translate steps (reader -> egress seam -> writer). The egress seam is the
-
 fn xreq(ingress: &'static str, egress: &str, body: &Value) -> Value {
     let ingress_p = crate::codec::proto_codec::protocol_for(ingress).expect("ingress");
     let egress_p = crate::codec::proto_codec::protocol_for(egress).expect("egress");

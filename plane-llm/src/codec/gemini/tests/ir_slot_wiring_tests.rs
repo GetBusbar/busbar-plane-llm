@@ -12,7 +12,6 @@ use crate::codec::ir::{
 use serde_json::{json, Value};
 
 /// A Gemini request read, then put through the cross-protocol seam so `extra` is cleared
-
 fn read_then_seam(body: &Value) -> IrRequest {
     read_then_seam_from("gemini", body)
 }
@@ -65,7 +64,6 @@ fn function_tool(name: &str) -> IrTool {
 }
 
 /// GEM-10 / IR-11 (reader): `googleSearch` / `codeExecution` / `urlContext` are read into the typed
-
 #[test]
 fn gem10_gemini_hosted_tools_read_into_the_typed_slot() {
     let body = json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}],
@@ -101,7 +99,6 @@ fn gem10_gemini_hosted_tools_read_into_the_typed_slot() {
 }
 
 /// GEM-10 / IR-11 (writer): a foreign hosted tool reaches a Gemini backend as its Gemini kind, with
-
 #[test]
 fn ir11_foreign_hosted_tools_write_as_gemini_tools() {
     let mut ir = bare_ir();
@@ -126,7 +123,6 @@ fn ir11_foreign_hosted_tools_write_as_gemini_tools() {
 }
 
 /// GEM-19 / IR-18 (writer): a reasoning signature minted by another family is NOT sent to Gemini as
-
 #[test]
 fn gem19_foreign_signature_is_not_sent_as_thought_signature() {
     let thinking = |sig: &str, origin: Option<IrSignatureOrigin>| IrBlock::Thinking {
@@ -159,7 +155,6 @@ fn gem19_foreign_signature_is_not_sent_as_thought_signature() {
 }
 
 /// IR-17 / IR-18 (reader): a Gemini thought part is a reasoning SUMMARY. A Gemini BACKEND's
-
 #[test]
 fn ir17_ir18_gemini_thought_parts_are_summary_with_gemini_origin() {
     let thinking = |block: &IrBlock| match block {
@@ -198,7 +193,6 @@ fn ir17_ir18_gemini_thought_parts_are_summary_with_gemini_origin() {
 }
 
 /// GEM-16 (reader half): a streamed citation's UTF-8 BYTE offsets become the IR's CHARACTER offsets,
-
 #[test]
 fn gem16_stream_citation_byte_offsets_read_as_characters() {
     let mut state = StreamDecodeState::default();
@@ -236,7 +230,6 @@ fn gem16_stream_citation_byte_offsets_read_as_characters() {
 }
 
 /// IR-03: Gemini `labels` read into the caller-metadata map; the map written back as `labels`, with
-
 #[test]
 fn ir03_labels_carry_as_metadata() {
     let body = json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}],
@@ -269,7 +262,6 @@ fn ir03_labels_carry_as_metadata() {
 }
 
 /// IR-10: `allowedFunctionNames` with more than one name is carried as the IR tool subset (not
-
 #[test]
 fn ir10_allowed_function_names_carry_as_the_tool_subset() {
     let tools = json!([{"functionDeclarations": [
@@ -374,7 +366,6 @@ fn ir09_thinking_budget_zero_carries_no_ask() {
 }
 
 /// IR-09 across the seam: an Anthropic `thinking:{type:"disabled"}` (read as Off) reaches a Gemini
-
 #[test]
 fn ir09_anthropic_thinking_disabled_reaches_gemini_as_off() {
     let body = json!({"model": "claude", "max_tokens": 64, "thinking": {"type": "disabled"},
@@ -405,7 +396,6 @@ fn ir09_anthropic_thinking_disabled_reaches_gemini_as_off() {
 }
 
 /// GEM-10 / IR-11 across the seam: an Anthropic hosted web search / code execution reaches a
-
 #[test]
 fn ir11_anthropic_hosted_tools_reach_gemini() {
     let body = json!({"model": "claude", "max_tokens": 64,
@@ -429,7 +419,6 @@ fn ir11_anthropic_hosted_tools_reach_gemini() {
 }
 
 /// IR-04..07: the slots Gemini has no form for are not written and are reported to the seam. The
-
 #[test]
 fn ir04_to_07_unsupported_slots_are_dropped_and_reported() {
     let mut ir = bare_ir();

@@ -28,15 +28,12 @@ pub struct Dialect {
 }
 
 /// The upstream answer head fields describing the operator's own account or connection, in every
-
 pub const ACCOUNT_RESPONSE_HEADERS: &[&str] = &["set-cookie", "set-cookie2"];
 
 /// The upstream answer head field families reporting the operator's account-wide rate-limit state
-
 pub const ACCOUNT_RESPONSE_PREFIXES: &[&str] = &["x-ratelimit-", "anthropic-ratelimit-"];
 
 /// Whether the answer head field `name` (compared without case) is the operator's account state
-
 #[must_use]
 pub fn account_scoped_response(name: &str) -> bool {
     ACCOUNT_RESPONSE_HEADERS
@@ -51,7 +48,6 @@ pub fn account_scoped_response(name: &str) -> bool {
 const OPENAI_GOVERNED_RESPONSE: &[&str] = &["openai-organization", "openai-project"];
 
 /// What the two dialects of one vendor govern: its credential headers (a bearer, and the key header a
-
 const OPENAI_GOVERNED: &[&str] = &[
     "authorization",
     "api-key",
@@ -60,7 +56,6 @@ const OPENAI_GOVERNED: &[&str] = &[
 ];
 
 /// The `api-key` style's parameters for the dialect whose credentials come in families (its codec's
-
 pub(crate) const KEY_FAMILY_PARAMS: &str = concat!(
     r#"{"header":"x-api-key","#,
     r#""families":[{"prefix":"sk-ant-api","header":"x-api-key","trim_start":true},"#,
@@ -69,7 +64,6 @@ pub(crate) const KEY_FAMILY_PARAMS: &str = concat!(
 );
 
 /// The bearer-presented dialects' parameters (their codecs' `EgressScheme::Static` with no credential
-
 pub(crate) const OPENAI_PARAMS: &str =
     r#"{"families":[],"own":{},"passthrough":{},"protocol":"openai"}"#;
 /// [`OPENAI_PARAMS`] for the responses dialect.
@@ -79,14 +73,12 @@ pub(crate) const RESPONSES_PARAMS: &str =
 pub(crate) const COHERE_PARAMS: &str =
     r#"{"families":[],"own":{},"passthrough":{},"protocol":"cohere"}"#;
 /// The `x-goog-api-key` dialect's parameters (its codec's `EgressScheme::Static`): the operator's and
-
 pub(crate) const GEMINI_PARAMS: &str = concat!(
     r#"{"families":[],"own":{"header":"x-goog-api-key"},"#,
     r#""passthrough":{"header":"x-goog-api-key"},"protocol":"gemini"}"#,
 );
 
 /// The `sigv4` style's parameters for the signed dialect (its codec's `EgressScheme::SigV4`): the
-
 pub(crate) const SIGNED_PARAMS: &str = concat!(
     r#"{"service":"bedrock","content_type":"application/json","#,
     r#""region":{"host_label_after":["bedrock-runtime","bedrock-runtime-fips","bedrock","bedrock-fips"],"#,

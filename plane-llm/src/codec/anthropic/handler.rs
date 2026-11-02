@@ -8,12 +8,10 @@ use busbar_contract::codec::RequestHandler;
 use busbar_contract::operation::OpVerb;
 
 /// Endpoint paths — each appears on BOTH the egress side (`upstream_path`) and the ingress match
-
 const PATH_MESSAGES: &str = "/v1/messages";
 
 pub struct AnthropicRequestHandler;
 /// This protocol's OWN chat instance — delete this line (and the registry arm) and this
-
 static CHAT: super::super::chat_handle::ChatOperation =
     super::super::chat_handle::ChatOperation(super::VENDOR_NAME);
 

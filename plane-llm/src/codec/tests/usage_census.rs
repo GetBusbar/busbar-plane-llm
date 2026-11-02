@@ -11,7 +11,6 @@ use crate::codec::ir::open_class::{OPEN_CLASSES, OPEN_CLASS_COUNT};
 pub(crate) const CLASSES: usize = 4 + OPEN_CLASS_COUNT;
 
 /// The ledgered units, in this order: input, output, cache read, cache write, then every open
-
 pub(crate) type Ledgered = [i64; CLASSES];
 
 /// The index of the input tier in a [`Ledgered`] reading.
@@ -26,7 +25,6 @@ pub(crate) const CW: usize = 3;
 pub(crate) const NONE: Ledgered = [0; CLASSES];
 
 /// The index of open class `class` in a [`Ledgered`] reading; a class the plane does not declare
-
 pub(crate) const fn slot(class: &str) -> usize {
     let mut k = 0;
     while k < OPEN_CLASSES.len() {
@@ -53,7 +51,6 @@ pub(crate) const fn at(slot: usize, n: i64) -> Ledgered {
 }
 
 /// The count members the pinned wire lock of `dialect`
-
 pub(crate) fn lock_counts(dialect: &str, section: &str, prefix: &str) -> Vec<String> {
     let lock_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
         "../testing/llm-conformance/wire/{dialect}.wire.json"
@@ -77,7 +74,6 @@ pub(crate) fn lock_counts(dialect: &str, section: &str, prefix: &str) -> Vec<Str
 }
 
 /// The one ledgered reading of a usage, through BOTH projections a ledger row is built from (the
-
 pub(crate) fn ledgered(u: &TokenUsage) -> Ledgered {
     let n = |x: u64| i64::try_from(x).expect("small fixture");
     let map = tier_usage(u).usage_units;
@@ -146,7 +142,6 @@ pub(crate) fn moved(after: Ledgered, before: Ledgered) -> Ledgered {
 }
 
 /// Project the IR's normalized usage into the neutral name-keyed [`busbar_contract::billing::Usage`]
-
 pub(crate) fn tier_usage(
     u: &busbar_contract::billing::TokenUsage,
 ) -> busbar_contract::billing::Usage {

@@ -10,7 +10,6 @@ use crate::codec::usage_census::{
 };
 
 /// What each Anthropic `usage` count IS, as the move one more of it makes on the ledgered units.
-
 const ANTHROPIC_COUNT_CLASSES: &[(&str, Ledgered)] = &[
     ("input_tokens", at(IN, 1)),
     ("output_tokens", at(OUT, 1)),
@@ -140,7 +139,6 @@ fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {
 }
 
 /// A turn's web searches reach the ledger as `search_units` on every read path, and a turn that ran
-
 #[test]
 fn web_searches_ledger_as_search_units_and_none_is_no_row() {
     let usage = base_usage();
@@ -172,7 +170,6 @@ fn web_searches_ledger_as_search_units_and_none_is_no_row() {
 }
 
 /// A turn's web fetches reach the ledger as exactly one `web_fetch_requests` line on every read
-
 #[test]
 fn web_fetches_ledger_as_web_fetch_requests_on_every_path() {
     let usage = base_usage();

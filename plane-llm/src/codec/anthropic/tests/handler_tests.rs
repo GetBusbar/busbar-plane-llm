@@ -6,7 +6,6 @@
 use super::*;
 
 /// Anthropic serves chat only: `operation_handler` must answer `Some` for `Chat` and `None`
-
 #[test]
 fn operation_handler_serves_chat_only() {
     let h = AnthropicRequestHandler;
@@ -27,7 +26,6 @@ fn operation_handler_serves_chat_only() {
 }
 
 /// A request path ending in `/v1/messages` resolves to `Chat`; anything else resolves to
-
 #[test]
 fn resolve_operation_matches_the_messages_path_only() {
     let h = AnthropicRequestHandler;

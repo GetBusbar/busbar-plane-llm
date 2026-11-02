@@ -204,7 +204,6 @@ pub fn translate(
 }
 
 /// An opaque body bridged at the byte level; `None` falls through to the JSON path, `Err` is the
-
 fn opaque(
     host: &dyn busbar_contract::codec::CodecHost,
     ctx: &WholeCtx<'_>,
@@ -255,7 +254,6 @@ fn opaque(
 }
 
 /// A JSON body translated; `None` when no body could be written, `Err` the far end's dialect
-
 fn json(
     host: &dyn busbar_contract::codec::CodecHost,
     ctx: &WholeCtx<'_>,

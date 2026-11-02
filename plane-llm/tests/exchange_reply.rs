@@ -14,7 +14,6 @@ use busbar_plane_llm::exchange::reply::wire::head_field;
 use serde_json::Value;
 
 /// The codec host these tests hand the plane: a FIXED entropy source and the system clock in whole
-
 struct TestHost;
 
 impl busbar_contract::codec::CodecHost for TestHost {
@@ -24,7 +23,6 @@ impl busbar_contract::codec::CodecHost for TestHost {
     }
 
     /// A FIXED wall clock: a relay stamps `created` from it, and the piece-boundary test compares two
-
     fn wall_clock_now(&self) -> Option<u64> {
         Some(1_700_000_000)
     }
@@ -64,7 +62,6 @@ fn field<'a>(fields: &'a [(String, Vec<u8>)], name: &str) -> Option<&'a [u8]> {
 }
 
 /// A dialect may declare a relayed head field the way its vendor spells it; the caller reads the
-
 #[test]
 fn a_declared_head_field_name_is_lowered_and_an_illegal_one_dropped() {
     let (name, value) = head_field("x-amzn-RequestId", b"req-1").expect("a legal name");
@@ -80,7 +77,6 @@ fn a_declared_head_field_name_is_lowered_and_an_illegal_one_dropped() {
 }
 
 /// The class of a far-end error: a mapped code, the built-in context-length code on a request-size
-
 #[test]
 fn a_far_end_error_is_placed_in_its_class() {
     let em = map(&[
@@ -151,7 +147,6 @@ fn a_far_end_error_is_placed_in_its_class() {
 const JSON_HEAD: &[(&[u8], &[u8])] = &[(b"content-type", b"application/json")];
 
 /// A far-end error judged, for every dialect: a caller's own credential failing is relayed
-
 #[test]
 fn a_far_end_error_is_judged_for_every_pair() {
     let head = JSON_HEAD;
@@ -228,7 +223,6 @@ fn a_far_end_error_is_judged_for_every_pair() {
 }
 
 /// A caller that relays the far end's `x-amzn-*` fields reads them verbatim on a same-dialect
-
 #[test]
 fn a_verbatim_relay_carries_the_native_head_fields() {
     let head: &[(&[u8], &[u8])] = &[
@@ -266,7 +260,6 @@ fn a_verbatim_relay_carries_the_native_head_fields() {
 }
 
 /// BUSBAR IS INVISIBLE ON A SAME-DIALECT ANSWER: every far head field reaches the caller in order,
-
 #[test]
 fn a_verbatim_relay_carries_every_far_field_but_the_governed_ones() {
     let head: &[(&[u8], &[u8])] = &[
@@ -331,7 +324,6 @@ fn letter(dialect: &str) -> char {
 }
 
 /// Every native answer of `dialect` the codec's golden corpus holds: each `resp_X2Y_*.json` is a
-
 pub fn native_answers(dialect: &str) -> Vec<(String, Vec<u8>)> {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/codec/tests/proto/golden");
     let infix = format!("2{}_", letter(dialect));
@@ -370,7 +362,6 @@ fn ctx<'a>(
 }
 
 /// Every far end's native answer, for a caller of every other dialect, is delivered in the
-
 #[test]
 fn a_whole_answer_is_delivered_in_the_callers_dialect() {
     let mut checked = 0;
@@ -415,7 +406,6 @@ fn a_failed_generation_is_a_502_that_keeps_its_usage() {
 }
 
 /// An answer the caller's dialect cannot be written from is a 500 in the caller's envelope; the
-
 #[test]
 fn an_untranslatable_answer_is_the_callers_500() {
     for ingress in SIX {
@@ -436,7 +426,6 @@ fn an_untranslatable_answer_is_the_callers_500() {
 }
 
 /// A caller that asked for a JSON-array stream from a far end that answered one body reads a
-
 #[test]
 fn a_json_array_caller_reads_a_one_element_array() {
     let (_, body) = native_answers("openai")
@@ -504,7 +493,6 @@ fn relay_all(r: &mut Relay, far: &[u8], step: usize) -> Vec<u8> {
 }
 
 /// A far end's native stream of `dialect`: the OpenAI stream above as the translator writes it for
-
 fn native_stream(dialect: &str) -> Vec<u8> {
     let mut ctx = relay_ctx(dialect, "openai", true);
     ctx.client_include_usage = true;
@@ -513,7 +501,6 @@ fn native_stream(dialect: &str) -> Vec<u8> {
 }
 
 /// A same-dialect whole body relays untouched (the far end's own bytes, borrowed) and its usage is
-
 #[test]
 fn a_same_dialect_whole_body_relays_untouched_and_meters() {
     for dialect in SIX {
@@ -550,7 +537,6 @@ fn with_unknown_member(json: &[u8]) -> Vec<u8> {
 }
 
 /// SAME-DIALECT IDENTITY, the answer side (DIALECT FIDELITY; DIALECT-FIDELITY-DESIGN F4): in
-
 #[test]
 fn a_same_dialect_answer_carrying_an_unknown_member_reaches_the_caller_byte_identical() {
     for dialect in SIX {
@@ -599,7 +585,6 @@ fn a_same_dialect_answer_carrying_an_unknown_member_reaches_the_caller_byte_iden
 }
 
 /// A stream from a far end of every dialect reaches a caller of every dialect whole, whatever the
-
 #[test]
 fn a_stream_relays_for_every_pair_whatever_the_piece_boundaries() {
     let mut checked = 0;
@@ -632,7 +617,6 @@ fn a_stream_relays_for_every_pair_whatever_the_piece_boundaries() {
 }
 
 /// A stream cut after its first byte ends on the caller's own in-band error; one cut before any
-
 #[test]
 fn a_cut_stream_ends_on_the_callers_error_frame() {
     for ingress in SIX {
@@ -718,7 +702,6 @@ const AT: At = At {
 };
 
 /// A relayed stream: the caller's head on the first piece with an `Ok`, the bytes as frames
-
 #[test]
 fn a_reply_relays_a_stream_piece_by_piece() {
     let arrived = arrival("openai", true);
@@ -765,7 +748,6 @@ fn a_reply_relays_a_stream_piece_by_piece() {
 }
 
 /// A whole answer: nothing for the caller until the last piece, then the head, the translated
-
 #[test]
 fn a_reply_takes_a_whole_answer_whole() {
     let arrived = arrival("openai", false);
@@ -797,7 +779,6 @@ fn a_reply_takes_a_whole_answer_whole() {
 }
 
 /// A TRANSLATED WHOLE ANSWER BILLS ON AN EARLY LEAVE. The door writes a
-
 #[test]
 fn a_whole_answer_handed_to_the_caller_bills_when_the_caller_leaves_early() {
     let arrived = arrival("openai", false);
@@ -838,7 +819,6 @@ fn a_whole_answer_handed_to_the_caller_bills_when_the_caller_leaves_early() {
 }
 
 /// A far-end error: a client fault is `Hard` with the caller's answer; a transient is `Retry`
-
 #[test]
 fn a_reply_judges_a_far_end_error() {
     let arrived = arrival("openai", false);
@@ -871,7 +851,6 @@ fn a_reply_judges_a_far_end_error() {
 }
 
 /// THE BREAKER'S READING beside the walk's verdict:
-
 #[test]
 fn a_judged_far_end_error_carries_the_breakers_reading_apart_from_its_verdict() {
     use busbar_contract::abi::transport::{FAULT_CALLER, FAULT_HARD, FAULT_NONE, FAULT_TRANSIENT};
@@ -916,7 +895,6 @@ fn a_judged_far_end_error_carries_the_breakers_reading_apart_from_its_verdict() 
 }
 
 /// A cut: a stream after its first byte ends on the caller's error frame, `Hard`, the far end's
-
 #[test]
 fn a_reply_that_is_cut_says_so() {
     let arrived = arrival("openai", true);
@@ -964,7 +942,6 @@ fn stream_drops(caller: &str, far: &str, bytes: &[u8]) -> Vec<String> {
 }
 
 /// The far end's spec-shaped stream of `dialect` (the OpenAI stream itself, or as busbar writes it
-
 fn far_stream(dialect: &str) -> Vec<u8> {
     if dialect == "openai" {
         openai_stream()
@@ -988,7 +965,6 @@ fn a_translated_stream_of_carried_members_drops_nothing() {
 }
 
 /// A member the caller's dialect has no form for is dropped on the one drop path, named by its wire
-
 #[test]
 fn a_translated_stream_names_each_unmapped_path_once() {
     let far = String::from_utf8(openai_stream())
@@ -1030,7 +1006,6 @@ fn a_translated_stream_names_each_unmapped_path_once() {
 }
 
 /// Responses refusal events are mapped content: the actual relay carries each text delta into
-
 #[test]
 fn a_translated_responses_refusal_keeps_its_text_usage_and_has_no_drop() {
     let events = [
@@ -1119,7 +1094,6 @@ fn a_same_dialect_stream_drops_nothing() {
 }
 
 /// The legacy engine's answer tests (`crates/busbar-llm/src/engine/**`), rehomed onto the served
-
 mod rehomed_answers {
     use super::*;
     use std::borrow::Cow;
@@ -1137,7 +1111,6 @@ mod rehomed_answers {
     const EVENTSTREAM: &str = "application/vnd.amazon.eventstream";
 
     /// The host's entropy, so a dialect that mints an id (a request id, a message id) mints one:
-
     struct SevensHost;
 
     impl busbar_contract::codec::CodecHost for SevensHost {
@@ -1152,7 +1125,6 @@ mod rehomed_answers {
     }
 
     /// The handle every exchange and codec call in this module is handed (it shadows the file's
-
     const HOST: &dyn busbar_contract::codec::CodecHost = &SevensHost;
 
     /// A chat request in `dialect`'s own shape.
@@ -1171,7 +1143,6 @@ mod rehomed_answers {
     }
 
     /// The caller's arrival of `request` in `dialect`: a path-model dialect's URL names the model
-
     fn arrived(dialect: &'static str, request: Value, json_array: bool) -> Arrived {
         let stream = request["stream"].as_bool().unwrap_or(false);
         Arrived {
@@ -1274,7 +1245,6 @@ mod rehomed_answers {
     }
 
     /// One answer through the served reply: the far end's `status` and `head`, its body in
-
     fn answer(
         ctx: &ReplyCtx<'_>,
         status: u16,
@@ -1417,7 +1387,6 @@ mod rehomed_answers {
     }
 
     /// A same-dialect whole body in two pieces through a relay that meters nothing (the ungoverned
-
     fn ungoverned_relay(first: &[u8], second: &[u8]) -> (Vec<u8>, relay::End) {
         let mut ctx = relay_ctx("cohere", "cohere", false);
         ctx.meter = false;
@@ -1434,7 +1403,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::ungoverned_same_protocol_cohere_error_split_key_faults_the_breaker`
-
     #[test]
     fn ungoverned_same_protocol_cohere_error_split_key_faults_the_breaker() {
         let tail = split_tail("ERROR");
@@ -1460,7 +1428,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::ungoverned_same_protocol_cohere_complete_split_key_is_no_fault`
-
     #[test]
     fn ungoverned_same_protocol_cohere_complete_split_key_is_no_fault() {
         let tail = split_tail("COMPLETE");
@@ -1484,7 +1451,6 @@ mod rehomed_answers {
     ];
 
     /// DIALECT-FIDELITY F2: a same-dialect 2xx answer carries the far head
-
     #[test]
     fn a_same_dialect_answer_relays_the_upstream_head() {
         let (arrived, lane) = ask("openai", "openai", false);
@@ -1505,7 +1471,6 @@ mod rehomed_answers {
     }
 
     /// A same-dialect 400 `invalid_request_error` reaches the caller with the far head's values
-
     #[test]
     fn a_same_dialect_error_relays_the_upstream_head() {
         let (arrived, lane) = ask("openai", "openai", false);
@@ -1528,7 +1493,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/client_header_forwarding_tests.rs::a_translated_answer_relays_no_upstream_head`
-
     #[test]
     fn a_translated_answer_relays_no_upstream_head() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -1620,7 +1584,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_sse_events_single_data_prefix`
-
     #[test]
     fn test_sse_events_single_data_prefix() {
         let (arrived, lane) = ask("anthropic", "anthropic", true);
@@ -1637,7 +1600,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_stream_inspection_tap_usage_parsing`
-
     #[test]
     fn test_stream_inspection_tap_usage_parsing() {
         let (arrived, lane) = ask("anthropic", "anthropic", true);
@@ -1656,7 +1618,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_forward_once_cross_protocol_auth_kinds_match_main_path`
-
     #[test]
     fn test_forward_once_cross_protocol_auth_kinds_match_main_path() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -1685,7 +1646,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_cross_protocol_stream_openai_lane_to_anthropic_client`
-
     #[test]
     fn test_cross_protocol_stream_openai_lane_to_anthropic_client() {
         let (arrived, lane) = ask("anthropic", "openai", true);
@@ -1711,7 +1671,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_error_kind_mapping`
-
     #[test]
     fn test_cross_protocol_error_kind_mapping() {
         for (status, kind) in [
@@ -1730,7 +1689,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_shape_cross_protocol_error_auth_kinds`
-
     #[test]
     fn test_shape_cross_protocol_error_auth_kinds() {
         let body = br#"{"error":{"message":"nope"}}"#;
@@ -1760,7 +1718,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_ingress_stream_content_type_by_protocol`
-
     #[test]
     fn test_ingress_stream_content_type_by_protocol() {
         for dialect in ["openai", "anthropic", "gemini", "cohere", "responses"] {
@@ -1786,7 +1743,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_response_carries_ingress_ct_and_native_id`
-
     #[test]
     fn test_cross_protocol_response_carries_ingress_ct_and_native_id() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -1817,7 +1773,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_bedrock_ingress_success_carries_amzn_request_id`
-
     #[test]
     fn test_bedrock_ingress_success_carries_amzn_request_id() {
         let (arrived, lane) = ask("bedrock", "openai", false);
@@ -1831,7 +1786,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_ingress_success_carries_request_id_header`
-
     #[test]
     fn test_anthropic_ingress_success_carries_request_id_header() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -1845,7 +1799,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_ingress_stream_carries_request_id_header`
-
     #[test]
     fn test_anthropic_ingress_stream_carries_request_id_header() {
         let (arrived, lane) = ask("anthropic", "anthropic", true);
@@ -1858,7 +1811,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_client_fault_reshapes_error_envelope`
-
     #[test]
     fn test_cross_protocol_client_fault_reshapes_error_envelope() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -1891,7 +1843,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_same_proto_error_relays_upstream_request_id_verbatim_once`
-
     #[test]
     fn test_anthropic_same_proto_error_relays_upstream_request_id_verbatim_once() {
         let (arrived, lane) = ask("anthropic", "anthropic", false);
@@ -1912,7 +1863,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_same_proto_passthrough_401_relays_request_id_verbatim_once`
-
     #[test]
     fn test_anthropic_same_proto_passthrough_401_relays_request_id_verbatim_once() {
         let (arrived, lane) = ask("anthropic", "anthropic", false);
@@ -1940,7 +1890,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_bedrock_converse_stream_buffered_cross_protocol_emits_binary_eventstream`
-
     #[test]
     fn test_bedrock_converse_stream_buffered_cross_protocol_emits_binary_eventstream() {
         let (arrived, lane) = ask("bedrock", "openai", true);
@@ -1967,7 +1916,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_gemini_json_array_buffered_cross_protocol_emits_one_element_array`
-
     #[test]
     fn test_gemini_json_array_buffered_cross_protocol_emits_one_element_array() {
         let body = chat_completion("Hi");
@@ -1986,7 +1934,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_gemini_json_array_buffered_via_forward_once_matches_primary`
-
     #[test]
     fn test_gemini_json_array_buffered_via_forward_once_matches_primary() {
         let arrived = arrived("gemini", chat_request("gemini", true), true);
@@ -2007,7 +1954,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_non_gemini_stream_buffered_cross_protocol_stays_a_plain_object_not_an_array`
-
     #[test]
     fn test_non_gemini_stream_buffered_cross_protocol_stays_a_plain_object_not_an_array() {
         let (arrived, lane) = ask("openai", "anthropic", true);
@@ -2032,7 +1978,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_converse_routes_and_returns_json`
-
     #[test]
     fn test_bedrock_converse_routes_and_returns_json() {
         let (arrived, lane) = ask("bedrock", "openai", false);
@@ -2054,7 +1999,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_converse_stream_returns_binary_eventstream`
-
     #[test]
     fn test_bedrock_converse_stream_returns_binary_eventstream() {
         let (arrived, lane) = ask("bedrock", "openai", true);
@@ -2084,7 +2028,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_same_protocol_stream_passthrough_forwards_upstream_request_id`
-
     #[test]
     fn test_bedrock_same_protocol_stream_passthrough_forwards_upstream_request_id() {
         let (arrived, lane) = ask("bedrock", "bedrock", true);
@@ -2132,7 +2075,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_same_protocol_converse_non_stream_forwards_upstream_request_id`
-
     #[test]
     fn test_bedrock_same_protocol_converse_non_stream_forwards_upstream_request_id() {
         let (arrived, lane) = ask("bedrock", "bedrock", false);
@@ -2160,7 +2102,6 @@ mod rehomed_answers {
     }
 
     /// The checks every bedrock caller's cut stream answers to: pure binary frames, nothing left
-
     fn assert_binary_exception_tail(read: &Read) {
         let body = &read.body;
         assert!(
@@ -2177,7 +2118,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_same_protocol_stream_mid_stream_transport_error_appends_binary_exception`
-
     #[test]
     fn test_bedrock_same_protocol_stream_mid_stream_transport_error_appends_binary_exception() {
         let (arrived, lane) = ask("bedrock", "bedrock", true);
@@ -2198,7 +2138,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_ingress_mid_stream_transport_error_appends_binary_exception`
-
     #[test]
     fn test_bedrock_ingress_mid_stream_transport_error_appends_binary_exception() {
         let (arrived, lane) = ask("bedrock", "openai", true);
@@ -2217,7 +2156,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_openai_ingress_mid_stream_transport_error_appends_native_sse`
-
     #[test]
     fn test_openai_ingress_mid_stream_transport_error_appends_native_sse() {
         let (arrived, lane) = ask("openai", "openai", true);
@@ -2231,7 +2169,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_stream_generate_content_alt_sse_is_event_stream`
-
     #[test]
     fn test_gemini_stream_generate_content_alt_sse_is_event_stream() {
         let (arrived, lane) = ask("gemini", "openai", true);
@@ -2252,7 +2189,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_alt_sse_mid_stream_transport_error_appends_native_sse_frame`
-
     #[test]
     fn test_gemini_alt_sse_mid_stream_transport_error_appends_native_sse_frame() {
         let (arrived, lane) = ask("gemini", "openai", true);
@@ -2274,7 +2210,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_json_array_mid_stream_error_closes_array_no_sse`
-
     #[test]
     fn test_gemini_json_array_mid_stream_error_closes_array_no_sse() {
         let arrived = arrived("gemini", chat_request("gemini", true), true);
@@ -2303,7 +2238,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_anthropic_cross_protocol_message_start_full_skeleton`
-
     #[test]
     fn test_anthropic_cross_protocol_message_start_full_skeleton() {
         let (arrived, lane) = ask("anthropic", "openai", true);
@@ -2337,7 +2271,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_passthrough_401_cross_protocol_reshaped_to_ingress`
-
     #[test]
     fn test_passthrough_401_cross_protocol_reshaped_to_ingress() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -2361,7 +2294,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_openai_ingress_stream_emits_native_openai_frames`
-
     #[test]
     fn test_openai_ingress_stream_emits_native_openai_frames() {
         let (arrived, lane) = ask("openai", "openai", true);
@@ -2392,7 +2324,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_cohere_ingress_stream_emits_native_cohere_frames`
-
     #[test]
     fn test_cohere_ingress_stream_emits_native_cohere_frames() {
         let (arrived, lane) = ask("cohere", "openai", true);
@@ -2423,7 +2354,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_responses_ingress_stream_emits_native_responses_events`
-
     #[test]
     fn test_responses_ingress_stream_emits_native_responses_events() {
         let (arrived, lane) = ask("responses", "openai", true);
@@ -2458,7 +2388,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_cohere_ingress_mid_stream_transport_error_appends_native_sse`
-
     #[test]
     fn test_cohere_ingress_mid_stream_transport_error_appends_native_sse() {
         let (arrived, lane) = ask("cohere", "openai", true);
@@ -2481,7 +2410,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_responses_ingress_mid_stream_transport_error_appends_response_failed`
-
     #[test]
     fn test_responses_ingress_mid_stream_transport_error_appends_response_failed() {
         let (arrived, lane) = ask("responses", "openai", true);
@@ -2505,7 +2433,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_mid_stream_generic_detail_has_no_leak_markers`
-
     #[test]
     fn test_mid_stream_generic_detail_has_no_leak_markers() {
         const LEAK_MARKERS: &[&str] = &[
@@ -2580,7 +2507,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_bedrock_ingress_mid_stream_error_is_binary_exception_frame`
-
     #[test]
     fn test_bedrock_ingress_mid_stream_error_is_binary_exception_frame() {
         let crc = crc32fast::hash;
@@ -2611,7 +2537,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_sse_ingress_mid_stream_error_uses_native_framing`
-
     #[test]
     fn test_sse_ingress_mid_stream_error_uses_native_framing() {
         for dialect in ["openai", "cohere", "gemini"] {
@@ -2671,7 +2596,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_client_fault_kind_mapping`
-
     #[test]
     fn test_client_fault_kind_mapping() {
         assert_eq!(
@@ -2685,7 +2609,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_extract_error_message`
-
     #[test]
     fn test_extract_error_message() {
         assert_eq!(
@@ -2701,7 +2624,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_is_stream_content_type`
-
     #[test]
     fn test_is_stream_content_type() {
         assert!(wire::is_stream_content_type("text/event-stream"));
@@ -2714,7 +2636,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/wire_tests.rs::unknown_ingress_mid_stream_error_is_a_bare_data_frame_from_core`
-
     #[test]
     fn unknown_ingress_mid_stream_error_is_a_bare_data_frame_from_core() {
         let text = String::from_utf8(wire::mid_stream_error_bytes(
@@ -2742,7 +2663,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/wire_tests.rs::status_word_golden_engine_client_fault_kind`
-
     #[test]
     fn status_word_golden_engine_client_fault_kind() {
         let golden: [(StatusClass, &str); 9] = [
@@ -2762,7 +2682,6 @@ mod rehomed_answers {
     }
 
     /// The breaker's class rule (`busbar-kernel-breaker` `classify::normalize_raw_error`, 1.5.5's),
-
     fn breaker_rule(
         raw: &RawUpstreamError,
         error_map: &HashMap<String, String>,
@@ -2818,7 +2737,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/plane_reply_parity_tests.rs::the_planes_class_rule_is_the_breakers`
-
     #[test]
     fn the_planes_class_rule_is_the_breakers() {
         let maps: Vec<HashMap<String, String>> = vec![
@@ -2890,7 +2808,6 @@ mod rehomed_answers {
     ];
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/plane_reply_parity_tests.rs::a_far_end_error_reads_the_same_through_the_plane`
-
     #[test]
     fn a_far_end_error_reads_the_same_through_the_plane() {
         let fixtures: [(u16, &[u8], Option<&str>); 3] = [
@@ -2985,7 +2902,6 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/plane_reply_parity_tests.rs::a_far_end_errors_relay_is_the_engines`
-
     #[test]
     fn a_far_end_errors_relay_is_the_engines() {
         let body = br#"{"error":{"message":"slow down"}}"#;
@@ -3030,11 +2946,9 @@ mod rehomed_answers {
 }
 
 /// The far end's one content chunk before its connection dropped (an OpenAI chat stream), as the
-
 const CUT_FIRST: &[u8] = b"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"},\"finish_reason\":null}]}\n\n";
 
 /// THE BYTES 1.5.5 ENDED A CUT STREAM WITH, per caller dialect: recorded 2026-10-13 from the
-
 const CUT_1_5_5: &[(&str, bool, &[u8])] = &[
     ("openai", false, b"data: {\"error\":{\"code\":null,\"message\":\"The response stream was interrupted.\",\"param\":null,\"type\":\"server_error\"}}\n\n"),
     ("anthropic", false, b"event: error\ndata: {\"error\":{\"message\":\"The response stream was interrupted.\",\"type\":\"api_error\"},\"type\":\"error\"}\n\n"),
@@ -3059,7 +2973,6 @@ const S6_RESPONSE_MEMBERS: &[&str] = &[
 ];
 
 /// A Responses `response.failed` frame as 1.5.5's recording is compared to it: its event name and
-
 fn without_run_ids(frame: &[u8]) -> (Vec<u8>, Value) {
     let text = std::str::from_utf8(frame).expect("text");
     let (event, data) = text.split_once("\ndata: ").expect("an event and its data");
@@ -3097,7 +3010,6 @@ fn assert_run_ids(frame: &[u8]) {
 }
 
 /// A STREAM CUT AFTER ITS FIRST BYTE ENDS IN 1.5.5'S BYTES, for every caller dialect: the in-band error 1.5.5 wrote, in
-
 #[test]
 fn a_stream_cut_after_its_first_byte_ends_in_1_5_5s_bytes_for_every_caller_dialect() {
     let hex = |s: &str| -> Vec<u8> {
@@ -3202,7 +3114,6 @@ fn a_responses_stream_that_fails_bills_no_tokens_and_agrees_with_its_buffered_tw
 }
 
 /// A top-level upstream error keeps native frames byte-identical while marking the exchange
-
 #[test]
 fn a_responses_streams_top_level_error_event_fails_the_exchange_without_changing_native_bytes() {
     let mut arrived = arrival("responses", true);
@@ -3239,7 +3150,6 @@ fn a_responses_streams_top_level_error_event_fails_the_exchange_without_changing
 }
 
 /// The legacy engine's tests that pin what an answer bills (`crates/busbar-llm/src/engine/**`),
-
 mod rehomed_metering {
     use super::*;
     use std::borrow::Cow;
@@ -3270,7 +3180,6 @@ mod rehomed_metering {
     }
 
     /// The caller's arrival of `request` for `operation` in `dialect` (`None`: a body that is not
-
     fn arrived_for(
         dialect: &'static str,
         operation: OpVerb,
@@ -3404,7 +3313,6 @@ mod rehomed_metering {
     }
 
     /// One answer through the served reply: the far end's `status` and `head`, its body in
-
     fn answer(
         ctx: &ReplyCtx<'_>,
         status: u16,
@@ -3462,7 +3370,6 @@ mod rehomed_metering {
     }
 
     /// A gemini event stream: a text chunk, then the terminal chunk with `finish_reason`,
-
     fn gemini_stream(finish_reason: &str) -> Vec<u8> {
         let first = json!({"candidates": [{"index": 0,
             "content": {"role": "model", "parts": [{"text": "x"}]}}]});
@@ -3475,7 +3382,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::buffered_cohere_error_is_an_error_a_breaker_fault_and_charges_10_5`
-
     #[test]
     fn buffered_cohere_error_is_an_error_a_breaker_fault_and_charges_10_5() {
         let (arrived, lane) = ask("openai", "cohere", false);
@@ -3499,7 +3405,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::buffered_cohere_complete_is_a_success_and_charges_10_5`
-
     #[test]
     fn buffered_cohere_complete_is_a_success_and_charges_10_5() {
         let (arrived, lane) = ask("openai", "cohere", false);
@@ -3515,7 +3420,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::same_protocol_cohere_error_relays_verbatim_faults_the_breaker_and_charges_10_5`
-
     #[test]
     fn same_protocol_cohere_error_relays_verbatim_faults_the_breaker_and_charges_10_5() {
         let (arrived, lane) = ask("cohere", "cohere", false);
@@ -3534,7 +3438,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::same_protocol_cohere_complete_is_a_success_and_charges_10_5`
-
     #[test]
     fn same_protocol_cohere_complete_is_a_success_and_charges_10_5() {
         let (arrived, lane) = ask("cohere", "cohere", false);
@@ -3549,7 +3452,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::streamed_gemini_malformed_function_call_is_an_error_frame_a_breaker_fault_and_charges`
-
     #[test]
     fn streamed_gemini_malformed_function_call_is_an_error_frame_a_breaker_fault_and_charges() {
         let (arrived, lane) = ask("openai", "gemini", true);
@@ -3565,7 +3467,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::streamed_gemini_stop_is_a_success_and_charges`
-
     #[test]
     fn streamed_gemini_stop_is_a_success_and_charges() {
         let (arrived, lane) = ask("openai", "gemini", true);
@@ -3581,7 +3482,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/engine_tests/crossproto_delivery_billing_tests.rs::delivered_cross_protocol_response_bills_once`
-
     #[test]
     fn delivered_cross_protocol_response_bills_once() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -3603,7 +3503,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/engine_tests/crossproto_delivery_billing_tests.rs::ingress_unsupported_404_does_not_charge`
-
     #[test]
     fn ingress_unsupported_404_does_not_charge() {
         let body = br#"{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2,0.3]}],"model":"text-embedding-3-small","usage":{"prompt_tokens":42}}"#;
@@ -3624,7 +3523,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/engine_tests/crossproto_delivery_billing_tests.rs::untranslatable_500_does_not_charge`
-
     #[test]
     fn untranslatable_500_does_not_charge() {
         let body: &[u8] = &[
@@ -3643,7 +3541,6 @@ mod rehomed_metering {
     const EMPTY_CHOICES: &[u8] = br#"{"id":"chatcmpl-EMPTY","object":"chat.completion","created":1234567890,"model":"glm-4.5","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}"#;
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_once_pool_cell_tests.rs::test_forward_once_untranslatable_2xx_refunds_budget_and_trips_breaker`
-
     #[test]
     fn test_forward_once_untranslatable_2xx_refunds_budget_and_trips_breaker() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -3660,7 +3557,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_untranslatable_2xx_refunds_budget_and_trips_breaker`
-
     #[test]
     fn test_untranslatable_2xx_refunds_budget_and_trips_breaker() {
         let answered = whole::translate(
@@ -3681,7 +3577,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_openai_ingress_single_model_anthropic_response_translated`
-
     #[test]
     fn test_openai_ingress_single_model_anthropic_response_translated() {
         let (arrived, lane) = ask("openai", "anthropic", false);
@@ -3700,7 +3595,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_same_protocol_nonstream_multichunk_counts_usage`
-
     #[test]
     fn test_same_protocol_nonstream_multichunk_counts_usage() {
         let (arrived, lane) = ask("openai", "openai", false);
@@ -3721,7 +3615,6 @@ mod rehomed_metering {
     }
 
     /// How many times the usage tap's copy of a same-dialect chat body, fed in 512-byte pieces under
-
     fn truncations(body: &[u8], cap: usize) -> usize {
         let mut ctx = super::relay_ctx("openai", "openai", false);
         ctx.translate_cap = cap;
@@ -3732,7 +3625,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_same_protocol_nonstream_over_cap_body_bills_no_trailing_usage_as_in_1_5_5`
-
     #[test]
     fn a_same_dialect_body_past_the_cap_bills_no_trailing_usage_as_in_1_5_5() {
         const CAP: usize = 4096;
@@ -3756,7 +3648,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_truncated_beyond_recovery_bills_no_floor_as_in_1_5_5`
-
     #[test]
     fn a_same_dialect_body_truncated_past_the_cap_bills_no_floor_as_in_1_5_5() {
         const CAP: usize = 4096;
@@ -3779,7 +3670,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_stream_delivers_trailing_usage_gemini_json_array`
-
     #[test]
     fn test_cross_protocol_stream_delivers_trailing_usage_gemini_json_array() {
         let arrived = arrived_for(
@@ -3810,7 +3700,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_stream_delivers_trailing_usage_anthropic_sse`.
-
     #[test]
     fn a_chat_streams_trailing_usage_reaches_an_anthropic_callers_terminal_message_delta() {
         let (arrived, lane) = ask("anthropic", "openai", true);
@@ -3835,7 +3724,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_mid_stream_transport_error_does_not_bill_partial_usage`
-
     #[test]
     fn rehomed_mid_stream_transport_error_does_not_bill_partial_usage() {
         let (arrived, lane) = ask("openai", "anthropic", true);
@@ -3860,7 +3748,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_bedrock_to_gemini_carries_total_tokens_and_response_id`
-
     #[test]
     fn test_cross_protocol_bedrock_to_gemini_carries_total_tokens_and_response_id() {
         let (arrived, lane) = ask("gemini", "bedrock", false);
@@ -3901,7 +3788,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_nonstream_over_cap_body_returns_500_uncharged`
-
     #[test]
     fn rehomed_cross_protocol_nonstream_over_cap_body_returns_500_uncharged() {
         const CAP: usize = 4096;
@@ -3942,7 +3828,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_streaming_translate_abort_trips_breaker_and_skips_billing`
-
     #[test]
     fn rehomed_streaming_translate_abort_trips_breaker_and_skips_billing() {
         let (arrived, lane) = ask("anthropic", "openai", true);
@@ -3967,7 +3852,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cancel_drop_bills_partial_tokens`
-
     #[test]
     fn rehomed_cancel_drop_bills_partial_tokens() {
         let (arrived, lane) = ask("anthropic", "openai", true);
@@ -3981,7 +3865,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cancel_drop_bills_streamed_tokens_on_aborted_translate`
-
     #[test]
     fn test_cancel_drop_bills_streamed_tokens_on_aborted_translate() {
         let (arrived, lane) = ask("anthropic", "openai", true);
@@ -3997,7 +3880,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/plane_reply_parity_tests.rs::a_cut_stream_reads_the_same_through_the_plane`
-
     #[test]
     fn a_cut_stream_reads_the_same_through_the_plane() {
         use busbar_plane_llm::exchange::reply::wire;
@@ -4116,7 +3998,6 @@ mod rehomed_metering {
     }
 
     /// The far end's answer, in `far`'s dialect, to a stream request: its content type and bytes,
-
     fn upstream_answer(far: &str, stream: bool) -> (&'static str, Vec<u8>) {
         let usage_chat = json!({"prompt_tokens": IN_TOK, "completion_tokens": OUT_TOK,
             "total_tokens": IN_TOK + OUT_TOK});
@@ -4323,7 +4204,6 @@ mod rehomed_metering {
     }
 
     /// One `stream: true` responses request answered by a far end of `far` (a native stream when
-
     fn responses_case(far: &'static str, stream: bool) {
         let label = format!("responses<-{far} (stream: {stream})");
         let (content_type, body) = upstream_answer(far, stream);
@@ -4400,84 +4280,72 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_anthropic_stream`
-
     #[test]
     fn responses_stream_over_anthropic_stream() {
         responses_case("anthropic", true);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_anthropic_buffered`
-
     #[test]
     fn responses_stream_over_anthropic_buffered() {
         responses_case("anthropic", false);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_openai_stream`
-
     #[test]
     fn responses_stream_over_openai_stream() {
         responses_case("openai", true);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_openai_buffered`
-
     #[test]
     fn responses_stream_over_openai_buffered() {
         responses_case("openai", false);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_cohere_stream`
-
     #[test]
     fn responses_stream_over_cohere_stream() {
         responses_case("cohere", true);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_cohere_buffered`
-
     #[test]
     fn responses_stream_over_cohere_buffered() {
         responses_case("cohere", false);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_gemini_stream`
-
     #[test]
     fn responses_stream_over_gemini_stream() {
         responses_case("gemini", true);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_gemini_buffered`
-
     #[test]
     fn responses_stream_over_gemini_buffered() {
         responses_case("gemini", false);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_bedrock_stream`
-
     #[test]
     fn responses_stream_over_bedrock_stream() {
         responses_case("bedrock", true);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_bedrock_buffered`
-
     #[test]
     fn responses_stream_over_bedrock_buffered() {
         responses_case("bedrock", false);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_responses_stream`
-
     #[test]
     fn responses_stream_over_responses_stream() {
         responses_case("responses", true);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_responses_buffered`
-
     #[test]
     fn responses_stream_over_responses_buffered() {
         responses_case("responses", false);
@@ -4490,7 +4358,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/unreadable_usage_floor_tests.rs::buffered_relay_refused_usage_bills_the_floor_not_zero`
-
     #[test]
     fn buffered_relay_refused_usage_bills_only_the_readable_counts() {
         let (arrived, lane) = ask("anthropic", "anthropic", false);
@@ -4512,7 +4379,6 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/unreadable_usage_floor_tests.rs::stream_refused_usage_bills_the_floor_not_zero`
-
     #[test]
     fn stream_refused_usage_bills_only_the_readable_counts() {
         let (arrived, lane) = ask("openai", "openai", true);
@@ -4638,7 +4504,6 @@ mod rehomed_metering {
     }
 
     /// One answer read to its end in one far-end piece: the reply (for its cancel reading) and
-
     fn ended(ctx: &ReplyCtx<'_>, head: &[(&[u8], &[u8])], far: &[u8]) -> (Reply, Piece<'static>) {
         let mut reply = Reply::new(HOST, ctx, 200, head);
         let end = owned(reply.feed(HOST, ctx, far, true, AT));
@@ -4647,7 +4512,6 @@ mod rehomed_metering {
     }
 
     /// A RELAYED END THAT BILLS ITS UNITS BILLS THEM WHEN THE CALLER LEAVES DURING ITS LAST WINDOW
-
     #[test]
     fn a_relayed_end_that_bills_bills_when_the_caller_leaves_during_its_last_window() {
         let (arrived, lane) = ask("cohere", "cohere", false);
@@ -4721,7 +4585,6 @@ mod rehomed_metering {
     }
 
     /// ZERO HOST CALLS PER CHUNK (`on_piece`). The door reads the host's
-
     #[test]
     fn only_the_last_piece_of_a_whole_answer_reads_the_time() {
         let (arrived, lane) = ask("openai", "cohere", false);
@@ -4754,7 +4617,6 @@ mod rehomed_metering {
 }
 
 /// A TRANSLATED STREAM IS TIMED ON THE HOST'S ONE CLOCK. A Bedrock caller's
-
 #[test]
 fn a_translated_stream_is_timed_on_the_hosts_clock() {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -4792,7 +4654,6 @@ fn a_translated_stream_is_timed_on_the_hosts_clock() {
 }
 
 /// AN OPENAI FAR END'S WHOLE ANSWER READS AS AN ANTHROPIC MESSAGE: an anthropic caller served by an
-
 #[test]
 fn an_openai_whole_answer_reads_as_an_anthropic_message_naming_the_serving_model() {
     let far = br#"{"object":"chat.completion","model":"glm-4.5","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":3}}"#;
@@ -4932,7 +4793,6 @@ fn malformed_rerank_retains_full_billing_variants_and_units() {
 type Banners = Vec<(String, Option<String>)>;
 
 /// Every `diag` banner, and every uncoded line carrying an `error_map_value` (by its message), with
-
 fn banners_of(f: impl FnOnce()) -> Banners {
     use std::sync::{Arc, Mutex};
     use tracing::field::{Field, Visit};
@@ -4984,7 +4844,6 @@ fn banners_of(f: impl FnOnce()) -> Banners {
 }
 
 /// A provider `error_map` entry that names no status class is ignored, and the operator is told so
-
 #[test]
 fn an_error_map_class_that_names_no_class_is_reported_once() {
     let em = map(&[

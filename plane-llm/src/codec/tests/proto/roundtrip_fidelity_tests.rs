@@ -15,7 +15,6 @@ use serde_json::{json, Value};
 struct Divergence(String);
 
 /// Recursively diff `got` against `want`, appending one [`Divergence`] per differing leaf.
-
 fn diff(path: &str, want: &Value, got: &Value, out: &mut Vec<Divergence>) {
     match (want, got) {
         (Value::Object(w), Value::Object(g)) => {
@@ -174,7 +173,6 @@ fn roundtrip_anthropic_response() {
 }
 
 /// The 5m/1h cache-creation TIER SPLIT survives a round trip.
-
 #[test]
 fn anthropic_cache_tier_split_survives_the_ir() {
     let entry = crate::codec::proto_codec::protocol_for("anthropic").expect("anthropic");
@@ -231,7 +229,6 @@ fn roundtrip_openai_request() {
 }
 
 /// An OpenAI `input_audio` / `file` attachment survives read → write instead of becoming
-
 #[test]
 fn openai_attachments_survive_the_ir_rather_than_becoming_empty_text() {
     let entry = crate::codec::proto_codec::protocol_for("openai").expect("openai");
@@ -332,7 +329,6 @@ fn openai_reasoning_tokens_reach_the_ir() {
 }
 
 /// A Gemini `inlineData` of a NON-image mime type must NOT become an `IrBlock::Image`.
-
 #[test]
 fn gemini_non_image_inline_data_is_not_an_image_block() {
     let entry = crate::codec::proto_codec::protocol_for("gemini").expect("gemini");
@@ -398,7 +394,6 @@ fn gemini_non_image_inline_data_is_not_an_image_block() {
 }
 
 /// A non-image attachment reaches a Gemini backend as native `inlineData` rather than vanishing.
-
 #[test]
 fn attachments_reach_gemini_as_inline_data() {
     let openai = crate::codec::proto_codec::protocol_for("openai").expect("openai");
@@ -441,7 +436,6 @@ fn roundtrip_bedrock_request() {
 }
 
 /// A Bedrock `document` / `video` block reaches the IR (cross-protocol) AND is re-emitted verbatim
-
 #[test]
 fn bedrock_document_is_modelled_without_double_emitting() {
     let entry = crate::codec::proto_codec::protocol_for("bedrock").expect("bedrock");
@@ -475,7 +469,6 @@ fn bedrock_document_is_modelled_without_double_emitting() {
 }
 
 /// Cohere's `message.tool_plan` must NOT be promoted into visible assistant text.
-
 #[test]
 fn cohere_tool_plan_is_reasoning_not_visible_text() {
     let entry = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
@@ -533,7 +526,6 @@ fn cohere_tool_plan_is_reasoning_not_visible_text() {
 }
 
 /// A Cohere tool-result `document` content part must keep its STRUCTURE instead of being stringified
-
 #[test]
 fn cohere_tool_result_document_is_not_stringified() {
     let entry = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
@@ -577,7 +569,6 @@ fn cohere_tool_result_document_is_not_stringified() {
 }
 
 /// Cohere's `billed_units.search_units` is a SEPARATELY BILLED unit that no token field can carry —
-
 #[test]
 fn cohere_search_units_reach_the_ir() {
     let entry = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
@@ -666,7 +657,6 @@ fn responses_reasoning_tokens_are_not_zeroed() {
 }
 
 /// Gemini's `thoughtsTokenCount` is the reasoning sub-bucket, and recording it must not move any
-
 #[test]
 fn gemini_thoughts_token_count_is_the_reasoning_sub_bucket() {
     let entry = crate::codec::proto_codec::protocol_for("gemini").expect("gemini");
@@ -694,7 +684,6 @@ fn gemini_thoughts_token_count_is_the_reasoning_sub_bucket() {
 }
 
 /// A streamed citation reaches an OpenAI-ingress client instead of vanishing.
-
 #[test]
 fn streamed_citations_reach_openai_and_cohere_clients() {
     let citation = crate::codec::ir::IrCitation {
@@ -760,7 +749,6 @@ fn streamed_citations_reach_openai_and_cohere_clients() {
 }
 
 /// A Cohere backend's grounding citations reach a foreign-dialect client.
-
 #[test]
 fn cohere_response_citations_reach_a_foreign_client() {
     let cohere = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
@@ -818,7 +806,6 @@ fn cohere_response_citations_reach_a_foreign_client() {
 }
 
 /// An Anthropic `search_result` block's retrieved passages reach a foreign client.
-
 #[test]
 fn anthropic_search_result_reaches_a_foreign_client() {
     let anthropic = crate::codec::proto_codec::protocol_for("anthropic").expect("anthropic");
@@ -891,7 +878,6 @@ fn anthropic_search_result_reaches_a_foreign_client() {
 }
 
 /// A streamed citation reaches a BEDROCK-ingress client.
-
 #[test]
 fn streamed_citations_reach_a_bedrock_client() {
     let ev = crate::codec::ir::IrStreamEvent::BlockDelta {
@@ -926,7 +912,6 @@ fn streamed_citations_reach_a_bedrock_client() {
 }
 
 /// A page-located citation must not be mislabelled as a character offset on a Bedrock egress.
-
 #[test]
 fn bedrock_citation_omits_a_location_it_cannot_honestly_fill() {
     let ev = crate::codec::ir::IrStreamEvent::BlockDelta {
@@ -960,7 +945,6 @@ fn bedrock_citation_omits_a_location_it_cannot_honestly_fill() {
 }
 
 /// A Gemini Google-Search-grounded answer's SOURCES reach a foreign client.
-
 #[test]
 fn gemini_grounding_metadata_reaches_a_foreign_client() {
     let gemini = crate::codec::proto_codec::protocol_for("gemini").expect("gemini");
@@ -1047,7 +1031,6 @@ fn assert_unrepresentable_anthropic_citation_is_audited(
 }
 
 /// A grounded answer with sources but NO support spans still carries its sources.
-
 #[test]
 fn gemini_grounding_chunks_cross_without_support_spans() {
     let gemini = crate::codec::proto_codec::protocol_for("gemini").expect("gemini");
@@ -1080,7 +1063,6 @@ fn gemini_grounding_chunks_cross_without_support_spans() {
 }
 
 /// `tools[].strict` crosses the OpenAI Chat ↔ Responses pair, in both directions.
-
 #[test]
 fn tool_strict_crosses_the_openai_responses_pair() {
     let openai = crate::codec::proto_codec::protocol_for("openai").expect("openai");
@@ -1136,7 +1118,6 @@ fn tool_strict_crosses_the_openai_responses_pair() {
 }
 
 /// OpenAI `messages[].name` survives a same-protocol re-serialize, and never leaks its sentinel.
-
 #[test]
 fn openai_message_name_survives_a_same_protocol_reserialize() {
     let openai = crate::codec::proto_codec::protocol_for("openai").expect("openai");
@@ -1167,7 +1148,6 @@ fn openai_message_name_survives_a_same_protocol_reserialize() {
 }
 
 /// Usage sub-buckets survive on the STREAMING path, not only the buffered one.
-
 #[test]
 fn streamed_usage_sub_buckets_are_not_zeroed() {
     let openai = crate::codec::proto_codec::protocol_for("openai").expect("openai");
@@ -1285,7 +1265,6 @@ fn streamed_anthropic_cache_tiers_survive() {
 }
 
 /// Cohere's separately-billed `search_units` survive a STREAM.
-
 #[test]
 fn streamed_cohere_search_units_survive() {
     let cohere = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
@@ -1338,7 +1317,6 @@ fn streamed_cohere_search_units_survive() {
 }
 
 /// A BUFFERED response's citations reach a Bedrock client too, not only a streamed one.
-
 #[test]
 fn buffered_citations_reach_a_bedrock_client() {
     let cohere = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
@@ -1382,7 +1360,6 @@ fn buffered_citations_reach_a_bedrock_client() {
 }
 
 /// A text block with NO citations keeps the plain `{"text": …}` shape.
-
 #[test]
 fn bedrock_uncited_text_keeps_the_plain_shape() {
     let bedrock = crate::codec::proto_codec::protocol_for("bedrock").expect("bedrock");

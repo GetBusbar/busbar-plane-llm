@@ -10,7 +10,6 @@ use crate::codec::DECLS;
 use crate::options::{self, SetOption};
 
 /// The provider `auth:` overrides that present under a scheme of their own, not the dialect's, so
-
 const AUTH_API_KEY: &str = "api-key";
 /// See [`AUTH_API_KEY`].
 const AUTH_JWT_BEARER: &str = "jwt-bearer";
@@ -246,7 +245,6 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
 }
 
 /// The capabilities a far end accepts for `wire_model`: the provider's switches, then the first
-
 fn lane_caps(p: &ProviderCfg, wire_model: &str) -> LaneCaps {
     let mut caps = LaneCaps::default();
     if let Some(k) = &p.max_output_key {
@@ -283,7 +281,6 @@ fn lane_caps(p: &ProviderCfg, wire_model: &str) -> LaneCaps {
 }
 
 /// The provider's options a lane of `dialect` takes. They were judged against the provider's own
-
 fn lane_options(
     set: &[SetOption],
     provider_dialect: Option<&str>,
@@ -356,7 +353,6 @@ pub const DEFAULT_AFFINITY_HEADER: &str = "x-session-id";
 
 impl Shaping {
     /// The header the session affinity of the unit routed over `pool` reads: the pool's own
-
     #[must_use]
     pub fn affinity_header(&self, pool: &str) -> &str {
         self.affinity_headers
@@ -365,7 +361,6 @@ impl Shaping {
     }
 
     /// Read the tables from the settings object.
-
     pub fn from_settings(settings: &Value) -> Result<Self, String> {
         let blocks: BTreeMap<String, serde_json::Map<String, Value>> =
             section(settings, sections::PROVIDERS)?.unwrap_or_default();
@@ -511,7 +506,6 @@ impl Shaping {
     }
 
     /// The translation cap this generation enforces, in bytes: the kernel's `limits.request_body_max_bytes`
-
     #[must_use]
     pub fn translate_cap(&self) -> usize {
         self.request_body_max_bytes
@@ -525,7 +519,6 @@ impl Shaping {
     }
 
     /// Whether reasoning reaches the far end for `member` of `pool`: the member's own switch when
-
     #[must_use]
     pub fn reasoning(&self, pool: &str, member: &str) -> Option<bool> {
         let lane = self.lane(member)?;

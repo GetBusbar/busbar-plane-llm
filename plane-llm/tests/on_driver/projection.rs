@@ -47,7 +47,6 @@ fn target(dialect: &str, mut v: Value) -> (&'static str, Value) {
 }
 
 /// What a `prompt: ro` base policy is shown of `v` posted in `dialect`; `None` when the request
-
 async fn shown(dialect: &str, v: Value) -> Option<CapturedReq> {
     let (seen, policy) = capturing(true, true, None);
     let rig = Rig::new(
@@ -768,12 +767,6 @@ async fn apply_rewrite_to_body_echoes_redacted_marker_as_visible_text() {
 
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_opt_in_projection_tests.rs::max_tokens_signal_is_dialect_aware_for_responses`
-
-
-
-
-
-
 #[tokio::test]
 async fn max_tokens_signal_reads_the_bedrock_inference_config() {
     let c = seen(
@@ -788,11 +781,6 @@ async fn max_tokens_signal_reads_the_bedrock_inference_config() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_opt_in_projection_tests.rs::responses_reasoning_reader_rejects_malformed_encrypted_content`
-
-
-
-
-
 #[tokio::test]
 async fn responses_reasoning_reader_rejects_malformed_encrypted_content() {
     let c = seen(
@@ -808,14 +796,6 @@ async fn responses_reasoning_reader_rejects_malformed_encrypted_content() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_opt_in_projection_tests.rs::size_signal_and_projection_agree_on_tool_role_content`
-
-
-
-
-
-
-
-
 #[tokio::test]
 async fn size_signal_and_projection_agree_on_tool_role_content() {
     let c = seen(
@@ -861,13 +841,6 @@ async fn size_signal_and_projection_agree_on_tool_role_content() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_opt_in_projection_tests.rs::hook_content_uncapped_by_default_and_omits_whole_when_opted_in`
-
-
-
-
-
-
-
 #[tokio::test]
 async fn hook_content_uncapped_by_default_and_omits_whole_when_opted_in() {
 
@@ -910,12 +883,6 @@ async fn hook_content_uncapped_by_default_and_omits_whole_when_opted_in() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/lazy_body_tests.rs::ensure_ir_reads_the_body_through_the_ingress_reader`
-
-
-
-
-
-
 #[tokio::test]
 async fn ensure_ir_reads_the_body_through_the_ingress_reader() {
     let c = seen(

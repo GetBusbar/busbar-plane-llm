@@ -66,7 +66,6 @@ fn reasoning_items(out: &serde_json::Value) -> Vec<serde_json::Value> {
 }
 
 /// RSP-14 (IR-09): `reasoning.effort: "none"` is reasoning switched OFF, not "nothing said": it
-
 #[test]
 fn rsp14_effort_none_is_reasoning_off() {
     let body = serde_json::json!({"model": "gpt", "input": "hi", "max_output_tokens": 64,
@@ -80,7 +79,6 @@ fn rsp14_effort_none_is_reasoning_off() {
 }
 
 /// IR-03 metadata, IR-04 service_tier, IR-05 store, IR-06 safety_identifier / prompt_cache_key,
-
 #[test]
 fn ir03_07_shared_request_members_cross_the_seam() {
     let body = serde_json::json!({"model": "gpt", "input": "hi",
@@ -116,7 +114,6 @@ fn ir07_verbosity_merges_with_text_format() {
 }
 
 /// IR-14: a system prompt written as `developer` items goes back as a `developer` item; a `system`
-
 #[test]
 fn ir14_developer_role_crosses_the_seam() {
     let dev = serde_json::json!({"model": "gpt", "input": [
@@ -167,7 +164,6 @@ fn ir08_image_detail_crosses_the_seam() {
 }
 
 /// RSP-15 (IR-10): the `allowed_tools` tool choice is read into the subset slot and written back,
-
 #[test]
 fn rsp15_allowed_tools_cross_the_seam() {
     let tool = |n: &str| serde_json::json!({"type": "function", "name": n, "parameters": {}});
@@ -199,7 +195,6 @@ fn rsp15_allowed_tools_cross_the_seam() {
 }
 
 /// IR-11: a web search and an auto-container code interpreter cross the seam in the neutral
-
 #[test]
 fn ir11_hosted_tools_cross_the_seam() {
     let body = serde_json::json!({"model": "gpt", "input": "hi", "tools": [
@@ -255,7 +250,6 @@ fn ir02_request_history_refusal_stays_a_refusal() {
 }
 
 /// IR-02: a buffered refusal answer reaches the Responses client as a refusal part, and the
-
 #[test]
 fn ir02_response_refusal_is_a_refusal_part_buffered_and_streamed() {
     let output = serde_json::json!([{"type": "message", "id": "msg_1", "role": "assistant",
@@ -301,7 +295,6 @@ fn ir02_response_refusal_is_a_refusal_part_buffered_and_streamed() {
 }
 
 /// IR-02: a streamed refusal block is written as the refusal part lifecycle — `content_part.added`
-
 #[test]
 fn ir02_stream_refusal_block_writes_refusal_events() {
     let w = ResponsesWriter;
@@ -353,7 +346,6 @@ fn ir02_stream_refusal_block_writes_refusal_events() {
 }
 
 /// RSP-13 (IR-18): a foreign thinking signature is never sent as `encrypted_content`. A
-
 #[test]
 fn rsp13_foreign_signature_is_not_sent_as_encrypted_content() {
     use crate::codec::ir::IrSignatureOrigin as O;
@@ -442,7 +434,6 @@ fn ir18_responses_encrypted_content_is_openai_origin() {
 }
 
 /// IR-17: a summary-only reasoning item is a Summary, and goes back into `summary[]`; a content-only
-
 #[test]
 fn ir17_reasoning_summary_stays_a_summary() {
     let body = serde_json::json!({"model": "gpt", "input": [
@@ -476,7 +467,6 @@ fn ir17_reasoning_summary_stays_a_summary() {
 }
 
 /// A BUFFERED answer places a summary-kind thought where the
-
 #[test]
 fn ir17_a_buffered_summary_thought_is_written_as_a_summary() {
     let resp = serde_json::json!({"id": "resp_1", "object": "response", "created_at": 1,
@@ -506,7 +496,6 @@ fn ir17_a_buffered_summary_thought_is_written_as_a_summary() {
 }
 
 /// SHR-03: an OpenAI Files id a Chat reader tagged (`"openai"`) reaches the Responses writer as
-
 #[test]
 fn shr03_chat_file_id_reaches_responses_input() {
     let vendor = |id: &str| crate::codec::ir::IrImageSource::Vendor {
@@ -543,7 +532,6 @@ fn shr03_chat_file_id_reaches_responses_input() {
 }
 
 /// IR-03..06 placement: the five shared members moved from "always raw in `extra`" to parked
-
 #[test]
 fn ir03_06_same_dialect_member_bytes_are_the_callers() {
     let body = serde_json::json!({

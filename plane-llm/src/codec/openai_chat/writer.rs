@@ -1,7 +1,6 @@
 use super::*;
 
 /// The `created` stamped when the answer carries none: the host's wall clock via the
-
 fn host_now(host: &dyn busbar_contract::codec::CodecHost) -> u64 {
     host.wall_clock_now().unwrap_or(0)
 }
@@ -27,13 +26,11 @@ impl ProtocolWriter for OpenAiWriter {
     }
 
     /// The candidate count is top-level `n`. `Some(k)` only for `k > 1`; absent, 1 or unparseable
-
     fn requested_candidate_count(&self, body: &serde_json::Value) -> Option<u64> {
         body.get(W_N).and_then(|v| v.as_u64()).filter(|&k| k > 1)
     }
 
     /// A hosted tool Chat has no built-in for (code execution, web fetch) is dropped by the writer;
-
     fn dropped_egress_controls(&self, req: &crate::codec::ir::IrRequest) -> Vec<&'static str> {
         crate::codec::carry::dropped(super::map::REQUEST, super::map::CONTROLS, req)
             .map(crate::codec::carry::Slot::name)
@@ -749,7 +746,6 @@ impl ProtocolWriter for OpenAiWriter {
     }
 
     /// Native error envelope, served as `application/json`:
-
     fn write_error(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,

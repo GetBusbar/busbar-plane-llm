@@ -27,7 +27,6 @@ const NAMED: &[(&str, &[&str])] = &[
 ];
 
 /// The six request dialects, by the name the drop path knows each by, and the file stem of its wire
-
 const DIALECTS: &[(&str, &str)] = &[
     ("anthropic", "anthropic"),
     ("bedrock", "bedrock"),
@@ -38,7 +37,6 @@ const DIALECTS: &[(&str, &str)] = &[
 ];
 
 /// The IR request members each dialect's reader never sets: the dialect has no wire form for them
-
 fn unread(dialect: &str) -> &'static [&'static str] {
     use crate::codec::drops::name::*;
     match dialect {
@@ -68,7 +66,6 @@ fn unread(dialect: &str) -> &'static [&'static str] {
 }
 
 /// Every (dialect, IR name) pair a drop could be named for is named by the caller's wire path: a
-
 #[test]
 fn every_drop_is_named_by_the_callers_wire_path() {
     let mut unresolved = Vec::new();
@@ -104,7 +101,6 @@ fn an_unread_member_has_no_wire_path() {
 }
 
 /// A request code name's wire path is in the dialect's wire lock (a union arm's selector may be
-
 #[test]
 fn every_request_code_name_is_in_the_wire_lock() {
     let root =

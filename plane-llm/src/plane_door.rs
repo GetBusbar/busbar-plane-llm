@@ -84,7 +84,6 @@ const fn section(name: &'static str, flags: u32) -> Section {
 }
 
 /// `pools:` declared; `providers:`, `models:` and `limits:` read beside it; `webhooks:` its own,
-
 const SECTIONS: &[Section] = &[
     section(sections::POOLS, SECTION_DECLARING),
     section(sections::PROVIDERS, SECTION_CONSUMED | SECTION_REQUIRED),
@@ -121,7 +120,6 @@ const fn op(i: usize) -> OpClass {
 }
 
 /// The token classes, the one source of this plane's token class names: the first four of the tail's
-
 pub const TOKEN_CLASSES: [&str; 4] = [
     busbar_contract::records::UNIT_INPUT,
     busbar_contract::records::UNIT_OUTPUT,
@@ -149,7 +147,6 @@ const fn open_class(k: usize) -> BillableClass {
 }
 
 /// The fee unit the plane counts: one per billable request (`busbar_contract::plane::PER_REQUEST`),
-
 pub const FEE_CLASS: &str = busbar_contract::plane::PER_REQUEST;
 /// [`FEE_CLASS`]'s index in the tail's billable classes.
 pub const FEE_CLASS_INDEX: u32 = (TOKEN_CLASSES.len() + OPEN_CLASSES.len()) as u32;
@@ -177,7 +174,6 @@ const FEE_UNITS: &[AbiStr] = &[abi_str(FEE_CLASS)];
 const INPUT_TOKEN_CLASS_INDEX: u32 = 0;
 const OUTPUT_TOKEN_CLASS_INDEX: u32 = 1;
 /// Historical default routing score: the mean of the input and output token prices.
-
 const INPUT_OUTPUT_ROUTE_WEIGHT: f64 = 0.5;
 const ROUTE_COST: &[RouteCost] = &[
     RouteCost {
@@ -193,7 +189,6 @@ const ROUTE_COST: &[RouteCost] = &[
 ];
 
 /// The outbound auth styles the members are bound under: each dialect's default (`egress_style`),
-
 pub const EGRESS_STYLES: &[&str] = &[
     DIALECTS[1].egress_style,
     DIALECTS[0].egress_style,
@@ -212,7 +207,6 @@ const _: () = assert!(
 );
 
 /// The tail's per-dialect flags: a provider's `protocol`
-
 const DIALECT_FLAG: u32 = DIALECT_PROVIDER;
 
 const fn dialect_auth(i: usize) -> DialectAuth {
@@ -249,7 +243,6 @@ pub(crate) const fn const_eq(a: &str, b: &str) -> bool {
 }
 
 /// Response head fields the plane never reads beyond the kernel's strip list: what a far end derives
-
 pub const DENY_RESPONSE_HEADERS: &[&str] = &[
     DIALECTS[0].governed_response_headers[0],
     DIALECTS[1].governed_response_headers[0],
@@ -276,7 +269,6 @@ const fn need(auth: &'static str) -> Need {
 }
 
 /// The plane's needs: outbound to a configured provider over the claim's transport, one per
-
 pub const NEEDS: &[Need] = &[
     need(EGRESS_STYLES[0]),
     need(EGRESS_STYLES[1]),
@@ -325,7 +317,6 @@ const TAIL_ROW: PlaneTail = {
 pub const TAIL: &PlaneTail = &TAIL_ROW;
 
 /// The Statement's extensions: the plane's provider keys ([`crate::meta::PROVIDER_KEYS`]) under the
-
 pub(crate) const EXTENSIONS: &[u8] = &extensions::entry::<
     { extensions::entry_len(EXT_PROVIDER_KEYS, PROVIDER_KEYS.as_bytes()) },
 >(EXT_PROVIDER_KEYS, PROVIDER_KEYS.as_bytes());
@@ -341,7 +332,6 @@ pub const STATEMENT: Statement = {
 };
 
 /// The settings blob read as the plane's tables: `{section: value}` for the sections it reads; an
-
 pub fn read_settings(settings: &[u8]) -> Result<Shaping, String> {
     let value = if settings.is_empty() {
         Value::Object(serde_json::Map::new())
@@ -387,7 +377,6 @@ struct Answer {
 const DROPPED_CONTROL: &[u8] = b"egress.control_unrepresentable";
 
 /// The action of the audit row a stream synthesised from a whole answer writes (busbar answers in
-
 pub const STREAM_SYNTHESIZED: &[u8] = b"egress.stream_synthesized";
 
 impl Answer {
@@ -512,7 +501,6 @@ impl<S> UnitBook<S> {
     }
 
     /// The unit's pieces come on `ticket`: a `cancel` on it finds the unit. A ticket the unit came
-
     pub fn bind(&mut self, ticket: Ticket, unit: u64) {
         if let Some(old) = self.ticket_of.insert(unit, ticket) {
             if old != ticket {
@@ -531,7 +519,6 @@ impl<S> UnitBook<S> {
     }
 
     /// A `cancel` of `unit` (the kernel's key the cancel names; `0` names none) else of the unit
-
     pub fn cancel(&mut self, UnitCancel { ticket, unit }: UnitCancel) -> Option<S> {
         let unit = if unit == 0 {
             *self.tickets.get(&ticket)?
@@ -552,7 +539,6 @@ impl<S> UnitBook<S> {
 }
 
 /// One instance: every live generation's snapshot and tables, the units in flight, and the host's
-
 pub struct LlmDoor {
     generations: Generations<PlaneSnapshot>,
     shapings: Mutex<BTreeMap<u64, Arc<Shaping>>>,
@@ -582,7 +568,6 @@ impl LlmDoor {
 }
 
 /// A ticketless handle: the two services a codec reads never pend, so they are called outside any
-
 const UNTICKETED: CompletionHandle = CompletionHandle {
     ticket: Ticket::NONE,
     ..CompletionHandle::ZERO
@@ -627,15 +612,12 @@ impl busbar_contract::codec::CodecHost for DoorHost {
 }
 
 /// One claim: its verb, its target, whether the target is exact (else its whole subtree), and the
-
 type ClaimRow = (&'static str, &'static str, bool, &'static str);
 
 /// The verbs the fallback answers on any path (a dialect path hit with another
-
 const FALLBACK_VERBS: [&str; 5] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
 /// The dialects' own paths, each with the dialect its path shape names (the rule
-
 const DIALECT_CLAIMS: [ClaimRow; 7] = [
     ("POST", "/v1/messages", true, "anthropic"),
     ("POST", "/v1/chat/completions", true, "openai"),
@@ -696,18 +678,15 @@ const ENTRY_FACTS: [(&str, &str); 19] = [
 ];
 
 /// The signed paths: request shapes whose callers sign each request (the bedrock converse surfaces),
-
 const SIGNED_CLAIMS: [&str; 2] = ["/model/*/converse", "/model/*/converse-stream"];
 
 /// The list-models catalog routes: `GET` on each listing path,
-
 const CATALOG_PATHS: [&str; 2] = [
     crate::exchange::catalog::PATH,
     crate::exchange::catalog::BETA_PATH,
 ];
 
 /// The plane's claims: [`DIALECT_CLAIMS`], the [`ENTRY_FACTS`], the [`SIGNED_CLAIMS`], the
-
 #[must_use]
 pub fn claims() -> Vec<ClaimSpec> {
     let fallback = crate::exchange::arrive::envelope_for("/");
@@ -753,7 +732,6 @@ pub fn claims() -> Vec<ClaimSpec> {
 }
 
 /// The receivers' claims: each webhook receiver its `webhooks:` section switches on, an exact path
-
 #[must_use]
 pub fn webhook_claims(webhooks: Webhooks) -> Vec<ClaimSpec> {
     webhooks
@@ -790,7 +768,6 @@ fn dialect_index(name: &str) -> u32 {
 }
 
 /// The route an arrival names: the model it asked for, as the entry inside the plane's own
-
 #[must_use]
 pub fn route_of<'a>(shaping: &Shaping, model: &'a str) -> (u8, &'a str) {
     let class = if shaping.pools.contains_key(model) {
@@ -822,7 +799,6 @@ fn owned(fields: Vec<(String, Vec<u8>)>) -> Vec<(Vec<u8>, Vec<u8>)> {
 }
 
 /// The far end's cumulative counts, in the tail's billable-class order: tokens in, tokens out,
-
 #[must_use]
 pub fn counts(units: &Units) -> Vec<UnitCount> {
     let tokens = [
@@ -864,7 +840,6 @@ pub fn counts(units: &Units) -> Vec<UnitCount> {
 }
 
 /// The breaker's reading of a judged answer (one neutral vocabulary, stated apart from the walk's
-
 #[must_use]
 pub fn breaker_fault(f: Option<&Fault>) -> u8 {
     match f {
@@ -880,7 +855,6 @@ pub fn breaker_fault(f: Option<&Fault>) -> u8 {
 }
 
 /// The reason the breaker's reading states (the far-end fault reading): the plane classifies the
-
 #[must_use]
 pub fn fault_reason(f: Option<&Fault>, status: u16) -> Option<String> {
     let Some(Fault::Judged {
@@ -907,7 +881,6 @@ fn verdict(v: Verdict) -> u32 {
 }
 
 /// The request's fee unit on `answer` (the plane's report is the one fee decider): incurred when
-
 fn fee_unit(unit: &mut UnitState, answer: &mut Answer) {
     if !answer.units.is_empty() {
         unit.reported.clone_from(&answer.units);
@@ -929,7 +902,6 @@ fn fee_unit(unit: &mut UnitState, answer: &mut Answer) {
 }
 
 /// The unit's sticky-routing key: the value of
-
 #[must_use]
 pub fn affinity_key(
     header: &str,
@@ -974,7 +946,6 @@ fn to_caller(piece: Piece<'_>) -> Answer {
 }
 
 /// A far-end reply piece as the caller's answer, with the reason its fault reading states (`status`:
-
 fn far_answer(piece: Piece<'_>, status: u16) -> Answer {
     let reason = fault_reason(piece.fault.as_ref(), status);
     Answer {
@@ -1225,7 +1196,6 @@ fn settle(
 }
 
 /// Write the unit's pending answer's next chunk: its head, fields and units first (FAILED, with
-
 fn deliver(
     unit: &mut UnitState,
     input: Lent<'_, OnPieceIn>,
@@ -1320,7 +1290,6 @@ macro_rules! slot {
 }
 
 /// The plane's lifecycle on the SDK's [`PlaneLife`] (`lifecycle: plane_life(LlmDoor)`): `tick`,
-
 impl PlaneLife for LlmDoor {
     type Held = ();
 
@@ -1336,7 +1305,6 @@ impl PlaneLife for LlmDoor {
     }
 
     /// `open`: the instance, its host clock, and the first generation's tables and snapshot; a
-
     fn open(input: &Lent<'_, PlaneOpenIn>) -> Result<Opened<Self>, Refusal> {
         let open = input.open();
         let shaping = read_settings(open.settings().bytes()).map_err(Refusal::failed)?;
@@ -1366,13 +1334,11 @@ impl PlaneLife for LlmDoor {
     }
 
     /// `retire`, after the SDK dropped the generation's snapshot: its tables are dropped; a unit
-
     fn retire(&self, generation: u64) {
         guard(&self.shapings).remove(&generation);
     }
 
     /// `cancel`: the cancelled unit (the unit the cancel names, else the one on its ticket) ends;
-
     fn cancel(
         instance: Instance<'_, Self>,
         input: Lent<'_, PlaneCancelIn>,

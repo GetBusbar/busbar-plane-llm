@@ -10,7 +10,6 @@ impl ProtocolWriter for CohereWriter {
     }
 
     /// The typed request slots Cohere v2 `/chat` has no form for:
-
     fn dropped_egress_controls(&self, req: &crate::codec::ir::IrRequest) -> Vec<&'static str> {
         crate::codec::carry::dropped(super::map::REQUEST, super::map::CONTROLS, req)
             .map(crate::codec::carry::Slot::name)
@@ -1051,7 +1050,6 @@ impl ProtocolWriter for CohereWriter {
     }
 
     /// NATIVE Cohere v2 error envelope. The Cohere v2 chat API conveys the error *category* via the
-
     fn write_error(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,

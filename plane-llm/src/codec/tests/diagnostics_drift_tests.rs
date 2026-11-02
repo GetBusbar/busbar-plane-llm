@@ -57,7 +57,6 @@ fn no_plane_code_is_listed_twice() {
 }
 
 /// THE DOOR'S `declares.json` IS THE PLANE'S CATALOG: the declared section the host folds this plane's
-
 #[test]
 fn the_declares_file_states_the_catalog() {
     let declared: serde_json::Value =

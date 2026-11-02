@@ -17,7 +17,6 @@ fn cross_proto_usage(ingress: &str, egress: &str, frames: &[&[u8]]) -> (u64, u64
 }
 
 /// Decode a NON-STREAM body through `proto`'s reader (the same-proto non-stream billing path #4:
-
 fn nonstream_usage(proto: &str, body: &[u8]) -> (u64, u64) {
     let p = protocol_for(proto).expect("known proto");
     let v: serde_json::Value = crate::codec::json::parse(body).expect("json body");
@@ -77,7 +76,6 @@ fn nonstream_same_proto_all_protocols() {
 }
 
 /// A Cohere completion whose separately-metered `billed_units` differ from the raw `tokens` bucket
-
 #[test]
 fn buffered_billing_and_stream_tap_agree_on_cohere_billed_units() {
     use busbar_contract::billing::Billing;

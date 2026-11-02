@@ -17,7 +17,6 @@ const fn dialect_index(name: &str) -> u32 {
 }
 
 /// The reason codes this plane states a status for: each a reason's place in the plane ABI's refusal
-
 pub mod reason {
     /// `unauthenticated`: no credential resolved to a principal.
     pub const UNAUTHENTICATED: u32 = 12;

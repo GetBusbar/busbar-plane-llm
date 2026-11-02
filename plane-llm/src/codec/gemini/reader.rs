@@ -66,7 +66,6 @@ static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
 
 impl ProtocolReader for GeminiReader {
     /// A candidate's own `finishReason` member (`{"candidates":[{…,"finishReason":…}]}`, depth 3);
-
     fn stop_reason_key(&self) -> Option<crate::codec::usage_tail::StopKey> {
         Some(crate::codec::usage_tail::StopKey {
             key: b"\"finishReason\"",
@@ -1195,7 +1194,6 @@ impl ProtocolReader for GeminiReader {
     }
 
     /// A chunk bills or fails only via a top-level `error` object, a `promptFeedback` (prompt-blocked
-
     fn same_proto_reads(&self, _event_type: &str, payload: &[u8]) -> bool {
         use crate::codec::json_splice::{any_member, first_element};
         any_member(payload, |m, v| {
@@ -1220,7 +1218,6 @@ impl ProtocolReader for GeminiReader {
 }
 
 /// Close every block still open, in order: a thinking block first (a thinking-only stream never
-
 fn close_open_blocks(
     state: &mut crate::codec::ir::StreamDecodeState,
     out: &mut Vec<IrStreamEvent>,

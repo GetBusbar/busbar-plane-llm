@@ -6,7 +6,6 @@
 use super::rewrite_frame_strip_usage;
 
 /// Byte-stripper fallback indistinguishability: when the fast byte-splice path declines and
-
 #[test]
 fn fallback_preserves_key_order_and_crlf() {
     let payload = r#"{"id":"chatcmpl-x","object":"chat.completion.chunk","choices":[{"delta":{"content":"hi"}}],"usage":null}"#;

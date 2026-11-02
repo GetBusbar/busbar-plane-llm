@@ -104,7 +104,6 @@ fn drop_one(path: &'static str) {
 }
 
 /// (a) Two interleaved translate calls on one thread — one nested inside the other — keep separate
-
 #[test]
 fn nested_scopes_on_one_thread_keep_separate_logs() {
     let inner_seam = Seam {
@@ -127,7 +126,6 @@ fn nested_scopes_on_one_thread_keep_separate_logs() {
 }
 
 /// (b) A panic inside a scope — nested or not — leaves no attempt open afterwards: the guard puts
-
 #[test]
 fn a_panic_inside_a_nested_scope_leaves_the_slot_closed() {
     let unwound = std::panic::catch_unwind(|| {
@@ -142,7 +140,6 @@ fn a_panic_inside_a_nested_scope_leaves_the_slot_closed() {
 }
 
 /// (c) After a scope closes, the thread holds no drop entries: the next attempt on the same thread
-
 #[test]
 fn a_closed_scope_leaks_no_drop_entries_into_the_next_call() {
     let ((), first) = scope(SEAM, || drop_one("logit_bias"));
@@ -167,7 +164,6 @@ fn a_closed_scope_leaks_no_drop_entries_into_the_next_call() {
 }
 
 /// A scope never spans an await, a ticket boundary or a return to the driver, so its guard is
-
 #[cfg(debug_assertions)]
 #[test]
 fn a_guard_dropped_on_another_thread_panics_in_debug() {
@@ -257,7 +253,6 @@ fn parked_members_are_named_as_the_reader_declares_them() {
 }
 
 /// Translate `body` from `ingress` onto `egress`: the far end's body, what the seam audits, and the
-
 pub(super) fn translate(
     ingress: &str,
     egress: &str,
@@ -447,7 +442,6 @@ fn responses_request_drops_name_the_wire_path() {
 }
 
 /// Translate the far end's `body` (`egress`) for a caller of `ingress`: the caller's body and the
-
 fn answer(egress: &str, ingress: &str, body: &Value) -> (String, Vec<String>, WarnCapture) {
     let _ = protocol_for(egress);
     let ctx = crate::exchange::reply::whole::WholeCtx {
@@ -652,7 +646,6 @@ fn cohere_answer_drops_name_the_wire_path() {
 }
 
 /// The walk names the shallowest member nothing carries, reads a union by its `type` arm where the
-
 #[test]
 fn the_answer_walk_names_the_shallowest_uncarried_member() {
     let carried = crate::codec::drops::Carried {
@@ -824,7 +817,6 @@ fn the_answer_walk_names_only_true_drops_over_the_golden_corpus() {
 }
 
 /// A dialect never lists as dropped a path it carries (a map row or a code-carried path): the walk
-
 #[test]
 fn no_dialect_drops_a_path_it_carries() {
     for dialect in [
@@ -864,7 +856,6 @@ fn no_dialect_drops_a_path_it_carries() {
 }
 
 /// Every dialect's drop list is sorted ascending, each path once: the walk binary-searches it for
-
 #[test]
 fn every_drop_list_is_sorted_for_the_walks_search() {
     for dialect in [

@@ -25,7 +25,6 @@ fn test_openai_classify() {
 }
 
 /// The classifier must run the SHARED prose scan, not a clause of its own.
-
 #[test]
 fn every_context_length_phrasing_the_shared_scan_knows_classifies_as_context_length() {
     let protocol = crate::codec::proto_codec::protocol_for("openai").expect("openai should exist");
@@ -58,7 +57,6 @@ fn every_context_length_phrasing_the_shared_scan_knows_classifies_as_context_len
 }
 
 /// The shared context-length prose scan must fire on the canonical self-contained phrases and on
-
 #[test]
 fn context_length_prose_scan_fires_on_canonical_phrases() {
     use super::context_length_prose_scan as scan;
@@ -72,7 +70,6 @@ fn context_length_prose_scan_fires_on_canonical_phrases() {
 }
 
 /// Precision guard: the scan must NOT fire on unrelated errors whose prose merely mentions weak
-
 #[test]
 fn context_length_prose_scan_precise_no_false_positive() {
     use super::context_length_prose_scan as scan;
@@ -89,7 +86,6 @@ fn context_length_prose_scan_precise_no_false_positive() {
 }
 
 /// `bearer_error_code` mirrors the native OpenAI `type`→`code` pairing: only auth and
-
 #[test]
 fn bearer_error_code_mirrors_native_type_code_pairing() {
     use super::bearer_error_code as code;

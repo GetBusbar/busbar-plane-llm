@@ -24,7 +24,6 @@ pub struct ModerationReq {
 }
 
 /// THE MODERATION FAMILY'S WALK — this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. Moderation
-
 impl busbar_contract::ir::facts::IrFacts for ModerationReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::MODERATION

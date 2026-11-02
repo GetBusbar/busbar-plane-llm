@@ -162,14 +162,12 @@ fn cohere_stream() -> Vec<u8> {
 const MARKS: [&str; 4] = [URL_A, "Why the sky is blue", URL_B, "Rayleigh scattering"];
 
 /// Which of `MARKS` a client's wire bytes carry. Read off the WIRE, not re-read through busbar's own
-
 fn carried(wire: &[u8]) -> Vec<&'static str> {
     let text = String::from_utf8_lossy(wire);
     MARKS.iter().copied().filter(|m| text.contains(m)).collect()
 }
 
 /// The client's streamed wire: the upstream's native stream through `StreamTranslate`, the
-
 fn streamed_wire(upstream: &str, client: &str, upstream_bytes: &[u8]) -> Vec<u8> {
     match StreamTranslate::new(client, upstream) {
         Some(mut st) => {
@@ -182,7 +180,6 @@ fn streamed_wire(upstream: &str, client: &str, upstream_bytes: &[u8]) -> Vec<u8>
 }
 
 /// The client's buffered body: upstream reader → IR → client writer; a same-dialect hop is a
-
 fn buffered_wire(upstream: &str, client: &str, upstream_body: &serde_json::Value) -> Vec<u8> {
     if upstream == client {
         return upstream_body.to_string().into_bytes();

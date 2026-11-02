@@ -59,7 +59,6 @@ fn infinities_and_nan_are_refused() {
 }
 
 /// THE DEFECT, STATED AS THE DIFFERENCE BETWEEN THE TWO SEAMS.
-
 #[test]
 fn an_unreadable_count_was_a_silent_zero_and_is_now_a_refusal() {
     let usage = json!({ "output_tokens": "27" });
@@ -134,7 +133,6 @@ fn a_hostile_spelling_cannot_write_an_essay_into_the_refusal() {
 }
 
 /// NO DIALECT MAY REINTRODUCE THE BARE READ.
-
 #[test]
 fn no_dialect_reads_a_count_with_the_bare_defaulting_idiom() {
     use std::path::Path;
@@ -213,7 +211,6 @@ fn no_dialect_reads_a_count_with_the_bare_defaulting_idiom() {
 }
 
 /// THE SAME RULE, FOR THE OTHER SPELLING — the one that let the defect come back.
-
 #[test]
 fn no_dialect_reads_a_billed_count_field_with_a_bare_as_u64() {
     use std::path::Path;
@@ -334,7 +331,6 @@ fn no_dialect_reads_a_billed_count_field_with_a_bare_as_u64() {
 }
 
 /// A MULTI-BYTE UNREADABLE SPELLING REFUSES; IT DOES NOT PANIC THE CUT.
-
 #[test]
 fn a_multi_byte_unreadable_spelling_refuses_rather_than_panicking() {
     let hostile = "é".repeat(40);
@@ -371,7 +367,6 @@ fn billed_count_opt_is_none_when_absent_and_refuses_when_unreadable() {
 }
 
 /// Flatten one source file the way the scans in this file read it: full-line comments dropped,
-
 fn squash(text: &str) -> String {
     text.lines()
         .filter(|l| !l.trim_start().starts_with("//"))
@@ -399,7 +394,6 @@ fn past_balanced(s: &str, open: char, close: char) -> Option<usize> {
 }
 
 /// Every lenient count read in `flat` (a [`squash`]ed file) whose `None` is then DEFAULTED.
-
 fn lenient_defaults(flat: &str) -> Vec<String> {
     let wrappers = lenient_wrappers(flat);
     const DEFAULTS: &[&str] = &[
@@ -453,7 +447,6 @@ fn whole_ident(flat: &str, at: usize, len: usize) -> bool {
 }
 
 /// `read_count_u64` plus every local closure or `-> Option<u64>` fn in `flat` that wraps one (found
-
 fn lenient_wrappers(flat: &str) -> Vec<String> {
     let mut wrappers: Vec<String> = vec!["read_count_u64".to_string()];
     loop {
@@ -516,7 +509,6 @@ fn lenient_wrappers(flat: &str) -> Vec<String> {
 }
 
 /// The IR fields whose value IS a billed quantity or selects the tier one prices at, where `None`
-
 const BILLED_OPTION_FIELDS: &[&str] = &[
     "cache_read_input_tokens",
     "cache_creation_input_tokens",
@@ -531,7 +523,6 @@ const BILLED_OPTION_FIELDS: &[&str] = &[
 ];
 
 /// Every `FIELD: <expr>` initializer in `flat` (a [`squash`]ed file) where FIELD is a
-
 fn lenient_billed_fields(flat: &str) -> Vec<String> {
     let wrappers = lenient_wrappers(flat);
     let mut hits = Vec::new();
@@ -590,7 +581,6 @@ fn lenient_billed_fields(flat: &str) -> Vec<String> {
 }
 
 /// A lenient read whose `None` flows, undefaulted, through `.map(..)` into a STRUCT LITERAL — the
-
 fn lenient_struct_maps(flat: &str) -> Vec<String> {
     let wrappers = lenient_wrappers(flat);
     let mut hits = Vec::new();

@@ -68,7 +68,6 @@ fn a_cohere_answer_fills_none_of_the_answer_slots() {
 }
 
 /// A foreign answer carrying every slot reaches a Cohere client as a well-formed /v2/chat answer:
-
 #[test]
 fn foreign_answer_slots_drop_on_the_cohere_wire_and_move_no_usage() {
     let plain = read(&answer());

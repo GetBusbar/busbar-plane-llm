@@ -34,7 +34,6 @@ fn segments(path: &str) -> Vec<Seg> {
 }
 
 /// The first scalar type of a lock entry's `type` (`null|string` is `string`), or `None` for a
-
 fn scalar(entry: &Value) -> Option<&'static str> {
     let ty = entry.get("type")?.as_str()?;
     ["string", "integer", "number", "boolean"]
@@ -92,7 +91,6 @@ fn fill_siblings(obj: &mut Map<String, Value>, prefix: &str, lock: &Map<String, 
 }
 
 /// Plant `value` at `path` into `root`, building the structure it names (a NEW array element at
-
 fn plant(root: &mut Value, path: &str, value: Value, lock: &Map<String, Value>) {
     let segs = segments(path);
     let mut cur = root;

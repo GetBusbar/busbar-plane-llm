@@ -51,7 +51,6 @@ fn usage_of(recording: &str) -> serde_json::Value {
 }
 
 /// The LAST SSE frame of a recording that actually carries token counters.
-
 fn last_counted_sse_frame(recording: &str) -> serde_json::Value {
     let mut last = None;
     for line in recording.lines() {
@@ -71,7 +70,6 @@ fn count(usage: &serde_json::Value, key: &str) -> u64 {
 }
 
 /// Assert the identity on one recorded `usageMetadata` block, DRIVEN BY THE DIALECT'S OWN CONST
-
 fn assert_identity(name: &str, usage: &serde_json::Value) {
     let summed: u64 = super::GEMINI_USAGE_ADDITIVE_TERMS
         .iter()
@@ -88,7 +86,6 @@ fn assert_identity(name: &str, usage: &serde_json::Value) {
 }
 
 /// THE MEASUREMENT. All seven real recordings satisfy
-
 #[test]
 fn the_four_term_usage_identity_holds_on_every_real_recording() {
     for (name, body) in [
@@ -109,7 +106,6 @@ fn the_four_term_usage_identity_holds_on_every_real_recording() {
 }
 
 /// THE FINDING THAT OVERTURNED THE DOCS, stated as arithmetic rather than opinion.
-
 #[test]
 fn tool_use_prompt_tokens_cannot_be_a_slice_of_the_prompt() {
     let usage = usage_of(RESP_GROUNDING);
@@ -139,7 +135,6 @@ fn tool_use_prompt_tokens_cannot_be_a_slice_of_the_prompt() {
 }
 
 /// `thoughtsTokenCount` is additive too — confirmed, not overturned. If it were a slice of
-
 #[test]
 fn thoughts_tokens_are_additive_not_a_slice_of_candidates() {
     let usage = usage_of(RESP_THINKING);
@@ -161,7 +156,6 @@ fn thoughts_tokens_are_additive_not_a_slice_of_candidates() {
 }
 
 /// THE MONEY PATH, pinned through the REAL decoder on the REAL bytes.
-
 #[test]
 fn billed_figures_for_every_recording_are_pinned() {
     let reader = Protocol::gemini();
@@ -192,7 +186,6 @@ fn billed_figures_for_every_recording_are_pinned() {
 }
 
 /// THE 1.6.0 MONEY CHANGE, stated as arithmetic. busbar used to bill 18 + 172 = 190 tokens for the
-
 #[test]
 fn a_grounded_turn_bills_the_tool_use_term() {
     let v: serde_json::Value = serde_json::from_str(RESP_GROUNDING).expect("parses");
@@ -295,7 +288,6 @@ fn a_total_above_its_terms_ledgers_the_itemized_counts_on_every_path() {
 }
 
 /// A total at or below the sum of its terms adds nothing: an early stream frame states none, and a
-
 #[test]
 fn a_total_that_closes_or_is_absent_adds_nothing() {
     for (usage, out) in [
@@ -325,7 +317,6 @@ fn a_total_that_closes_or_is_absent_adds_nothing() {
 }
 
 /// THE TRUNCATED PATH BILLS THE SAME. A response too large to reassemble is metered through
-
 #[test]
 fn a_truncated_grounded_turn_bills_the_tool_use_term_too() {
     let recovered = Protocol::gemini()
@@ -340,7 +331,6 @@ fn a_truncated_grounded_turn_bills_the_tool_use_term_too() {
 }
 
 /// THE WRITER IS THE READER'S INVERSE. `input_tokens` now carries the tool-use term, so a
-
 #[test]
 fn the_writer_reconstructs_the_recorded_wire_shape() {
     let v: serde_json::Value = serde_json::from_str(RESP_GROUNDING).expect("parses");
@@ -364,7 +354,6 @@ fn the_writer_reconstructs_the_recorded_wire_shape() {
 }
 
 /// The quiet case must stay quiet. A turn whose counters reconcile against Google's stated total
-
 #[test]
 fn a_reconciling_turn_reports_no_discrepancy() {
     let reader = Protocol::gemini();
@@ -386,7 +375,6 @@ fn a_reconciling_turn_reports_no_discrepancy() {
 }
 
 /// SPEC DISCREPANCY, RECORDED: the streaming path never reports `toolUsePromptTokenCount`.
-
 #[test]
 fn streamed_grounded_turns_omit_the_tool_use_term_entirely() {
     for (name, sse) in [
@@ -408,7 +396,6 @@ fn streamed_grounded_turns_omit_the_tool_use_term_entirely() {
 }
 
 /// SPEC DISCREPANCY, RECORDED: an early SSE frame carries a `usageMetadata` object that is PRESENT
-
 #[test]
 fn sse_early_frame_usage_metadata_carries_no_counters() {
     let first = SSE_GROUNDING
@@ -437,14 +424,12 @@ fn sse_early_frame_usage_metadata_carries_no_counters() {
 }
 
 /// The upstream body of oracle cell `usage.gemini|stream-grounded|no-tool-use-count`.
-
 const GROUNDED_STREAM: &str = concat!(
     "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"po\"}],\"role\":\"model\"},\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":18,\"totalTokenCount\":18},\"modelVersion\":\"m-cap\"}\r\n\r\n",
     "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ng\"}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0,\"groundingMetadata\":{\"webSearchQueries\":[\"ping\"]}}],\"usageMetadata\":{\"promptTokenCount\":18,\"candidatesTokenCount\":7,\"totalTokenCount\":57},\"modelVersion\":\"m-cap\"}\r\n\r\n",
 );
 
 /// What 1.5.5 relayed for that cell to an OpenAI chat client that asked for
-
 const GROUNDED_STREAM_155: &str = concat!(
     "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null,\"index\":0}],\"created\":0,\"id\":\"chatcmpl-<ID>\",\"model\":\"m-cap\",\"object\":\"chat.completion.chunk\"}\n\n",
     "data: {\"choices\":[{\"delta\":{\"content\":\"po\"},\"finish_reason\":null,\"index\":0}],\"created\":0,\"id\":\"chatcmpl-<ID>\",\"model\":\"m-cap\",\"object\":\"chat.completion.chunk\"}\n\n",
@@ -455,7 +440,6 @@ const GROUNDED_STREAM_155: &str = concat!(
 );
 
 /// The oracle's two masks, and nothing else: every `"id":"chatcmpl-…"` value becomes `<ID>` and
-
 fn mask_chunk_identity(out: &str) -> String {
     fn mask_after(s: &str, key: &str, stop: fn(char) -> bool, with: &str) -> String {
         let mut rest = s;
@@ -491,7 +475,6 @@ fn relay_grounded_stream() -> (String, busbar_contract::billing::TokenUsage) {
 }
 
 /// THE LEDGER AND THE RELAYED BYTES BOTH CARRY WHAT GOOGLE ITEMIZED (oracle cell
-
 #[test]
 fn a_grounded_stream_relays_the_155_bytes_and_ledgers_the_itemized_counts() {
     let (relayed, ledgered) = relay_grounded_stream();
@@ -540,7 +523,6 @@ fn a_grounded_stream_never_relays_the_totals_remainder() {
 }
 
 /// What each `usageMetadata` count IS, per Google's own usage semantics, as the meter-class move
-
 const GEMINI_COUNT_CLASSES: &[(&str, (i64, i64, i64))] = &[
     ("promptTokenCount", (1, 0, 0)),
     ("cachedContentTokenCount", (-1, 1, 0)),

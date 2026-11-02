@@ -6,7 +6,6 @@
 use busbar_plane_llm::exchange::multipart::multipart_model;
 
 /// The `Content-Type` each body below arrives under. The boundary is not decoration: it is the only
-
 const CT_BOUNDARY: &str = "multipart/form-data; boundary=BOUNDARY";
 const CT_B: &str = "multipart/form-data; boundary=B";
 const CT_ZZ: &str = "multipart/form-data; boundary=zz";
@@ -35,7 +34,6 @@ fn absent_model_is_none() {
 }
 
 /// A `name="model"` SPELLED INSIDE ANOTHER PART'S VALUE IS NOT A PART HEADER.
-
 #[test]
 fn a_decoy_model_inside_another_parts_value_does_not_win() {
     let mut body = Vec::new();
@@ -58,7 +56,6 @@ fn a_decoy_model_inside_another_parts_value_does_not_win() {
 }
 
 /// TWO `model` PARTS IS NOT A REQUEST WITH A MODEL.
-
 #[test]
 fn two_model_parts_resolve_to_no_model() {
     let body = concat!(

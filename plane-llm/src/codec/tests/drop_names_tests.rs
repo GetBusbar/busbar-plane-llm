@@ -62,7 +62,6 @@ fn translate(
 }
 
 /// Whether a captured warn carries exactly `path=<path>` as one of its fields; `drop_path` picks the
-
 fn warned(cap: &WarnCapture, path: &str, drop_path: bool) -> bool {
     let field = format!("path={path}");
     cap.messages()
@@ -71,7 +70,6 @@ fn warned(cap: &WarnCapture, path: &str, drop_path: bool) -> bool {
 }
 
 /// A seam gate's drop is warned on the one drop path and audited under `path`, and never under the
-
 fn gate_named(ingress: &str, egress: &str, body: Value, path: &str, slot: &str) {
     let (audited, cap) = translate(ingress, egress, &body, CLOSED);
     assert!(
@@ -97,7 +95,6 @@ fn gate_named(ingress: &str, egress: &str, body: Value, path: &str, slot: &str) 
 }
 
 /// A control the far end's dialect has no form for is warned by the far end's writer and audited
-
 fn control_named(ingress: &str, egress: &str, body: Value, path: &str, slot: &str) {
     let (audited, cap) = translate(ingress, egress, &body, OPEN);
     assert!(
@@ -267,7 +264,6 @@ fn cohere_control_drop_is_named_by_its_wire_path() {
 }
 
 /// A member the caller's map file has no row for, carried by the reader's own code: Cohere's
-
 #[test]
 fn a_slot_the_callers_reader_carries_by_code_is_named_by_its_wire_path() {
     gate_named(

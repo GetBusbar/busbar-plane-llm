@@ -16,7 +16,6 @@ fn served_generation() -> busbar_plane_llm::exchange::shaping::Shaping {
 }
 
 /// The host the gated forward is handed: deterministic stack-only entropy and no clock. A native
-
 struct GateHost;
 
 impl busbar_contract::codec::CodecHost for GateHost {
@@ -36,7 +35,6 @@ const HOST: &dyn busbar_contract::codec::CodecHost = &GateHost;
 const FAR_OK: &[u8] = br#"{"id":"chatcmpl-gate","object":"chat.completion","created":0,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
 
 /// ONE served forward, as the plane's door runs it for a unit: the arrival read off the caller's
-
 fn one_forward(shaping: &busbar_plane_llm::exchange::shaping::Shaping, body: &[u8]) -> u16 {
     one_forward_with_host(shaping, body, HOST)
 }
@@ -77,11 +75,9 @@ fn one_forward_with_host(
 }
 
 /// COMMITTED BOUND (1.5.5's `FORWARD_PASSTHROUGH_MAX_ALLOCS`): the most allocations ONE warmed
-
 const FORWARD_PASSTHROUGH_MAX_ALLOCS: u64 = 107;
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/alloc_gate_tests.rs::alloc_gate_openai_passthrough_forward`
-
 #[test]
 fn alloc_gate_openai_passthrough_forward() {
     let shaping = served_generation();
@@ -108,7 +104,6 @@ fn alloc_gate_openai_passthrough_forward() {
 const ECHO_SCALING_MESSAGES: usize = 4_000;
 
 /// COMMITTED BOUND (1.5.5's `ECHO_BODY_SCALING_MAX_ALLOCS`): how many more allocations a request of
-
 const ECHO_BODY_SCALING_MAX_ALLOCS: u64 = 92_000;
 
 /// An openai chat request with `n` messages, asking to STREAM.
@@ -126,7 +121,6 @@ fn openai_stream_body(n: usize) -> Vec<u8> {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/alloc_gate_tests.rs::alloc_gate_request_echo_body_materialized_once`
-
 #[test]
 fn alloc_gate_request_echo_body_materialized_once() {
     let shaping = served_generation();
@@ -170,7 +164,6 @@ fn buffered_stream_synthesis_still_refuses_failed_entropy() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/alloc_gate_tests.rs::alloc_gate_dialect_seam_resolution_is_free_for_every_dialect`
-
 #[test]
 fn resolving_every_dialect_by_name_allocates_nothing() {
     use busbar_plane_llm::codec::proto_codec::{self as p, ProtocolWriter};

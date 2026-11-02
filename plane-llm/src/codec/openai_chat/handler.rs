@@ -20,7 +20,6 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 /// Endpoint paths — each appears on BOTH the egress side (`upstream_path`) and the ingress match
-
 const PATH_CHAT_COMPLETIONS: &str = "/v1/chat/completions";
 const PATH_EMBEDDINGS: &str = "/v1/embeddings";
 const PATH_MODERATIONS: &str = "/v1/moderations";
@@ -32,7 +31,6 @@ const PATH_RERANK: &str = "/v1/rerank";
 
 pub struct OpenAiRequestHandler;
 /// This protocol's OWN chat instance — delete this line (and the registry arm) and this
-
 static CHAT: super::super::chat_handle::ChatOperation =
     super::super::chat_handle::ChatOperation(super::VENDOR_NAME);
 
@@ -43,7 +41,6 @@ static TRANSCRIPTION: OpenAiTranscription = OpenAiTranscription;
 static SPEECH: OpenAiSpeech = OpenAiSpeech;
 
 /// OPENAI'S ROW OF THE SUPPORT MATRIX — the verbs this protocol speaks, as data. A verb absent from
-
 static CELLS: &[busbar_contract::codec::Cell] = &[
     (OpVerb::CHAT, &CHAT),
     (OpVerb::MODERATION, &MODERATION),
@@ -54,7 +51,6 @@ static CELLS: &[busbar_contract::codec::Cell] = &[
 ];
 
 /// The egress half of the path constants above; `resolve_operation` reads the same constants on the
-
 static PATHS: &[(OpVerb, &str)] = &[
     (OpVerb::CHAT, PATH_CHAT_COMPLETIONS),
     (OpVerb::EMBEDDINGS, PATH_EMBEDDINGS),
@@ -102,7 +98,6 @@ use busbar_contract::media::base64_decode;
 type MultipartField<'a> = crate::exchange::multipart::TranscriptionField<'a>;
 
 /// Sanitize a client-supplied MIME type before it enters the IR: a MIME type is `type/subtype`
-
 fn sanitize_mime_type(raw: &str) -> String {
     let clean: String = raw
         .chars()
@@ -118,7 +113,6 @@ fn sanitize_mime_type(raw: &str) -> String {
 }
 
 /// Decode an audio blob at the egress boundary. A failed decode is an unwritable-body sentinel,
-
 fn decode_ir_b64(s: &str) -> Option<SlabBytes> {
     let decoded = base64_decode(s);
     if decoded.is_none() {
@@ -131,13 +125,11 @@ fn decode_ir_b64(s: &str) -> Option<SlabBytes> {
 }
 
 /// Minimal byte-level `multipart/form-data` parser: enough for the OpenAI audio form (a `model` text
-
 fn parse_multipart<'a>(body: &'a [u8], content_type: &str) -> Vec<MultipartField<'a>> {
     crate::exchange::multipart::transcription_fields(content_type, body)
 }
 
 /// Transcription (STT): multipart audio IN → `{text}` OUT.
-
 struct OpenAiTranscription;
 
 leaf_op! {
@@ -158,14 +150,12 @@ leaf_op! {
 }
 
 /// The multipart boundary the transcription egress form is framed with: a constant, so the
-
 pub const TRANSCRIPTION_BOUNDARY: &str = "----busbaraudioMIME";
 
 /// The Content-Type the transcription egress form is declared with; names [`TRANSCRIPTION_BOUNDARY`].
 const TRANSCRIPTION_CONTENT_TYPE: &str = "multipart/form-data; boundary=----busbaraudioMIME";
 
 /// Does `part` contain the multipart delimiter, i.e. can splicing it into a body framed with
-
 fn part_carries_delimiter(part: &[u8], boundary: &str) -> bool {
     let head = format!("--{boundary}");
     let head = head.as_bytes();
@@ -177,7 +167,6 @@ fn part_carries_delimiter(part: &[u8], boundary: &str) -> bool {
 }
 
 /// IR → openai multipart transcription request wire (the body of
-
 pub fn write_transcription_request(r: &TranscriptionReq) -> Bytes {
     let boundary = TRANSCRIPTION_BOUNDARY;
     let mut out: Vec<u8> = Vec::new();
@@ -234,7 +223,6 @@ pub fn write_transcription_request(r: &TranscriptionReq) -> Bytes {
 }
 
 /// IR → openai transcription response wire (the body of [`OpenAiTranscription::write_response`], moved
-
 pub fn write_transcription_response(r: &TranscriptionResp) -> WireBody {
     if matches!(
         r.response_format.as_deref(),
@@ -302,7 +290,6 @@ pub fn write_transcription_response(r: &TranscriptionResp) -> WireBody {
 }
 
 /// OpenAI transcription `usage` → `Billing`: `{type:"duration",seconds}` (whisper) or a token shape.
-
 fn parse_transcription_usage(wire: &[u8], u: &Value) -> Result<Option<Billing>, CodecError> {
     match u.get(keys::TYPE).and_then(Value::as_str) {
         Some(super::W_DURATION) => {
@@ -351,7 +338,6 @@ leaf_op! {
 }
 
 /// IR → openai speech (TTS) request wire (the body of [`OpenAiSpeech::write_request`], moved behind
-
 pub fn write_speech_request(r: &SpeechReq) -> Bytes {
     let mut body = json!({ (keys::MODEL): r.model, (keys::INPUT): r.input, "voice": r.timbre });
     if let Some(f) = &r.response_format {
@@ -368,7 +354,6 @@ pub fn write_speech_request(r: &SpeechReq) -> Bytes {
 }
 
 /// IR → openai speech (TTS) response wire (the body of [`OpenAiSpeech::write_response`], moved behind
-
 pub fn write_speech_response(r: &SpeechResp) -> WireBody {
     let Some(blob) = &r.audio else {
         return WireBody::json(SlabBytes::default());
@@ -405,7 +390,6 @@ leaf_op! {
 }
 
 /// IR → openai embeddings request wire (the body of [`OpenAiEmbeddings::write_request`], moved behind
-
 pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
     let input = match &r.input {
         EmbInput::Text(v) if v.len() == 1 => json!(v[0]),
@@ -437,7 +421,6 @@ pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
 }
 
 /// IR → openai embeddings response wire (the body of [`OpenAiEmbeddings::write_response`], moved
-
 pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
     let data: Vec<Value> = r
         .embeddings
@@ -484,7 +467,6 @@ leaf_op! {
 }
 
 /// IR → openai image request wire (the body of [`OpenAiImage::write_request`], moved behind the
-
 pub fn write_image_request(r: &ImageReq) -> Bytes {
     let mut body = json!({ (keys::MODEL): r.model });
     if let Some(p) = &r.prompt {
@@ -530,7 +512,6 @@ pub fn write_image_request(r: &ImageReq) -> Bytes {
 }
 
 /// IR → openai image response wire (the body of [`OpenAiImage::write_response`], moved behind the
-
 pub fn write_image_response(r: &ImageResp) -> WireBody {
     let data: Vec<Value> = r
         .images
@@ -582,14 +563,12 @@ leaf_op! {
 }
 
 /// IR → openai moderation request wire (the body of [`OpenAiModeration::write_request`], moved behind
-
 pub fn write_moderation_request(r: &ModerationReq) -> Bytes {
     let body = json!({ (keys::MODEL): r.model, (keys::INPUT): input_to_value(&r.input) });
     Bytes::from(serde_json::to_vec(&body).unwrap_or_default())
 }
 
 /// IR → openai moderation response wire (the body of [`OpenAiModeration::write_response`], moved
-
 pub fn write_moderation_response(r: &ModerationResp) -> WireBody {
     let results: Vec<Value> = r
         .results
@@ -702,7 +681,6 @@ mod tests;
 mod speech_mime_regression_tests;
 
 /// Wire -> concrete `TranscriptionReq` parse, extracted from the `OperationHandler::read_request`
-
 pub fn read_transcription_request(
     body: &[u8],
     content_type: &str,
@@ -745,7 +723,6 @@ pub fn read_transcription_request(
 }
 
 /// Wire -> concrete `TranscriptionResp` parse, extracted from the `OperationHandler::read_response`
-
 pub fn read_transcription_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::audio::TranscriptionResp, CodecError> {
@@ -825,7 +802,6 @@ pub fn read_transcription_response(
 }
 
 /// Wire -> concrete `SpeechReq` parse, extracted from the `OperationHandler::read_request`
-
 pub fn read_speech_request(
     body: &[u8],
     _content_type: &str,
@@ -859,7 +835,6 @@ pub fn read_speech_request(
 }
 
 /// Wire -> concrete `SpeechResp` parse, extracted from the `OperationHandler::read_response`
-
 pub fn read_speech_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::audio::SpeechResp, CodecError> {
@@ -876,7 +851,6 @@ pub fn read_speech_response(
 }
 
 /// Recover the audio Content-Type of an OpenAI speech (TTS) response body from its container magic
-
 fn sniff_speech_audio_mime(wire: &[u8]) -> &'static str {
     if wire.starts_with(b"ID3") {
         keys::AUDIO_MPEG
@@ -894,7 +868,6 @@ fn sniff_speech_audio_mime(wire: &[u8]) -> &'static str {
 }
 
 /// Wire -> concrete `EmbeddingsReq` parse, extracted from the `OperationHandler::read_request`
-
 pub fn read_embeddings_request(
     body: &[u8],
     _content_type: &str,
@@ -950,7 +923,6 @@ pub fn read_embeddings_request(
 }
 
 /// Wire -> concrete `EmbeddingsResp` parse, extracted from the `OperationHandler::read_response`
-
 pub fn read_embeddings_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::embeddings::EmbeddingsResp, CodecError> {
@@ -1013,7 +985,6 @@ pub fn read_embeddings_response(
 }
 
 /// Wire -> concrete `ImageReq` parse, extracted from the `OperationHandler::read_request`
-
 pub fn read_image_request(
     body: &[u8],
     _content_type: &str,
@@ -1094,7 +1065,6 @@ pub fn read_image_request(
 }
 
 /// Wire -> concrete `ImageResp` parse, extracted from the `OperationHandler::read_response`
-
 pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::ImageResp, CodecError> {
     let v: Value =
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
@@ -1150,7 +1120,6 @@ pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::Image
 }
 
 /// Wire -> concrete `ModerationReq` parse, extracted from the `OperationHandler::read_request`
-
 pub fn read_moderation_request(
     body: &[u8],
     _content_type: &str,
@@ -1171,7 +1140,6 @@ pub fn read_moderation_request(
 }
 
 /// Wire -> concrete `ModerationResp` parse, extracted from the `OperationHandler::read_response`
-
 pub fn read_moderation_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::moderation::ModerationResp, CodecError> {

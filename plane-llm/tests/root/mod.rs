@@ -15,13 +15,9 @@
 
 
 /// THIS PLANE'S CAPABILITY-EQUALITY COLUMNS (`qa/capability-equality.json`): the cells its root leg
-
 pub(crate) const COLUMNS: &[&str] = &["llm"];
 
 /// `(capability, column, reason)`: the root-leg cells this plane is NOT owed, each the ledger's own
-
-
-
 pub(crate) const NOT_APPLICABLE: &[(&str, &str, &str)] = &[
     (
         "trust-pinning",
@@ -36,9 +32,6 @@ pub(crate) const NOT_APPLICABLE: &[(&str, &str, &str)] = &[
 ];
 
 /// THE SECRET-SOURCE SCAN'S DRIVEN DOOR (the composition root's `secret_source.rs`, which holds
-
-
-
 pub(crate) fn secret_source_driven() -> Vec<String> {
     Vec::new()
 }

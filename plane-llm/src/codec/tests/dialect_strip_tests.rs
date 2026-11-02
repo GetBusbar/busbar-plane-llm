@@ -6,7 +6,6 @@
 use super::*;
 
 /// A TRUNCATED top-level object must be refused, not spliced.
-
 #[test]
 fn a_truncated_object_is_refused_rather_than_spliced() {
     for input in [
@@ -23,7 +22,6 @@ fn a_truncated_object_is_refused_rather_than_spliced() {
 }
 
 /// The refusal above must not have cost the well-formed case: a CLOSED object with a top-level
-
 #[test]
 fn a_closed_object_still_strips_and_stays_parseable() {
     let out = strip_top_level_usage_member(r#"{"a":1,"usage":{"x":1},"b":2}"#)

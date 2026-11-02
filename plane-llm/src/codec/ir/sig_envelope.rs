@@ -32,7 +32,6 @@ impl IrSignatureOrigin {
 }
 
 /// Wrap `signature` (minted by `origin`) for a carrier with no provenance field. Idempotent: an
-
 pub fn wrap(origin: IrSignatureOrigin, signature: &str) -> String {
     if unwrap(signature).is_some() {
         return signature.to_string();
@@ -45,7 +44,6 @@ pub fn wrap(origin: IrSignatureOrigin, signature: &str) -> String {
 }
 
 /// Unwrap an envelope: `Some((origin, original signature))`, or `None` when `carried` is not a
-
 pub fn unwrap(carried: &str) -> Option<(IrSignatureOrigin, String)> {
     let rest = carried.strip_prefix(ENVELOPE_PREFIX)?;
     let (word, payload) = rest.split_once(':')?;
@@ -55,7 +53,6 @@ pub fn unwrap(carried: &str) -> Option<(IrSignatureOrigin, String)> {
 }
 
 /// READER helper: a signature read off a carrier whose own family is `own`. An envelope yields the
-
 pub fn read_carried(
     carried: String,
     own: Option<IrSignatureOrigin>,
@@ -81,7 +78,6 @@ pub fn read_carried_opt(
 }
 
 /// Client-writer helper: the string for a client carrier for a signature minted by `origin`, where
-
 pub fn for_client(
     signature: &str,
     origin: Option<IrSignatureOrigin>,

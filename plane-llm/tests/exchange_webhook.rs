@@ -132,7 +132,6 @@ fn a_delivery_missing_or_mistyping_what_it_must_carry_is_refused() {
 }
 
 /// LEGACY `crates/busbar-llm/src/tests/webhook_tests.rs::body_tolerates_absent_and_unknown_fields`
-
 #[test]
 fn a_delivery_without_its_optional_fields_reads_and_a_numeric_type_does_not() {
     let lenient = br#"{"type":"response.failed","data":{"id":"resp_1","status":"failed"},

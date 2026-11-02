@@ -164,7 +164,6 @@ fn collect_stream(chunks: &[serde_json::Value]) -> Vec<IrStreamEvent> {
 }
 
 /// Regression: a streamed functionCall MUST produce a matching BlockStop for its tool block.
-
 #[test]
 fn test_stream_tool_block_is_closed() {
     let events = collect_stream(&[serde_json::json!({
@@ -242,7 +241,6 @@ fn gemini_text_then_tool_closes_text_block_before_opening_tool() {
 }
 
 /// The `functionCall` arm is the one block-opening arm in this reader that does not close an
-
 #[test]
 fn test_stream_function_call_closes_open_thinking_block() {
     let events = collect_stream(&[serde_json::json!({
@@ -282,7 +280,6 @@ fn test_stream_function_call_closes_open_thinking_block() {
 }
 
 /// The gemini reader's index allocator had the SAME post-terminal defect as the openai_chat reader
-
 #[test]
 fn gemini_tool_after_finish_chunk_claims_a_fresh_index() {
     let events = collect_stream(&[
@@ -338,7 +335,6 @@ fn gemini_tool_after_finish_chunk_claims_a_fresh_index() {
 }
 
 /// Regression: a Gemini stream chunk with `candidateCount > 1` (multiple candidates each
-
 #[test]
 fn test_stream_multiple_candidates_emit_single_terminal_sequence() {
     let events = collect_stream(&[serde_json::json!({
@@ -405,7 +401,6 @@ fn test_stream_multiple_candidates_emit_single_terminal_sequence() {
 }
 
 /// Regression: text + tool in the same response use distinct, stable indices (text=0, tool=1)
-
 #[test]
 fn test_stream_text_and_tool_indices_stable_and_closed() {
     let events = collect_stream(&[serde_json::json!({
@@ -460,7 +455,6 @@ fn test_stream_text_and_tool_indices_stable_and_closed() {
 }
 
 /// A functionCall part BEFORE the first text part
-
 #[test]
 fn test_stream_tool_before_text_no_index_collision() {
     for chunks in [
@@ -529,7 +523,6 @@ fn test_stream_tool_before_text_no_index_collision() {
 }
 
 /// Regression: tool block indices stay stable when the functionCall arrives in a different
-
 #[test]
 fn test_stream_tool_index_stable_across_chunks() {
     let events = collect_stream(&[
@@ -566,7 +559,6 @@ fn test_stream_tool_index_stable_across_chunks() {
 }
 
 /// Regression: two functionCalls in a tool-only response get distinct, contiguous indices
-
 #[test]
 fn test_stream_two_tools_distinct_indices() {
     let events = collect_stream(&[serde_json::json!({
@@ -622,7 +614,6 @@ fn test_stream_two_tools_distinct_indices() {
 }
 
 /// Interleaving regression: when a text block DOES open, the reserved index 0
-
 #[test]
 fn test_stream_text_then_tool_keeps_text_at_zero() {
     let events = collect_stream(&[serde_json::json!({
@@ -671,7 +662,6 @@ fn test_stream_text_then_tool_keeps_text_at_zero() {
 }
 
 /// Regression: the tool BlockStart now BUFFERS the name and emits NO frame; a native Gemini
-
 #[test]
 fn test_writer_tool_blockstart_emits_no_frame() {
     let writer = GeminiWriter;
@@ -706,7 +696,6 @@ fn test_writer_text_blockstart_is_none() {
 }
 
 /// HIGH (asymmetric twin of the file_id leak): a Bedrock S3-source image (IMAGE_S3_SENTINEL
-
 #[test]
 fn test_write_request_image_s3_dropped_not_corrupted() {
     let writer = GeminiWriter;
@@ -747,7 +736,6 @@ fn test_write_request_image_s3_dropped_not_corrupted() {
 }
 
 /// Helper: drive a sequence of IR events through ONE GeminiWriter (preserving its per-stream
-
 fn collect_function_calls(events: &[IrStreamEvent]) -> Vec<serde_json::Value> {
     let writer = GeminiWriter;
     let mut calls = Vec::new();
@@ -850,7 +838,6 @@ fn streamed_citation_anchor_stays_a_prefix_after_overflow() {
 }
 
 /// Regression: a tool BlockStart + one whole-JSON InputJsonDelta + BlockStop emits EXACTLY ONE
-
 #[test]
 fn test_writer_tool_call_emits_single_name_and_args_part() {
     let calls = collect_function_calls(&[
@@ -886,7 +873,6 @@ fn test_writer_tool_call_emits_single_name_and_args_part() {
 }
 
 /// Regression: the `arguments` JSON arrives SPLIT across MULTIPLE partial-
-
 #[test]
 fn test_writer_tool_call_reassembles_split_json_args() {
     let calls = collect_function_calls(&[
@@ -935,7 +921,6 @@ fn test_writer_tool_call_reassembles_split_json_args() {
 }
 
 /// Regression: a tool call's `arguments` accumulated JSON string must not grow WITHOUT BOUND
-
 #[test]
 fn test_writer_tool_call_args_capped_at_max_len() {
     let cap = busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
@@ -1019,7 +1004,6 @@ fn test_writer_tool_call_args_capped_at_max_len() {
 }
 
 /// Happy-path regression: a NORMAL-sized tool call's arguments (well under
-
 #[test]
 fn test_writer_tool_call_args_under_cap_round_trips() {
     let calls = collect_function_calls(&[
@@ -1078,7 +1062,6 @@ fn test_writer_tool_call_args_under_cap_round_trips() {
 }
 
 /// Regression: TWO parallel tool blocks in one stream, with their
-
 #[test]
 fn test_writer_parallel_tool_calls_keep_distinct_names_and_args() {
     let calls = collect_function_calls(&[
@@ -1142,7 +1125,6 @@ fn test_writer_parallel_tool_calls_keep_distinct_names_and_args() {
 }
 
 /// Regression: a zero-argument tool call (BlockStart then BlockStop with NO InputJsonDelta) must
-
 #[test]
 fn test_writer_tool_call_empty_args_flushed_on_stop() {
     let writer = GeminiWriter;
@@ -1180,7 +1162,6 @@ fn test_writer_tool_call_empty_args_flushed_on_stop() {
 }
 
 /// Regression: neither the BlockStart nor the args delta emits a frame — the functionCall part
-
 #[test]
 fn test_writer_tool_call_no_frame_before_block_stop() {
     let writer = GeminiWriter;
@@ -1224,7 +1205,6 @@ fn test_writer_tool_call_no_frame_before_block_stop() {
 }
 
 /// extract_error parses the body once and derives both the provider code and structured type.
-
 #[test]
 fn test_extract_error_single_parse_fields() {
     let reader = GeminiReader;
@@ -1241,7 +1221,6 @@ fn test_extract_error_single_parse_fields() {
 }
 
 /// An integer `error.code` (the real Gemini shape) must be stringified into
-
 #[test]
 fn test_extract_error_integer_code_is_stringified() {
     let reader = GeminiReader;
@@ -1275,7 +1254,6 @@ fn test_extract_error_status_fallback() {
 }
 
 /// A real Gemini oversized-context error is a
-
 #[test]
 fn test_extract_error_oversized_context_yields_canonical_code() {
     let reader = GeminiReader;
@@ -1293,7 +1271,6 @@ fn test_extract_error_oversized_context_yields_canonical_code() {
 }
 
 /// A second real-world phrasing the official API emits ("input is longer than the maximum number
-
 #[test]
 fn test_extract_error_oversized_context_alternate_phrasing() {
     let reader = GeminiReader;
@@ -1306,7 +1283,6 @@ fn test_extract_error_oversized_context_alternate_phrasing() {
 }
 
 /// A NON-context-length 400 (e.g. a malformed field) must NOT be misclassified as context-length:
-
 #[test]
 fn test_extract_error_unrelated_invalid_argument_keeps_status_code() {
     let reader = GeminiReader;
@@ -1320,7 +1296,6 @@ fn test_extract_error_unrelated_invalid_argument_keeps_status_code() {
 }
 
 /// Explicit bad-key ErrorInfo is preserved as an authentication signal in the raw contract.
-
 #[test]
 fn test_extract_error_bad_api_key_classifies_as_auth_harddown() {
     let reader = GeminiReader;
@@ -1354,7 +1329,6 @@ fn test_extract_error_bad_api_key_classifies_as_auth_harddown() {
 }
 
 /// The documented machine-readable `API_KEY_INVALID` reason can also accompany a 403
-
 #[test]
 fn test_extract_error_bad_api_key_permission_denied_is_auth() {
     let reader = GeminiReader;
@@ -1367,7 +1341,6 @@ fn test_extract_error_bad_api_key_permission_denied_is_auth() {
 }
 
 /// PRECISION GUARD: the bad-key reason is read from the ErrorInfo field it is documented to live
-
 #[test]
 fn test_extract_error_echoed_api_key_invalid_token_does_not_park_the_lane() {
     let reader = GeminiReader;
@@ -1400,7 +1373,6 @@ fn test_extract_error_echoed_api_key_invalid_token_does_not_park_the_lane() {
 }
 
 /// PRECISION GUARD: a GENERIC `INVALID_ARGUMENT` 400 (a real field-validation error, no api-key
-
 #[test]
 fn test_extract_error_generic_invalid_argument_stays_client_fault() {
     let reader = GeminiReader;
@@ -1432,7 +1404,6 @@ fn test_extract_error_generic_invalid_argument_stays_client_fault() {
 }
 
 /// PRECISION GUARD: a bare `PERMISSION_DENIED` with NO api-key text (e.g. the existing
-
 #[test]
 fn test_extract_error_bare_permission_denied_not_treated_as_bad_key() {
     let reader = GeminiReader;
@@ -1454,7 +1425,6 @@ fn test_extract_error_non_json_body() {
 }
 
 /// The native Gemini error envelope is google.rpc.Status-shaped:
-
 #[test]
 fn test_write_error_native_gemini_envelope() {
     let writer = GeminiWriter;
@@ -1507,7 +1477,6 @@ fn test_write_error_kind_maps_to_status_vocabulary() {
 }
 
 /// An unrecognized `kind` falls back to the HTTP-status-derived google.rpc.Code name (never a
-
 #[test]
 fn test_write_error_unknown_kind_falls_back_to_http_status() {
     let writer = GeminiWriter;
@@ -1529,7 +1498,6 @@ fn test_write_error_unknown_kind_falls_back_to_http_status() {
 }
 
 /// The emitted `code`/`status` pair must always be an INTERNALLY CONSISTENT
-
 #[test]
 fn test_write_error_code_status_pair_stays_consistent() {
     let writer = GeminiWriter;
@@ -1568,7 +1536,6 @@ fn test_write_error_code_status_pair_stays_consistent() {
 }
 
 /// Same-protocol (Gemini→Gemini) passthrough preserves the upstream `responseId` and
-
 #[test]
 fn test_response_identity_roundtrip_preserves_id_and_model() {
     let reader = GeminiReader;
@@ -1607,7 +1574,6 @@ fn test_response_identity_roundtrip_preserves_id_and_model() {
 }
 
 /// F2 conformance: a foreign / novel IR stop_reason (`refusal` from Responses, `error` from
-
 #[test]
 fn foreign_stop_reason_maps_to_other_not_verbatim() {
     use crate::codec::ir::IrStopReason as S;
@@ -1657,7 +1623,6 @@ fn foreign_stop_reason_maps_to_other_not_verbatim() {
 }
 
 /// Cross-protocol write where a non-Gemini backend reader DID set a response id (the normal
-
 #[test]
 fn test_response_identity_cross_protocol_emits_foreign_id() {
     let writer = GeminiWriter;
@@ -1681,7 +1646,6 @@ fn test_response_identity_cross_protocol_emits_foreign_id() {
 }
 
 /// Fidelity guard: when the IR carries NO id (a native Gemini body that omitted `responseId`, or
-
 #[test]
 fn test_response_identity_none_id_is_omitted_not_fabricated() {
     let writer = GeminiWriter;
@@ -1703,7 +1667,6 @@ fn test_response_identity_none_id_is_omitted_not_fabricated() {
 }
 
 /// The streaming reader captures the stream identity from the first chunk into MessageStart,
-
 #[test]
 fn test_stream_message_start_captures_and_emits_identity() {
     let events = collect_stream(&[serde_json::json!({
@@ -1745,7 +1708,6 @@ fn test_stream_message_start_captures_and_emits_identity() {
 }
 
 /// Cross-protocol fidelity (stream): a MessageStart with NO identity (the post-strip state on a
-
 #[test]
 fn test_stream_message_start_no_identity_synthesizes_response_id() {
     let writer = GeminiWriter;
@@ -1773,7 +1735,6 @@ fn test_stream_message_start_no_identity_synthesizes_response_id() {
 }
 
 /// Regression: a NATIVE request (which never carries `stream`) must produce a body with no
-
 #[test]
 fn test_native_request_without_stream_stays_streamless() {
     let reader = GeminiReader;
@@ -1798,7 +1759,6 @@ fn test_native_request_without_stream_stays_streamless() {
 }
 
 /// An `INVALID_ARGUMENT` 400 whose
-
 #[test]
 fn test_extract_error_invalid_word_near_api_key_stays_client_fault() {
     let reader = GeminiReader;
@@ -1830,7 +1790,6 @@ fn test_extract_error_invalid_word_near_api_key_stays_client_fault() {
 }
 
 /// Companion to the refinement: an EXPIRED-key prose message ("API key expired") with no
-
 #[test]
 fn test_extract_error_expired_api_key_prose_is_auth() {
     let reader = GeminiReader;
@@ -1844,7 +1803,6 @@ fn test_extract_error_expired_api_key_prose_is_auth() {
 }
 
 /// A thinking-only assistant turn must NOT vanish from
-
 #[test]
 fn test_write_request_thinking_only_turn_survives_with_placeholder() {
     let writer = GeminiWriter;
@@ -1912,7 +1870,6 @@ fn test_write_request_thinking_only_turn_survives_with_placeholder() {
 }
 
 /// A tool result that parses to JSON `null` (the upstream omitted the
-
 #[test]
 fn test_write_request_null_tool_result_coerced_to_struct() {
     let writer = GeminiWriter;
@@ -1951,7 +1908,6 @@ fn test_write_request_null_tool_result_coerced_to_struct() {
 }
 
 /// A bare-scalar tool result ("42") must likewise be coerced to a Struct — wrapped under
-
 #[test]
 fn test_write_request_scalar_tool_result_coerced_to_struct() {
     let writer = GeminiWriter;
@@ -1990,7 +1946,6 @@ fn test_write_request_scalar_tool_result_coerced_to_struct() {
 }
 
 /// Regression: Gemini's `Content.role` is OPTIONAL. A single-turn request that omits `role`
-
 #[test]
 fn test_read_request_absent_role_defaults_to_user() {
     let reader = GeminiReader;
@@ -2009,7 +1964,6 @@ fn test_read_request_absent_role_defaults_to_user() {
 }
 
 /// An explicitly EMPTY role string (`"role": ""`) is likewise treated as a user turn, matching
-
 #[test]
 fn test_read_request_empty_role_defaults_to_user() {
     let reader = GeminiReader;
@@ -2027,7 +1981,6 @@ fn test_read_request_empty_role_defaults_to_user() {
 }
 
 /// A genuinely unexpected NON-EMPTY role string is still a hard client error — the leniency is
-
 #[test]
 fn test_read_request_unknown_nonempty_role_still_rejected() {
     let reader = GeminiReader;
@@ -2041,7 +1994,6 @@ fn test_read_request_unknown_nonempty_role_still_rejected() {
 }
 
 /// Regression: `model` is preserved in `extra` exactly once (no duplicate insert) and survives
-
 #[test]
 fn test_read_request_model_preserved_in_extra_once() {
     let reader = GeminiReader;
@@ -2059,7 +2011,6 @@ fn test_read_request_model_preserved_in_extra_once() {
 }
 
 /// Regression: a ToolResult whose content is multi-part PLAIN TEXT (not JSON) must be wrapped in
-
 #[test]
 fn test_write_request_tool_result_plaintext_wrapped_not_dropped() {
     let writer = GeminiWriter;
@@ -2118,7 +2069,6 @@ fn test_write_request_tool_result_json_passthrough() {
 }
 
 /// Regression: a cross-protocol response with NO foreign id but a populated `created` (the
-
 #[test]
 fn test_response_identity_cross_protocol_synthesizes_id_when_created_set() {
     let writer = GeminiWriter;
@@ -2145,7 +2095,6 @@ fn test_response_identity_cross_protocol_synthesizes_id_when_created_set() {
 }
 
 /// Regression: the in-stream Error frame emits the FULL google.rpc.Status envelope
-
 #[test]
 fn test_stream_error_emits_full_google_rpc_status() {
     let writer = GeminiWriter;
@@ -2199,7 +2148,6 @@ fn test_stream_error_server_error_maps_internal() {
 }
 
 /// A cross-protocol stream that carries only a model (no id) surfaces `modelVersion` AND a
-
 #[test]
 fn test_stream_message_start_model_only_emits_model_version() {
     let writer = GeminiWriter;
@@ -2233,7 +2181,6 @@ fn test_stream_message_start_model_only_emits_model_version() {
 }
 
 /// Regression: a Gemini `functionCall` in `read_request` must produce a NON-EMPTY tool-use id
-
 #[test]
 fn test_read_request_functioncall_gets_nonempty_id() {
     let reader = GeminiReader;
@@ -2253,7 +2200,6 @@ fn test_read_request_functioncall_gets_nonempty_id() {
 }
 
 /// Regression: two `functionCall`s sharing the SAME function name in one request must get
-
 #[test]
 fn test_read_request_same_name_tool_calls_get_distinct_ids() {
     let reader = GeminiReader;
@@ -2284,7 +2230,6 @@ fn test_read_request_same_name_tool_calls_get_distinct_ids() {
 }
 
 /// Regression: the synthesized id is DETERMINISTIC for a given (index, name) — two reads of the
-
 #[test]
 fn test_read_request_tool_call_id_is_deterministic() {
     let reader = GeminiReader;
@@ -2308,7 +2253,6 @@ fn test_read_request_tool_call_id_is_deterministic() {
 }
 
 /// Regression: the same-protocol ToolResult correlation key stays the function NAME (the writer
-
 #[test]
 fn test_read_request_functionresponse_tool_use_id_is_name() {
     let reader = GeminiReader;
@@ -2358,7 +2302,6 @@ fn test_read_response_functioncall_gets_nonempty_id() {
 }
 
 /// A SAFETY-filtered Gemini candidate carries only
-
 #[test]
 fn test_read_response_safety_filtered_candidate_no_content_is_ok() {
     let reader = GeminiReader;
@@ -2384,7 +2327,6 @@ fn test_read_response_safety_filtered_candidate_no_content_is_ok() {
 }
 
 /// A PROMPT-blocked Gemini stream chunk carries a top-level
-
 #[test]
 fn test_stream_prompt_block_emits_terminal_sequence() {
     let events = collect_stream(&[serde_json::json!({
@@ -2423,7 +2365,6 @@ fn test_stream_prompt_block_emits_terminal_sequence() {
 }
 
 /// A prompt-level RECITATION block must classify as `safety` (matching the candidate-level
-
 #[test]
 fn test_stream_prompt_block_recitation_maps_to_safety() {
     let events = collect_stream(&[serde_json::json!({
@@ -2442,7 +2383,6 @@ fn test_stream_prompt_block_recitation_maps_to_safety() {
 }
 
 /// A MID-STREAM prompt-block arm must close any blocks opened by
-
 #[test]
 fn test_stream_mid_stream_prompt_block_closes_open_text_block() {
     let reader = GeminiReader;
@@ -2506,7 +2446,6 @@ fn test_stream_mid_stream_prompt_block_closes_open_text_block() {
 }
 
 /// A PROMPT-blocked NON-STREAMING Gemini body (top-level
-
 #[test]
 fn test_read_response_prompt_block_is_safety_stop_not_error() {
     let reader = GeminiReader;
@@ -2534,7 +2473,6 @@ fn test_read_response_prompt_block_is_safety_stop_not_error() {
 }
 
 /// Regression: a candidates-absent body with NEITHER an error NOR a promptFeedback.blockReason is
-
 #[test]
 fn test_read_response_candidates_absent_without_block_still_errors() {
     let reader = GeminiReader;
@@ -2548,7 +2486,6 @@ fn test_read_response_candidates_absent_without_block_still_errors() {
 }
 
 /// A STREAMING zero-arg `functionCall` (no `args` field) must emit an
-
 #[test]
 fn test_stream_zero_arg_function_call_emits_empty_object_not_null() {
     let events = collect_stream(&[serde_json::json!({
@@ -2572,7 +2509,6 @@ fn test_stream_zero_arg_function_call_emits_empty_object_not_null() {
 }
 
 /// A NON-STREAMING zero-arg `functionCall` (no `args` field) must decode
-
 #[test]
 fn test_read_response_zero_arg_function_call_input_is_empty_object_not_null() {
     let reader = GeminiReader;
@@ -2598,7 +2534,6 @@ fn test_read_response_zero_arg_function_call_input_is_empty_object_not_null() {
 }
 
 /// Regression: the streaming `BlockStart` for a tool block must carry a non-empty synthesized
-
 #[test]
 fn test_stream_tool_blockstart_id_is_nonempty() {
     let events = collect_stream(&[serde_json::json!({
@@ -2624,7 +2559,6 @@ fn test_stream_tool_blockstart_id_is_nonempty() {
 }
 
 /// A source `stream` is captured into the typed `IrRequest.stream` (used only by path selection)
-
 #[test]
 fn test_read_request_source_stream_round_trips_via_extra() {
     let reader = GeminiReader;
@@ -2650,7 +2584,6 @@ fn test_read_request_source_stream_round_trips_via_extra() {
 }
 
 /// A `maxOutputTokens` above `u32::MAX`
-
 #[test]
 fn test_read_request_max_output_tokens_overflow_drops_to_none() {
     let reader = GeminiReader;
@@ -2677,7 +2610,6 @@ fn test_read_request_max_output_tokens_overflow_drops_to_none() {
 }
 
 /// Regression: native Gemini `toolConfig` (camelCase) is NOT in `modeled_keys`, so it
-
 #[test]
 fn test_read_request_native_tool_config_round_trips_via_extra() {
     let reader = GeminiReader;
@@ -2705,7 +2637,6 @@ fn test_read_request_native_tool_config_round_trips_via_extra() {
 }
 
 /// Unmodeled `generationConfig` sub-fields (`responseMimeType` for JSON mode,
-
 #[test]
 fn test_generation_config_unmodeled_subfields_survive_roundtrip() {
     let reader = GeminiReader;
@@ -2764,7 +2695,6 @@ fn test_generation_config_unmodeled_subfields_survive_roundtrip() {
 }
 
 /// The typed IR fields OVERLAY the raw extra copy — if the IR's typed
-
 #[test]
 fn test_generation_config_typed_fields_override_raw_extra() {
     let writer = GeminiWriter;
@@ -2800,7 +2730,6 @@ fn test_generation_config_typed_fields_override_raw_extra() {
 }
 
 /// Regression: the streamed `MessageDelta` usage frame must include `totalTokenCount`
-
 #[test]
 fn test_stream_message_delta_includes_total_token_count() {
     let writer = GeminiWriter;
@@ -2835,7 +2764,6 @@ fn test_stream_message_delta_includes_total_token_count() {
 }
 
 /// The streamed total saturates (never overflow-panics) on pathological counts — guards the
-
 #[test]
 fn test_stream_message_delta_total_token_count_saturates() {
     let writer = GeminiWriter;
@@ -2862,7 +2790,6 @@ fn test_stream_message_delta_total_token_count_saturates() {
 }
 
 /// On the CROSS-protocol egress path (signalled by a populated `created` — the
-
 #[test]
 fn test_write_response_includes_total_token_count_cross_protocol() {
     let writer = GeminiWriter;
@@ -2896,7 +2823,6 @@ fn test_write_response_includes_total_token_count_cross_protocol() {
 }
 
 /// Fidelity guard: a SAME-protocol read→write (no `created` — native Gemini bodies carry no
-
 #[test]
 fn test_write_response_omits_total_token_count_same_protocol() {
     let writer = GeminiWriter;
@@ -2944,7 +2870,6 @@ fn test_write_response_total_token_count_saturates() {
 }
 
 /// A cross-protocol response from a backend whose reader sets `created: None`
-
 #[test]
 fn test_write_response_includes_total_token_count_when_only_model_present() {
     let writer = GeminiWriter;
@@ -2977,7 +2902,6 @@ fn test_write_response_includes_total_token_count_when_only_model_present() {
 }
 
 /// The model-only cross-protocol total saturates (never overflow-panics) on pathological counts,
-
 #[test]
 fn test_write_response_model_only_total_token_count_saturates() {
     let writer = GeminiWriter;
@@ -3000,7 +2924,6 @@ fn test_write_response_model_only_total_token_count_saturates() {
 }
 
 /// The modelled keys are the mapping file's top-level rows, so unmodelled keys still flow to
-
 #[test]
 fn test_modeled_request_keys_are_the_mapping_rows() {
     let a = |k: &str| crate::codec::carry::models(super::map::REQUEST, k);
@@ -3023,7 +2946,6 @@ fn test_modeled_request_keys_are_the_mapping_rows() {
 }
 
 /// Hoisting the set must not change read behavior — an unmodeled top-level key
-
 #[test]
 fn test_read_request_unmodeled_key_still_flows_to_extra_after_hoist() {
     let reader = GeminiReader;
@@ -3052,7 +2974,6 @@ fn test_read_request_unmodeled_key_still_flows_to_extra_after_hoist() {
 }
 
 /// Regression: a buffered `write_response` with stop_reason=tool_use (the canonical value every
-
 #[test]
 fn test_write_response_tool_use_maps_to_stop() {
     let writer = GeminiWriter;
@@ -3082,7 +3003,6 @@ fn test_write_response_tool_use_maps_to_stop() {
 }
 
 /// Regression: the streamed `MessageDelta` with stop_reason=tool_use also emits finishReason
-
 #[test]
 fn test_stream_message_delta_tool_use_maps_to_stop() {
     let writer = GeminiWriter;
@@ -3111,7 +3031,6 @@ fn test_stream_message_delta_tool_use_maps_to_stop() {
 }
 
 /// Regression: an IR Image carrying the `"image_url"` media_type SENTINEL (a remote https URL
-
 #[test]
 fn test_write_request_image_url_sentinel_emits_file_data() {
     let writer = GeminiWriter;
@@ -3142,7 +3061,6 @@ fn test_write_request_image_url_sentinel_emits_file_data() {
 }
 
 /// A real base64 image (a genuine mimeType) still emits as `inlineData` — the sentinel branch
-
 #[test]
 fn test_write_request_base64_image_still_inline_data() {
     let writer = GeminiWriter;
@@ -3175,7 +3093,6 @@ fn test_write_request_base64_image_still_inline_data() {
 }
 
 /// Round-trip: a native Gemini `fileData{fileUri}` part reads into the typed `Url` image source
-
 #[test]
 fn test_file_data_image_round_trips_via_url() {
     let reader = GeminiReader;
@@ -3209,7 +3126,6 @@ fn test_file_data_image_round_trips_via_url() {
 }
 
 /// A synthesized `responseId` must be a native-shaped opaque
-
 #[test]
 fn test_synth_response_id_is_opaque_native_shape() {
     let id = synth_response_id(crate::codec::test_host::HOST).expect("test entropy");
@@ -3240,7 +3156,6 @@ fn test_synth_response_id_is_opaque_native_shape() {
 }
 
 /// The synthesized id must embed NO unix-second prefix: the old form's leading segment WAS the
-
 #[test]
 fn test_synth_response_id_leaks_no_timestamp() {
     let now_hex = format!(
@@ -3264,7 +3179,6 @@ fn test_synth_response_id_leaks_no_timestamp() {
 }
 
 /// The base62 reduction must be UNBIASED. The old body mapped each
-
 #[test]
 fn test_synth_response_id_base62_is_unbiased() {
     use std::collections::HashMap;
@@ -3309,7 +3223,6 @@ fn test_synth_response_id_base62_is_unbiased() {
 }
 
 /// Uniqueness burst: a large run of synthesized ids must be collision-free in practice (each
-
 #[test]
 fn test_synth_response_id_uniqueness_burst() {
     use std::collections::HashSet;
@@ -3329,7 +3242,6 @@ fn test_synth_response_id_uniqueness_burst() {
 }
 
 /// `state.open_tools` is only drained on a `finishReason` chunk,
-
 #[test]
 fn test_stream_open_tools_growth_is_capped() {
     let reader = GeminiReader;
@@ -3358,7 +3270,6 @@ fn test_stream_open_tools_growth_is_capped() {
 }
 
 /// Past `MAX_GEMINI_TOOL_FRAMES` the drop must be OBSERVABLE, not silent: the first frame that
-
 #[test]
 fn test_stream_tool_frame_cap_drop_is_observable() {
     let reader = GeminiReader;
@@ -3406,7 +3317,6 @@ fn test_stream_tool_frame_cap_drop_is_observable() {
 }
 
 /// The cap must NOT perturb a realistic stream: a small number of tool calls are all recorded
-
 #[test]
 fn test_stream_open_tools_under_cap_records_all() {
     let reader = GeminiReader;
@@ -3460,7 +3370,6 @@ fn test_auth_headers_valid_key_emits_x_goog_api_key() {
 }
 
 /// HIGH/correctness regression: a Tool-role IR message carries `ToolResult` blocks, which the
-
 #[test]
 fn test_tool_role_maps_to_user_for_function_response() {
     let writer = GeminiWriter;
@@ -3498,7 +3407,6 @@ fn test_tool_role_maps_to_user_for_function_response() {
 }
 
 /// HIGH/correctness regression: an Assistant-role message carrying a `functionCall` (ToolUse)
-
 #[test]
 fn test_assistant_tool_use_stays_model_role() {
     let writer = GeminiWriter;
@@ -3529,7 +3437,6 @@ fn test_assistant_tool_use_stays_model_role() {
 }
 
 /// An inline `{"error":{...}}` google.rpc.Status object
-
 #[test]
 fn test_stream_inline_error_envelope_surfaces_ir_error() {
     let events = collect_stream(&[serde_json::json!({
@@ -3554,7 +3461,6 @@ fn test_stream_inline_error_envelope_surfaces_ir_error() {
 }
 
 /// An inline error whose `status` is absent falls back to the numeric `code` mapping (503 →
-
 #[test]
 fn test_stream_inline_error_code_fallback_and_default() {
     let by_code = collect_stream(&[serde_json::json!({
@@ -3584,7 +3490,6 @@ fn test_stream_inline_error_code_fallback_and_default() {
 }
 
 /// `gemini_error_status_class` prefers the UPPER_SNAKE `status` over the numeric `code`, and an
-
 #[test]
 fn test_gemini_error_status_class_mapping() {
     assert_eq!(
@@ -3620,7 +3525,6 @@ fn test_gemini_error_status_class_mapping() {
 }
 
 /// The Gemini bad-key auth-failure envelope MUST carry the
-
 #[test]
 fn test_write_error_bad_key_carries_api_key_invalid_details() {
     let writer = GeminiWriter;
@@ -3667,7 +3571,6 @@ fn test_write_error_bad_key_carries_api_key_invalid_details() {
 }
 
 /// A NON-auth 400/INVALID_ARGUMENT (e.g. a generic malformed-request body) must NOT grow the
-
 #[test]
 fn test_write_error_generic_invalid_argument_has_no_details() {
     let writer = GeminiWriter;
@@ -3689,7 +3592,6 @@ fn test_write_error_generic_invalid_argument_has_no_details() {
 }
 
 /// HIGH/correctness regression: on a CROSS-protocol multi-turn tool call (Anthropic/OpenAI
-
 #[test]
 fn test_write_request_cross_protocol_function_response_name_matches_call() {
     let writer = GeminiWriter;
@@ -3747,7 +3649,6 @@ fn test_write_request_cross_protocol_function_response_name_matches_call() {
 }
 
 /// Same-protocol (Gemini→Gemini) regression guard for the fix above: when the ToolResult's
-
 #[test]
 fn test_write_request_same_protocol_function_response_name_falls_back_to_id() {
     let writer = GeminiWriter;
@@ -3773,7 +3674,6 @@ fn test_write_request_same_protocol_function_response_name_falls_back_to_id() {
 }
 
 /// LOW/completeness regression: a STREAMING chunk with an EMPTY `candidates: []` array (rather than
-
 #[test]
 fn test_stream_empty_candidates_array_prompt_block_terminates() {
     let events = collect_stream(&[serde_json::json!({
@@ -3797,7 +3697,6 @@ fn test_stream_empty_candidates_array_prompt_block_terminates() {
 }
 
 /// LOW/completeness regression: a NON-STREAMING body with an EMPTY `candidates: []` array plus a
-
 #[test]
 fn test_read_response_empty_candidates_array_prompt_block_is_safety_stop() {
     let reader = GeminiReader;
@@ -3822,7 +3721,6 @@ fn test_read_response_empty_candidates_array_prompt_block_is_safety_stop() {
 }
 
 /// Guard: an EMPTY `candidates: []` with NO block reason and NO error is still a malformed
-
 #[test]
 fn test_read_response_empty_candidates_array_without_block_still_errors() {
     let reader = GeminiReader;
@@ -3836,7 +3734,6 @@ fn test_read_response_empty_candidates_array_without_block_still_errors() {
 }
 
 /// Gemini has no TOOL_USE finishReason — a tool-call turn ends with STOP.
-
 #[test]
 fn test_read_response_stop_with_function_call_is_tool_use() {
     let reader = GeminiReader;
@@ -3867,7 +3764,6 @@ fn test_read_response_stop_with_function_call_is_tool_use() {
 }
 
 /// Companion guard: a plain STOP with NO tool block must stay `end_turn`. The promotion
-
 #[test]
 fn test_read_response_plain_stop_stays_end_turn() {
     let reader = GeminiReader;
@@ -3888,7 +3784,6 @@ fn test_read_response_plain_stop_stays_end_turn() {
 }
 
 /// The streaming reader mapped STOP → `end_turn` on the
-
 #[test]
 fn test_stream_stop_with_function_call_terminal_is_tool_use() {
     let events = collect_stream(&[serde_json::json!({
@@ -3912,7 +3807,6 @@ fn test_stream_stop_with_function_call_terminal_is_tool_use() {
 }
 
 /// Companion guard (streaming): a plain STOP stream with no tool block must terminate
-
 #[test]
 fn test_stream_plain_stop_terminal_stays_end_turn() {
     let events = collect_stream(&[serde_json::json!({
@@ -3933,7 +3827,6 @@ fn test_stream_plain_stop_terminal_stays_end_turn() {
 }
 
 /// A `ToolUse.input` that is a JSON ARRAY must be coerced to a valid Gemini
-
 #[test]
 fn test_tool_use_array_input_coerced_to_object_args() {
     let block = crate::codec::ir::IrBlock::ToolUse {
@@ -3987,7 +3880,6 @@ fn test_tool_use_array_input_coerced_to_object_args() {
 }
 
 /// Companion guard: an OBJECT `ToolUse.input` must pass through byte-identical so the
-
 #[test]
 fn test_tool_use_object_input_passes_through_unchanged() {
     let writer = GeminiWriter;
@@ -4059,7 +3951,6 @@ fn tool_choice_specific_tool_roundtrips() {
 }
 
 /// Fidelity: `ANY` + `allowedFunctionNames` with N>1 names cannot be expressed by the
-
 #[test]
 fn tool_choice_multi_name_allowlist_relaxes_to_required() {
     let ir = gemini_read(serde_json::json!({
@@ -4134,7 +4025,6 @@ fn tool_choice_no_duplicate_function_calling_config() {
 }
 
 /// The raw `toolConfig` the reader preserves in `req.extra` (for
-
 #[test]
 fn tool_choice_overlay_survives_stale_raw_toolconfig_in_extra() {
     let mut req = base_ir_request();
@@ -4167,7 +4057,6 @@ fn tool_choice_overlay_survives_stale_raw_toolconfig_in_extra() {
 }
 
 /// `synth_tool_call_id` (used by `read_response`, one call per Gemini
-
 #[test]
 fn response_tool_call_ids_do_not_collide_across_conversation_turns() {
     let reader = GeminiReader;
@@ -4268,7 +4157,6 @@ fn finish_reason_recitation_in_response_is_safety() {
 }
 
 /// End-to-end through read_response: a MALFORMED_FUNCTION_CALL finishReason surfaces as the
-
 #[test]
 fn finish_reason_malformed_function_call_in_response_is_error() {
     let body = serde_json::json!({
@@ -4288,7 +4176,6 @@ fn finish_reason_malformed_function_call_in_response_is_error() {
 }
 
 /// The STREAMING reader (read_response_events) routes finishReason through the SAME
-
 #[test]
 fn finish_reason_malformed_function_call_stream_is_error() {
     let chunks = vec![serde_json::json!({
@@ -4350,7 +4237,6 @@ fn finish_reason_malformed_function_call_stream_is_error() {
 }
 
 /// `raw_stop_reason` reads the FIRST candidate's `finishReason` off the RAW bytes and maps it
-
 #[test]
 fn raw_stop_reason_agrees_with_read_response() {
     for token in [
@@ -4392,7 +4278,6 @@ fn raw_stop_reason_agrees_with_read_response() {
 }
 
 /// The relay's INCREMENTAL scan answers the same wherever the body is split — the key, the colon,
-
 #[test]
 fn stop_key_scanner_reads_the_candidate_member_at_every_split() {
     use crate::codec::usage_tail::StopKeyScanner;
@@ -4443,7 +4328,6 @@ fn stop_key_scanner_reads_the_candidate_member_at_every_split() {
 }
 
 /// A MODEL-WRITTEN TOOL ARGUMENT NEVER FAULTS THE LANE. A Gemini answer writes `content` before
-
 #[test]
 fn a_finish_reason_inside_tool_args_is_not_the_stop_reason() {
     let body = serde_json::json!({
@@ -4476,7 +4360,6 @@ fn a_finish_reason_inside_tool_args_is_not_the_stop_reason() {
 }
 
 /// The Error event is scoped to the failed-generation reason: a SAFETY stop is a correctly-served
-
 #[test]
 fn finish_reason_non_error_stops_push_no_error_event() {
     for reason in ["STOP", "MAX_TOKENS", "SAFETY", "OTHER"] {
@@ -4523,7 +4406,6 @@ fn context_length_override_only_fires_on_400_or_413() {
 }
 
 /// Minimal IR request with a single user "hi" turn and all controls defaulted. Tests mutate the
-
 fn base_ir_request() -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
         block_origins: Default::default(),
@@ -4568,7 +4450,6 @@ fn base_ir_request() -> crate::codec::ir::IrRequest {
 }
 
 /// OpenAI→Gemini: an IR carrying frequency/presence penalties, seed, and n MUST emit them in
-
 #[test]
 fn test_write_request_sampling_controls_emit_generation_config() {
     let mut req = base_ir_request();
@@ -4609,7 +4490,6 @@ fn test_write_request_sampling_controls_omitted_when_none() {
 }
 
 /// Gemini→IR: native generationConfig sampling controls promote into the typed IR fields, and a
-
 #[test]
 fn test_read_request_sampling_controls_promote_and_round_trip() {
     let body = serde_json::json!({
@@ -4639,7 +4519,6 @@ fn test_read_request_sampling_controls_promote_and_round_trip() {
 }
 
 /// Gemini→IR→Gemini: native responseMimeType + responseSchema read into the normalized IR
-
 #[test]
 fn test_response_format_round_trips_native_gemini() {
     let body = serde_json::json!({
@@ -4677,7 +4556,6 @@ fn test_response_format_round_trips_native_gemini() {
 }
 
 /// A JSON structured-output directive (from any source protocol — here a typed IR carrying a
-
 #[test]
 fn test_response_format_maps_to_gemini_and_sanitizes_schema() {
     let mut req = base_ir_request();
@@ -4712,7 +4590,6 @@ fn test_response_format_maps_to_gemini_and_sanitizes_schema() {
 }
 
 /// A Gemini response `thought:true` part with a `thoughtSignature` reads into IrBlock::Thinking
-
 #[test]
 fn test_thought_part_round_trips_through_ir_thinking() {
     let body = serde_json::json!({
@@ -4760,7 +4637,6 @@ fn test_thought_part_round_trips_through_ir_thinking() {
 }
 
 /// A Thinking block in a REQUEST assistant turn round-trips through write_request as a thought
-
 #[test]
 fn test_thinking_block_round_trips_in_write_request() {
     let mut req = base_ir_request();
@@ -4795,7 +4671,6 @@ fn test_thinking_block_round_trips_in_write_request() {
 }
 
 /// Gemini usageMetadata.cachedContentTokenCount maps into the IR cache_read_input_tokens field
-
 #[test]
 fn test_cached_content_token_count_reads_into_cache_read() {
     let body = serde_json::json!({
@@ -4829,7 +4704,6 @@ fn test_cached_content_token_count_reads_into_cache_read() {
 }
 
 /// A Gemini `fileData` part (with or without a mimeType) is a remote URL reference → reads into
-
 #[test]
 fn test_file_data_reads_into_url_source_and_round_trips() {
     let body = serde_json::json!({
@@ -4857,7 +4731,6 @@ fn test_file_data_reads_into_url_source_and_round_trips() {
 }
 
 /// Regression guard: a fileData WITHOUT a mimeType (bare remote URI) reads back as an image_url
-
 #[test]
 fn test_file_data_url_reemits_with_derived_mime_type() {
     let body = serde_json::json!({
@@ -4889,7 +4762,6 @@ fn test_file_data_url_reemits_with_derived_mime_type() {
 }
 
 /// A cross-protocol tool def carrying JSON-Schema keywords Gemini 400-rejects ($schema,
-
 #[test]
 fn test_write_request_strips_rejected_schema_keywords() {
     let mut req = base_ir_request();
@@ -4976,7 +4848,6 @@ fn test_sanitize_gemini_schema_preserves_clean_and_walks_arrays() {
 }
 
 /// The keyword filter is POSITIONAL. Inside a `properties` map the keys
-
 #[test]
 fn test_sanitize_gemini_schema_keeps_user_properties_named_like_keywords() {
     let schema = serde_json::json!({
@@ -5030,7 +4901,6 @@ fn test_sanitize_gemini_schema_keeps_user_properties_named_like_keywords() {
 }
 
 /// A realistic Pydantic/Zod-generated nested-model schema: a top-level `address` property is a
-
 #[test]
 fn test_sanitize_gemini_schema_inlines_nested_ref_against_defs() {
     let schema = serde_json::json!({
@@ -5078,7 +4948,6 @@ fn test_sanitize_gemini_schema_inlines_nested_ref_against_defs() {
 }
 
 /// `additionalProperties` is only rejected by the live Gemini API when it carries a SCHEMA (the
-
 #[test]
 fn test_sanitize_gemini_schema_keeps_boolean_additional_properties_strips_schema_form() {
     let schema = serde_json::json!({
@@ -5112,7 +4981,6 @@ fn test_sanitize_gemini_schema_keeps_boolean_additional_properties_strips_schema
 }
 
 /// Gemini's THINKING tokens are billed and must be ledgered.
-
 #[test]
 fn test_gemini_usage_counts_thinking_tokens_as_output() {
     let with_thoughts = serde_json::json!({
@@ -5158,7 +5026,6 @@ fn test_gemini_usage_counts_thinking_tokens_as_output() {
 }
 
 /// The Gemini stream WRITE path must emit a streamed reasoning part for a `ThinkingDelta`
-
 #[test]
 fn test_stream_thinking_and_signature_deltas_emit_thought_parts() {
     let writer = GeminiWriter;
@@ -5215,7 +5082,6 @@ fn test_stream_thinking_and_signature_deltas_emit_thought_parts() {
 }
 
 /// A Gemini response carrying `candidates[].citationMetadata.citationSources[]` must read
-
 #[test]
 fn gemini_citation_metadata_reads_and_projects_to_cohere() {
     let reader = GeminiReader;
@@ -5283,7 +5149,6 @@ fn gemini_citation_metadata_reads_and_projects_to_cohere() {
 }
 
 /// Same-protocol Gemini→IR→Gemini citation round-trip re-emits candidate-level
-
 #[test]
 fn gemini_citations_roundtrip_and_absent_unaffected() {
     let reader = GeminiReader;
@@ -5336,7 +5201,6 @@ fn gemini_citations_roundtrip_and_absent_unaffected() {
 }
 
 /// A Gemini candidate whose content splits its output across MULTIPLE text
-
 #[test]
 fn gemini_citation_offsets_correct_across_multiple_text_parts() {
     let reader = GeminiReader;
@@ -5405,7 +5269,6 @@ fn gemini_citation_offsets_correct_across_multiple_text_parts() {
 }
 
 /// Gemini's candidate-level `citationSources[]` is CUMULATIVE: each chunk restates every source
-
 #[test]
 fn stream_gemini_cumulative_citation_sources_emit_only_the_new_ones() {
     let source_a = serde_json::json!({
@@ -5459,7 +5322,6 @@ fn stream_gemini_cumulative_citation_sources_emit_only_the_new_ones() {
 }
 
 /// STREAMING citations, cross-protocol: a Gemini stream chunk carrying candidate-level
-
 #[test]
 fn stream_gemini_citation_metadata_projects_to_cohere_citation_start() {
     let events = collect_stream(&[
@@ -5543,7 +5405,6 @@ fn stream_gemini_citation_metadata_projects_to_cohere_citation_start() {
 }
 
 /// STREAMING citations, reverse direction: an `IrDelta::CitationsDelta` (as an Anthropic
-
 #[test]
 fn stream_anthropic_citation_projects_to_gemini_citation_metadata() {
     let writer = GeminiWriter;
@@ -5599,7 +5460,6 @@ fn stream_anthropic_citation_projects_to_gemini_citation_metadata() {
 }
 
 /// A Gemini stream with NO citations must be unaffected — no `CitationsDelta` is produced,
-
 #[test]
 fn stream_gemini_no_citations_unaffected() {
     let events = collect_stream(&[serde_json::json!({
@@ -5631,7 +5491,6 @@ fn stream_gemini_no_citations_unaffected() {
 }
 
 /// Each `IrToolChoice` variant must round-trip through Gemini's native
-
 #[test]
 fn tool_choice_variants_round_trip_via_function_calling_config() {
     let cases = [
@@ -5676,7 +5535,6 @@ fn tool_choice_variants_round_trip_via_function_calling_config() {
 }
 
 /// An UNKNOWN native `finishReason` (a future/novel Gemini token) maps to `IrStopReason::Other`
-
 #[test]
 fn unknown_finish_reason_maps_to_other_and_writes_native_other() {
     assert_eq!(
@@ -5696,7 +5554,6 @@ fn unknown_finish_reason_maps_to_other_and_writes_native_other() {
 }
 
 /// cachedContentTokenCount NORMALIZATION, WRITE side (the read side is covered by
-
 #[test]
 fn write_response_reconstructs_prompt_token_count_with_cached() {
     let resp = crate::codec::ir::IrResponse {
@@ -5737,7 +5594,6 @@ fn write_response_reconstructs_prompt_token_count_with_cached() {
 }
 
 /// A system prompt must survive read→IR→write: Gemini's `systemInstruction.parts[]` reads into
-
 #[test]
 fn system_instruction_round_trips_through_ir_system() {
     let body = serde_json::json!({
@@ -5768,7 +5624,6 @@ fn system_instruction_round_trips_through_ir_system() {
 }
 
 /// `read_response` captures a part-level `thoughtSignature` sibling of `functionCall` into
-
 #[test]
 fn test_read_response_captures_function_call_thought_signature() {
     let reader = GeminiReader;
@@ -5800,7 +5655,6 @@ fn test_read_response_captures_function_call_thought_signature() {
 }
 
 /// `read_request` captures a part-level `thoughtSignature` from a `role:"model"` history turn
-
 #[test]
 fn test_read_request_captures_function_call_thought_signature_from_history() {
     let reader = GeminiReader;
@@ -5828,7 +5682,6 @@ fn test_read_request_captures_function_call_thought_signature_from_history() {
 }
 
 /// THE OUTAGE TEST. An OpenAI-shaped `ToolUse` block (no `thought_signature` — the OpenAI wire
-
 #[test]
 fn test_outage_cross_protocol_tool_use_gets_sentinel_thought_signature() {
     let mut ir_req = crate::codec::ir::IrRequest {
@@ -5885,7 +5738,6 @@ fn test_outage_cross_protocol_tool_use_gets_sentinel_thought_signature() {
 }
 
 /// A real signature already present on the IR is NOT overwritten by `prepare_for_egress`'s fill
-
 #[test]
 fn test_prepare_for_egress_does_not_overwrite_real_thought_signature() {
     let mut ir_req = crate::codec::ir::IrRequest {
@@ -5930,7 +5782,6 @@ fn test_prepare_for_egress_does_not_overwrite_real_thought_signature() {
 }
 
 /// VERTEX EXCLUSION: same outage scenario, but `thought_signature_fill: false` (simulating a
-
 #[test]
 fn test_vertex_lane_gets_no_sentinel_thought_signature() {
     let mut ir_req = crate::codec::ir::IrRequest {
@@ -5973,7 +5824,6 @@ fn test_vertex_lane_gets_no_sentinel_thought_signature() {
 }
 
 /// MIXED PARALLEL CALLS: Google only signs the FIRST of N parallel function calls in a real
-
 #[test]
 fn test_prepare_for_egress_fills_only_missing_signatures_in_parallel_calls() {
     let mut ir_req = crate::codec::ir::IrRequest {
@@ -6038,7 +5888,6 @@ fn test_prepare_for_egress_fills_only_missing_signatures_in_parallel_calls() {
 }
 
 /// `write_response` emits a real signature when present, never a sentinel (response-side is never
-
 #[test]
 fn test_write_response_emits_real_signature_never_sentinel() {
     let writer = GeminiWriter;
@@ -6086,7 +5935,6 @@ fn test_write_response_emits_real_signature_never_sentinel() {
 }
 
 /// An empty-string `thoughtSignature` on the wire is treated as absent — it normalizes to `None`
-
 #[test]
 fn test_empty_string_thought_signature_normalizes_to_none() {
     let reader = GeminiReader;
@@ -6136,7 +5984,6 @@ fn test_empty_string_thought_signature_normalizes_to_none() {
 }
 
 /// Regression: the truncated-usage recovery path must count Gemini thinking tokens as
-
 #[test]
 fn recover_truncated_usage_counts_thinking_as_output() {
     let reader = GeminiReader;
@@ -6157,7 +6004,6 @@ fn recover_truncated_usage_counts_thinking_as_output() {
 }
 
 /// Measure the nesting depth of a `Value` iteratively. A recursive walk would itself overflow the
-
 fn value_depth(v: &serde_json::Value) -> usize {
     let mut max = 0usize;
     let mut stack = vec![(v, 1usize)];
@@ -6181,7 +6027,6 @@ fn value_depth(v: &serde_json::Value) -> usize {
 }
 
 /// A cycle-free "diamond" of chained `$defs` — each level references the next TWICE — has no cycle
-
 #[test]
 fn gemini_schema_ref_diamond_stays_within_budget() {
     const LEVELS: usize = 40;
@@ -6211,7 +6056,6 @@ fn gemini_schema_ref_diamond_stays_within_budget() {
 }
 
 /// Thousands of shallow sibling `$defs` chained singly are also cycle-free, but inline into one
-
 #[test]
 fn gemini_schema_ref_flat_chain_depth_is_capped() {
     const LINKS: usize = 5_000;
@@ -6237,7 +6081,6 @@ fn gemini_schema_ref_flat_chain_depth_is_capped() {
 }
 
 /// The byte→char offset INDEX must answer every offset exactly as converting that offset on its own
-
 #[test]
 fn gemini_char_index_matches_per_offset_conversion() {
     let text = "abc é ✓ 𝄞 déjà vu ✓✓ 𝄞𝄞 end";
@@ -6264,7 +6107,6 @@ fn gemini_char_index_matches_per_offset_conversion() {
 }
 
 /// The writer's `open_tools` accumulator grows one entry per distinct tool-block index a backend
-
 #[test]
 fn test_writer_open_tools_capped_in_entry_count() {
     let writer = GeminiWriter;
@@ -6311,7 +6153,6 @@ fn status_word_golden() {
 }
 
 /// STREAMED AND BUFFERED ANSWERS NAME A CALL ALIKE, AS IN 1.5.5. For parts `[text, call, call]` the
-
 #[test]
 fn streamed_tool_ids_after_text_match_the_buffered_ids() {
     let body = serde_json::json!({
@@ -6363,7 +6204,6 @@ fn grounding_repeated_chunk_index_is_cloned_once() {
 }
 
 /// Supports that between them name more chunk bytes than the per-candidate budget stop adding
-
 #[test]
 fn grounding_clone_budget_bounds_total_cloned_bytes() {
     let big = "u".repeat(1024 * 1024);
@@ -6385,7 +6225,6 @@ fn grounding_clone_budget_bounds_total_cloned_bytes() {
 }
 
 /// The CHARACTER to BYTE direction of the index answers as the per-offset walk does, and marks kept
-
 #[test]
 fn gemini_char_index_byte_offsets_and_streamed_marks_match_the_walk() {
     let fragments: Vec<String> = (0..97)
@@ -6416,7 +6255,6 @@ fn gemini_char_index_byte_offsets_and_streamed_marks_match_the_walk() {
 }
 
 /// LLM3#3 (reader): a stream whose every chunk carries answer text AND the candidate's citation
-
 #[test]
 fn streamed_citation_chunks_do_not_rewalk_the_answer() {
     let mut state = StreamDecodeState::default();
@@ -6452,7 +6290,6 @@ fn streamed_citation_chunks_do_not_rewalk_the_answer() {
 }
 
 /// LLM3#3 (reader): the answer copy a stream keeps to anchor citation offsets is bounded by the
-
 #[test]
 fn streamed_answer_copy_is_bounded_by_the_translate_cap() {
     let cap = busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
@@ -6501,7 +6338,6 @@ fn writer_stream_text_copy_is_bounded_by_the_translate_cap() {
 }
 
 /// LLM3#3 (writer): many streamed citation frames against one long text block convert through the
-
 #[test]
 fn writer_streamed_citations_do_not_rewalk_the_block() {
     let writer = GeminiWriter;
@@ -6548,7 +6384,6 @@ fn writer_streamed_citations_do_not_rewalk_the_block() {
 }
 
 /// Convert a Gemini `startIndex`/`endIndex` BYTE offset (Google's `CitationSource` is documented
-
 fn gemini_byte_offset_to_char(text: &str, byte_idx: i64) -> i64 {
     let clamped = byte_idx.max(0) as usize;
     let boundary = clamped.min(text.len());
@@ -6561,7 +6396,6 @@ fn gemini_byte_offset_to_char(text: &str, byte_idx: i64) -> i64 {
 }
 
 /// The inverse of `gemini_byte_offset_to_char`: a CHARACTER offset (the IR contract) back to the
-
 fn gemini_char_offset_to_byte(text: &str, char_idx: i64) -> i64 {
     let clamped = char_idx.max(0) as usize;
     match text.char_indices().nth(clamped) {

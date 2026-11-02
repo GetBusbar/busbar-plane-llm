@@ -153,7 +153,6 @@ fn signature_only_thought_chunk_survives_the_stream_reader() {
 }
 
 /// GEM-08 (reader): a native `functionCall.id` / `functionResponse.id` carries the pair to a
-
 #[test]
 fn gem08_native_call_ids_pair_on_a_foreign_backend() {
     let body = json!({"contents": [
@@ -209,7 +208,6 @@ fn gem08_native_call_ids_pair_on_a_foreign_backend() {
 }
 
 /// GEM-02: a Bedrock `{"json": …}` tool result reaches Gemini as the `response` object, not an
-
 #[test]
 fn gem02_bedrock_json_tool_result_reaches_gemini() {
     let body = json!({"messages": [
@@ -229,7 +227,6 @@ fn gem02_bedrock_json_tool_result_reaches_gemini() {
 }
 
 /// GEM-03: `parametersJsonSchema` is the tool's schema (it used to be ignored: Anthropic got
-
 #[test]
 fn gem03_parameters_json_schema_is_the_tool_schema() {
     let schema = json!({"type": "object", "properties": {"x": {"type": "string"}}});
@@ -240,7 +237,6 @@ fn gem03_parameters_json_schema_is_the_tool_schema() {
 }
 
 /// GEM-04: `responseJsonSchema` is the JSON-mode schema (it used to be dropped, leaving a bare
-
 #[test]
 fn gem04_response_json_schema_carries_to_openai() {
     let schema = json!({"type": "object", "properties": {"n": {"type": "integer"}}});
@@ -254,7 +250,6 @@ fn gem04_response_json_schema_carries_to_openai() {
 }
 
 /// GEM-05: a failed tool call crosses as Gemini's documented `response.error`, and a Gemini
-
 #[test]
 fn gem05_tool_error_maps_both_ways() {
     let body = json!({"model": "m", "max_tokens": 100, "messages": [
@@ -343,7 +338,6 @@ fn gem09_thinking_level_is_the_effort_ask() {
 }
 
 /// GEM-10: a hosted tool (`googleSearch`) is not silently lost in the reader: it is read into the
-
 #[test]
 fn gem10_hosted_tool_is_read_as_hosted() {
     let body = json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}],
@@ -366,7 +360,6 @@ fn gem10_hosted_tool_is_read_as_hosted() {
 }
 
 /// GEM-11: an OpenAPI-subset schema (`OBJECT`, `nullable`) reaches a JSON-Schema target as JSON
-
 #[test]
 fn gem11_openapi_schema_normalizes_to_json_schema() {
     let body = json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}],
@@ -387,7 +380,6 @@ fn gem11_openapi_schema_normalizes_to_json_schema() {
 }
 
 /// GEM-12: the AUDIO slices of `promptTokensDetails` / `candidatesTokensDetails` reach OpenAI's
-
 #[test]
 fn gem12_audio_token_details_reach_openai() {
     let body = json!({"candidates": [{"content": {"role": "model", "parts": [{"text": "hi"}]}, "finishReason": "STOP"}],
@@ -424,7 +416,6 @@ fn a_refusal_is_other_for_a_gemini_client() {
 }
 
 /// GEM-15: the image content-policy stops are policy stops, and an unexpected tool call is a failed
-
 #[test]
 fn gem15_image_policy_and_unexpected_tool_call_stops() {
     use crate::codec::ir::IrStopReason as S;
@@ -449,7 +440,6 @@ fn gem15_image_policy_and_unexpected_tool_call_stops() {
 }
 
 /// GEM-16 (writer): a streamed foreign citation's CHARACTER offsets become Gemini's candidate-wide
-
 #[test]
 fn gem16_streamed_citation_offsets_are_bytes_for_a_gemini_client() {
     let writer = GeminiWriter;
@@ -508,7 +498,6 @@ fn gem18_create_time_is_created() {
 }
 
 /// GEM-20: a citation Gemini sends after a functionCall closed the text block annotates THAT text
-
 #[test]
 fn gem20_late_stream_citation_annotates_the_closed_text_block() {
     let raw = gemini_sse(&[
@@ -536,7 +525,6 @@ fn gem20_late_stream_citation_annotates_the_closed_text_block() {
 }
 
 /// GEM-01: with no native ids, every tool result pairs with the call it answers — positionally,
-
 #[test]
 fn gem01_tool_results_pair_with_their_calls_without_ids() {
     let body = json!({"contents": [
@@ -601,7 +589,6 @@ fn gem01_tool_results_pair_with_their_calls_without_ids() {
 }
 
 /// GEM-08 (writer): an IR call id reaches Gemini as `functionCall.id` — on a request (with the
-
 #[test]
 fn gem08_call_ids_reach_gemini() {
     let body = json!({"model": "m", "max_tokens": 100, "messages": [
@@ -659,7 +646,6 @@ fn gem08_call_ids_reach_gemini() {
 }
 
 /// A Gemini client of a reasoning lane reads the `candidatesTokenCount` 1.5.5 wrote: the whole
-
 #[test]
 fn reasoning_tokens_stay_inside_candidates_for_a_gemini_client() {
     let resp = json!({"id": "chatcmpl-1", "object": "chat.completion", "created": 1, "model": "o3",
@@ -700,7 +686,6 @@ fn reasoning_tokens_stay_inside_candidates_for_a_gemini_client() {
 }
 
 /// GEM-17: an image the model GENERATED reaches a target that carries a response attachment
-
 #[test]
 fn gem17_generated_image_reaches_bedrock() {
     let body = json!({"candidates": [{"content": {"role": "model", "parts": [

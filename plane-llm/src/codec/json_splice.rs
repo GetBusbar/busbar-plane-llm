@@ -6,7 +6,6 @@
 use busbar_contract::spans::{scan, RawMember};
 
 /// Whether the object `b` opens on has a member for which `hit(member, value bytes)` holds,
-
 pub fn any_member(b: &[u8], mut hit: impl FnMut(&RawMember<'_>, &[u8]) -> bool) -> bool {
     let mut found = false;
     scan(b, 0, |m| {
@@ -16,7 +15,6 @@ pub fn any_member(b: &[u8], mut hit: impl FnMut(&RawMember<'_>, &[u8]) -> bool) 
 }
 
 /// The bytes of the array value `v` from its first element on; `None` when `v` is not an array or
-
 #[must_use]
 pub fn first_element(v: &[u8]) -> Option<&[u8]> {
     if v.first() != Some(&b'[') {

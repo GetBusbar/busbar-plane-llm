@@ -4,7 +4,6 @@ use super::*;
 use crate::codec::keys;
 
 /// Read Gemini's structured-output directive from `generationConfig` into [`crate::codec::ir::IrResponseFormat`].
-
 pub(super) fn read_gemini_response_format(
     gen_config: Option<&serde_json::Value>,
 ) -> Option<crate::codec::ir::IrResponseFormat> {
@@ -23,7 +22,6 @@ pub(super) fn read_gemini_response_format(
 }
 
 /// Project [`crate::codec::ir::IrResponseFormat`] into a Gemini `generationConfig` map. The only
-
 pub(super) fn write_gemini_response_format(
     gen_config: &mut serde_json::Map<String, serde_json::Value>,
     rf: &crate::codec::ir::IrResponseFormat,
@@ -44,7 +42,6 @@ pub(super) fn write_gemini_response_format(
 }
 
 /// JSON-Schema keywords Gemini's OpenAPI-subset validator rejects with a 400 in a `responseSchema`
-
 pub(super) const GEMINI_SCHEMA_REJECTED_KEYS: &[&str] = &[
     "$schema",
     "$id",
@@ -60,7 +57,6 @@ pub(super) const GEMINI_SCHEMA_REJECTED_KEYS: &[&str] = &[
 ];
 
 /// JSON-Schema keywords whose value is a map from a caller-chosen name to a subschema. The keys are
-
 pub(super) const GEMINI_SCHEMA_NAME_KEYED_MAPS: &[&str] = &[keys::PROPERTIES, "dependentSchemas"];
 
 #[derive(Clone, Copy)]
@@ -122,7 +118,6 @@ fn map_schema_child(
 }
 
 /// Recursively strip the keywords Gemini rejects (`GEMINI_SCHEMA_REJECTED_KEYS`) from a schema so a
-
 pub(super) fn sanitize_gemini_schema(schema: &serde_json::Value) -> serde_json::Value {
     let mut cleaned = sanitize_gemini_schema_keywords(schema);
     write_gemini_nullable_types(&mut cleaned);
@@ -213,7 +208,6 @@ fn sanitize_gemini_schema_keywords(schema: &serde_json::Value) -> serde_json::Va
 }
 
 /// The name-keyed half of [`sanitize_gemini_schema`]: keys are kept verbatim (caller field names)
-
 pub(super) fn sanitize_gemini_schema_names(value: &serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(map) => serde_json::Value::Object(
@@ -226,7 +220,6 @@ pub(super) fn sanitize_gemini_schema_names(value: &serde_json::Value) -> serde_j
 }
 
 /// Collect every `$defs`/`definitions` map in a schema, keyed by definition name, for
-
 pub(super) fn collect_gemini_schema_defs(
     schema: &serde_json::Value,
     out: &mut serde_json::Map<String, serde_json::Value>,
@@ -267,22 +260,18 @@ pub(super) fn collect_gemini_schema_defs(
 }
 
 /// Ceiling on nodes one `$ref` resolution may emit. The `active` stack stops self-reference but not a
-
 pub(super) const GEMINI_SCHEMA_INLINE_MAX_NODES: usize = 100_000;
 
 /// Ceiling on inlined nesting depth, matching the substrate JSON parser's input depth guard. That
-
 pub(super) const GEMINI_SCHEMA_INLINE_MAX_DEPTH: usize = 128;
 
 /// One inlining allowance, owned by [`resolve_gemini_schema_refs`] and threaded through the walk so
-
 pub(super) struct GeminiInlineBudget {
     remaining_nodes: usize,
     depth: usize,
 }
 
 /// Recursively inline every `$ref` pointing at a named `#/$defs/X` or `#/definitions/X` entry in
-
 pub(super) fn inline_gemini_schema_refs(
     schema: &serde_json::Value,
     defs: &serde_json::Map<String, serde_json::Value>,
@@ -300,7 +289,6 @@ pub(super) fn inline_gemini_schema_refs(
 }
 
 /// Copy instance data without interpreting any member as a schema keyword. Each node still
-
 fn inline_gemini_literal(
     value: &serde_json::Value,
     budget: &mut GeminiInlineBudget,
@@ -345,7 +333,6 @@ fn inline_gemini_child(
 }
 
 /// The inlining walk proper, reached only through [`inline_gemini_schema_refs`], which charges the
-
 pub(super) fn inline_gemini_schema_refs_within_budget(
     schema: &serde_json::Value,
     defs: &serde_json::Map<String, serde_json::Value>,
@@ -399,7 +386,6 @@ pub(super) fn inline_gemini_schema_refs_within_budget(
 }
 
 /// Entry point: resolve every `$ref` against the schema's own `$defs`/`definitions` and drop those
-
 pub(super) fn resolve_gemini_schema_refs(schema: &serde_json::Value) -> serde_json::Value {
     let mut defs = serde_json::Map::new();
     collect_gemini_schema_defs(schema, &mut defs);

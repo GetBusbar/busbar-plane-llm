@@ -13,7 +13,6 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 
 /// What a request-translation hop reads from: a parsed JSON object `Value` (the value-codec fast
-
 pub enum TranslateReqInput<'a> {
     /// A JSON-object body, routed through the value codecs.
     Json(&'a Value),
@@ -25,14 +24,12 @@ pub enum TranslateReqInput<'a> {
 }
 
 /// The result of a cross-protocol request translation: the egress wire plus what did not cross (the
-
 pub struct TranslatedRequest {
     pub wire: EgressWire,
     pub dropped_controls: Vec<String>,
 }
 
 /// Why a cross-protocol request translation could not proceed: three terminal outcomes. The seam
-
 pub enum TranslateReqReject {
     /// The ingress reader refused the body; the caller renders `ingress_reject_response`.
     Ingress(IngressReject),
@@ -43,14 +40,12 @@ pub enum TranslateReqReject {
 }
 
 /// What a non-stream response-translation hop reads from: the upstream 2xx body, a parsed JSON
-
 pub enum TranslateRespInput<'a> {
     Json(&'a Value),
     Opaque(&'a [u8]),
 }
 
 /// The single neutral translate entrypoint on the codec cell (G6 step 4). Every request/response hop
-
 pub trait TranslateCodec: OperationHandler {
     /// Cross-protocol request translation: `self` is the ingress codec (it reads), `egress` the
     /// lane's codec (it writes).
@@ -152,13 +147,11 @@ pub trait TranslateCodec: OperationHandler {
     }
 
     /// Read the request facts the hook seam / lazy-body projects from: the one read through this
-
     fn read_facts_value(&self, v: &Value) -> Result<Box<dyn IrFacts + Send + Sync>, IngressReject> {
         Ok(self.read_request_value(v)?.facts())
     }
 
     /// Byte-codec sibling of [`Self::read_facts_value`], for an opaque/multipart body whose caller
-
     fn read_facts(
         &self,
         wire: &[u8],
@@ -246,7 +239,6 @@ pub trait TranslateCodec: OperationHandler {
 }
 
 /// Keep controls first and ordinary drops in encounter order. A value-qualified earlier path
-
 fn merge_dropped_paths(
     controls: impl IntoIterator<Item = String>,
     dropped: Vec<String>,

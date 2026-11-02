@@ -147,7 +147,6 @@ fn streaming_terminal_refuses_an_unreadable_cache_count_on_its_own() {
 }
 
 /// The cache-write slice bills inside the input on every path and in every spelling, as in 1.5.5:
-
 #[test]
 fn cache_write_tokens_bill_inside_the_input_on_every_path() {
     for spelling in [serde_json::json!(40), serde_json::json!("40")] {

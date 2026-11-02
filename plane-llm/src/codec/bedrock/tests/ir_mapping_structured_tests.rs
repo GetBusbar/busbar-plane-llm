@@ -58,7 +58,6 @@ fn a_foreign_reasoning_ask_is_dropped_on_bedrock_egress() {
 }
 
 /// BED-08: Converse's `outputConfig.textFormat` and `toolSpec.strict` are read into the IR and
-
 #[test]
 fn bed08_output_config_and_tool_strict_map_both_ways() {
     let body = json!({

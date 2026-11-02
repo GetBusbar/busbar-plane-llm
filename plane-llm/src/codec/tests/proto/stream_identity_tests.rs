@@ -27,7 +27,6 @@ fn opening_id(frame: &serde_json::Value, pointer: &str) -> String {
 }
 
 /// Drive one writer through `MessageStart("first")`, `MessageStart("second")` and return the id
-
 fn two_starts<W: ProtocolWriter>(w: &W, pointer: &str) -> (String, String) {
     let one = w
         .write_response_event(crate::codec::test_host::HOST, &start("id_first"))

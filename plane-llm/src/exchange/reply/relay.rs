@@ -26,7 +26,6 @@ pub enum ContentType {
 }
 
 /// Whether the far end's success answer is taken whole rather than relayed: a non-stream answer
-
 #[must_use]
 pub fn takes_whole(
     ingress: &str,
@@ -163,7 +162,6 @@ pub struct RelayCtx<'a> {
 pub type Parts = (Option<StreamTranslate>, Option<Box<dyn ArrayStreamFramer>>);
 
 /// The translator for the dialect pair of a far end's answer (a stream reframed across dialects, or
-
 #[must_use]
 pub fn parts(ctx: &RelayCtx<'_>) -> Parts {
     let translate = crate::codec::proto_stream::new_stream_translator_on(
@@ -206,7 +204,6 @@ impl Relay {
     }
 
     /// OPEN the relay over a translator and a framer already made (see [`parts`]), its same-dialect
-
     #[must_use]
     pub fn from_parts(
         ingress: &str,
@@ -253,7 +250,6 @@ impl Relay {
     }
 
     /// FEED one far-end piece. The second value is `true` on the one piece that first pushed the
-
     pub fn feed<'a>(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -408,7 +404,6 @@ impl Relay {
     }
 
     /// CUT the relay: the far end's transport failed (`transport`), or the stream's ceiling
-
     pub fn cut(&mut self, host: &dyn busbar_contract::codec::CodecHost, transport: bool) -> Cut {
         let had_first = self.first_byte;
         if had_first && self.far_is_stream {
@@ -444,7 +439,6 @@ impl Relay {
     }
 
     /// The caller had a usable part: a byte of the answer was relayed and nothing failed it (no
-
     #[must_use]
     pub fn partial(&self) -> bool {
         self.first_byte
@@ -455,7 +449,6 @@ impl Relay {
     }
 
     /// Whether the stream's terminal error is its far end's failed generation: the far dialect's own
-
     #[must_use]
     pub fn failed_generation(&self, far: &str) -> bool {
         self.translate
@@ -469,7 +462,6 @@ impl Relay {
     }
 
     /// The usage a stream's readers have read so far (cheap: nothing is scanned); `None` for a
-
     #[must_use]
     pub fn streamed_usage(&self) -> Option<TokenUsage> {
         self.translate
@@ -478,7 +470,6 @@ impl Relay {
     }
 
     /// The usage an answer that ended early had incurred: what a stream's readers accumulated; for a
-
     #[must_use]
     pub fn incurred_usage(&self) -> Option<TokenUsage> {
         match self.translate.as_ref() {
@@ -496,7 +487,6 @@ impl Relay {
 }
 
 /// The far end reported the failure itself: the whole body reads, in its dialect's own reader, as a
-
 fn far_reported_failure(
     host: &dyn busbar_contract::codec::CodecHost,
     protocol: &str,

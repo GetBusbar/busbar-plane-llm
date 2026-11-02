@@ -141,7 +141,6 @@ pub fn translate_reject(envelope: &'static str, reject: TranslateReqReject) -> A
 }
 
 /// Whether a caller's body is JSON, by the arrival's own rule: a path-model arrival always is (its
-
 fn relays_json(ingress: &str, content_type: &str) -> bool {
     decl(ingress).is_some_and(|d| d.has_model_in_url)
         || content_type.starts_with(APPLICATION_JSON)
@@ -149,7 +148,6 @@ fn relays_json(ingress: &str, content_type: &str) -> bool {
 }
 
 /// The members a far end at a `path_base` needs reshaped, read off its own writer: each member the
-
 fn path_base_members(far: &ProtocolDecl) -> Vec<(String, Option<Vec<u8>>)> {
     let mut probe = serde_json::json!({ "model": "" });
     let reshaped = far
@@ -170,7 +168,6 @@ fn path_base_members(far: &ProtocolDecl) -> Vec<(String, Option<Vec<u8>>)> {
 }
 
 /// The common relay, proved without allocating: a body-model object that carries none of busbar's
-
 fn needs_no_splice(lane: FarShape<'_>, hop_bytes: &[u8]) -> bool {
     let wire = lane.wire_model.as_bytes();
     let plain = !wire.iter().any(|c| *c == b'"' || *c == b'\\' || *c < 0x20);
@@ -197,7 +194,6 @@ fn needs_no_splice(lane: FarShape<'_>, hop_bytes: &[u8]) -> bool {
 }
 
 /// The relay of one same-dialect body: the caller's bytes with the governed splices only, each a
-
 #[must_use]
 pub fn relay_request<'a>(
     lane: FarShape<'_>,
@@ -276,7 +272,6 @@ fn static_name(name: &str) -> &'static str {
 }
 
 /// THE TRANSLATION OF ONE HOP'S BODY for the far end `lane`: `body` is the caller's JSON (`None`
-
 #[allow(clippy::too_many_arguments)]
 #[must_use]
 pub fn translate_request<'a>(
@@ -450,7 +445,6 @@ fn translate_into<'a>(
 }
 
 /// The far end's path for `operation` on `lane`: the provider's fixed path, else the far end's
-
 #[must_use]
 pub fn upstream_path(lane: &Lane, operation: OpVerb, stream: bool) -> Option<String> {
     let rh = decl(lane.dialect).and_then(|d| d.handler)?;
@@ -489,7 +483,6 @@ pub fn uri_encode_path(path: &str) -> String {
 }
 
 /// The path as it goes on the wire and as a request signature canonicalises it: an unreserved path
-
 #[must_use]
 pub fn wire_and_canonical_path(url_path: &str) -> (String, String) {
     let (path, query) = match url_path.split_once('?') {
@@ -513,7 +506,6 @@ pub fn wire_and_canonical_path(url_path: &str) -> (String, String) {
 }
 
 /// Whether busbar governs the request header `name` (case-insensitive) for any dialect. The union,
-
 #[must_use]
 pub fn governed(name: &str) -> bool {
     DIALECTS
@@ -524,7 +516,6 @@ pub fn governed(name: &str) -> bool {
 }
 
 /// Whether busbar governs the request query parameter `name` for a caller of `dialect` (its
-
 #[must_use]
 pub fn governed_query(dialect: &str, name: &str) -> bool {
     crate::dialect::dialect(dialect).is_some_and(|d| d.governed_query.contains(&name))
@@ -534,7 +525,6 @@ pub fn governed_query(dialect: &str, name: &str) -> bool {
 const SIGNED_SCHEME: &str = "request-signature";
 
 /// The far end's target with the caller's own query on a same-dialect attempt (busbar is invisible to
-
 #[must_use]
 pub fn with_caller_query(dialect: &str, target: &str, caller_query: &str) -> Option<String> {
     if crate::dialect::dialect(dialect).is_some_and(|d| d.egress_scheme == SIGNED_SCHEME) {
@@ -561,7 +551,6 @@ pub fn with_caller_query(dialect: &str, target: &str, caller_query: &str) -> Opt
 }
 
 /// The provider's static head-field options for `lane` ([`crate::options`]) as `(name, value)`, split
-
 #[must_use]
 pub fn option_fields(lane: &Lane) -> (Vec<HeadField>, Vec<HeadField>) {
     let (forced, defaults): (Vec<_>, Vec<_>) = lane
@@ -578,7 +567,6 @@ pub fn option_fields(lane: &Lane) -> (Vec<HeadField>, Vec<HeadField>) {
 }
 
 /// Native static fields and option defaults, followed by the separately returned forced options.
-
 pub(crate) fn default_head_fields(
     lane: &Lane,
     standard: [HeadField; 3],
@@ -605,7 +593,6 @@ pub(crate) fn default_head_fields(
 }
 
 /// The target with the provider's static query options for `lane` ([`crate::options`]): a default is
-
 #[must_use]
 pub fn with_option_query(lane: &Lane, target: &str) -> String {
     let opts: Vec<&SetOption> = lane
@@ -660,11 +647,9 @@ fn legal_field_value(v: &[u8]) -> bool {
 }
 
 /// The `accept` field: busbar's own answer framing (the operation's single answer or its dialect's
-
 const ACCEPT: &str = "accept";
 
 /// The head fields a native client of `lane`'s dialect sends, then, when the caller speaks that
-
 fn head_fields(
     lane: &Lane,
     handler: &dyn OperationHandler,
@@ -724,7 +709,6 @@ fn head_fields(
 }
 
 /// The caller's forwarded fields laid over busbar's own as an `http::HeaderMap` lays them (one
-
 fn forward_over(
     own: Vec<(String, Vec<u8>)>,
     forwarded: Vec<(String, Vec<u8>)>,
@@ -757,7 +741,6 @@ fn forward_over(
 }
 
 /// Build one attempt's far-end request for `member` of `pool`.
-
 pub fn build(
     host: &dyn busbar_contract::codec::CodecHost,
     arrived: &Arrived,
@@ -842,7 +825,6 @@ pub const DETAIL_STREAM_OPTIONS_NOT_OBJECT: &str =
     "Invalid type for 'stream_options': expected an object.";
 
 /// A streamed request to a far end that reports usage only when asked is asked, unless the caller
-
 fn inject_stream_usage(
     ingress: &'static str,
     lane: &Lane,
@@ -873,7 +855,6 @@ const STREAM_OPTIONS: &str = "stream_options";
 const INCLUDE_USAGE: &str = "include_usage";
 
 /// Ask a streamed request for its usage: `stream_options.include_usage = true`, the object made when
-
 pub fn try_inject_stream_include_usage(payload: Vec<u8>) -> Result<Vec<u8>, Vec<u8>> {
     let Some(top) = spans::members(&payload, 0) else {
         return Ok(payload);

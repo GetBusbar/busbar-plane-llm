@@ -63,7 +63,6 @@ pub struct LaneCaps {
 
 impl LaneCaps {
     /// The capabilities of a lane that declares none — every pre-capability form. The same value as
-
     pub const NONE: LaneCaps = LaneCaps {
         max_output_key: MaxOutputKey::MaxTokens,
         anthropic_adaptive_thinking: false,

@@ -20,7 +20,6 @@ use crate::exchange::decl;
 pub const GENERIC_REJECTED_DETAIL: &str = "The request could not be processed.";
 
 /// The message an answer that could not be relayed is answered with: a transfer that failed, a
-
 pub const GENERIC_RESPONSE_ERROR_DETAIL: &str =
     "An internal error occurred while processing the response.";
 
@@ -33,7 +32,6 @@ fn stream_ct(d: &ProtocolDecl) -> Option<&'static str> {
 }
 
 /// True for a content type that carries an incremental answer: a content type some dialect
-
 #[must_use]
 pub fn is_stream_content_type(ct: &str) -> bool {
     DECLS
@@ -43,14 +41,12 @@ pub fn is_stream_content_type(ct: &str) -> bool {
 }
 
 /// The content type the caller's dialect expects on a streamed answer, or `None` for a dialect the
-
 #[must_use]
 pub fn ingress_stream_content_type(ingress: &str) -> Option<&'static str> {
     decl(ingress).and_then(stream_ct)
 }
 
 /// Whether busbar governs the answer head field `name` (compared without case) for a caller of
-
 #[must_use]
 pub fn governed_response(dialect: &str, name: &str) -> bool {
     crate::dialect::account_scoped_response(name)
@@ -62,7 +58,6 @@ pub fn governed_response(dialect: &str, name: &str) -> bool {
 }
 
 /// Relay the far end's head onto a same-dialect answer (busbar is invisible to the caller too): each
-
 pub fn relay_far_head(
     dialect: &str,
     fields: &mut Vec<(String, Vec<u8>)>,
@@ -83,14 +78,12 @@ pub fn relay_far_head(
 }
 
 /// The far-end head field names a caller of `ingress` has relayed verbatim on a same-dialect
-
 #[must_use]
 pub fn ingress_relayed_response_header_names(ingress: &str) -> &'static [&'static str] {
     decl(ingress).map_or(&[], |d| d.ingress_relayed_response_header_names)
 }
 
 /// The request-id head field a caller of `ingress` reads on its answer: the far end's own id when
-
 #[must_use]
 pub fn response_request_id(
     host: &dyn busbar_contract::codec::CodecHost,
@@ -126,7 +119,6 @@ fn name_byte(b: u8) -> bool {
 }
 
 /// A head field as a caller reads it: the name in its wire (lower-case) form, so a dialect may
-
 #[must_use]
 pub fn head_field(name: &str, value: &[u8]) -> Option<(String, Vec<u8>)> {
     (!name.is_empty() && name.bytes().all(name_byte))
@@ -134,7 +126,6 @@ pub fn head_field(name: &str, value: &[u8]) -> Option<(String, Vec<u8>)> {
 }
 
 /// The error kind a far-end status is reshaped into for a caller of another dialect: the native
-
 #[must_use]
 pub fn cross_protocol_error_kind(status: u16) -> &'static str {
     match status {
@@ -165,7 +156,6 @@ pub fn client_fault_kind(class: StatusClass) -> &'static str {
 }
 
 /// The human message of a far-end error body (`error.message`, else a top-level `message`), or
-
 #[must_use]
 pub fn extract_error_message(bytes: &[u8]) -> Option<String> {
     let v: Value = crate::codec::json::parse(bytes).ok()?;
@@ -177,7 +167,6 @@ pub fn extract_error_message(bytes: &[u8]) -> Option<String> {
 }
 
 /// The kind and message a far-end error of `status` is reshaped with for a caller of another
-
 #[must_use]
 pub fn cross_protocol_error(status: u16, bytes: &[u8]) -> (&'static str, String) {
     let kind = cross_protocol_error_kind(status);
@@ -186,7 +175,6 @@ pub fn cross_protocol_error(status: u16, bytes: &[u8]) -> (&'static str, String)
 }
 
 /// The bytes a stream cut after its first byte ends on, in the caller's own framing: a modeled
-
 #[must_use]
 pub fn mid_stream_error_bytes(
     host: &dyn busbar_contract::codec::CodecHost,
@@ -235,7 +223,6 @@ pub fn agnostic_stream_error_frame(message: &str) -> Vec<u8> {
 }
 
 /// The floor a delivered body that demonstrably spent tokens bills when its usage cannot be read:
-
 #[must_use]
 pub fn estimate_usage_from_truncated_tail(tail_len: usize) -> TokenUsage {
     TokenUsage {
@@ -245,7 +232,6 @@ pub fn estimate_usage_from_truncated_tail(tail_len: usize) -> TokenUsage {
 }
 
 /// The usage the far end reported in the bytes in hand (the dialect's own scan for its usage
-
 #[must_use]
 pub fn reported_usage(protocol: &str, buf: &[u8]) -> Option<TokenUsage> {
     decl(protocol)
@@ -254,7 +240,6 @@ pub fn reported_usage(protocol: &str, buf: &[u8]) -> Option<TokenUsage> {
 }
 
 /// The usage of a delivered body whose usage could not be read whole: what the dialect's scan
-
 #[must_use]
 pub fn unrecovered_usage(protocol: &str, buf: &[u8]) -> TokenUsage {
     reported_usage(protocol, buf).unwrap_or_else(|| estimate_usage_from_truncated_tail(buf.len()))
@@ -275,7 +260,6 @@ pub fn token_usage_of(usage: &Option<Billing>) -> Option<TokenUsage> {
 }
 
 /// Return the non-token usage counts by open class.
-
 #[must_use]
 pub fn open_units_of(usage: &Option<Billing>) -> BTreeMap<String, u64> {
     use crate::codec::ir::open_class::{add, AUDIO_MS_CLASS, IMAGES_CLASS};
@@ -302,7 +286,6 @@ pub fn open_units_of(usage: &Option<Billing>) -> BTreeMap<String, u64> {
 }
 
 /// Whether the far end reported this whole answer's generation as failed: its dialect's reader
-
 #[must_use]
 pub fn generation_failed(
     host: &dyn busbar_contract::codec::CodecHost,

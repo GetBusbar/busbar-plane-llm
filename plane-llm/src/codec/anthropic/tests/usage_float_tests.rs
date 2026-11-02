@@ -5,7 +5,6 @@ use super::AnthropicReader;
 use crate::codec::ir::IrStreamEvent;
 
 /// stream:`message_start.message.usage` — `input_tokens`/`output_tokens` float-encoded must survive
-
 #[test]
 fn message_start_float_token_counts_survive_as_integers() {
     let data = serde_json::json!({
@@ -46,7 +45,6 @@ fn message_start_float_token_counts_survive_as_integers() {
 }
 
 /// stream:`message_start.message.usage.cache_creation` — the 5m/1h TTL tier split, float-encoded,
-
 #[test]
 fn message_start_float_cache_tier_split_survives_as_integers() {
     let data = serde_json::json!({
@@ -81,7 +79,6 @@ fn message_start_float_cache_tier_split_survives_as_integers() {
 }
 
 /// stream:`message_delta.usage` — the terminal streaming usage frame. Float-encoded
-
 #[test]
 fn message_delta_float_token_counts_survive_as_integers() {
     let data = serde_json::json!({
@@ -119,7 +116,6 @@ fn message_delta_float_token_counts_survive_as_integers() {
 }
 
 /// Buffered `read_response().usage` — every top-level counter, the 5m/1h cache tier split,
-
 #[test]
 fn buffered_response_float_usage_counts_survive_as_integers() {
     let body = serde_json::json!({
@@ -180,7 +176,6 @@ fn buffered_response_float_usage_counts_survive_as_integers() {
 }
 
 /// MONEY BUG regression (truncated-tail recovery path): a HEAD-truncated non-stream billing buffer
-
 #[test]
 fn recover_truncated_usage_float_token_counts_survive_as_integers() {
     let tail = br#"{"usage":{"input_tokens":27.0,"output_tokens":9.0,"cache_creation_input_tokens":4.0,"cache_read_input_tokens":3.0}}"#;

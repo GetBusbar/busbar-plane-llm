@@ -11,7 +11,6 @@ fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// The boundary, off the `Content-Type`: the one thing that says where a part begins. Every
-
 fn multipart_boundary(content_type: &str) -> Option<String> {
     parameter(content_type, "boundary")
         .filter(|value| !value.is_empty())
@@ -19,7 +18,6 @@ fn multipart_boundary(content_type: &str) -> Option<String> {
 }
 
 /// Split a header value on `;`, ignoring separators inside a quoted string (a naive `split(';')` cuts
-
 fn split_params(value: &str) -> impl Iterator<Item = &str> {
     let (mut quoted, mut escaped) = (false, false);
     value.split(move |c| {
@@ -84,7 +82,6 @@ fn parameter<'a>(value: &'a str, attribute: &str) -> Option<Cow<'a, str>> {
 }
 
 /// Only the whole `name` parameter of Content-Disposition names a field. A filename, quoted
-
 pub(crate) fn multipart_field_name(headers: &str) -> Option<Cow<'_, str>> {
     for line in headers.split("\r\n") {
         let Some((name, value)) = line.split_once(':') else {
@@ -98,7 +95,6 @@ pub(crate) fn multipart_field_name(headers: &str) -> Option<Cow<'_, str>> {
 }
 
 /// Borrowed multipart segments, excluding delimiter lines but retaining the CRLF before each
-
 pub(crate) struct MultipartSegments<'a> {
     body: &'a [u8],
     delimiter: String,
@@ -164,7 +160,6 @@ pub(crate) fn multipart_segments<'a>(
 }
 
 /// Rung 2 of the model ladder: the `model` form field of a multipart arrival, read as a document.
-
 pub fn multipart_model(content_type: &str, body: &[u8]) -> Option<String> {
     multipart_field_value(content_type, body, "model", true)
         .map(|value| String::from_utf8_lossy(value).trim().to_string())
@@ -172,7 +167,6 @@ pub fn multipart_model(content_type: &str, body: &[u8]) -> Option<String> {
 }
 
 /// The last form field, as the transcription reader resolves repeated format fields, borrowed
-
 pub(crate) fn multipart_field<'a>(
     content_type: &str,
     body: &'a [u8],

@@ -53,7 +53,6 @@ use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
 use serde_json::{json, Value};
 
 /// Pull the usage off the one `MessageDelta` a terminal stream frame must emit.
-
 fn terminal_usage(events: &[IrStreamEvent]) -> &crate::codec::ir::IrUsage {
     events
         .iter()
@@ -67,7 +66,6 @@ fn terminal_usage(events: &[IrStreamEvent]) -> &crate::codec::ir::IrUsage {
 }
 
 /// busbar's tree at the pin this repo names (`BUSBAR_CHECKOUT`, a checkout of GetBusbar/busbar at
-
 fn workspace_root() -> std::path::PathBuf {
     std::path::PathBuf::from(
         std::env::var_os("BUSBAR_CHECKOUT").expect(
@@ -77,7 +75,6 @@ fn workspace_root() -> std::path::PathBuf {
 }
 
 /// Load the RESPONSE BODY busbar returned in a recorded shadow-oracle golden cell.
-
 fn oracle_cell_body(cell: &str) -> Value {
     let path = workspace_root()
         .join("testing/shadow-oracle/golden/1.5.5/cells")
@@ -91,7 +88,6 @@ fn oracle_cell_body(cell: &str) -> Value {
 }
 
 /// Load a raw RECORDED UPSTREAM BODY from the llm-conformance fixtures — the bytes exactly as they
-
 fn conformance_raw_body(recording: &str, cell: &str) -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../testing/llm-conformance/fixtures")
@@ -104,7 +100,6 @@ fn conformance_raw_body(recording: &str, cell: &str) -> String {
 }
 
 /// Set one nested member on a copy of a recorded body, returning the copy.
-
 fn with_member(body: &Value, pointer: &str, value: Value) -> Value {
     let mut out = body.clone();
 
@@ -126,7 +121,6 @@ fn with_member(body: &Value, pointer: &str, value: Value) -> Value {
 }
 
 /// The recorded Bedrock Converse body is the shape the reader must handle, and busbar must not
-
 #[test]
 fn bedrock_recorded_no_cache_turn_invents_no_ttl_split() {
     let body = oracle_cell_body("llm__bedrock__bedrock__request__ok");
@@ -154,7 +148,6 @@ fn bedrock_recorded_no_cache_turn_invents_no_ttl_split() {
 }
 
 /// `usage.cacheDetails[]` → the IR's 5m/1h tiers, and back onto the Bedrock wire (1h before 5m).
-
 #[test]
 fn bedrock_cache_details_ttl_split_reaches_the_ir_and_the_wire() {
     let recorded = oracle_cell_body("llm__bedrock__bedrock__request__ok");
@@ -200,7 +193,6 @@ fn bedrock_cache_details_ttl_split_reaches_the_ir_and_the_wire() {
 }
 
 /// The STREAM reports the same split the buffered response does.
-
 #[test]
 fn bedrock_cache_details_ride_the_stream_metadata_frame() {
     let mut state = StreamDecodeState::default();
@@ -231,7 +223,6 @@ fn bedrock_cache_details_ride_the_stream_metadata_frame() {
 }
 
 /// The RAW RECORDED Cohere upstream body — the bytes off the wire — is the shape the reader handles,
-
 #[test]
 fn cohere_recorded_raw_body_reads_without_inventing_a_cache_read() {
     let raw = conformance_raw_body("selftest-recording", "llm__cohere__cohere__request__ok");
@@ -255,7 +246,6 @@ fn cohere_recorded_raw_body_reads_without_inventing_a_cache_read() {
 }
 
 /// `usage.cached_tokens` stays inside the input: the whole reported `tokens.input_tokens` bills at
-
 #[test]
 fn cohere_cached_tokens_bill_inside_the_input() {
     let raw = conformance_raw_body("selftest-recording", "llm__cohere__cohere__request__ok");
@@ -293,7 +283,6 @@ fn cohere_cached_tokens_bill_inside_the_input() {
 }
 
 /// The STREAM terminal (`message-end.delta.usage`) bills the cache hit inside the input the same
-
 #[test]
 fn cohere_cached_tokens_ride_the_stream_terminal_inside_the_input() {
     let mut state = StreamDecodeState::default();
@@ -330,7 +319,6 @@ fn cohere_cached_tokens_ride_the_stream_terminal_inside_the_input() {
 }
 
 /// ONE COMPLETION, ONE INVOICE — whichever path read it.
-
 #[test]
 fn cohere_truncated_recovery_bills_the_same_bucket_as_the_buffered_path() {
     let raw = conformance_raw_body("selftest-recording", "llm__cohere__cohere__request__ok");
@@ -382,7 +370,6 @@ fn cohere_truncated_recovery_bills_the_same_bucket_as_the_buffered_path() {
 }
 
 /// The recorded Responses body carries the member (busbar's own Responses WRITER emits it; the
-
 #[test]
 fn responses_recorded_body_carries_the_cache_write_member() {
     let body = oracle_cell_body("llm__responses__responses__request__ok");
@@ -439,7 +426,6 @@ fn responses_cache_write_tokens_bill_inside_the_input() {
 }
 
 /// The STREAM terminal (`response.completed`) bills the cache write inside the input the same way
-
 #[test]
 fn responses_cache_write_tokens_ride_the_stream_terminal_inside_the_input() {
     let mut state = StreamDecodeState::default();
@@ -473,7 +459,6 @@ fn responses_cache_write_tokens_ride_the_stream_terminal_inside_the_input() {
 }
 
 /// The recorded Chat Completions body is the shape the reader handles, and a turn that reported no
-
 #[test]
 fn openai_chat_recorded_body_invents_no_cache_write() {
     let body = oracle_cell_body("llm__openai__openai__request__ok");
@@ -561,7 +546,6 @@ fn openai_chat_cache_write_tokens_ride_the_usage_chunk_inside_the_input() {
 }
 
 /// BUSBAR NEVER CHARGES MORE INPUT THAN THE PROVIDER STATED — including on the Cohere billed path.
-
 #[test]
 fn cohere_billed_input_and_cache_read_never_exceed_the_reported_total() {
     let raw = conformance_raw_body("selftest-recording", "llm__cohere__cohere__request__ok");
@@ -596,7 +580,6 @@ fn cohere_billed_input_and_cache_read_never_exceed_the_reported_total() {
 }
 
 /// A dialect without a billed bucket projects its plain normalized totals.
-
 #[test]
 fn the_billed_netting_does_not_touch_a_dialect_without_billed_units() {
     let recorded = oracle_cell_body("llm__responses__responses__request__ok");

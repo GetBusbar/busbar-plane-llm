@@ -528,7 +528,6 @@ pub const FALLBACK_RESTRICT_NO_ELIGIBLE_LANE: Diagnostic = Diagnostic {
     retired: false,
 };
 /// Report an operator `error_map` value naming no status class, once per distinct value per process,
-
 pub fn warn_error_map_class_unrecognized(value: &str) {
     use std::collections::HashSet;
     use std::sync::{Mutex, OnceLock};
@@ -555,7 +554,6 @@ pub fn warn_error_map_class_unrecognized(value: &str) {
 mod reentry_tests;
 
 /// Every code this plane defines, in catalog order, for the composition root's
-
 pub static DIAGNOSTICS: &[&Diagnostic] = &[
     &USAGE_TAP_UNKNOWN_PROTOCOL,
     &USAGE_TAP_BAD_JSON,

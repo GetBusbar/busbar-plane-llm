@@ -6,7 +6,6 @@
 use super::*;
 
 /// Every class is named exactly once: two spellings of one class, or one class under two names,
-
 #[test]
 fn every_open_class_is_named_once() {
     let mut names: Vec<&str> = OPEN_CLASSES.iter().map(|(c, _)| *c).collect();
@@ -23,7 +22,6 @@ fn every_open_class_is_named_once() {
 }
 
 /// No open class is in the token family: a token-family class counts toward a `tokens:` cap, and
-
 #[test]
 fn no_open_class_counts_toward_a_token_cap() {
     for (class, family) in OPEN_CLASSES {
@@ -36,7 +34,6 @@ fn no_open_class_counts_toward_a_token_cap() {
 }
 
 /// Every guardrail count lands in a declared open class, and no two counts share one (AWS prices
-
 #[test]
 fn every_guardrail_count_has_its_own_declared_class() {
     let declared: Vec<&str> = OPEN_CLASSES.iter().map(|(c, _)| *c).collect();

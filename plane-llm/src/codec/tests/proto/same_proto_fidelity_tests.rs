@@ -143,7 +143,6 @@ fn same_proto_cross_chunk_split_is_verbatim() {
 }
 
 /// BENCHMARK: same-proto streaming per-feed latency / throughput. The short-circuit's
-
 #[test]
 #[ignore = "a timing bench: run with --release --ignored --nocapture"]
 fn bench_same_proto_short_circuit() {

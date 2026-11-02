@@ -7,7 +7,6 @@ use super::*;
 use crate::codec::ir::StreamDecodeState;
 
 /// THE TRUNCATED-STREAM RECOVERY PATH. `recover_truncated_usage` parses the trailing `usage` object
-
 #[test]
 fn recover_truncated_usage_reads_float_encoded_counts() {
     let reader = OpenAiReader;
@@ -24,7 +23,6 @@ fn recover_truncated_usage_reads_float_encoded_counts() {
 }
 
 /// THE STREAMING PATH: a `stream_options: {include_usage: true}` trailing usage-only chunk
-
 #[test]
 fn streaming_trailing_usage_chunk_reads_float_encoded_counts() {
     let reader = OpenAiReader;
@@ -72,7 +70,6 @@ fn streaming_trailing_usage_chunk_reads_float_encoded_counts() {
 }
 
 /// THE BUFFERED PATH. The identical float-spelled usage object on a non-streamed `chat.completion`
-
 #[test]
 fn buffered_read_response_reads_float_encoded_counts() {
     let body = serde_json::json!({
@@ -117,7 +114,6 @@ fn buffered_read_response_reads_float_encoded_counts() {
 }
 
 /// AN UNREADABLE IMAGE COUNT IS RECORDED AS UNKNOWN: THE ANSWER IS SERVED, THE COUNT NEVER 0.
-
 #[test]
 fn an_unreadable_image_count_is_recorded_as_unknown_and_the_answer_served() {
     let wire = br#"{"data":[{"b64_json":"aGk="}],"usage":{"input_tokens":"27","output_tokens":5}}"#;
@@ -181,7 +177,6 @@ fn an_unreadable_image_count_is_recorded_as_unknown_and_the_answer_served() {
 }
 
 /// THE BUFFERED EMBEDDINGS READER REFUSES AN UNREADABLE BILLED COUNT ON ITS OWN (LLM3#6): it bills
-
 #[test]
 fn an_unreadable_embeddings_count_refuses_itself_and_the_answer_is_served() {
     let wire = br#"{"model":"m","data":[{"index":0,"embedding":[0.1]}],"usage":{"prompt_tokens":{"n":27}}}"#;
@@ -223,7 +218,6 @@ fn an_unreadable_transcription_count_refuses_itself_and_the_transcript_is_served
 }
 
 /// AN ABSENT COUNT IS STILL ZERO, AND A RESPONSE WITH NO USAGE OBJECT STILL READS.
-
 #[test]
 fn an_absent_count_still_reads_as_zero_and_no_usage_object_still_reads() {
     let wire = br#"{"data":[{"b64_json":"aGk="}],"usage":{"input_tokens":27}}"#;
@@ -247,7 +241,6 @@ fn an_absent_count_still_reads_as_zero_and_no_usage_object_still_reads() {
 }
 
 /// A WHISPER DURATION READS EXACTLY, AND ECHOES BACK THE BYTES IT ARRIVED AS.
-
 #[test]
 fn a_whisper_duration_reads_exactly_and_echoes_the_same_bytes() {
     let wire = br#"{"text":"hi","usage":{"type":"duration","seconds":12.1}}"#;
@@ -273,7 +266,6 @@ fn a_whisper_duration_reads_exactly_and_echoes_the_same_bytes() {
 }
 
 /// A DURATION FINER THAN THE SCALE REFUSES RATHER THAN BEING ROUNDED (#81).
-
 #[test]
 fn a_duration_finer_than_the_scale_refuses_rather_than_being_rounded() {
     let wire = br#"{"text":"hi","usage":{"type":"duration","seconds":2.7755575615628914}}"#;

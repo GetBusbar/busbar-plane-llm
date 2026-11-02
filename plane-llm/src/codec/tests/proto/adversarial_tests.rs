@@ -42,11 +42,9 @@ const DIALECTS: [&str; 6] = [
 ];
 
 /// The bounded cap every reader clamps an attacker-controlled block index to
-
 const MAX_BLOCK_INDEX: usize = 1023;
 
 /// A MINIMAL, genuinely-VALID request body in `dialect`'s native shape carrying `text` as the sole
-
 fn valid_request_body(dialect: &str, text: &str) -> serde_json::Value {
     use serde_json::json;
     match dialect {
@@ -62,7 +60,6 @@ fn valid_request_body(dialect: &str, text: &str) -> serde_json::Value {
 }
 
 /// The concatenated text of the first user turn in `ir` — the payload a reader that silently
-
 fn first_user_text(ir: &crate::codec::ir::IrRequest) -> String {
     ir.messages
         .iter()
@@ -80,7 +77,6 @@ fn first_user_text(ir: &crate::codec::ir::IrRequest) -> String {
 }
 
 /// Assert `res` is the canonical structural-parse rejection: `Err` with a client 400 carrying the
-
 fn expect_ir_parse<T>(res: Result<T, IrError>, ctx: &str) {
     match res {
         Ok(_) => panic!("{ctx}: expected a clean ir_parse rejection, got Ok"),
@@ -135,7 +131,6 @@ fn non_object_top_level_response_body_rejects_every_dialect() {
 }
 
 /// OpenAI Chat's `choices` is a REQUIRED array; a present-but-wrong-typed (or empty) `choices`
-
 #[test]
 fn openai_wrong_typed_or_empty_choices_response_rejects() {
     let proto = protocol_for("openai").expect("openai");
@@ -156,7 +151,6 @@ fn openai_wrong_typed_or_empty_choices_response_rejects() {
 }
 
 /// The Responses reader's terminal is `output`: a `status:"completed"` body whose `output` is
-
 #[test]
 fn responses_wrong_typed_output_response_rejects() {
     let proto = protocol_for("responses").expect("responses");
@@ -209,7 +203,6 @@ fn native_response_with_stop(dialect: &str, stop: &str) -> serde_json::Value {
 }
 
 /// Unknown terminal enum on the five dialects whose terminal is a stop-reason token degrades to
-
 #[test]
 fn unknown_stop_reason_degrades_to_other_not_reject() {
     for dialect in ["anthropic", "openai", "gemini", "bedrock", "cohere"] {
@@ -231,7 +224,6 @@ fn unknown_stop_reason_degrades_to_other_not_reject() {
 }
 
 /// The Responses API's terminal vocabulary is `status`, not a stop-reason token. An unknown status
-
 #[test]
 fn responses_unknown_status_degrades_to_none() {
     let proto = protocol_for("responses").expect("responses");
@@ -252,7 +244,6 @@ fn responses_unknown_status_degrades_to_none() {
 }
 
 /// NO-LEAK across the seam: an unknown upstream stop token, degraded to `Other`, must be written
-
 #[test]
 fn unknown_stop_reason_does_not_leak_across_writer() {
     let anth = protocol_for("anthropic").expect("anthropic");
@@ -278,7 +269,6 @@ fn unknown_stop_reason_does_not_leak_across_writer() {
 }
 
 /// The minimal VALID frame sequence that makes `dialect`'s reader emit one `TextDelta("ok")` —
-
 fn valid_text_delta_frames(dialect: &str) -> Vec<(&'static str, serde_json::Value)> {
     use serde_json::json;
     match dialect {
@@ -330,7 +320,6 @@ fn valid_text_delta_frames(dialect: &str) -> Vec<(&'static str, serde_json::Valu
 }
 
 /// A battery of hostile de-framed stream events: non-object payloads, wrong-typed deltas/usage, an
-
 #[test]
 fn hostile_stream_events_are_total_no_panic_no_bad_index() {
     let hostile: Vec<(&str, serde_json::Value)> = vec![
@@ -429,7 +418,6 @@ fn hostile_stream_events_are_total_no_panic_no_bad_index() {
 }
 
 /// Precise clamp proof for Bedrock: a `contentBlockStart` carrying `contentBlockIndex: u64::MAX`
-
 #[test]
 fn bedrock_huge_content_block_index_is_clamped() {
     let proto = protocol_for("bedrock").expect("bedrock");
@@ -467,7 +455,6 @@ fn bedrock_huge_content_block_index_is_clamped() {
 }
 
 /// The MAX_JSON_DEPTH floor rejects a pathologically-nested body at the PARSE boundary
-
 #[test]
 fn overdeep_nested_body_rejected_at_parse_before_any_reader() {
     let depth = 10_000usize;
@@ -514,7 +501,6 @@ fn overdeep_nested_body_rejected_at_parse_before_any_reader() {
 }
 
 /// A truncated SSE egress stream (a `data:` frame that never receives its blank-line terminator)
-
 #[test]
 fn truncated_sse_stream_finish_terminates_no_hang() {
     let mut st = StreamTranslate::new("anthropic", "openai").expect("translator");
@@ -547,7 +533,6 @@ fn truncated_sse_stream_finish_terminates_no_hang() {
 }
 
 /// Complete-but-garbage SSE frames (non-JSON `data:` payloads, comment/keepalive lines) must be
-
 #[test]
 fn garbage_non_json_sse_frames_skipped_no_false_abort() {
     let mut st = StreamTranslate::new("anthropic", "openai").expect("translator");
@@ -580,7 +565,6 @@ fn garbage_non_json_sse_frames_skipped_no_false_abort() {
 }
 
 /// A large-but-well-formed request body (a multi-megabyte text content string, well under the
-
 #[test]
 fn oversized_but_valid_body_reads_without_panic() {
     let big = "x".repeat(5 * 1024 * 1024);

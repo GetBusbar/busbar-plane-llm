@@ -13,7 +13,6 @@ fn arrived(target: &str, body: &serde_json::Value) -> busbar_plane_llm::exchange
 }
 
 /// RED: the reader's refusal of the unknown role made the projection fail, and the door refused
-
 #[test]
 fn an_unknown_role_is_screened_under_its_own_role_and_every_turn_is_kept() {
     let body = serde_json::json!({
@@ -44,7 +43,6 @@ fn an_unknown_role_is_screened_under_its_own_role_and_every_turn_is_kept() {
 }
 
 /// The raw view keeps 1.5.5's shapes for a refused body: a block-array system prompt flattened, a
-
 #[test]
 fn a_refused_body_keeps_the_system_prompt_blocks_tools_and_end_user() {
     let body = serde_json::json!({

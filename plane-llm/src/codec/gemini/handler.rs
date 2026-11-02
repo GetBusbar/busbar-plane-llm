@@ -35,7 +35,6 @@ use serde_json::{json, Value};
 
 pub struct GeminiRequestHandler;
 /// This protocol's own chat instance; remove it and the registry arm and chat 404s via the
-
 static CHAT: super::super::chat_handle::ChatOperation =
     super::super::chat_handle::ChatOperation(COUNT_LABEL);
 static EMB: GeminiEmbeddings = GeminiEmbeddings;
@@ -44,7 +43,6 @@ static TRANSCRIPTION: GeminiTranscription = GeminiTranscription;
 static SPEECH: GeminiSpeech = GeminiSpeech;
 
 /// Gemini's row of the support matrix, as data. A verb absent from it is the standard no-handler
-
 static CELLS: &[busbar_contract::codec::Cell] = &[
     (OpVerb::CHAT, &CHAT),
     (OpVerb::EMBEDDINGS, &EMB),
@@ -54,7 +52,6 @@ static CELLS: &[busbar_contract::codec::Cell] = &[
 ];
 
 /// The `:verb` suffix of each verb's egress URL, keyed by this protocol's verb constants. The three
-
 static ACTIONS: &[(OpVerb, &str)] = &[
     (OpVerb::EMBEDDINGS, "embedContent"),
     (OpVerb::IMAGE, "predict"),
@@ -135,7 +132,6 @@ impl RequestHandler for GeminiRequestHandler {
 }
 
 /// Gemini transcription: audio understood via `models/{id}:generateContent` with inline audio.
-
 struct GeminiTranscription;
 
 leaf_op! {
@@ -145,7 +141,6 @@ leaf_op! {
 }
 
 /// The two synthetic directive texts the transcription writer prepends, named so the reader can
-
 const TRANSCRIBE_INSTRUCTION: &str = "Transcribe the following audio verbatim.";
 const TRANSLATE_INSTRUCTION: &str = "Translate the following audio to text.";
 
@@ -208,7 +203,6 @@ pub fn write_transcription_response(r: &crate::codec::ir::audio::TranscriptionRe
 }
 
 /// Gemini speech (TTS): `models/{id}:generateContent` with `responseModalities: [AUDIO]`. It returns
-
 struct GeminiSpeech;
 
 leaf_op! {
@@ -232,7 +226,6 @@ fn joined_text(v: &Value, pointer: &str) -> String {
 }
 
 /// One named prebuilt speaker: `{voiceConfig: {prebuiltVoiceConfig: {voiceName}}}` (the single
-
 fn prebuilt_speaker(name: &str) -> Value {
     json!({ "voiceConfig": { "prebuiltVoiceConfig": { "voiceName": name } } })
 }
@@ -289,7 +282,6 @@ pub fn write_speech_response(r: &SpeechResp) -> WireBody {
 }
 
 /// Gemini/Imagen image generation (`models/{id}:predict`): prompt in, `predictions[].bytesBase64Encoded`
-
 struct GeminiImage;
 
 leaf_op! {
@@ -356,7 +348,6 @@ pub fn write_image_response(r: &crate::codec::ir::image::ImageResp) -> WireBody 
 }
 
 /// Gemini embeddings (`models/{id}:embedContent`). Single content in, `embedding.values` out.
-
 struct GeminiEmbeddings;
 
 leaf_op! {
@@ -512,7 +503,6 @@ pub fn read_transcription_request(
 }
 
 /// `usageMetadata` counts a transcription answer reports beside the two it bills. The chat table
-
 const TRANSCRIPTION_RESIDUAL_COUNTS: [&str; 3] = [
     FIELD_THOUGHTS_TOKEN_COUNT,
     FIELD_CACHED_CONTENT_TOKEN_COUNT,
@@ -520,7 +510,6 @@ const TRANSCRIPTION_RESIDUAL_COUNTS: [&str; 3] = [
 ];
 
 /// Residual units of a transcription answer's `usageMetadata` ([`TRANSCRIPTION_RESIDUAL_COUNTS`]),
-
 fn transcription_residual_units(usage: &Value) -> std::collections::BTreeMap<String, u64> {
     let mut warnings = Vec::new();
     TRANSCRIPTION_RESIDUAL_COUNTS

@@ -7,7 +7,6 @@ use super::*;
 use crate::codec::ir::IrRequest;
 
 /// `default_max_tokens` resolution precedence on the translation seam (only fires when the source
-
 #[test]
 fn per_model_then_global_then_4096() {
     let global = 8192;
@@ -68,7 +67,6 @@ fn per_model_then_global_then_4096() {
 }
 
 /// Anthropic 400s with "A maximum of 4 blocks with cache_control may be provided".
-
 #[test]
 fn cache_control_breakpoints_clamped_to_four_on_anthropic_egress() {
     use crate::codec::ir::{CacheControl, CacheKind, IrBlock, IrMessage, IrRole};

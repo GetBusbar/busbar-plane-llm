@@ -11,7 +11,6 @@ use busbar_plugin_loader::dispatch::migrate::{migrate_door, migrate_library};
 use serde_json::json;
 
 /// This crate's built cdylib (uplifted or under `deps`, newest wins). A missing artifact is a
-
 fn cdylib() -> PathBuf {
     let exe = std::env::current_exe().expect("the test binary has a path");
     let profile = exe
@@ -28,7 +27,6 @@ fn cdylib() -> PathBuf {
 }
 
 /// The private-destinations corpus shape (busbar `tests/migration-corpus/private-destinations`), as
-
 fn sections() -> serde_json::Value {
     json!({
         "pools": { "local": { "members": [{ "model": "llama-local" }] } },

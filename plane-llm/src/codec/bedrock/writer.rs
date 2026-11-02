@@ -2,7 +2,6 @@ use super::*;
 use crate::codec::keys;
 
 /// Converse `usage.totalTokens`: every token consumed, cache tokens included. AWS reports
-
 fn converse_total_tokens(usage: &crate::codec::ir::IrUsage) -> u64 {
     usage
         .input_tokens
@@ -38,7 +37,6 @@ impl ProtocolWriter for BedrockWriter {
     }
 
     /// Converse frames a turn as `{role, content: [{text}]}`; a verbatim insert of `{role, content:
-
     fn apply_rewrite_to_ingress_body(
         &self,
         obj: &mut serde_json::Map<String, serde_json::Value>,
@@ -93,7 +91,6 @@ impl ProtocolWriter for BedrockWriter {
     }
 
     /// The production write: the lane's [`LaneCaps`] choose the structured-output form (see
-
     fn write_request_for_lane(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -291,7 +288,6 @@ impl ProtocolWriter for BedrockWriter {
     }
 
     /// A `citation` delta carries one citation, so a multi-citation delta frames as several events at
-
     fn write_response_events(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -321,7 +317,6 @@ impl ProtocolWriter for BedrockWriter {
     }
 
     /// Maps an IR error to the `(exception_name, message)` of the modeled-exception event-stream
-
     fn write_response_exception(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -476,7 +471,6 @@ impl ProtocolWriter for BedrockWriter {
     }
 
     /// Native Converse error envelope: a flat body with the detail in lowercase `message` and the
-
     fn write_error(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -529,7 +523,6 @@ impl ProtocolWriter for BedrockWriter {
     }
 
     /// IR-18: a `reasoningText.signature` reads back as Claude's or the Bedrock model's own (told
-
     fn reads_signature_origin_as_own(&self, origin: crate::codec::ir::IrSignatureOrigin) -> bool {
         matches!(
             origin,
@@ -545,7 +538,6 @@ impl ProtocolWriter for BedrockWriter {
 
 impl BedrockWriter {
     /// The request write for a lane with the declared [`LaneCaps`] (the model gate has already
-
     fn write_request_with(
         &self,
         req: &crate::codec::ir::IrRequest,

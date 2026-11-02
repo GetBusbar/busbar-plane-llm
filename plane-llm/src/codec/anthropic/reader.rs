@@ -92,7 +92,6 @@ impl ProtocolReader for AnthropicReader {
     }
 
     /// Usage rides only `message_start` and `message_delta`, and the terminal failure is `error`.
-
     fn same_proto_reads(&self, event_type: &str, _payload: &[u8]) -> bool {
         matches!(
             event_type,

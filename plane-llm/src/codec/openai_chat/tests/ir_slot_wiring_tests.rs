@@ -7,7 +7,6 @@ use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
 use serde_json::{json, Value};
 
 /// Chat body → Chat reader → the cross-protocol egress seam → Chat writer. The seam clears `extra`,
-
 fn through_seam(body: &Value) -> Value {
     let mut req = super::OpenAiReader.read_request(body).expect("body reads");
     crate::codec::chat_handle::chat_prepare_for_egress(
@@ -51,7 +50,6 @@ fn text(t: &str, refusal: bool) -> crate::codec::ir::IrBlock {
 }
 
 /// OAI-12 (IR-02). The Chat reader flags `message.refusal` as the refusal block, and the writer
-
 #[test]
 fn oai12_refusal_block_is_carried_exactly() {
     let body = json!({
@@ -86,7 +84,6 @@ fn oai12_refusal_block_is_carried_exactly() {
 }
 
 /// OAI-12 (IR-02), stream. `delta.refusal` opens a text block flagged `refusal: true`, and the Chat
-
 #[test]
 fn oai12_stream_refusal_is_carried_exactly() {
     let reader = super::OpenAiReader;
@@ -137,7 +134,6 @@ fn oai12_stream_refusal_is_carried_exactly() {
 }
 
 /// OAI-03 (IR-04). The request `service_tier` crosses in the typed slot — every OpenAI tier,
-
 #[test]
 fn oai03_flex_and_scale_tiers_cross() {
     for tier in ["auto", "default", "flex", "scale", "priority"] {
@@ -166,7 +162,6 @@ fn oai03_flex_and_scale_tiers_cross() {
 }
 
 /// SHR-03. A Responses `input_file.file_id` (vendor tag `responses`) reaches a Chat lane as
-
 #[test]
 fn shr03_responses_file_id_reaches_chat() {
     let req = crate::codec::ir::IrRequest {
@@ -195,7 +190,6 @@ fn shr03_responses_file_id_reaches_chat() {
 }
 
 /// IR-03 / IR-05 / IR-06 / IR-07. `metadata`, `store`, `safety_identifier`, `prompt_cache_key` and
-
 #[test]
 fn ir03_05_06_07_request_scalars_cross() {
     let members = json!({
@@ -212,7 +206,6 @@ fn ir03_05_06_07_request_scalars_cross() {
 }
 
 /// IR-19. `modalities` crosses; `audio` is written only beside the caller's own `audio` member (a
-
 #[test]
 fn ir19_modalities_cross() {
     let members: Value = serde_json::from_str(include_str!("fixtures/chat_audio_member.json"))
@@ -288,7 +281,6 @@ fn ir10_allowed_tools_cross() {
 }
 
 /// IR-14. A `developer` system turn is written back as `developer`; mixed roles fall back to
-
 #[test]
 fn ir14_developer_role_crosses() {
     let body = json!({"model": "gpt-5", "messages": [
@@ -322,7 +314,6 @@ fn ir08_image_detail_crosses() {
 }
 
 /// Same-dialect fidelity. A member the typed slot cannot hold exactly (a non-string metadata value,
-
 #[test]
 fn unrepresentable_slot_members_relay_verbatim_on_the_same_dialect() {
     let body = chat_body(json!({"metadata": {"n": 1}, "service_tier": "turbo"}));
@@ -339,7 +330,6 @@ fn unrepresentable_slot_members_relay_verbatim_on_the_same_dialect() {
 }
 
 /// OAI-10 (IR-09). `reasoning_effort: "none"` is reasoning switched OFF — not "no ask" — so a
-
 #[test]
 fn oai10_none_is_reasoning_off() {
     let body = chat_body(json!({"reasoning_effort": "none"}));

@@ -67,7 +67,6 @@ pub struct EmbeddingsReq {
 }
 
 /// The embeddings family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`], the
-
 impl busbar_contract::ir::facts::IrFacts for EmbeddingsReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::EMBEDDINGS

@@ -6,7 +6,6 @@
 use super::*;
 
 /// Tests that the same-proto `StreamTranslate`:
-
 #[test]
 fn test_stream_inspection_tap_usage_parsing() {
     let mut t = StreamTranslate::new_same_proto("anthropic").expect("same-proto translator");
@@ -35,7 +34,6 @@ fn test_stream_inspection_tap_usage_parsing() {
 }
 
 /// A bare CR is one of the three line terminators the event-stream grammar names, and the frame
-
 #[test]
 fn same_proto_anthropic_bare_cr_frames_still_tap_usage() {
     let mut t = StreamTranslate::new_same_proto("anthropic").expect("same-proto translator");
@@ -55,7 +53,6 @@ fn same_proto_anthropic_bare_cr_frames_still_tap_usage() {
 }
 
 /// The same-protocol A-tap must carry the usage DETAIL sub-buckets, not just the four totals. The
-
 #[test]
 fn same_proto_tap_carries_usage_detail_sub_buckets() {
     let mut t = StreamTranslate::new_same_proto("openai").expect("same-proto translator");
@@ -101,7 +98,6 @@ fn same_proto_tap_carries_usage_detail_sub_buckets() {
 }
 
 /// Cohere reports usage TWICE — a raw `tokens` bucket and a separately-metered `billed_units`
-
 #[test]
 fn same_proto_tap_carries_cohere_billed_units() {
     let mut t = StreamTranslate::new_same_proto("cohere").expect("same-proto translator");
@@ -147,7 +143,6 @@ fn same_proto_tap_carries_cohere_billed_units() {
 }
 
 /// A stream that ends before its terminal `message_delta` (the far end cut it, or the caller left)
-
 #[test]
 fn anthropic_stream_start_usage_bills_before_the_terminal_delta() {
     let start = b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"usage\":{\"input_tokens\":100000,\"cache_read_input_tokens\":7,\"output_tokens\":1}}}\n\n";

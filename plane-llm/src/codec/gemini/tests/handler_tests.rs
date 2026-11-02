@@ -58,7 +58,6 @@ fn path_base_reshapes_the_gemini_url_for_vertex() {
 }
 
 /// Moderation and rerank (no Gemini cell) answer `:generateContent` whether or not the request
-
 #[test]
 fn moderation_and_rerank_always_use_generate_content() {
     let h = GeminiRequestHandler;

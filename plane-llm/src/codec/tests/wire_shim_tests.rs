@@ -11,7 +11,6 @@ fn unit(usage: &busbar_contract::billing::Usage, k: &str) -> Option<u64> {
 }
 
 /// A tier the dialect reader actually reported (including an honest zero, distinct from a
-
 #[test]
 fn reported_tiers_are_priced() {
     let tu = TokenUsage {
@@ -41,7 +40,6 @@ fn reported_tiers_are_priced() {
 }
 
 /// A cache tier the provider genuinely never reported (`None`, per `read_count_opt`'s absent/null
-
 #[test]
 fn absent_cache_tiers_are_omitted_not_billed() {
     let tu = TokenUsage {
@@ -72,7 +70,6 @@ fn absent_cache_tiers_are_omitted_not_billed() {
 }
 
 /// An explicit reported zero (`Some(0)`) and a legitimately-absent tier (`None`) price IDENTICALLY —
-
 #[test]
 fn sparse_zero_and_absent_cache_tiers_are_both_omitted() {
     let reported_zero = TokenUsage {
@@ -93,7 +90,6 @@ fn sparse_zero_and_absent_cache_tiers_are_both_omitted() {
 }
 
 /// END TO END, through a real dialect reader this crate owns (not cohere/openai_responses): a
-
 #[test]
 fn unreadable_top_level_cache_count_refuses_before_reaching_tier_usage() {
     use crate::codec::anthropic::AnthropicReader;
@@ -190,7 +186,6 @@ fn a_residual_never_reaches_a_bill() {
 }
 
 /// The open classes a non-token answer ledgers, through both projections: the plane's `Units`
-
 fn non_token_open(
     billing: busbar_contract::billing::Billing,
 ) -> std::collections::BTreeMap<String, u64> {

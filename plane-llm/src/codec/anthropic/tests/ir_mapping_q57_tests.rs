@@ -52,7 +52,6 @@ fn xreq_lane(
 }
 
 /// A lane of the newest Claude generation: declares adaptive thinking AND native structured
-
 pub(super) fn newest_lane() -> crate::codec::egress_prep::LaneCaps {
     crate::codec::egress_prep::LaneCaps {
         anthropic_adaptive_thinking: true,
@@ -89,7 +88,6 @@ fn user_text(text: &str) -> Value {
 }
 
 /// ANT-01: an Anthropic `document` with a `text` source is carried BASE64 on the IR, so a foreign
-
 #[test]
 fn ant01_text_document_reaches_foreign_writers_as_real_base64() {
     let body = json!({
@@ -115,7 +113,6 @@ fn ant01_text_document_reaches_foreign_writers_as_real_base64() {
 }
 
 /// ANT-02: a foreign text/plain document (base64 on the IR) reaches Anthropic as a `text` source
-
 #[test]
 fn ant02_foreign_text_document_is_decoded_into_the_text_source() {
     let body = json!({
@@ -152,7 +149,6 @@ fn ant02_foreign_text_document_is_decoded_into_the_text_source() {
 }
 
 /// ANT-03: a Files-API image (`source.type:"file"`) is an Anthropic-only handle: a foreign writer
-
 #[test]
 fn ant03_file_image_source_is_a_vendor_handle_not_empty_base64() {
     let body = json!({
@@ -242,7 +238,6 @@ fn ant05_tool_strict_is_written() {
 }
 
 /// ANT-06: Anthropic `output_config.format` (and the deprecated `output_format`) reach a foreign
-
 #[test]
 fn ant06_output_config_format_is_read() {
     let schema = json!({"type": "object", "properties": {"a": {"type": "string"}},
@@ -268,7 +263,6 @@ fn ant06_output_config_format_is_read() {
 }
 
 /// ANT-07 (with ANT-08): on a lane that declares native structured outputs, a foreign
-
 #[test]
 fn ant07_response_format_is_native_and_leaves_tool_choice_alone() {
     let body = json!({
@@ -343,7 +337,6 @@ fn ant07_response_format_is_native_and_leaves_tool_choice_alone() {
 }
 
 /// ANT-07, the lane that does NOT declare native structured outputs (the default — Claude 3.x,
-
 #[test]
 fn ant07_default_lane_drops_the_directive_as_in_1_5_5() {
     let body = json!({
@@ -412,7 +405,6 @@ fn ant09_adaptive_thinking_and_effort_are_read() {
 }
 
 /// ANT-10: a word-form reasoning ask reaches an adaptive-thinking lane (Opus 4.7+/5.x, Sonnet 5,
-
 #[test]
 fn ant10_effort_ask_is_written_as_adaptive() {
     let body = json!({"model": "gpt-5", "messages": [{"role": "user", "content": "hi"}],
@@ -436,7 +428,6 @@ fn ant10_effort_ask_is_written_as_adaptive() {
 }
 
 /// ANT-11: `model_context_window_exceeded` is a length cut-off on every foreign client, buffered and
-
 #[test]
 fn ant11_context_window_stop_is_a_length_stop() {
     let body = json!({"id": "msg_1", "type": "message", "role": "assistant", "model": "claude",
@@ -469,7 +460,6 @@ fn ant11_context_window_stop_is_a_length_stop() {
 }
 
 /// ANT-12: a foreign content-filter stop reaches an Anthropic client as `refusal`, buffered and
-
 #[test]
 fn ant12_content_filter_stop_is_a_refusal() {
     let body = json!({"id": "chatcmpl-1", "object": "chat.completion", "created": 1, "model": "gpt-4o",
@@ -489,7 +479,6 @@ fn ant12_content_filter_stop_is_a_refusal() {
 }
 
 /// ANT-13: an Anthropic server tool is hosted, not a function: it never reaches a foreign backend as
-
 #[test]
 fn ant13_server_tools_are_hosted_not_functions() {
     let body = json!({"model": "m", "max_tokens": 100, "messages": [user_text("hi")],
@@ -527,7 +516,6 @@ fn ant13_server_tools_are_hosted_not_functions() {
 }
 
 /// ANT-14: a streamed server-tool block (`server_tool_use` + its `input_json_delta`s + stop, then a
-
 #[test]
 fn ant14_suppressed_stream_block_drops_its_deltas_and_stop() {
     let raw = concat!(
@@ -576,7 +564,6 @@ fn ant14_suppressed_stream_block_drops_its_deltas_and_stop() {
 }
 
 /// ANT-15: a foreign backend's image/attachment output is omitted from an Anthropic response (an
-
 #[test]
 fn ant15_response_image_and_json_blocks_are_not_invalid_blocks() {
     let resp = crate::codec::ir::IrResponse {
@@ -641,7 +628,6 @@ fn ant16_json_tool_result_is_carried_as_text() {
 }
 
 /// ANT-17: inside a `tool_result`, an attachment with no Anthropic projection (audio, a foreign
-
 #[test]
 fn ant17_tool_result_content_is_filtered_like_message_content() {
     let req = crate::codec::ir::IrRequest {
@@ -691,7 +677,6 @@ fn ant17_tool_result_content_is_filtered_like_message_content() {
 }
 
 /// ANT-18: a `search_result_location` citation keeps its `source` (as the neutral url) on read, and
-
 #[test]
 fn ant18_search_result_citation_source_maps_both_ways() {
     let body = json!({"id": "msg_1", "type": "message", "role": "assistant", "model": "claude",

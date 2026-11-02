@@ -637,7 +637,6 @@ impl ProtocolReader for OpenAiReader {
     }
 
     /// OpenAI's flat stream → IR block-structured events. One chat.completion.chunk
-
     fn read_response_events(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -1042,7 +1041,6 @@ impl ProtocolReader for OpenAiReader {
     }
 
     /// A chunk bills or fails only through a top-level `error` OBJECT, a `usage` OBJECT, or a
-
     fn same_proto_reads(&self, _event_type: &str, payload: &[u8]) -> bool {
         use crate::codec::json_splice::{any_member, first_element};
         any_member(payload, |m, v| {
@@ -1298,15 +1296,12 @@ impl ProtocolReader for OpenAiReader {
 const MODERATION: &str = "moderation";
 
 /// The `tool_ir_index` key that records the IR index of a Thinking block opened AFTER the answer
-
 const LATE_THINKING_KEY: usize = usize::MAX;
 
 /// The `open_tools` / `tool_ir_index` join key of a streamed legacy `delta.function_call` (OAI-08).
-
 const LEGACY_FUNCTION_CALL_KEY: usize = usize::MAX - 1;
 
 /// The `tool_ir_index` key that records the IR index of the text block opened for `delta.refusal`
-
 const REFUSAL_TEXT_KEY: usize = usize::MAX - 2;
 
 /// Is the open text block the refusal block?
@@ -1354,7 +1349,6 @@ fn close_text_block(state: &mut crate::codec::ir::StreamDecodeState, out: &mut V
 mod unreadable_count_refusal_tests;
 
 /// A tool call of a type the IR does not model (a `custom` call, or a type OpenAI adds later): its
-
 fn unmodeled_tool_call(tc_val: &serde_json::Value) -> bool {
     tc_val
         .get(keys::TYPE)

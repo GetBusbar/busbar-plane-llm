@@ -7,7 +7,6 @@ use super::{duration_seconds_to_wire, head_field, ImageOutput};
 use busbar_contract::Count;
 
 /// A 64-bit xorshift, so the sweep draws from integers and the proof of exactness does not itself
-
 struct Xorshift(u64);
 
 impl Xorshift {
@@ -27,7 +26,6 @@ fn decimal_text(micros: i128) -> String {
 }
 
 /// THE BYTE-IDENTITY CLAIM, SWEPT.
-
 #[test]
 fn the_wire_rendering_is_the_same_double_the_text_used_to_parse_to() {
     let mut checked = 0usize;
@@ -96,7 +94,6 @@ fn image_output_is_additive_b64_and_url_coexist() {
 }
 
 /// A claims predicate reads a head field by name in any case, and the first field whose value is
-
 #[test]
 fn a_head_field_is_the_first_legal_value_under_its_name_in_any_case() {
     let fields: &[(&[u8], &[u8])] = &[

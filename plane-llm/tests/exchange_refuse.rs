@@ -166,7 +166,6 @@ fn a_model_no_rate_prices_reads_the_kernels_no_rate_text() {
 }
 
 /// A model that names no pool and no configured model: 1.5.5 answered the dialect's not-found
-
 #[test]
 fn a_model_that_resolves_to_no_destination_reads_the_not_found_answer() {
     let message = busbar_plane_llm::exchange::refuse::model_not_found("nope", None);
@@ -273,7 +272,6 @@ fn aws(kind: &str) -> &'static str {
 }
 
 /// 1.5.5's refusal body, spelled out per dialect (the shapes of the recorded `malformed` and
-
 fn native(dialect: &str, status: u16, kind: &str, message: &str) -> Value {
     match dialect {
         "openai" | "responses" => serde_json::json!({
@@ -360,7 +358,6 @@ fn message_in(dialect: &str, body: &Value) -> Option<String> {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/auth_native_envelope_tests.rs::test_vendor_auth_failure_message_is_plausible_per_proto`.
-
 #[test]
 fn an_authentication_refusal_reads_each_vendors_own_sentence() {
     for (dialect, status, sentence) in [
@@ -410,7 +407,6 @@ fn an_authentication_refusal_reads_each_vendors_own_sentence() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_ingress_error_bedrock_amzn_headers`.
-
 #[test]
 fn a_bedrock_throttle_carries_both_amzn_fields_and_an_openai_refusal_neither() {
     for r in [
@@ -437,7 +433,6 @@ fn a_bedrock_throttle_carries_both_amzn_fields_and_an_openai_refusal_neither() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_ingress_error_has_amzn_headers`.
-
 #[test]
 fn a_bedrock_not_found_carries_a_uuid_request_id_and_its_exception() {
     let r = render(
@@ -463,7 +458,6 @@ fn a_bedrock_not_found_carries_a_uuid_request_id_and_its_exception() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_errortype_header_matches_body_and_others_omit`.
-
 #[test]
 fn a_bedrock_refusals_errortype_is_its_body_type_for_every_kind() {
     for (kind, status, code, expected) in [
@@ -506,7 +500,6 @@ fn a_bedrock_refusals_errortype_is_its_body_type_for_every_kind() {
 }
 
 /// The kernel answers a model that names no pool and no configured model with its class default
-
 fn no_destination_status() -> u16 {
     assert!(
         !busbar_plane_llm::refusal::REFUSAL_STATUSES
@@ -545,7 +538,6 @@ fn unknown_model(target: &str, body: &[u8]) -> (String, Rendered) {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_unknown_model_404_native_shape`.
-
 #[test]
 fn a_gemini_unknown_model_reads_gemini_not_found() {
     let (message, r) = unknown_model(
@@ -561,7 +553,6 @@ fn a_gemini_unknown_model_reads_gemini_not_found() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_unknown_model_404_native_shape`.
-
 #[test]
 fn a_bedrock_unknown_model_reads_resource_not_found() {
     let (message, r) = unknown_model("/model/no-such/converse", br#"{"messages":[]}"#);
@@ -573,7 +564,6 @@ fn a_bedrock_unknown_model_reads_resource_not_found() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_cohere_unknown_model_404_native_shape`.
-
 #[test]
 fn a_cohere_unknown_model_reads_coheres_not_found() {
     let (message, r) = unknown_model("/v2/chat", br#"{"model":"no-such-model","messages":[]}"#);
@@ -585,7 +575,6 @@ fn a_cohere_unknown_model_reads_coheres_not_found() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_responses_unknown_model_404_native_shape`.
-
 #[test]
 fn a_responses_unknown_model_reads_not_found_error() {
     let (message, r) = unknown_model(
@@ -597,7 +586,6 @@ fn a_responses_unknown_model_reads_not_found_error() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_no_client_error_message_carries_router_prefix`.
-
 #[test]
 fn no_refusal_body_carries_the_router_prefix() {
     let json = [("content-type", "application/json")];
@@ -656,7 +644,6 @@ fn pool_not_permitted(dialect: &str) -> Rendered {
 const NOT_PERMITTED: &str = "Your API key does not have permission to access this resource.";
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_governance_pool_acl_403_cohere_native_envelope`.
-
 #[test]
 fn a_cohere_pool_refusal_reads_coheres_403() {
     assert_native(
@@ -669,7 +656,6 @@ fn a_cohere_pool_refusal_reads_coheres_403() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_governance_pool_acl_403_responses_native_envelope`.
-
 #[test]
 fn a_responses_pool_refusal_reads_permission_error() {
     let r = pool_not_permitted("responses");
@@ -678,7 +664,6 @@ fn a_responses_pool_refusal_reads_permission_error() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_governance_pool_acl_403_openai_native_envelope`.
-
 #[test]
 fn an_openai_pool_refusal_reads_permission_error() {
     let r = pool_not_permitted("openai");
@@ -687,7 +672,6 @@ fn an_openai_pool_refusal_reads_permission_error() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_governance_pool_acl_403_gemini_native_envelope`.
-
 #[test]
 fn a_gemini_pool_refusal_reads_permission_denied() {
     let r = pool_not_permitted("gemini");
@@ -697,7 +681,6 @@ fn a_gemini_pool_refusal_reads_permission_denied() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_governance_pool_acl_403_bedrock_native_envelope`.
-
 #[test]
 fn a_bedrock_pool_refusal_reads_access_denied() {
     let r = pool_not_permitted("bedrock");
@@ -741,7 +724,6 @@ fn refusal_in(
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::a_non_object_body_refuses_with_the_live_arms_bytes`.
-
 #[test]
 fn a_non_object_body_reads_the_released_400_in_every_dialect() {
     let json = [("content-type", "application/json")];
@@ -784,7 +766,6 @@ fn a_non_object_body_reads_the_released_400_in_every_dialect() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::the_reserialize_guard_renders_the_live_arms_bytes`.
-
 #[test]
 fn the_reserialize_guard_reads_the_released_400_in_every_dialect() {
     for dialect in SIX {
@@ -805,7 +786,6 @@ fn the_reserialize_guard_reads_the_released_400_in_every_dialect() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::every_arrival_refusal_renders_through_audit_to_the_legacy_bytes`.
-
 #[test]
 fn every_arrival_refusal_reads_the_released_bytes_in_every_dialect_and_none() {
     let cases = [
@@ -829,7 +809,6 @@ fn every_arrival_refusal_reads_the_released_bytes_in_every_dialect_and_none() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::a_refusal_renders_even_with_no_dialect_registered`.
-
 #[test]
 fn a_parse_refusal_renders_for_a_dialect_the_plane_does_not_hold() {
     let r = refusal_in(
@@ -851,7 +830,6 @@ fn a_parse_refusal_renders_for_a_dialect_the_plane_does_not_hold() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::the_missing_model_refusal_carries_the_live_arms_bytes`.
-
 #[test]
 fn the_missing_model_refusal_reads_the_released_bytes_in_every_dialect() {
     let json = [("content-type", "application/json")];
@@ -873,7 +851,6 @@ fn the_missing_model_refusal_reads_the_released_bytes_in_every_dialect() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::every_decode_refusal_renders_through_audit_to_the_legacy_bytes`.
-
 #[test]
 fn every_decode_refusal_reads_the_released_bytes_in_every_dialect_and_none() {
     let cases = [
@@ -906,7 +883,6 @@ fn every_decode_refusal_reads_the_released_bytes_in_every_dialect_and_none() {
 }
 
 /// THE KERNEL-SHAPED REFUSALS, RENDERED BY THE PLANE: the kernel
-
 #[test]
 fn the_kernels_method_and_size_refusals_read_as_the_previous_release_answered() {
     use busbar_contract::abi::plane::reason_code;
@@ -960,7 +936,6 @@ fn the_kernels_method_and_size_refusals_read_as_the_previous_release_answered() 
 }
 
 /// EVERY DIALECT, AS THE PREVIOUS RELEASE'S KERNEL WROTE IT: the
-
 #[test]
 fn the_kernels_refusals_are_the_previous_releases_writing_in_every_dialect() {
     use busbar_contract::abi::plane::reason_code;

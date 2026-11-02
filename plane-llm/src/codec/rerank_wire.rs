@@ -17,7 +17,6 @@ fn text_of(v: &Value) -> Option<String> {
 }
 
 /// `documents[]` -> texts in the original order. A malformed entry refuses the request:
-
 pub fn read_documents(v: Option<&Value>) -> Result<Vec<String>, &'static str> {
     let entries = v
         .and_then(Value::as_array)
@@ -62,7 +61,6 @@ pub fn read_results(v: Option<&Value>) -> Result<Vec<RerankResult>, &'static str
 }
 
 /// Search units are independent of the ranked payload. Keep them readable even when a malformed
-
 pub fn read_search_units(value: &Value, protocol: &'static str) -> Option<u64> {
     crate::codec::usage_count::billed_count_opt(
         value

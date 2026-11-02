@@ -13,7 +13,6 @@ const GEMINI_CODE_EXECUTION: &str = "codeExecution";
 const GEMINI_URL_CONTEXT: &str = "urlContext";
 
 /// The tool entries Gemini carries beside `functionDeclarations` in one `tools[]` entry (GEM-10). A
-
 pub(super) fn read_gemini_hosted_tools(
     tool_val: &serde_json::Value,
 ) -> (Vec<IrHostedTool>, Vec<IrTool>) {
@@ -71,7 +70,6 @@ pub(super) fn read_gemini_hosted_tools(
 }
 
 /// One Gemini `tools[]` entry per IR hosted tool (IR-11). Gemini's three hosted tools take no neutral
-
 pub(super) fn write_gemini_hosted_tools(hosted: &[IrHostedTool]) -> Vec<serde_json::Value> {
     hosted
         .iter()
@@ -118,7 +116,6 @@ pub(super) fn write_gemini_hosted_tools(hosted: &[IrHostedTool]) -> Vec<serde_js
 }
 
 /// Gemini `labels` to the IR caller-metadata map (IR-03), in key order. Read only as an object of
-
 pub(super) fn read_gemini_labels(
     labels: Option<&serde_json::Value>,
 ) -> Option<Vec<(String, String)>> {
@@ -133,7 +130,6 @@ const GEMINI_MAX_LABELS: usize = 64;
 const GEMINI_LABEL_MAX_CHARS: usize = 63;
 
 /// A label key/value character: lowercase letter, digit, `_` or `-`; international characters are
-
 fn gemini_label_char_ok(c: char) -> bool {
     c.is_ascii_lowercase()
         || c.is_ascii_digit()
@@ -143,7 +139,6 @@ fn gemini_label_char_ok(c: char) -> bool {
 }
 
 /// Whether one metadata entry is a valid Gemini label: the key starts with a lowercase letter (or
-
 fn gemini_label_ok(key: &str, value: &str) -> bool {
     let key_len = key.chars().count();
     let starts_ok = key.chars().next().is_some_and(|c| {
@@ -157,7 +152,6 @@ fn gemini_label_ok(key: &str, value: &str) -> bool {
 }
 
 /// The IR caller-metadata map to Gemini `labels` (IR-03). An entry breaking Gemini's label syntax (an
-
 pub(super) fn write_gemini_labels(metadata: &[(String, String)]) -> serde_json::Value {
     let mut out = serde_json::Map::new();
     let mut dropped = 0usize;
@@ -180,7 +174,6 @@ pub(super) fn write_gemini_labels(metadata: &[(String, String)]) -> serde_json::
 }
 
 /// `toolConfig.functionCallingConfig.allowedFunctionNames` to the IR tool subset (IR-10). Read when it
-
 pub(super) fn read_gemini_allowed_tools(
     tool_config: Option<&serde_json::Value>,
 ) -> Option<Vec<String>> {
@@ -200,7 +193,6 @@ pub(super) fn read_gemini_allowed_tools(
 }
 
 /// `generationConfig.responseModalities` → the IR output modalities (IR-19). An unknown word is
-
 pub(super) fn read_gemini_response_modalities(
     gen_config: Option<&serde_json::Value>,
 ) -> Option<Vec<IrModality>> {
@@ -231,7 +223,6 @@ pub(super) fn write_gemini_response_modalities(modalities: &[IrModality]) -> ser
 }
 
 /// Whether a Gemini model accepts `thinkingBudget: 0` (reasoning off, IR-09). Only the
-
 pub(super) fn gemini_model_accepts_thinking_off(model: &str) -> bool {
     let name = model.rsplit('/').next().unwrap_or(model);
     name.starts_with("gemini-2.5-flash")

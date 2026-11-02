@@ -37,7 +37,6 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// The controls Gemini has no form for, derived from the mapping file; `write_request` drops
-
     fn dropped_egress_controls(&self, req: &crate::codec::ir::IrRequest) -> Vec<&'static str> {
         crate::codec::carry::dropped(super::map::REQUEST, super::map::CONTROLS, req)
             .map(crate::codec::carry::Slot::name)
@@ -49,7 +48,6 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// Gemini expresses the candidate count as `generationConfig.candidateCount` (the snake_case
-
     fn requested_candidate_count(&self, body: &serde_json::Value) -> Option<u64> {
         body.pointer("/generationConfig/candidateCount")
             .or_else(|| body.pointer("/generationConfig/candidate_count"))
@@ -58,7 +56,6 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// Gemini's URL embeds the model AND the stream mode. Streaming requests go to
-
     fn upstream_path_for_stream(&self, model: &str, stream: bool) -> String {
         if stream {
             let (key, value) = super::STREAM_QUERY;
@@ -73,7 +70,6 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// Gemini carries turns in `contents` as `{role, parts: [{text}]}`, and spells the assistant
-
     fn apply_rewrite_to_ingress_body(
         &self,
         obj: &mut serde_json::Map<String, serde_json::Value>,
@@ -105,7 +101,6 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// The production write: the lane model is known, so a reasoning-OFF ask is written only where
-
     fn write_request_for_lane(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -645,7 +640,6 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// Native Gemini error envelope: `{"error":{"code":<int>,"message":<msg>,"status":<UPPER_SNAKE>}}`.
-
     fn write_error(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -1190,7 +1184,6 @@ impl ProtocolWriter for GeminiWriter {
 }
 
 /// One native `functionCall` part: `{functionCall: {id?, name, args}, thoughtSignature?}`. The id
-
 fn function_call_part(
     id: &str,
     name: &str,
@@ -1215,7 +1208,6 @@ fn function_call_part(
 }
 
 /// The native `usageMetadata` RECONSTRUCTED from the normalized IR usage, shared by the stream's
-
 fn gemini_usage_metadata(
     usage: &crate::codec::ir::IrUsage,
     emit_total: bool,

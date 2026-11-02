@@ -51,7 +51,6 @@ impl BlockText<'_> {
 }
 
 /// The body's conversation-turn array: `contents` (gemini), a list `input` (responses), else
-
 fn conversation_turns<'a>(v: &'a Value, dialect: &str) -> Option<&'a Vec<Value>> {
     let key = match dialect {
         PROTO_GEMINI => "contents",

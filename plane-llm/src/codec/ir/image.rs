@@ -67,7 +67,6 @@ pub struct ImageReq {
 }
 
 /// The image family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. A struct has
-
 impl busbar_contract::ir::facts::IrFacts for ImageReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::IMAGE
@@ -174,7 +173,6 @@ pub const IMAGE_OUTPUT_TOKENS_RESIDUAL: &str = "image.output_tokens";
 
 impl ImageResp {
     /// Billing projection. An answer reporting token usage (gpt-image-1, a Gemini image model) bills
-
     pub fn billing(&self) -> Option<Billing> {
         if let Some(u) = &self.usage {
             let mut residual_units = std::collections::BTreeMap::new();

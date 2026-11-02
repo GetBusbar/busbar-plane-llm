@@ -7,7 +7,6 @@ use super::*;
 use crate::codec::ir::StreamDecodeState;
 
 /// THE TRUNCATED-STREAM RECOVERY PATH. `recover_truncated_usage` parses the trailing `usage` object
-
 #[test]
 fn recover_truncated_usage_reads_float_encoded_counts() {
     let reader = ResponsesReader;
@@ -24,7 +23,6 @@ fn recover_truncated_usage_reads_float_encoded_counts() {
 }
 
 /// THE STREAMING PATH: the terminal `response.completed` event with EVERY usage field
-
 #[test]
 fn streaming_terminal_reads_float_encoded_counts() {
     let reader = ResponsesReader;
@@ -66,7 +64,6 @@ fn streaming_terminal_reads_float_encoded_counts() {
 }
 
 /// THE BUFFERED PATH. The identical float-spelled usage object on a non-streamed `response` body
-
 #[test]
 fn buffered_read_response_reads_float_encoded_counts() {
     let body = serde_json::json!({

@@ -2,7 +2,6 @@ use super::*;
 use busbar_contract::http::StatusCode;
 
 /// The cached streaming-CT set aggregated from the writer vtable must be exactly the SSE +
-
 #[test]
 fn test_streaming_content_types_cached_set() {
     let got = streaming_content_types();
@@ -15,7 +14,6 @@ fn test_streaming_content_types_cached_set() {
 }
 
 /// The cached array-stream shim-key set must be exactly Gemini's `GEMINI_JSON_ARRAY_SHIM_KEY`
-
 #[test]
 fn test_array_stream_shim_keys_cached_set() {
     assert_eq!(
@@ -26,7 +24,6 @@ fn test_array_stream_shim_keys_cached_set() {
 }
 
 /// Regression for the conformance bug where `find_frame_terminator` reported `term_len = 3`
-
 #[test]
 fn test_find_frame_terminator_crlf_reports_four_bytes() {
     let buf = b"data: x\r\n\r\n";
@@ -57,7 +54,6 @@ fn test_find_frame_terminator_lf_reports_two_bytes() {
 }
 
 /// Two adjacent CRLF frames must split at exactly the documented boundary, so the second
-
 #[test]
 fn test_find_frame_terminator_crlf_frame_split_is_clean() {
     let buf = b"data: x\r\n\r\ndata: y\r\n\r\n";
@@ -76,7 +72,6 @@ fn test_find_frame_terminator_crlf_frame_split_is_clean() {
 }
 
 /// The default `ProtocolWriter::write_error` (the only impl — no per-protocol
-
 #[test]
 fn test_write_error_default_envelope_is_valid_json() {
     let writer: Box<dyn ProtocolWriter> = Box::new(OpenAiWriter);
@@ -98,7 +93,6 @@ fn test_write_error_default_envelope_is_valid_json() {
 }
 
 /// Conformance (`synth_anthropic_request_id`): the synthesized `request-id` header value must
-
 #[test]
 fn test_synth_anthropic_request_id_is_well_formed() {
     let id = synth_anthropic_request_id(crate::codec::test_host::HOST)
@@ -132,7 +126,6 @@ fn test_synth_anthropic_request_id_is_well_formed() {
 }
 
 /// Correctness (`synth_anthropic_request_id`): the two 9-byte (72-bit) draws folded to 12
-
 #[test]
 fn synth_anthropic_request_id_msd_is_uniform() {
     const N: usize = 4000;
@@ -161,7 +154,6 @@ fn synth_anthropic_request_id_msd_is_uniform() {
 }
 
 /// Conformance (`GeminiJsonArrayFramer::finish_with_error`): the truncation error element must
-
 #[test]
 fn test_gemini_truncation_error_carries_no_internal_vocabulary() {
     let mut f = GeminiJsonArrayFramer::new();
@@ -183,7 +175,6 @@ fn test_gemini_truncation_error_carries_no_internal_vocabulary() {
 }
 
 /// Every protocol's writer must produce a non-empty, valid-JSON probe body that carries the
-
 #[test]
 fn test_probe_body_valid_for_all_protocols() {
     for name in [
@@ -206,7 +197,6 @@ fn test_probe_body_valid_for_all_protocols() {
 }
 
 /// `requires_max_tokens()` must be true exactly for the protocols whose APIs hard-reject a
-
 #[test]
 fn test_requires_max_tokens_per_protocol() {
     for (name, want) in [
@@ -226,7 +216,6 @@ fn test_requires_max_tokens_per_protocol() {
 }
 
 /// OpenAI-compatible reasoning models put the chain-of-thought in `reasoning_content`; it must
-
 #[test]
 fn test_openai_reasoning_content_maps_to_thinking() {
     let body = serde_json::json!({
@@ -265,7 +254,6 @@ fn test_openai_reasoning_content_maps_to_thinking() {
 }
 
 /// Streaming reasoning: `delta.reasoning_content` must open a Thinking block at index 0 and
-
 #[test]
 fn test_openai_streaming_reasoning_blocks() {
     use crate::codec::ir::{IrBlockMeta, IrDelta, IrStreamEvent};
@@ -539,7 +527,6 @@ fn test_cache_control_preserved() {
 }
 
 /// An Anthropic `cache_control`
-
 #[test]
 fn cache_breakpoints_gated_by_lane_capability_on_bedrock() {
     let anthropic = crate::codec::proto_codec::protocol_for("anthropic").unwrap();
@@ -1264,7 +1251,6 @@ fn test_protocol_clone_works() {
 }
 
 /// Cohere v2 carries the assistant's INTERNAL pre-tool plan in `message.tool_plan`. It must reach
-
 #[test]
 fn cohere_read_response_surfaces_tool_plan_as_reasoning_not_visible_text() {
     let body = serde_json::json!({
@@ -1298,7 +1284,6 @@ fn cohere_read_response_surfaces_tool_plan_as_reasoning_not_visible_text() {
 }
 
 /// Responses retains partial string arguments verbatim. Cohere refuses malformed JSON, while
-
 #[test]
 fn string_args_writers_emit_raw_tool_args_verbatim() {
     let raw = "not valid json {";
@@ -1377,7 +1362,6 @@ fn string_args_writers_emit_raw_tool_args_verbatim() {
 }
 
 /// Regression: Cohere is a free-form-tool-id
-
 #[test]
 fn cohere_tool_ids_pass_through_verbatim_no_decode() {
     assert_eq!(
@@ -1395,7 +1379,6 @@ fn cohere_tool_ids_pass_through_verbatim_no_decode() {
 }
 
 /// CHARACTERIZATION: this passes before and after `write_sse_frame` by construction, since it
-
 #[test]
 fn write_sse_frame_pins_both_framings_byte_for_byte() {
     let data = serde_json::json!({"a": 1});

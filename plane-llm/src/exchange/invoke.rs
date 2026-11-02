@@ -46,7 +46,6 @@ pub fn path(model: &str, stream: bool) -> String {
 pub type HeadField = (String, Vec<u8>);
 
 /// The far request's head fields over the envelope: the Messages API version is not sent (the body
-
 #[must_use]
 pub fn fields(fields: Vec<HeadField>, stream: bool) -> (Vec<HeadField>, Vec<Vec<u8>>) {
     let (beta, rest): (Vec<_>, Vec<_>) = fields
@@ -67,7 +66,6 @@ pub fn fields(fields: Vec<HeadField>, stream: bool) -> (Vec<HeadField>, Vec<Vec<
 }
 
 /// The far request's body over the envelope, a byte-level edit of the Messages body (never a
-
 #[must_use]
 pub fn body(messages: &[u8], beta: &[Vec<u8>]) -> Option<Vec<u8>> {
     let flags: Vec<Value> = beta
@@ -97,7 +95,6 @@ pub fn body(messages: &[u8], beta: &[Vec<u8>]) -> Option<Vec<u8>> {
 }
 
 /// The Anthropic dialect's error kind for a Bedrock exception name (`ValidationException`, or the
-
 fn kind_of(exception: &str) -> &'static str {
     let name = exception.split(':').next().unwrap_or("").trim();
     match name.to_ascii_lowercase().as_str() {
@@ -121,7 +118,6 @@ fn envelope(kind: &str, message: &str) -> Vec<u8> {
 }
 
 /// A refused answer's body, re-stated in the Anthropic dialect's error envelope from Bedrock's
-
 #[must_use]
 pub fn error_body(head: HeadFields<'_>, body: &[u8]) -> Vec<u8> {
     let parsed: Option<Value> = serde_json::from_slice(body).ok();
@@ -239,7 +235,6 @@ impl Transcoder {
 }
 
 /// One `chunk` frame's event: its `bytes` member, base64-decoded. An event that spans lines is
-
 fn chunk_event(payload: &[u8]) -> Option<Vec<u8>> {
     let v: Value = serde_json::from_slice(payload).ok()?;
     let encoded = v.get("bytes")?.as_str()?;

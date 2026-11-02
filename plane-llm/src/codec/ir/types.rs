@@ -125,7 +125,6 @@ pub enum IrToolChoice {
 }
 
 /// Normalize a native stop-sequence field (bare string or array) into `Vec<String>`. Non-string
-
 pub fn read_stop_sequences(val: Option<&Value>) -> Vec<String> {
     match val {
         Some(Value::String(s)) if !s.is_empty() => vec![s.clone()],
@@ -140,7 +139,6 @@ pub fn read_stop_sequences(val: Option<&Value>) -> Vec<String> {
 }
 
 /// Truncate `stop` to the egress vendor's published cap (vendors 400 on more). Warns only when it
-
 pub fn clamp_stop(stop: &[String], cap: usize, proto: &'static str) -> Vec<String> {
     if stop.len() <= cap {
         return stop.to_vec();
@@ -282,7 +280,6 @@ pub struct IrSafetyVerdict {
 
 impl IrSafetyVerdict {
     /// A `{"<category>": true|false, …}` map (the OpenAI family's moderation `categories`) as one
-
     pub fn flagged_categories(categories: Option<&Value>) -> Vec<IrSafetyVerdict> {
         categories
             .and_then(|c| c.as_object())
@@ -325,7 +322,6 @@ pub struct IrSearchResult {
 }
 
 /// An empty assistant answer, so construction sites can spread `..Default::default()` and survive
-
 impl Default for IrResponse {
     fn default() -> Self {
         IrResponse {
@@ -380,12 +376,10 @@ pub enum IrReasoningEffort {
 }
 
 /// Compiled-in effort table (mirrors the config defaults), the writer fallback when the seam did
-
 pub const REASONING_BUDGET_DEFAULTS: [u32; 4] = [1024, 4096, 8192, 16384];
 
 impl IrReasoningAsk {
     /// Project to a numeric budget via the table. `None` for `Dynamic` and `Off`, which a writer
-
     pub fn to_budget(self, table: [u32; 4]) -> Option<u32> {
         match self {
             IrReasoningAsk::Budget(n) => Some(n),
@@ -401,7 +395,6 @@ impl IrReasoningAsk {
     }
 
     /// Project to a word, bucketing a numeric budget to the largest effort whose table entry it
-
     pub fn to_effort(self, table: [u32; 4]) -> Option<IrReasoningEffort> {
         match self {
             IrReasoningAsk::Effort(e) => Some(e),
@@ -423,7 +416,6 @@ impl IrReasoningAsk {
 
 impl IrReasoningEffort {
     /// The effort on the `low`/`medium`/`high` scale every reasoning model accepts. Same as
-
     pub fn as_three_word_str(self) -> &'static str {
         match self {
             IrReasoningEffort::Minimal => "low",
@@ -444,7 +436,6 @@ impl IrReasoningEffort {
     }
 
     /// The four words every reader has always accepted. Not widened to `xhigh`/`max`: a reader
-
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "minimal" => Some(IrReasoningEffort::Minimal),
@@ -647,7 +638,6 @@ pub struct IrSearchResultParts<'a> {
 
 impl IrBlock {
     /// The block's IR kind, as a dropped block is named (`codec::drops::Member::Block`): `text`,
-
     pub fn kind_name(&self) -> &'static str {
         match self {
             IrBlock::Text { .. } => "text",
@@ -671,7 +661,6 @@ impl IrBlock {
     }
 
     /// The search-result slot: one caller-supplied RAG passage (Anthropic `search_result`, Converse
-
     pub fn search_result(
         source: &str,
         title: &str,
@@ -747,13 +736,11 @@ impl IrBlock {
     }
 
     /// COH-17: an empty text block that only carries citations (a grounded turn with no text
-
     pub fn is_citation_carrier(&self) -> bool {
         matches!(self, IrBlock::Text { text, citations, .. } if text.is_empty() && !citations.is_empty())
     }
 
     /// Is this block's content opaque to busbar (carried verbatim, never readable as plaintext, never
-
     pub fn is_opaque(&self) -> bool {
         match self {
             IrBlock::Thinking { redacted: true, .. } => true,
@@ -787,7 +774,6 @@ pub enum IrMediaKind {
 
 impl IrMediaKind {
     /// Classify a mime type by its `audio/*` / `video/*` prefix; anything else is a Document.
-
     pub fn from_media_type(media_type: &str) -> Self {
         let lower = media_type.to_ascii_lowercase();
         if lower.starts_with("audio/") {
@@ -810,7 +796,6 @@ impl IrMediaKind {
 }
 
 /// Image media types every protocol accepts: `image/{jpeg,png,gif,webp}`. Emitting anything else
-
 pub fn image_subtype_if_supported(media_type: &str) -> Option<&'static str> {
     let subtype = media_type.strip_prefix("image/").or_else(|| {
         media_type
@@ -871,7 +856,6 @@ impl IrResponseFormat {
     }
 
     /// A `json_schema` directive read from the object holding `name`/`schema`/`strict`/`description`:
-
     pub fn from_json_schema_members(js: Option<&Value>) -> Self {
         let text = |k: &str| {
             js.and_then(|j| j.get(k))
@@ -890,7 +874,6 @@ impl IrResponseFormat {
     }
 
     /// Inverse of [`Self::from_json_schema_members`]. OpenAI requires `name`, so one is synthesized
-
     pub fn write_json_schema_members(
         &self,
         schema: &Value,
@@ -1116,7 +1099,6 @@ pub struct UsageIdentityNote {
 
 impl IrUsage {
     /// Total billable tokens: `input_tokens` (uncached) + cache reads + cache creation +
-
     pub fn billable_tokens(&self) -> u64 {
         self.input_tokens
             .saturating_add(self.cache_read_input_tokens.unwrap_or(0))
@@ -1125,7 +1107,6 @@ impl IrUsage {
     }
 
     /// Project the four normalized totals into the core [`busbar_contract::billing::TokenUsage`],
-
     pub fn to_token_usage(&self) -> busbar_contract::billing::TokenUsage {
         busbar_contract::billing::TokenUsage {
             input: self.input_tokens,
@@ -1139,7 +1120,6 @@ impl IrUsage {
     }
 
     /// Separately reported counts by open class. Each is a ledger line under its meter class; the
-
     fn open_units(&self) -> std::collections::BTreeMap<String, u64> {
         use crate::codec::ir::open_class::{
             add, CLASSIFICATIONS_CLASS, UNITEMIZED_TOKENS_CLASS, WEB_FETCH_REQUESTS_CLASS,
@@ -1176,7 +1156,6 @@ impl IrUsage {
     }
 
     /// Residuals, never billed: [`IrUsageDetail::residual_units`]. Every reported unit has an open
-
     fn residual_units(&self) -> std::collections::BTreeMap<String, u64> {
         self.detail.residual_units.clone()
     }
@@ -1314,7 +1293,6 @@ pub struct StreamDecodeState {
 
 impl StreamDecodeState {
     /// Claim the next free IR block index. `reasoning_seen` reserves index 0 for the thinking block
-
     pub fn claim_ir_index(&mut self) -> usize {
         let idx = self.next_ir_index.max(usize::from(self.reasoning_seen));
         self.next_ir_index = idx + 1;
@@ -1534,7 +1512,6 @@ pub struct IrCustomTool {
 
 impl IrCustomTool {
     /// Read the tool's members from the object holding them (Chat `custom`, or the flat Responses
-
     pub fn read_members(
         obj: &serde_json::Map<String, serde_json::Value>,
         extra_ok: &[&str],

@@ -4,7 +4,6 @@ use super::*;
 use crate::codec::keys;
 
 /// Re-frame a Gemini SSE response stream as the JSON-array format a native `:streamGenerateContent`
-
 pub struct GeminiJsonArrayFramer {
     /// The SSE frame reassembler the upstream bytes accumulate in.
     frames: SseFrames,
@@ -35,7 +34,6 @@ impl GeminiJsonArrayFramer {
     }
 
     /// Feed a chunk of Gemini SSE bytes; return JSON-array bytes for the complete frames now available
-
     pub fn feed(&mut self, chunk: &[u8]) -> Vec<u8> {
         if self.aborted || self.finished {
             return Vec::new();
@@ -69,7 +67,6 @@ impl GeminiJsonArrayFramer {
     }
 
     /// Call once at end-of-stream. Emits the closing `]` (and the opening `[` too, as `[]`, if no
-
     pub fn finish(&mut self) -> Vec<u8> {
         if self.finished {
             return Vec::new();
@@ -86,7 +83,6 @@ impl GeminiJsonArrayFramer {
     }
 
     /// Close the array when this framer sits downstream of a cross-protocol [`StreamTranslate`]
-
     pub fn finish_for_translate(&mut self, translate_aborted: bool) -> Vec<u8> {
         if self.finished {
             return Vec::new();
@@ -98,7 +94,6 @@ impl GeminiJsonArrayFramer {
     }
 
     /// Terminate the array with a trailing Gemini-shaped error element, then `]`. Used on a mid-stream
-
     pub fn finish_with_error(&mut self, code: u16, status: &str, message: &str) -> Vec<u8> {
         if self.finished {
             return Vec::new();

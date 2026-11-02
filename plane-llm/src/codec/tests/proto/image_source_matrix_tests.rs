@@ -18,7 +18,6 @@ fn req_with_image(source: IrImageSource) -> crate::codec::ir::IrRequest {
 }
 
 /// A FOREIGN vendor reference (one the writer doesn't own) must never reach the wire as a corrupt
-
 #[test]
 fn foreign_vendor_image_ref_never_corrupts_any_writer() {
     let foreign = IrImageSource::Vendor {
@@ -57,7 +56,6 @@ fn foreign_vendor_image_ref_never_corrupts_any_writer() {
 }
 
 /// A neutral base64 image projects to a real inline-image shape on every writer that supports
-
 #[test]
 fn base64_image_projects_intact_on_every_writer() {
     let req = req_with_image(IrImageSource::Base64 {

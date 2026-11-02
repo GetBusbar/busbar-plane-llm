@@ -10,23 +10,19 @@ use busbar_contract::protocol::{
 };
 
 /// Machine-readable `code` in a bad-key 401 OpenAI-family envelope, used by [`bearer_error_code`] to
-
 pub const CODE_INVALID_API_KEY: &str = "invalid_api_key";
 
 /// Busbar-internal `provider_signal` label for a context-length result (the lane label, not the
-
 #[cfg(test)]
 pub const PROVIDER_SIGNAL_CONTEXT_LENGTH: &str = "context_length";
 
 /// Busbar-internal `extra` key parking OpenAI Chat's per-message `messages[].name` (the optional
-
 pub const MESSAGE_NAMES_SENTINEL: &str = "__busbar_message_names";
 
 /// The wire path [`MESSAGE_NAMES_SENTINEL`] holds, as a translate attempt's drop names it.
 pub const MESSAGE_NAMES_PATH: &str = "messages[].name";
 
 /// File extension to media type, rows two or more dialects read alike. Each dialect lists which
-
 pub const DOCUMENT_MEDIA_TYPES: &[(&str, &str)] = &[
     ("pdf", "application/pdf"),
     ("csv", "text/csv"),
@@ -50,7 +46,6 @@ pub fn media_type(tables: &[&[(&'static str, &'static str)]], ext: &str) -> Opti
 }
 
 /// How a dialect's egress warn names a dropped control: the field it rides under and the dialect's
-
 pub enum DropWarn {
     /// `control = <name>`, with a fixed message.
     Control(&'static str),
@@ -59,7 +54,6 @@ pub enum DropWarn {
 }
 
 /// One warn per dropped control, in the dialect's words (its `drop_warn`, used by
-
 pub fn warn_dropped<'a>(dropped: impl IntoIterator<Item = &'a str>, warn: &DropWarn) {
     for name in dropped {
         let path = crate::codec::drops::caller_path(name);
@@ -80,7 +74,6 @@ pub fn warn_dropped<'a>(dropped: impl IntoIterator<Item = &'a str>, warn: &DropW
 }
 
 /// The refusal a dialect reader returns for bytes it cannot read as its own shape: a client error
-
 #[must_use]
 pub fn ir_parse_error() -> busbar_contract::protocol::IrError {
     busbar_contract::protocol::IrError {
@@ -91,7 +84,6 @@ pub fn ir_parse_error() -> busbar_contract::protocol::IrError {
 }
 
 /// Precise context-length prose scan shared by `OpenAiReader::extract_error` and
-
 pub fn context_length_prose_scan(text: &str) -> bool {
     text.contains("maximum context length")
         || text.contains("context length exceeded")
@@ -100,7 +92,6 @@ pub fn context_length_prose_scan(text: &str) -> bool {
 }
 
 /// Map an OpenAI-family error `type` to its canonical `code`, shared by the Chat and `/v1/responses`
-
 pub fn bearer_error_code(error_type: &str) -> serde_json::Value {
     match error_type {
         ERR_TYPE_AUTHENTICATION => serde_json::Value::String(CODE_INVALID_API_KEY.to_string()),
@@ -122,28 +113,23 @@ pub fn bearer_error_code(error_type: &str) -> serde_json::Value {
 }
 
 /// The OpenAI-style SSE terminator sentinel (`data: [DONE]`). The bare token is matched by the
-
 pub const SSE_DONE_SENTINEL: &str = "[DONE]";
 /// The full framed `data: [DONE]\n\n` bytes emitted on egress. See [`SSE_DONE_SENTINEL`].
 pub const SSE_DONE_FRAME: &[u8] = b"data: [DONE]\n\n";
 
 /// Fallback `model` the two bearer-envelope dialects (Chat and Responses) stamp on a cross-protocol
-
 pub const FALLBACK_MODEL: &str = "gpt-4o";
 
 /// DoS cap on open tool-call accumulators per stream (OpenAI's parallel-tool-call limit, 128), shared
-
 pub const MAX_OPEN_TOOL_CALLS: usize = 128;
 
 /// Mixed-case base62 alphabet (digits, lowercase, uppercase; no `-`/`_`) for synthesizing opaque ids
-
 pub const BASE62_ALPHABET: &[u8; 62] =
     b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 /// The rejection-sampling threshold paired with [`BASE62_ALPHABET`].
 pub const BASE62_REJECT_THRESHOLD: u8 = 248;
 
 /// Fill `out` (at most 64 characters) with uniform characters of `alphabet` from the host's entropy
-
 pub(crate) fn fill_base62(
     host: &dyn busbar_contract::codec::CodecHost,
     out: &mut [u8],
@@ -173,7 +159,6 @@ pub(crate) fn fill_base62(
 }
 
 /// Project each message's `(role, content)` into a `(String, String)` pair when both are plain
-
 pub fn rewrite_text_pairs(messages: &[serde_json::Value]) -> Option<Vec<(String, String)>> {
     messages
         .iter()
@@ -192,7 +177,6 @@ pub fn rewrite_text_pairs(messages: &[serde_json::Value]) -> Option<Vec<(String,
 }
 
 /// The `event:` name of one SSE frame, borrowed from the frame: the cheap probe for a consumer that
-
 pub fn sse_event_type(frame: &[u8]) -> &str {
     let mut name = "";
     for (start, end) in sse_line_spans(frame) {
@@ -204,7 +188,6 @@ pub fn sse_event_type(frame: &[u8]) -> &str {
 }
 
 /// Render an IR ToolUse `input` as a wire tool-call `arguments` string. A `Value::String` is emitted
-
 pub fn tool_arguments_to_string(input: &serde_json::Value) -> String {
     match input {
         serde_json::Value::String(s) => s.clone(),
@@ -213,7 +196,6 @@ pub fn tool_arguments_to_string(input: &serde_json::Value) -> String {
 }
 
 /// Parse one SSE frame into `(event_type, data_payload)`, both borrowed: the payload is owned only
-
 pub fn parse_sse_frame(frame: &[u8]) -> Option<(&str, std::borrow::Cow<'_, str>)> {
     let text = std::str::from_utf8(frame).ok()?;
     let mut event_type = "";
@@ -239,7 +221,6 @@ pub fn parse_sse_frame(frame: &[u8]) -> Option<(&str, std::borrow::Cow<'_, str>)
 }
 
 /// Append an IR-derived `(event_type, data)` to `out` as ingress SSE bytes: a non-empty `event_type`
-
 pub fn write_sse_frame(out: &mut Vec<u8>, event_type: &str, data: &serde_json::Value) {
     if !event_type.is_empty() {
         out.extend_from_slice(b"event: ");
@@ -253,14 +234,12 @@ pub fn write_sse_frame(out: &mut Vec<u8>, event_type: &str, data: &serde_json::V
 }
 
 /// Byte-level removal of a top-level `"usage"` member from a JSON object string, preserving every
-
 pub fn strip_top_level_usage_member(json: &str) -> Option<String> {
     let (start, end) = top_level_usage_cut(json)?;
     Some([&json[..start], &json[end..]].concat())
 }
 
 /// The byte range [`strip_top_level_usage_member`] removes (the member and exactly one adjacent
-
 pub(crate) fn top_level_usage_cut(json: &str) -> Option<(usize, usize)> {
     let bytes = json.as_bytes();
     let n = bytes.len();
@@ -370,7 +349,6 @@ pub(crate) fn top_level_usage_cut(json: &str) -> Option<(usize, usize)> {
 }
 
 /// Drop the response-side provider metadata an egress dialect carries and no ingress dialect can
-
 pub fn drop_untranslatable_response_metadata(egress: &str, body: &serde_json::Value) {
     let present: Vec<&str> = crate::codec::decl_of(egress)
         .and_then(|d| d.vendor_response_metadata)

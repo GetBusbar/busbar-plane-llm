@@ -20,7 +20,6 @@ use serde_json::{json, Value};
 const HOST: &dyn busbar_contract::codec::CodecHost = &TestHost;
 
 /// A Bedrock provider (its own dialect, SigV4), one model served over it in Converse and one over
-
 fn shaping() -> Shaping {
     Shaping::from_settings(&json!({
         "providers": {
@@ -261,7 +260,6 @@ fn a_refusal_is_restated_in_the_carried_dialects_error_envelope() {
 }
 
 /// THE MONEY READ: a streamed answer over the envelope reaches the carried dialect's caller as that
-
 #[test]
 fn a_streamed_answer_meters_the_carried_dialects_usage() {
     let s = shaping();
@@ -313,7 +311,6 @@ fn a_streamed_answer_meters_the_carried_dialects_usage() {
 }
 
 /// THE KERNEL NEVER SEES THE ENVELOPE: it is no codec
-
 #[test]
 fn the_envelope_is_no_declared_protocol_and_the_1_5_5_list_is_unchanged() {
     let declared: Vec<&str> = busbar_plane_llm::codec::DECLS

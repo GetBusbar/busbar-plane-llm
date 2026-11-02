@@ -26,7 +26,6 @@ fn body(path: &str, pairs: &[(&str, &str)]) -> String {
 }
 
 /// THE 1.5.5 BYTES, PER DIALECT, FOR AN EMPTY LIST: a request naming no dialect is answered in the
-
 #[test]
 fn an_empty_listing_is_the_previous_releases_bytes_in_each_dialect() {
     let openai = r#"{"data":[],"object":"list"}"#;
@@ -59,7 +58,6 @@ fn the_names_are_rendered_in_the_order_the_kernel_hands_them() {
 }
 
 /// THE CATALOG ROUTES ARE CLAIMED: `GET` on each listing path, exact, flagged `CLAIM_CATALOG` so
-
 #[test]
 fn the_listing_paths_are_exact_catalog_claims_on_get() {
     let all = claims();

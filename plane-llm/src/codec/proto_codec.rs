@@ -27,7 +27,6 @@ pub(crate) fn entropy_error() -> IrError {
 }
 
 /// Preserve a writer failure across the contract's infallible buffered-stream handle seam.
-
 pub(crate) struct CheckedEntropy<'a> {
     host: &'a dyn busbar_contract::codec::CodecHost,
     failed: std::sync::atomic::AtomicBool,
@@ -66,7 +65,6 @@ impl busbar_contract::codec::CodecHost for CheckedEntropy<'_> {
 use busbar_contract::upstream::CanonicalSignal;
 
 /// Top-level body keys the six chat dialects point-read on the pre-materialized path: `model`
-
 pub const LLM_CHAT_HEAD_KEYS: &[&str] = &["model", "stream", "stream_options", "system"];
 
 #[cfg(test)]
@@ -84,7 +82,6 @@ pub enum ReportedStreamUsage {
 }
 
 /// ProtocolReader extracts signals from wire responses (Stage 1a + 1b): provider-specific
-
 pub trait ProtocolReader: Send + Sync {
     /// Extract raw error info from HTTP response without classifying.
     fn extract_error(
@@ -94,7 +91,6 @@ pub trait ProtocolReader: Send + Sync {
     ) -> busbar_contract::upstream::RawUpstreamError;
 
     /// Extract with response heads where the wire protocol carries its identity there.
-
     fn extract_error_with_head(
         &self,
         status: StatusCode,
@@ -105,7 +101,6 @@ pub trait ProtocolReader: Send + Sync {
     }
 
     /// Classify a response into a canonical signal in one call (`extract_error` +
-
     #[cfg(test)]
     fn classify(&self, status: StatusCode, body: &[u8]) -> CanonicalSignal {
         crate::codec::test_host::classified(&self.extract_error(status, body))
@@ -118,7 +113,6 @@ pub trait ProtocolReader: Send + Sync {
     ) -> Result<crate::codec::ir::IrRequest, IrError>;
 
     /// Recover neutral token totals from the original prefix of a non-stream response cut by its
-
     fn recover_truncated_usage(
         &self,
         _tail: &[u8],
@@ -127,19 +121,16 @@ pub trait ProtocolReader: Send + Sync {
     }
 
     /// This dialect's non-stream stop-reason field, located structurally (a member name, quotes
-
     fn stop_reason_key(&self) -> Option<crate::codec::usage_tail::StopKey> {
         None
     }
 
     /// Map a raw stop-reason token found under [`Self::stop_reason_key`] exactly as
-
     fn stop_reason_of_token(&self, _token: &str) -> Option<crate::codec::ir::IrStopReason> {
         None
     }
 
     /// Independently read a complete response's reported usage after its content failed decoding.
-
     fn recover_response_usage(
         &self,
         _body: &serde_json::Value,
@@ -148,7 +139,6 @@ pub trait ProtocolReader: Send + Sync {
     }
 
     /// Independently read native reported work when a parsed stream frame produced no
-
     fn recover_stream_usage(
         &self,
         _event_type: &str,
@@ -158,7 +148,6 @@ pub trait ProtocolReader: Send + Sync {
     }
 
     /// Read a single response/stream event from already-de-framed SSE data.
-
     fn read_response_event(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -172,7 +161,6 @@ pub trait ProtocolReader: Send + Sync {
     }
 
     /// Fan-out variant: one wire event/chunk to 0..n IR stream events, threading per-request decode
-
     fn read_response_events(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -182,7 +170,6 @@ pub trait ProtocolReader: Send + Sync {
     ) -> Vec<IrStreamEvent>;
 
     /// The same-dialect read probe. A same-dialect stream relays bytes and reads each frame only for
-
     fn same_proto_reads(&self, _event_type: &str, _payload: &[u8]) -> bool {
         true
     }
@@ -195,7 +182,6 @@ pub trait ProtocolReader: Send + Sync {
     ) -> Result<crate::codec::ir::IrResponse, IrError>;
 
     /// IR-18: the model family that minted the reasoning signatures this reader emits as
-
     fn stream_signature_origin(
         &self,
         _state: &crate::codec::ir::StreamDecodeState,
@@ -217,19 +203,16 @@ pub trait ProtocolWriter: Send + Sync {
     fn upstream_path(&self) -> &str;
 
     /// The upstream path for a specific model. Most protocols return a fixed path; Gemini's embeds
-
     fn upstream_path_for(&self, _model: &str) -> String {
         self.upstream_path().to_string()
     }
 
     /// Per-request upstream path that also knows whether the caller wants a stream. Defaults to
-
     fn upstream_path_for_stream(&self, model: &str, _stream: bool) -> String {
         self.upstream_path_for(model)
     }
 
     /// Rewrites the body's `model`, returning whether the body actually changed. The default
-
     fn rewrite_model_if_needed(&self, body: &mut serde_json::Value, model: &str) -> bool {
         if let Some(obj) = body.as_object_mut() {
             if obj.get("model").and_then(|m| m.as_str()) == Some(model) {
@@ -242,7 +225,6 @@ pub trait ProtocolWriter: Send + Sync {
     }
 
     /// THE REQUEST WRITE: an IR request for a known egress lane, its resolved wire `model` (`""`
-
     fn write_request_for_lane(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -261,7 +243,6 @@ pub trait ProtocolWriter: Send + Sync {
     }
 
     /// Apply a hook's `rewrite` reply to an ingress body of this dialect, in place. Returns whether
-
     fn apply_rewrite_to_ingress_body(
         &self,
         obj: &mut serde_json::Map<String, serde_json::Value>,
@@ -293,19 +274,16 @@ pub trait ProtocolWriter: Send + Sync {
     }
 
     /// Whether this dialect's request carries an input image's fidelity (IR-08, `image_url.detail`).
-
     fn carries_image_detail(&self) -> bool {
         true
     }
 
     /// Caller controls this writer drops for `req` on cross-protocol egress (no native
-
     fn dropped_egress_controls(&self, _req: &crate::codec::ir::IrRequest) -> Vec<&'static str> {
         Vec::new()
     }
 
     /// [`Self::dropped_egress_controls`] for a lane with the declared [`LaneCaps`], the set
-
     fn dropped_egress_controls_for_lane(
         &self,
         req: &crate::codec::ir::IrRequest,
@@ -316,13 +294,11 @@ pub trait ProtocolWriter: Send + Sync {
     }
 
     /// Perform the `path_base` body reshape `ProtocolDecl::reshapes_body_at_path_base` promised,
-
     fn reshape_for_path_base(&self, _body: &mut serde_json::Value) -> bool {
         false
     }
 
     /// IR-18: whether this dialect's signature carrier reads a signature minted by `origin` as its
-
     fn reads_signature_origin_as_own(&self, _origin: crate::codec::ir::IrSignatureOrigin) -> bool {
         true
     }
@@ -335,7 +311,6 @@ pub trait ProtocolWriter: Send + Sync {
     ) -> Option<(String, serde_json::Value)>;
 
     /// Write one IR stream event as an ordered sequence of frames, so a dialect can emit more than
-
     fn write_response_events(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -345,7 +320,6 @@ pub trait ProtocolWriter: Send + Sync {
     }
 
     /// Fallible encoding for writers that must synthesize an identity. An error contributes no
-
     fn try_write_response_events(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -373,13 +347,11 @@ pub trait ProtocolWriter: Send + Sync {
     }
 
     /// Render a local encoding refusal independently of stream identity. A dialect's optional
-
     fn encoding_failure(&self, host: &dyn busbar_contract::codec::CodecHost) -> serde_json::Value {
         self.write_error(host, 500, "server_error", "identifier entropy unavailable")
     }
 
     /// Map a mid-stream `IrError` to a modeled-exception pair `(exception_name, message)` for
-
     fn write_response_exception(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -389,7 +361,6 @@ pub trait ProtocolWriter: Send + Sync {
     }
 
     /// Frame a mid-stream terminal `IrError` as this protocol's native in-band SSE stream-error
-
     fn write_error_frame(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -419,7 +390,6 @@ pub trait ProtocolWriter: Send + Sync {
     ) -> serde_json::Value;
 
     /// Render a router/forward/auth-layer error as this protocol's native error envelope, so a
-
     fn write_error(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -436,7 +406,6 @@ pub trait ProtocolWriter: Send + Sync {
     }
 
     /// [`Self::write_error`] with the entropy for any minted identifier handed in by the caller
-
     fn write_error_from_entropy(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -449,7 +418,6 @@ pub trait ProtocolWriter: Send + Sync {
     }
 
     /// Attach protocol-specific response headers a native endpoint always carries on an error
-
     fn attach_error_response_headers(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -460,7 +428,6 @@ pub trait ProtocolWriter: Send + Sync {
     }
 
     /// When a Bedrock-ingress client asked for a stream but the upstream answered with a buffered
-
     fn wrap_buffered_as_stream(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -471,11 +438,9 @@ pub trait ProtocolWriter: Send + Sync {
     }
 
     /// Inject protocol-required per-response metrics into a translated buffered body (the
-
     fn inject_response_metrics(&self, _value: &mut serde_json::Value, _elapsed_ms: Option<u64>) {}
 
     /// The request-id response header (name, value) to attach to a 2xx/relay response on this
-
     fn ingress_response_request_id(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -485,13 +450,11 @@ pub trait ProtocolWriter: Send + Sync {
     }
 
     /// The one-token "ping" probe request (`ir_encode::ping_request`) through this dialect's own
-
     fn probe_request(&self, host: &dyn busbar_contract::codec::CodecHost) -> serde_json::Value {
         self.write_request(host, &crate::codec::ir_encode::ping_request())
     }
 
     /// A minimal protocol-correct request body for an active health probe of `model`: the one-token
-
     fn probe_body(&self, host: &dyn busbar_contract::codec::CodecHost, model: &str) -> Vec<u8> {
         let mut body = self.probe_request(host);
         let _ = self.rewrite_model_if_needed(&mut body, model);
@@ -499,35 +462,29 @@ pub trait ProtocolWriter: Send + Sync {
     }
 
     /// Build the per-stream framing state for this protocol as an ingress (client-facing) writer.
-
     fn new_stream_framing(&self) -> Box<dyn StreamFraming> {
         Box::new(PassthroughFraming)
     }
 
     /// Build this protocol's array-stream framer (the JSON-array reframer for a stream delivered as
-
     fn make_array_stream_framer(&self) -> Option<Box<dyn ArrayStreamFramer>> {
         None
     }
 
     /// True when this ingress writer's client wants its streamed response reframed as a JSON array
-
     fn wants_array_stream(&self, _body: &serde_json::Value) -> bool {
         false
     }
 
     /// The number of response candidates this ingress request asks for, when the caller set it above
-
     fn requested_candidate_count(&self, _body: &serde_json::Value) -> Option<u64> {
         None
     }
 
     /// Capture the original ingress request body so this writer can mirror client-set values the
-
     fn set_request_echo(&self, _ingress_request_body: &serde_json::Value) {}
 
     /// Hand this writer the translation cap its plane enforces (`limits.request_body_max_bytes`): the
-
     fn set_translate_cap(&self, _cap: usize) {}
 
     /// Clone this writer as a trait object.
@@ -535,16 +492,13 @@ pub trait ProtocolWriter: Send + Sync {
 }
 
 /// Per-stream, ingress-keyed framing state for the shared [`StreamTranslate`], the vtable seam that
-
 pub trait StreamFraming: Send {
     /// Egress-chunk seam (OpenAI ingress), called for every reframed `chat.completion.chunk` just
-
     fn on_egress_chunk(&mut self, _chunk: &mut serde_json::Value) -> Option<serde_json::Value> {
         None
     }
 
     /// Combined-stop-delta seam (Bedrock ingress), called on a combined
-
     fn on_combined_stop_delta(
         &mut self,
         _stop_reason: crate::codec::ir::IrStopReason,
@@ -555,19 +509,16 @@ pub trait StreamFraming: Send {
     }
 
     /// Usage-only-delta seam (Bedrock ingress), called for a trailing `MessageDelta{stop_reason:
-
     fn on_usage_only_delta(&mut self) -> Option<bool> {
         None
     }
 
     /// Finish seam (Bedrock ingress), called once at end of stream. `Some(event)` when a `metadata`
-
     fn on_finish(&mut self) -> Option<crate::codec::ir::IrStreamEvent> {
         None
     }
 
     /// Metadata-metrics seam (Bedrock ingress), called in the eventstream branch for each frame with
-
     fn inject_streaming_metrics(
         &self,
         _event_type: &str,
@@ -577,23 +528,19 @@ pub trait StreamFraming: Send {
     }
 
     /// Stream-abort seam (eventstream ingress): the error type name this ingress emits as the
-
     fn abort_exception_type(&self) -> Option<&'static str> {
         None
     }
 
     /// Terminal-usage-fold seam (plain SSE ingresses: Anthropic/Gemini/Cohere/Responses). These carry
-
     fn folds_terminal_usage(&self) -> bool {
         true
     }
 
     /// Client-intent seam (OpenAI ingress): whether the original client request had
-
     fn set_client_include_usage(&mut self, _include: bool) {}
 
     /// Same-protocol edit seam (OpenAI ingress). The same-protocol path re-emits each upstream frame
-
     fn same_proto_edit(&self, _payload: &[u8]) -> SameProtoEdit {
         SameProtoEdit::Keep
     }
@@ -612,7 +559,6 @@ pub enum SameProtoEdit {
 }
 
 /// A stream writer's per-stream state behind one lock. Writers are `&self` and `Sync` (the
-
 pub struct StreamCell<T>(std::sync::Mutex<T>);
 
 impl<T> StreamCell<T> {
@@ -684,7 +630,6 @@ impl EmittedBlockIndices {
 }
 
 /// Inert default [`StreamFraming`] for every protocol whose ingress stream has no per-stream
-
 pub struct PassthroughFraming;
 
 impl StreamFraming for PassthroughFraming {}
@@ -733,13 +678,11 @@ impl Protocol {
     }
 
     /// The protocol name as the registry's interned `&'static str`, so a caller outliving the
-
     pub fn name_static(&self) -> &'static str {
         self.name
     }
 
     /// This protocol's declaration (the constant facts core reads by field). Always `Some` for a
-
     pub fn decl(&self) -> Option<&'static busbar_contract::protocol::ProtocolDecl> {
         crate::codec::decl_of(self.name)
     }
@@ -756,13 +699,11 @@ impl Protocol {
 }
 
 /// Build this protocol's wire codec by name, a `Protocol` instance for paths that translate.
-
 pub fn protocol_for(name: &str) -> Option<Protocol> {
     entry_of(name).map(|d| (d.protocol)())
 }
 
 /// One dialect's registration: everything this plane resolves by name, declared in the dialect's
-
 pub struct DialectEntry {
     /// The dialect's declaration (its name is the registry key).
     pub decl: &'static busbar_contract::protocol::ProtocolDecl,
@@ -783,7 +724,6 @@ pub type WithWriter = fn(&mut dyn FnMut(&dyn ProtocolWriter));
 pub type WithReader = fn(&mut dyn FnMut(&dyn ProtocolReader));
 
 /// The registration of the dialect named `name`, read off [`crate::codec::DIALECTS`]. `None` for a
-
 pub fn entry_of(name: &str) -> Option<&'static DialectEntry> {
     crate::codec::DIALECTS
         .iter()
@@ -792,7 +732,6 @@ pub fn entry_of(name: &str) -> Option<&'static DialectEntry> {
 }
 
 /// Run `f` against the named dialect's writer built on the stack, with no `Protocol` and no `Box`.
-
 pub fn with_writer<T>(name: &str, f: impl FnOnce(&dyn ProtocolWriter) -> T) -> Option<T> {
     let entry = entry_of(name)?;
     let mut f = Some(f);
@@ -802,7 +741,6 @@ pub fn with_writer<T>(name: &str, f: impl FnOnce(&dyn ProtocolWriter) -> T) -> O
 }
 
 /// The reader twin of [`with_writer`]: the named dialect's reader on the stack (readers are unit
-
 pub fn with_reader<T>(name: &str, f: impl FnOnce(&dyn ProtocolReader) -> T) -> Option<T> {
     let entry = entry_of(name)?;
     let mut f = Some(f);
@@ -812,7 +750,6 @@ pub fn with_reader<T>(name: &str, f: impl FnOnce(&dyn ProtocolReader) -> T) -> O
 }
 
 /// The plane-local equivalent of the former core `handlers::protocol_error` round trip: the shared
-
 pub fn protocol_error(
     name: &str,
     status: u16,
@@ -841,7 +778,6 @@ pub fn protocol_error_with_head(
 pub struct DialectRef(&'static str);
 
 /// Construct the neutral [`DialectCodec`] facade for a named dialect, `const` so each dialect's
-
 pub const fn dialect_ref(name: &'static str) -> DialectRef {
     DialectRef(name)
 }
@@ -943,13 +879,11 @@ impl DialectCodec for DialectRef {
 }
 
 /// The ingress protocol's native tool-call id prefix, used by [`ToolIdRemap`] to reshape a foreign
-
 pub fn native_tool_id_prefix(protocol_name: &str) -> Option<&'static str> {
     crate::codec::decl_of(protocol_name).and_then(|d| d.native_tool_id_prefix)
 }
 
 /// Marker segment in a busbar-minted tool id, so the request-side reverse can tell a reshaped id from
-
 pub const TOOL_ID_REMAP_MARKER: &str = "bb1";
 
 /// Per-request / per-stream tool-id remap, applied only at the cross-protocol seam (ingress !=
@@ -968,12 +902,10 @@ pub struct ToolIdRemap {
 }
 
 /// Bound on memoized egress-to-native tool-id pairs per [`ToolIdRemap`]. The map only memoizes a
-
 pub const TOOL_ID_REMAP_MAX_MEMO: usize = crate::codec::dialect::MAX_OPEN_TOOL_CALLS;
 
 impl ToolIdRemap {
     /// Reshape one egress tool id into the ingress protocol's native form (deterministic, memoized).
-
     pub fn native_for(&mut self, ingress_protocol: &str, egress_id: &str) -> String {
         let Some(prefix) = native_tool_id_prefix(ingress_protocol) else {
             return egress_id.to_string();
@@ -1041,7 +973,6 @@ impl ToolIdRemap {
 }
 
 /// Recover the original egress tool id from a busbar-reshaped native id (the exact reverse of
-
 pub fn decode_native_tool_id(ingress_protocol: &str, id: &str) -> Option<String> {
     let prefix = native_tool_id_prefix(ingress_protocol)?;
     let rest = id.strip_prefix(prefix)?;
@@ -1062,7 +993,6 @@ pub fn decode_native_tool_id(ingress_protocol: &str, id: &str) -> Option<String>
 }
 
 /// Walk a request-body IR (messages, blocks, recursing into `ToolResult.content`) and decode any
-
 pub fn decode_request_tool_ids(
     ingress_protocol: &str,
     messages: &mut [crate::codec::ir::IrMessage],

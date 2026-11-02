@@ -21,7 +21,6 @@ fn stop_reason_egress_never_leaks_foreign_tokens() {
 }
 
 /// The credential-family table: an API key (`sk-ant-api…`) is presented as `x-api-key` with its
-
 #[test]
 fn egress_scheme_is_the_declared_credential_family_table() {
     use busbar_contract::protocol::{CredentialFamily, CredentialHeader as H};
@@ -65,7 +64,6 @@ fn egress_scheme_is_the_declared_credential_family_table() {
 }
 
 /// Every Anthropic request carries the pinned API version whatever its credential, as a DECLARED
-
 #[test]
 fn every_egress_request_declares_the_pinned_api_version() {
     assert_eq!(
@@ -90,7 +88,6 @@ fn extract_error_parses_both_fields() {
 }
 
 /// A non-JSON error body must not yield codes from the structured fields, but the
-
 #[test]
 fn extract_error_non_json_body() {
     let raw = AnthropicReader.extract_error(StatusCode::BAD_REQUEST, b"not json at all");
@@ -99,7 +96,6 @@ fn extract_error_non_json_body() {
 }
 
 /// Context-length is signalled via the error message; the single-parse refactor must preserve
-
 #[test]
 fn extract_error_context_length_from_message() {
     let body_json = serde_json::json!({"error":{"type": ERR_TYPE_INVALID_REQUEST,"message":"prompt is too long"}});
@@ -143,7 +139,6 @@ fn pathological_block_indices_refuse_all_three_stream_events() {
 }
 
 /// A 429 whose
-
 #[test]
 fn extract_error_429_with_token_body_not_reclassified_to_context_length() {
     let body_json = serde_json::json!({"error":{"type": ERR_TYPE_RATE_LIMIT,"message":"rate limit exceeds the maximum tokens per minute"}});
@@ -165,7 +160,6 @@ fn extract_error_429_with_token_body_not_reclassified_to_context_length() {
 }
 
 /// A genuine 400 oversized-prompt body STILL
-
 #[test]
 fn extract_error_400_context_length_still_synthesized_under_gate() {
     let body_json = serde_json::json!({"error":{"type": ERR_TYPE_INVALID_REQUEST,"message":"prompt is too long: 250000 tokens"}});
@@ -181,7 +175,6 @@ fn extract_error_400_context_length_still_synthesized_under_gate() {
 }
 
 /// write_error must produce the NATIVE Anthropic envelope
-
 #[test]
 fn write_error_native_anthropic_envelope_shape() {
     let v = anthropic_writer().write_error(
@@ -208,7 +201,6 @@ fn write_error_native_anthropic_envelope_shape() {
 }
 
 /// A `kind` already in Anthropic's vocabulary passes through unchanged (no double-mapping, no
-
 #[test]
 fn write_error_kind_vocabulary_mapping() {
     let map_of = |kind: &str| {
@@ -241,7 +233,6 @@ fn write_error_kind_vocabulary_mapping() {
 }
 
 /// A cross-protocol upstream 503 relayed to an Anthropic-ingress client arrives with the
-
 #[test]
 fn write_error_503_maps_to_overloaded_error_not_api_error() {
     let type_for = |status: u16| {
@@ -293,7 +284,6 @@ fn write_error_503_maps_to_overloaded_error_not_api_error() {
 }
 
 /// Same-protocol (anthropic→anthropic) passthrough must preserve the upstream response identity:
-
 #[test]
 fn read_then_write_response_preserves_identity() {
     let body = serde_json::json!({
@@ -340,7 +330,6 @@ fn read_then_write_response_preserves_identity() {
 }
 
 /// Same-protocol streaming `message_start` passthrough must preserve `id`/`model` and re-emit
-
 #[test]
 fn message_start_roundtrip_preserves_id_and_model() {
     let data = serde_json::json!({
@@ -385,7 +374,6 @@ fn message_start_roundtrip_preserves_id_and_model() {
 }
 
 /// Cross-protocol write (the backend supplied no Anthropic id, but a non-Anthropic reader
-
 #[test]
 fn cross_protocol_write_synthesizes_valid_unique_id() {
     let make = || crate::codec::ir::IrResponse {
@@ -434,7 +422,6 @@ fn cross_protocol_write_synthesizes_valid_unique_id() {
 }
 
 /// An IR carrying NEITHER `id` NOR `created` — the exact
-
 #[test]
 fn write_response_synthesizes_id_when_neither_id_nor_created() {
     let resp = crate::codec::ir::IrResponse {
@@ -476,7 +463,6 @@ fn write_response_synthesizes_id_when_neither_id_nor_created() {
 }
 
 /// write_response_event(Error(...)) must serialize the NATIVE Anthropic in-stream error shape:
-
 #[test]
 fn write_response_event_error_serializes_native_shape() {
     let err = IrError {
@@ -514,7 +500,6 @@ fn write_response_event_error_serializes_native_shape() {
 }
 
 /// When the error event carries no signal, `error.type` is the published token for the error's class
-
 #[test]
 fn write_response_event_error_type_is_the_class_token_when_signal_absent() {
     let err = IrError {
@@ -543,7 +528,6 @@ fn write_response_event_error_type_is_the_class_token_when_signal_absent() {
 }
 
 /// An in-stream error whose signal is FREE TEXT writes the text as `error.message` and the class's
-
 #[test]
 fn write_response_event_free_text_signal_is_the_message_not_the_type() {
     let sentence = "You have exceeded your requests per minute.";
@@ -584,7 +568,6 @@ fn write_response_event_error_type_keeps_a_native_token_verbatim() {
 }
 
 /// The reader must carry a missing error `type` through as `None` (not `Some("")`), so a
-
 #[test]
 fn read_error_event_without_type_carries_none() {
     let data = serde_json::json!({ "error": { "message": "boom" } });
@@ -619,7 +602,6 @@ fn read_error_event_with_type_round_trips() {
 }
 
 /// Regression: the streaming `error` reader hardcoded `StatusClass::ClientError`
-
 fn read_stream_error_class(error_type: &str) -> StatusClass {
     let data = serde_json::json!({ "error": { "type": error_type } });
     let ev = AnthropicReader
@@ -785,7 +767,6 @@ fn stream_error_unknown_or_absent_type_falls_back_to_client_error() {
 }
 
 /// write_error must include a synthesized top-level `request_id` (`req_...`) to match the native
-
 #[test]
 fn write_error_includes_synthesized_request_id() {
     let v = anthropic_writer().write_error(
@@ -817,7 +798,6 @@ fn write_error_includes_synthesized_request_id() {
 }
 
 /// Regression: a `system` field in ARRAY form must be read via `as_array()` (no
-
 #[test]
 fn read_request_array_system_parses_blocks() {
     let body = serde_json::json!({
@@ -848,7 +828,6 @@ fn read_request_non_array_non_string_system_is_refused() {
 }
 
 /// Regression: a `tool_result` block whose `content` is an ARRAY of nested blocks
-
 #[test]
 fn read_block_tool_result_array_content_parses() {
     let block = serde_json::json!({
@@ -874,7 +853,6 @@ fn read_block_tool_result_array_content_parses() {
 }
 
 /// Regression: a `read_response` body whose top-level `content` is an array must be
-
 #[test]
 fn read_response_array_content_parses_no_unwrap() {
     let body = serde_json::json!({
@@ -892,7 +870,6 @@ fn read_response_array_content_parses_no_unwrap() {
 }
 
 /// Id-synthesis collision guard: `synth_message_id` fills its 24-char suffix with pure CSPRNG
-
 #[test]
 fn synth_message_id_no_collision_under_rapid_minting() {
     let n = 10_000;
@@ -941,7 +918,6 @@ fn synth_request_id_no_collision_under_rapid_minting() {
 }
 
 /// An IR Image carrying the `"image_url"` media_type sentinel (an https:// URL recorded by the
-
 #[test]
 fn write_block_image_url_sentinel_emits_native_url_source() {
     let block = crate::codec::ir::IrBlock::Image {
@@ -973,7 +949,6 @@ fn write_block_image_url_sentinel_emits_native_url_source() {
 }
 
 /// A genuine base64 image (a real `image/*` media_type) must still take the base64 source path
-
 #[test]
 fn write_block_real_base64_image_unchanged() {
     let block = crate::codec::ir::IrBlock::Image {
@@ -998,7 +973,6 @@ fn write_block_real_base64_image_unchanged() {
 }
 
 /// An Anthropic `cache_control` breakpoint placed ON an `image` or `thinking`
-
 #[test]
 fn cache_control_on_image_and_thinking_blocks_round_trips() {
     let img_in = serde_json::json!({
@@ -1044,7 +1018,6 @@ fn cache_control_on_image_and_thinking_blocks_round_trips() {
 }
 
 /// An Anthropic URL-type image source
-
 #[test]
 fn read_block_url_image_source_round_trips_via_sentinel() {
     let block_json = serde_json::json!({
@@ -1079,7 +1052,6 @@ fn read_block_url_image_source_round_trips_via_sentinel() {
 }
 
 /// Non-regression: a genuine base64 image source must still parse to its real
-
 #[test]
 fn read_block_base64_image_source_unchanged() {
     let block_json = serde_json::json!({
@@ -1100,7 +1072,6 @@ fn read_block_base64_image_source_unchanged() {
 }
 
 /// A valid native Anthropic content-block type the IR does not model must NOT hard-error the whole
-
 #[test]
 fn read_block_unmodeled_document_type_degrades_not_400() {
     let with_source = serde_json::json!({
@@ -1160,7 +1131,6 @@ fn read_block_unmodeled_document_type_degrades_not_400() {
 }
 
 /// A `document` block survives a FULL `read_request` -> `write_request` round trip at its original
-
 #[test]
 fn anthropic_unmodeled_document_survives_same_protocol_round_trip() {
     let body = serde_json::json!({
@@ -1222,7 +1192,6 @@ fn anthropic_unmodeled_document_survives_same_protocol_round_trip() {
 }
 
 /// The STREAMING reader must not drop a `redacted_thinking` block. The
-
 #[test]
 fn streaming_redacted_thinking_is_not_dropped() {
     let reader = AnthropicReader;
@@ -1280,7 +1249,6 @@ fn streaming_redacted_thinking_is_not_dropped() {
 }
 
 /// Round-trip: an Anthropic `redacted_thinking` block read on the RESPONSE path must
-
 #[test]
 fn redacted_thinking_response_round_trips_as_native_block() {
     let native = serde_json::json!({
@@ -1319,7 +1287,6 @@ fn redacted_thinking_response_round_trips_as_native_block() {
 }
 
 /// Uniformity: `synth_id_with_prefix` must draw each base62 character
-
 #[test]
 fn synth_id_uniform_and_unique_under_burst() {
     let n = 20_000usize;
@@ -1362,7 +1329,6 @@ fn synth_id_uniform_and_unique_under_burst() {
 }
 
 /// Shape invariant: rejection sampling must not change the native length
-
 #[test]
 fn synth_id_matches_native_length_and_alphabet() {
     let id = synth_request_id(crate::codec::test_host::HOST).expect("test entropy");
@@ -1409,7 +1375,6 @@ fn read_request_oversized_max_tokens_refuses_and_top_k_drops_to_none() {
 }
 
 /// On the REQUEST side `write_message` must drop an assistant
-
 #[test]
 fn write_message_drops_unsigned_thinking_block() {
     let msg = crate::codec::ir::IrMessage {
@@ -1469,7 +1434,6 @@ fn write_message_drops_unsigned_thinking_block() {
 }
 
 /// When every content block is filtered out — e.g. an
-
 #[test]
 fn write_message_emits_empty_array_when_all_blocks_dropped() {
     let msg = crate::codec::ir::IrMessage {
@@ -1509,7 +1473,6 @@ fn write_message_emits_empty_array_when_all_blocks_dropped() {
 }
 
 /// Companion: a message with a single surviving block still emits a populated
-
 #[test]
 fn write_message_emits_array_for_surviving_block() {
     let msg = crate::codec::ir::IrMessage {
@@ -1531,7 +1494,6 @@ fn write_message_emits_array_for_surviving_block() {
 }
 
 /// Non-regression: the request-side filter must NOT affect the response
-
 #[test]
 fn write_response_keeps_unsigned_thinking_block() {
     let resp = crate::codec::ir::IrResponse {
@@ -1577,7 +1539,6 @@ fn write_response_keeps_unsigned_thinking_block() {
 }
 
 /// `message_start` must carry a `usage` object even when the IR `MessageStart.usage` is None
-
 #[test]
 fn message_start_emits_zero_usage_when_none() {
     let ev = IrStreamEvent::MessageStart {
@@ -1608,7 +1569,6 @@ fn message_start_emits_zero_usage_when_none() {
 }
 
 /// When usage IS present on `message_start`, its values and the optional cache fields must flow
-
 #[test]
 fn message_start_emits_present_usage_with_cache_fields() {
     let ev = IrStreamEvent::MessageStart {
@@ -1647,7 +1607,6 @@ fn message_start_emits_present_usage_with_cache_fields() {
 }
 
 /// Reading a `message_delta` whose data omits the
-
 #[test]
 fn read_message_delta_without_usage_preserves_terminal_event() {
     let data = serde_json::json!({
@@ -1679,7 +1638,6 @@ fn read_message_delta_without_usage_preserves_terminal_event() {
 }
 
 /// When `usage` IS present on a `message_delta`,
-
 #[test]
 fn read_message_delta_with_usage_flows_through() {
     let data = serde_json::json!({
@@ -1706,7 +1664,6 @@ fn read_message_delta_with_usage_flows_through() {
 }
 
 /// The non-stream `write_response` emits `model` UNCONDITIONALLY: the SDKs type `Message.model` as a
-
 #[test]
 fn write_response_emits_empty_model_when_none() {
     let resp = crate::codec::ir::IrResponse {
@@ -1773,7 +1730,6 @@ fn write_response_preserves_present_model() {
 }
 
 /// Streaming sibling: the `message_start.message` skeleton likewise carries `model` unconditionally,
-
 #[test]
 fn message_start_emits_empty_model_when_none() {
     let ev = IrStreamEvent::MessageStart {
@@ -1795,7 +1751,6 @@ fn message_start_emits_empty_model_when_none() {
 }
 
 /// EVERY event the writer emits
-
 #[test]
 fn every_write_response_event_carries_matching_top_level_type() {
     let events = vec![
@@ -1853,7 +1808,6 @@ fn every_write_response_event_carries_matching_top_level_type() {
 }
 
 /// A non-streaming `write_response` whose IR carried no stop sequence must still emit
-
 #[test]
 fn write_response_emits_null_stop_sequence_when_absent() {
     let resp = crate::codec::ir::IrResponse {
@@ -1899,7 +1853,6 @@ fn write_response_emits_null_stop_sequence_when_absent() {
 }
 
 /// When a stop sequence IS present, the non-streaming `write_response` must carry the matched
-
 #[test]
 fn write_response_emits_matched_stop_sequence_string() {
     let resp = crate::codec::ir::IrResponse {
@@ -1932,7 +1885,6 @@ fn write_response_emits_matched_stop_sequence_string() {
 }
 
 /// A billing error whose body carries a message
-
 #[test]
 fn classify_billing_substring_without_code_field() {
     let body = br#"{"error":{"type":"some_error","message":"insufficient balance to complete"}}"#;
@@ -1953,7 +1905,6 @@ fn classify_billing_substring_without_code_field() {
 }
 
 /// Non-regression: the structured `error.code` 400/422 → ClientError path must
-
 #[test]
 fn classify_structured_code_still_maps_client_error() {
     let body_json = serde_json::json!({"error":{"type": ERR_TYPE_INVALID_REQUEST,"code":"400","message":"bad"}});
@@ -1967,7 +1918,6 @@ fn classify_structured_code_still_maps_client_error() {
 }
 
 /// Synthesized ids must match the native
-
 #[test]
 fn synth_ids_match_native_shape_base62_versioned_fixed_length() {
     let check = |id: &str, prefix: &str| {
@@ -2007,7 +1957,6 @@ fn synth_ids_match_native_shape_base62_versioned_fixed_length() {
 }
 
 /// Regression: synthesized ids must come from the CSPRNG, not a deterministic clock+counter
-
 #[test]
 fn synth_ids_are_csprng_unique_within_tick() {
     let a = synth_message_id(crate::codec::test_host::HOST).expect("test entropy");
@@ -2027,7 +1976,6 @@ fn synth_ids_are_csprng_unique_within_tick() {
 }
 
 /// Regression: the leading characters of the token must vary across calls. The old
-
 #[test]
 fn synth_id_leading_chars_are_not_constant() {
     let mut firsts = std::collections::HashSet::new();
@@ -2043,7 +1991,6 @@ fn synth_id_leading_chars_are_not_constant() {
 }
 
 /// Regression: the modeled-key filter (now a sorted `binary_search` slice rather
-
 #[test]
 fn read_request_routes_unmodeled_keys_to_extra() {
     let body = serde_json::json!({
@@ -2103,7 +2050,6 @@ fn read_request_routes_unmodeled_keys_to_extra() {
 }
 
 /// The in-stream `error` event's
-
 #[test]
 fn write_response_event_error_message_has_no_proxy_vocabulary() {
     for (signal, expected) in [
@@ -2139,7 +2085,6 @@ fn write_response_event_error_message_has_no_proxy_vocabulary() {
 }
 
 /// Regression: a 200 `read_response` body that OMITS `usage` must read back
-
 #[test]
 fn read_response_without_usage_zero_defaults_no_error() {
     let body = serde_json::json!({
@@ -2161,7 +2106,6 @@ fn read_response_without_usage_zero_defaults_no_error() {
 }
 
 /// Regression: a wire `role:"system"` message inside `messages` must be
-
 #[test]
 fn read_request_promotes_system_role_message_into_system_blocks() {
     let body = serde_json::json!({
@@ -2200,7 +2144,6 @@ fn read_request_promotes_system_role_message_into_system_blocks() {
 }
 
 /// `write_request` must NEVER emit a message with
-
 #[test]
 fn write_request_never_emits_system_role_message() {
     let req = crate::codec::ir::IrRequest {
@@ -2257,7 +2200,6 @@ fn write_request_never_emits_system_role_message() {
 }
 
 /// A direct `write_message` call on an `IrRole::System`
-
 #[test]
 fn write_message_system_role_does_not_emit_system() {
     let msg = crate::codec::ir::IrMessage {
@@ -2347,7 +2289,6 @@ fn tool_choice_absent_emits_nothing() {
 }
 
 /// Cross-protocol: an OpenAI forced-function `tool_choice` reaches an Anthropic backend as
-
 #[test]
 fn tool_choice_openai_specific_to_anthropic_targeted() {
     let openai_body = serde_json::json!({
@@ -2610,7 +2551,6 @@ fn test_anthropic_streaming_safety_stop_reason_maps_to_refusal() {
 use busbar_test_kit::warn_capture::WarnCapture;
 
 /// SAMPLING: Anthropic's Messages API does NOT support `frequency_penalty`,
-
 #[test]
 fn write_request_omits_unsupported_sampling_params() {
     let req = crate::codec::ir::IrRequest {
@@ -2644,7 +2584,6 @@ fn write_request_omits_unsupported_sampling_params() {
 }
 
 /// Anthropic 400s on a FORCED/TARGETED `tool_choice` (`{type:"any"}`/`{type:"tool"}`) alongside
-
 #[test]
 fn write_request_downgrades_forced_tool_choice_to_auto_when_thinking_emitted() {
     let mk = |reasoning: Option<crate::codec::ir::IrReasoningAsk>,
@@ -2733,7 +2672,6 @@ fn write_request_downgrades_forced_tool_choice_to_auto_when_thinking_emitted() {
 }
 
 /// response_format → NATIVE structured outputs (ANT-07) on a lane that declares them
-
 #[test]
 fn write_request_projects_response_format_to_native_output_config() {
     let schema = serde_json::json!({
@@ -2798,7 +2736,6 @@ fn write_request_projects_response_format_to_native_output_config() {
 }
 
 /// A `tool_use` named `busbar_response_format` is an ordinary tool call: no lane is sent a synthetic
-
 #[test]
 fn read_response_rewrites_no_tool_use_block() {
     let body = serde_json::json!({
@@ -2827,7 +2764,6 @@ fn read_response_rewrites_no_tool_use_block() {
 }
 
 /// A Bedrock structured-JSON tool result (`IrBlock::Json`) nested in a ToolResult reaching the
-
 #[test]
 fn write_request_carries_json_tool_result_block_as_text() {
     let req = crate::codec::ir::IrRequest {
@@ -2870,7 +2806,6 @@ fn write_request_carries_json_tool_result_block_as_text() {
 }
 
 /// Counter-case: a request WITHOUT `response_format` must NOT emit the drop warning — the warn is
-
 #[test]
 fn write_request_no_response_format_warning_when_absent() {
     let req = crate::codec::ir::IrRequest {
@@ -2901,7 +2836,6 @@ fn write_request_no_response_format_warning_when_absent() {
 }
 
 /// THINKING (native Anthropic path): an extended-thinking content block with a `signature` must
-
 #[test]
 fn thinking_block_roundtrips_with_signature() {
     let native = serde_json::json!({
@@ -2942,7 +2876,6 @@ fn thinking_block_roundtrips_with_signature() {
 }
 
 /// THINKING (response egress, signed): a Thinking block carried in an IR RESPONSE surfaces on the
-
 #[test]
 fn thinking_block_with_signature_survives_response_egress() {
     let resp = crate::codec::ir::IrResponse {
@@ -3003,7 +2936,6 @@ fn thinking_block_with_signature_survives_response_egress() {
 }
 
 /// A Responses `file_id` image (the FILE_ID_IMAGE_SENTINEL media_type) reaching the Anthropic
-
 #[test]
 fn test_write_request_file_id_image_dropped_not_corrupted() {
     let writer = AnthropicWriter;
@@ -3056,7 +2988,6 @@ fn test_write_request_file_id_image_dropped_not_corrupted() {
 }
 
 /// HIGH (asymmetric twin of the file_id leak): a Bedrock S3-source image (IMAGE_S3_SENTINEL
-
 #[test]
 fn test_write_request_image_s3_dropped_not_corrupted() {
     let writer = AnthropicWriter;
@@ -3111,7 +3042,6 @@ fn test_write_request_image_s3_dropped_not_corrupted() {
 }
 
 /// Forge prevention (now STRUCTURAL): a CLIENT cannot forge an upstream-origin redacted-reasoning
-
 #[test]
 fn test_client_thinking_block_cannot_forge_redacted() {
     let reader = AnthropicReader;
@@ -3138,7 +3068,6 @@ fn test_client_thinking_block_cannot_forge_redacted() {
 }
 
 /// An Anthropic text block carrying citations of EVERY variant (char/page/content_block
-
 #[test]
 fn anthropic_citations_roundtrip_byte_exact_all_variants() {
     let block = serde_json::json!({
@@ -3207,7 +3136,6 @@ fn anthropic_citations_roundtrip_byte_exact_all_variants() {
 }
 
 /// When an IrCitation has NO `raw` (synthesized on a cross-protocol hop, e.g. Gemini→IR), the
-
 #[test]
 fn anthropic_writes_web_search_citation_from_neutral_fields() {
     let block = crate::codec::ir::IrBlock::Text {
@@ -3271,7 +3199,6 @@ fn anthropic_empty_citations_text_block_unaffected() {
 }
 
 /// STREAMING citations, Anthropic same-protocol byte-exactness: a native streaming
-
 #[test]
 fn read_write_streaming_citations_delta_roundtrips_byte_exact() {
     let native_citation = serde_json::json!({
@@ -3332,7 +3259,6 @@ fn read_write_streaming_citations_delta_roundtrips_byte_exact() {
 }
 
 /// An Anthropic `cache_control` breakpoint placed ON a `tool_use` block must survive
-
 #[test]
 fn cache_control_on_tool_use_block_round_trips() {
     let block = serde_json::json!({
@@ -3372,7 +3298,6 @@ fn cache_control_on_tool_use_block_round_trips() {
 }
 
 /// An Anthropic `cache_control` breakpoint on a `tool_result` block must survive
-
 #[test]
 fn cache_control_on_tool_result_block_round_trips() {
     let block = serde_json::json!({
@@ -3408,7 +3333,6 @@ fn cache_control_on_tool_result_block_round_trips() {
 }
 
 /// A `cache_control` breakpoint on a tool DEFINITION (`tools[].cache_control`) round-trips through
-
 #[test]
 fn cache_control_on_tool_definition_round_trips() {
     let tool = serde_json::json!({
@@ -3432,7 +3356,6 @@ fn cache_control_on_tool_definition_round_trips() {
 }
 
 /// Full non-stream response round-trip for an UNKNOWN native `stop_reason`: the reader maps a
-
 #[test]
 fn read_write_response_unknown_stop_reason_degrades_to_end_turn() {
     let body = serde_json::json!({
@@ -3462,7 +3385,6 @@ fn read_write_response_unknown_stop_reason_degrades_to_end_turn() {
 }
 
 /// Anthropic's `usage` cache fields are ADDITIVE (ir.rs:457): the reader stores
-
 #[test]
 fn read_response_cache_usage_is_additive_not_subtracted() {
     let body = serde_json::json!({
@@ -3512,7 +3434,6 @@ fn read_response_cache_usage_is_additive_not_subtracted() {
 }
 
 /// The request-side unsigned-thinking filter in `write_message` must
-
 #[test]
 fn write_message_keeps_redacted_thinking_block() {
     let msg = crate::codec::ir::IrMessage {
@@ -3569,7 +3490,6 @@ fn write_message_keeps_redacted_thinking_block() {
 }
 
 /// The streaming `content_block_start` skeleton must carry the SEED
-
 #[test]
 fn content_block_start_carries_seed_fields() {
     let (_et, out) = anthropic_writer()

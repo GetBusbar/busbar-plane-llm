@@ -276,7 +276,6 @@ pub(crate) fn bedrock(status: StatusCode, body: &[u8]) -> CanonicalSignal {
 }
 
 /// Canonical bearer-envelope error classification, shared verbatim by `OpenAiReader::classify` and
-
 pub(crate) fn bearer(status: u16, body: &[u8]) -> CanonicalSignal {
     let code_is_context = crate::codec::json::parse::<serde_json::Value>(body)
         .ok()

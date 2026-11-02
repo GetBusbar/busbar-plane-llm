@@ -33,7 +33,6 @@
 //! `[value_len: u16 BE][value]`.
 
 /// Upper bound on one event-stream frame. ConverseStream frames are small JSON deltas, so a larger
-
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
 use crate::codec::diagnostics::{
@@ -56,7 +55,6 @@ pub enum DrainStatus {
 }
 
 /// Drain every complete frame from `buf`, returning `(event_type, payload_bytes)` pairs and a
-
 pub fn drain_frames_checked(
     buf: &mut Vec<u8>,
     consumed_sink: Option<&mut Vec<u8>>,
@@ -91,7 +89,6 @@ pub(crate) fn drain_frames_signaled(
 /// `scanned` is bytes walked as complete frames; `edits` buffer edits; `shifted` bytes those edits
 /// moved (a front `drain` memmoves the tail). Every edit goes through [`consume_front`] /
 /// [`clear_all`], so a per-frame editor shows `edits == frames` and `shifted` quadratic in frames.
-
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct DrainWork {
@@ -197,7 +194,6 @@ fn drain_frames_signaled_counted(
 }
 
 /// Drain every complete frame from `buf`, returning `(event_type, payload_bytes)` per frame and
-
 #[cfg(test)]
 pub fn drain_frames(buf: &mut Vec<u8>) -> Vec<(String, Vec<u8>)> {
     drain_frames_checked(buf, None).0
@@ -215,7 +211,6 @@ struct FrameHeaders {
 }
 
 /// Resolve the event-type token `drain_frames_checked` returns for a frame: `:event-type` verbatim
-
 #[cfg(test)]
 fn event_type_for_frame(headers: &[u8]) -> String {
     event_type_from_headers(&parse_frame_headers(headers))
@@ -236,7 +231,6 @@ fn event_type_from_headers(parsed: &FrameHeaders) -> String {
 }
 
 /// Normalize an AWS failure-name header (`:exception-type` or `:error-code`) to the reader's
-
 fn normalize_error_token(raw: &str) -> String {
     let bare = raw
         .rsplit(['#', '/'])
@@ -246,7 +240,6 @@ fn normalize_error_token(raw: &str) -> String {
 }
 
 /// Lowercase only the first character (`InternalServerException` to `internalServerException`),
-
 fn lowercase_first(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
@@ -256,7 +249,6 @@ fn lowercase_first(s: &str) -> String {
 }
 
 /// Scan the header block for the `:event-type`, `:message-type` and `:exception-type` string
-
 fn parse_frame_headers(mut h: &[u8]) -> FrameHeaders {
     let mut found = FrameHeaders::default();
     while !h.is_empty() {
@@ -326,7 +318,6 @@ fn parse_frame_headers(mut h: &[u8]) -> FrameHeaders {
 }
 
 /// Append one `[name_len:u8][name][value_type:u8 = 7][value_len:u16 BE][value]` string header. The
-
 #[must_use]
 fn push_string_header(headers: &mut Vec<u8>, name: &str, value: &str) -> bool {
     if name.len() > u8::MAX as usize || value.len() > u16::MAX as usize {
@@ -374,7 +365,6 @@ pub fn encode_frame(event_type: &str, payload: &[u8]) -> Vec<u8> {
 }
 
 /// Encode a modeled-exception event-stream message for a native Bedrock SDK client: AWS signals a
-
 pub fn encode_exception_frame(exception_type: &str, message: &str) -> Vec<u8> {
     let payload = crate::codec::json::to_vec(&serde_json::json!({ "message": message }))
         .unwrap_or_else(|_| b"{\"message\":\"An internal server error occurred.\"}".to_vec());
@@ -428,7 +418,6 @@ const MSG_TYPE_EVENT: &str = "event";
 const MSG_TYPE_EXCEPTION: &str = "exception";
 
 /// `:message-type` value for an AWS mid-stream ERROR frame — the UNMODELED sibling of an exception
-
 const MSG_TYPE_ERROR: &str = "error";
 
 /// AWS event-stream header name for the error code (error frames only).
@@ -441,13 +430,11 @@ const HDR_ERROR_MESSAGE: &str = ":error-message";
 const HDR_TYPE_STRING: u8 = 7;
 
 /// Open a frame buffer with the 12-byte prelude (`total_len`, `headers_len`, `prelude_crc`) reserved
-
 fn frame_open() -> Vec<u8> {
     vec![0u8; PRELUDE_LEN]
 }
 
 /// Close a frame from [`frame_open`] after its headers are appended: backfill the prelude
-
 fn frame_close(mut frame: Vec<u8>, payload: &[u8]) -> Vec<u8> {
     let headers_len = (frame.len() - PRELUDE_LEN) as u64;
 

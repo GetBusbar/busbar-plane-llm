@@ -6,7 +6,6 @@
 use super::*;
 
 /// Structural class fix: on a CROSS-protocol request hop the source-protocol-only passthrough
-
 #[test]
 fn cross_protocol_strips_source_only_extra_keys() {
     let body = serde_json::json!({
@@ -54,7 +53,6 @@ fn cross_protocol_strips_source_only_extra_keys() {
 }
 
 /// SAME-protocol openai→openai must still carry `logprobs` (now via the first-class IR field
-
 #[test]
 fn same_protocol_passthrough_preserves_extra_keys() {
     let body = serde_json::json!({

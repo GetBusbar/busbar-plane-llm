@@ -48,7 +48,6 @@ impl Decline {
     }
 
     /// The arrival names an action its dialect has that this plane does not serve: a resolved
-
     #[must_use]
     pub const fn unsupported_action(self) -> bool {
         matches!(self, Decline::UnsupportedOperation | Decline::PathNotFound)
@@ -124,7 +123,6 @@ impl Catalogue for () {
 }
 
 /// THE DETECTION FOLD: every dialect's claim on `(fields, path)`, the tightest winning, a tie going
-
 #[must_use]
 pub fn detect(path: &str, fields: HeadFields<'_>) -> Option<&'static str> {
     DECLS
@@ -145,7 +143,6 @@ pub fn residual(path: &str) -> Option<&'static str> {
 }
 
 /// The envelope a refusal on `path` is rendered in: the dialect the path's shape names, else the
-
 #[must_use]
 pub fn envelope_for(path: &str) -> &'static str {
     residual(path)
@@ -227,7 +224,6 @@ fn content_type(fields: HeadFields<'_>) -> String {
 }
 
 /// The two convenience surfaces: `/{name}/v1/messages` (a pool or model named in the path) and
-
 enum Convenience {
     Named(String),
     Adhoc(String, String),
@@ -247,7 +243,6 @@ fn convenience(path: &str) -> Option<Convenience> {
 }
 
 /// Read one arrival. `method` is the request method, `target` the request target (path and query),
-
 pub fn arrive(
     method: &str,
     target: &str,
@@ -314,7 +309,6 @@ pub fn arrive(
 }
 
 /// A body-model arrival: the operation off the path and body, then the arrival step (the body
-
 fn body_arrival(
     proto: &'static str,
     path: &str,
@@ -415,7 +409,6 @@ fn gemini_api_version(path: &str) -> &'static str {
 }
 
 /// The not-found a path-model dialect answers for its own URL space: its native sentence when it has
-
 fn path_not_found(path: &str, native: impl FnOnce() -> String) -> Declined {
     let envelope = envelope_for(path);
     if decl(envelope).is_some_and(|d| d.has_native_path_not_found) {
@@ -551,7 +544,6 @@ fn bedrock_arrival(
 }
 
 /// The path-model carry: the URL's facts (`model`, `stream`, and when asked the array-stream shim key)
-
 #[must_use]
 pub fn splice_path_facts(
     body: &[u8],
@@ -575,7 +567,6 @@ pub fn splice_path_facts(
 }
 
 /// A path-model arrival's arrival step (the model and the stream flag spliced into the caller's
-
 #[allow(clippy::too_many_arguments)]
 fn path_model_arrival(
     proto: &'static str,

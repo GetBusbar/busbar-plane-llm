@@ -47,7 +47,6 @@ const BEDROCK: &str = "bedrock";
 const BEDROCK_CAP: &str = "/inferenceConfig/maxTokens";
 
 /// The output-cap signal: the dialect's cap key (`max_output_tokens` for responses, `max_tokens` for
-
 #[must_use]
 pub fn max_tokens_for(v: &Value, dialect: &str) -> Option<u32> {
     let key = if dialect == RESPONSES {
@@ -68,7 +67,6 @@ pub fn max_tokens_for(v: &Value, dialect: &str) -> Option<u32> {
 }
 
 /// The facts the operation's reader reads off `arrived`; `Ok(None)` when there is no reader or no
-
 fn facts(arrived: &Arrived) -> Result<Option<Box<dyn IrFacts + Send + Sync>>, Unreadable> {
     let Some(handler) = handler_of(arrived) else {
         return Ok(None);
@@ -194,7 +192,6 @@ fn read_rewrite(rewrite: &[u8]) -> Option<RewriteReply> {
 }
 
 /// Apply a request-stage hook's rewrite to `arrived` in its own dialect: the dialect frames the
-
 pub fn apply_rewrite(arrived: &mut Arrived, rewrite: &[u8]) -> Option<Vec<u8>> {
     let reply = read_rewrite(rewrite)?;
     if reply.messages.is_empty() {
@@ -236,7 +233,6 @@ pub fn apply_rewrite(arrived: &mut Arrived, rewrite: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// The plane's word on a rewrite it did not apply, in the `project` answer's view flags:
-
 #[must_use]
 pub fn rewrite_flags(arrived: &Arrived, rewrite: &[u8], applied: bool) -> u32 {
     if rewrite.is_empty() || applied || arrived.operation == OpVerb::CHAT {

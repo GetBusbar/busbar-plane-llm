@@ -1206,7 +1206,6 @@ impl ProtocolReader for CohereReader {
 }
 
 /// Cohere's usage counts, as data. The raw `tokens` bucket gives the totals; `billed_units` is the
-
 const USAGE: &[UsageCount] = &[
     (
         CountSlot::Input,
@@ -1235,7 +1234,6 @@ const USAGE: &[UsageCount] = &[
 ];
 
 /// A Cohere `usage` / `meta` object (`None` when absent) → the IR usage, through [`USAGE`]. Every
-
 fn read_cohere_usage(
     usage: Option<&serde_json::Value>,
 ) -> Result<crate::codec::ir::IrUsage, IrError> {

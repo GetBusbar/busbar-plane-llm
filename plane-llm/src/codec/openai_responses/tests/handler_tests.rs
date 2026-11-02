@@ -6,7 +6,6 @@
 use super::*;
 
 /// The Responses API serves chat only: `operation_handler` must answer `Some` for `Chat` and
-
 #[test]
 fn operation_handler_serves_chat_only() {
     let h = ResponsesRequestHandler;
@@ -27,7 +26,6 @@ fn operation_handler_serves_chat_only() {
 }
 
 /// `upstream_path` must egress to the REAL `/v1/responses` endpoint — a path-string typo here
-
 #[test]
 fn upstream_path_is_the_real_responses_endpoint() {
     let h = ResponsesRequestHandler;
@@ -47,7 +45,6 @@ fn upstream_path_is_the_real_responses_endpoint() {
 }
 
 /// A request path ending in `/v1/responses` resolves to `Chat`; anything else resolves to
-
 #[test]
 fn resolve_operation_matches_the_responses_path_only() {
     let h = ResponsesRequestHandler;

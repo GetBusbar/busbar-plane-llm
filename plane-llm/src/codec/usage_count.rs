@@ -1,7 +1,6 @@
 //! The one seam every usage/billing count read in this crate goes through.
 
 /// Read a JSON number as an exact, non-negative integer, or `None`. Tries the integer
-
 pub fn read_count_u64(v: &serde_json::Value) -> Option<u64> {
     if let Some(u) = v.as_u64() {
         return Some(u);
@@ -43,7 +42,6 @@ impl std::error::Error for UnreadableCount {}
 const SPELLING_BUDGET: usize = 64;
 
 /// Read one billed count out of a usage object: absent is zero, unreadable is a refusal.
-
 pub fn billed_count(
     usage: &serde_json::Value,
     field: &'static str,
@@ -70,7 +68,6 @@ pub fn billed_count(
 }
 
 /// [`billed_count`] for a count whose absence is distinct from zero (a cache tier, a per-TTL
-
 pub fn billed_count_opt(
     usage: Option<&serde_json::Value>,
     field: &'static str,
@@ -82,7 +79,6 @@ pub fn billed_count_opt(
 }
 
 /// A recorded count (one the ledger notes and never bills): absent or `null` is `Some(0)` (as
-
 pub fn recorded_count(
     usage: &serde_json::Value,
     field: &'static str,
@@ -209,7 +205,6 @@ fn parent<'a>(
 }
 
 /// One optional counter: absent or `null` is `None`, readable is `Some`, unreadable is the
-
 fn opt(
     usage: Option<&serde_json::Value>,
     path: &'static [&'static str],
@@ -219,7 +214,6 @@ fn opt(
 }
 
 /// One billed leaf-operation usage count that is present and unreadable, refused on its own: warned
-
 pub fn refused_count(protocol: &'static str, unreadable: &UnreadableCount) {
     tracing::warn!(
         protocol,
@@ -231,7 +225,6 @@ pub fn refused_count(protocol: &'static str, unreadable: &UnreadableCount) {
 }
 
 /// Attribution is already included in a billed total: an unreadable split stays unknown,
-
 fn recorded_optional(
     protocol: &'static str,
     read: Result<Option<u64>, UnreadableCount>,
@@ -251,7 +244,6 @@ fn recorded_optional(
 }
 
 /// The one usage reader. Walks a dialect's usage table over one wire usage object (`None` when
-
 pub fn read_usage(
     protocol: &'static str,
     usage: Option<&serde_json::Value>,
@@ -353,7 +345,6 @@ pub fn read_usage(
 }
 
 /// Whether [`read_usage`] refused a count of `usage` under `table` (a billed row present, not
-
 #[must_use]
 pub fn refused_any(usage: Option<&serde_json::Value>, table: &[UsageCount]) -> bool {
     table.iter().any(|&(_, read)| match read {
@@ -377,7 +368,6 @@ pub fn refused_any(usage: Option<&serde_json::Value>, table: &[UsageCount]) -> b
 }
 
 /// The stated-total cross-check: the total a provider states beside its itemized counts, against
-
 #[must_use]
 pub fn stated_total_note(
     protocol: &'static str,

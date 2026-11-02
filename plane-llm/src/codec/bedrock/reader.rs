@@ -1131,7 +1131,6 @@ impl ProtocolReader for BedrockReader {
     }
 
     /// `:event-type` is the `type` the reader dispatches on: usage rides only `metadata`, a failure
-
     fn same_proto_reads(&self, event_type: &str, _payload: &[u8]) -> bool {
         matches!(
             event_type,

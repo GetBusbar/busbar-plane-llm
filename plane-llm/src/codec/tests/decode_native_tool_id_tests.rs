@@ -38,7 +38,6 @@ fn uppercase_hex_client_id_passes_through_verbatim() {
 }
 
 /// The memo is an OPTIMIZATION over a pure, deterministic encode, and it is fed from UNTRUSTED
-
 #[test]
 fn memo_is_capped_and_answers_identically_past_the_cap() {
     let mut remap = ToolIdRemap::default();

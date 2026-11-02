@@ -95,7 +95,6 @@ fn anthropic_req(extra: Value) -> Value {
 }
 
 /// OAI-01. The codec writer does NOT pick the spelling blind: a
-
 #[test]
 fn oai01_codec_writes_source_spelling_or_max_tokens() {
     use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
@@ -125,7 +124,6 @@ fn oai01_codec_writes_source_spelling_or_max_tokens() {
 }
 
 /// OAI-04. A Bedrock `toolResult` whose content is `{"json":…}` is written as the serialized JSON
-
 #[test]
 fn oai04_json_tool_result_is_serialized_into_tool_content() {
     let bedrock = json!({
@@ -147,7 +145,6 @@ fn oai04_json_tool_result_is_serialized_into_tool_content() {
 }
 
 /// OAI-10. `xhigh` reaches the IR as the highest effort the IR has (`High`) instead of no ask, and
-
 #[test]
 fn oai10_xhigh_effort_maps_to_high() {
     use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
@@ -176,7 +173,6 @@ fn oai10_xhigh_effort_maps_to_high() {
 }
 
 /// OAI-11. An Anthropic assistant turn carrying only `thinking` is written with `content: ""`,
-
 #[test]
 fn oai11_thinking_only_assistant_turn_is_not_null_content() {
     let body = anthropic_req(json!({
@@ -203,7 +199,6 @@ fn oai11_thinking_only_assistant_turn_is_not_null_content() {
 }
 
 /// Assert the IR stream is strictly balanced: every index opens at most once, every delta lands on
-
 fn assert_balanced(events: &[crate::codec::ir::IrStreamEvent]) {
     use crate::codec::ir::IrStreamEvent as E;
     let mut opened = std::collections::BTreeSet::new();
@@ -262,7 +257,6 @@ fn thinking_deltas(events: &[crate::codec::ir::IrStreamEvent]) -> String {
 }
 
 /// OAI-02. A streamed `delta.annotations` url_citation reaches the IR as a CitationsDelta on the
-
 #[test]
 fn oai02_stream_annotations_become_citations() {
     let chunks = [
@@ -321,7 +315,6 @@ fn a_chat_url_without_an_anthropic_opaque_index_is_an_audited_loss() {
 }
 
 /// OAI-14 (text). Preamble text → tool call → MORE text: the resumed text is carried in a NEW text
-
 #[test]
 fn oai14_text_after_tool_calls_is_carried() {
     let chunks = [
@@ -341,7 +334,6 @@ fn oai14_text_after_tool_calls_is_carried() {
 }
 
 /// OAI-14 (reasoning). Text → reasoning → text: the late reasoning is carried as a Thinking block at
-
 #[test]
 fn oai14_reasoning_after_text_is_carried() {
     let chunks = [
@@ -386,7 +378,6 @@ fn oai_resp(extra: Value) -> Value {
 }
 
 /// OAI-03. OpenAI `service_tier` is read into the IR tier (`default` ↔ `standard`, `priority` ↔
-
 #[test]
 fn oai03_service_tier_maps_both_ways() {
     let out = xresp(
@@ -449,7 +440,6 @@ fn oai03_service_tier_maps_both_ways() {
 }
 
 /// OAI-12. An Anthropic `stop_reason: "refusal"` response reaches an OpenAI client as a native
-
 #[test]
 fn oai12_refusal_text_is_written_to_message_refusal() {
     let anthropic = json!({
@@ -500,7 +490,6 @@ fn oai12_refusal_text_is_written_to_message_refusal() {
 }
 
 /// OAI-08. A legacy `message.function_call` response becomes a tool call for a foreign client
-
 #[test]
 fn oai08_legacy_function_call_response_is_a_tool_use() {
     let body = json!({
@@ -548,7 +537,6 @@ fn oai08_legacy_function_call_response_is_a_tool_use() {
 }
 
 /// OAI-09. A Chat `custom` tool is not turned into an empty-name function tool: cross-protocol it is
-
 #[test]
 fn oai09_custom_tool_is_not_an_empty_name_function() {
     use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
@@ -577,7 +565,6 @@ fn oai09_custom_tool_is_not_an_empty_name_function() {
 }
 
 /// OAI-06. A `file.file_data` sent as BARE base64 (no `data:` prefix) is the file's content, typed
-
 #[test]
 fn oai06_bare_base64_file_data_is_base64() {
     let body = json!({
@@ -624,7 +611,6 @@ fn legacy_request() -> Value {
 }
 
 /// OAI-07. Legacy `functions` / `function_call` / `role:"function"` map onto the modern IR (tools,
-
 #[test]
 fn oai07_legacy_function_calling_request_maps() {
     use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
@@ -682,7 +668,6 @@ fn oai07_legacy_function_calling_request_maps() {
 }
 
 /// OAI-01. A lane that declares `max_output_key:
-
 #[test]
 fn oai01_lane_max_output_key_decides_the_cross_protocol_spelling() {
     use crate::codec::egress_prep::{LaneCaps, MaxOutputKey};

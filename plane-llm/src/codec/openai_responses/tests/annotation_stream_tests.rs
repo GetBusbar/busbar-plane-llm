@@ -51,7 +51,6 @@ fn completed_response() -> serde_json::Value {
 }
 
 /// The native event sequence for `completed_response`, in wire order: the annotation frames arrive
-
 fn stream_events() -> Vec<crate::codec::ir::IrStreamEvent> {
     let item =
         serde_json::json!({"type": "message", "id": "msg_1", "role": "assistant", "content": []});
@@ -201,7 +200,6 @@ fn streamed_responses_annotation_reaches_chat_egress() {
 }
 
 /// An annotation frame for an index with no open text block has nothing to attach to: no orphan
-
 #[test]
 fn annotation_without_open_text_block_emits_nothing() {
     let reader = ResponsesReader;

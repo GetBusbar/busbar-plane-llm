@@ -34,7 +34,6 @@ fn a_request() -> InvokeReqHandle {
 }
 
 /// A handle that does not override the JSON egress write cannot write itself onto ANY dialect, and
-
 #[test]
 fn the_write_default_is_unrepresentable_and_names_the_dialect() {
     let mut handle = a_request();
@@ -56,7 +55,6 @@ fn the_write_default_is_unrepresentable_and_names_the_dialect() {
 }
 
 /// A codec whose read yields a handle that keeps the write default — the shape the translate seam
-
 struct DefaultWriteCodec;
 
 impl OperationHandler for DefaultWriteCodec {
@@ -83,7 +81,6 @@ impl OperationHandler for DefaultWriteCodec {
 }
 
 /// The seam turns the unrepresentable write into the SAME refusal the pre-write representability
-
 #[test]
 fn the_translate_seam_refuses_an_unrepresentable_write() {
     let body = serde_json::json!({"tool": "search"});

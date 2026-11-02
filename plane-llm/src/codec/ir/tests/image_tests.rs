@@ -73,7 +73,6 @@ use busbar_contract::operation::OpVerb;
 use crate::codec::test_host::screened;
 
 /// THE NEW-STRING-FIELD FORCING FUNCTION for `ImageReq`.
-
 #[test]
 fn image_projection_covers_every_text_field() {
     let req = ImageReq {

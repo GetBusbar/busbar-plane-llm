@@ -59,7 +59,6 @@ fn chat_body() -> Value {
 }
 
 /// The previous release's `run`: a one-member pool whose base route policy is a capturing
-
 async fn run(
     send_prompt: bool,
     send_user: bool,
@@ -839,7 +838,6 @@ async fn reject_rides_the_full_forward_path() {
 }
 
 /// The gate's status picks the refusal's kind, rendered in the caller's dialect (here Anthropic's
-
 #[tokio::test]
 async fn reject_kind_mapping_matches_status_semantics() {
     for (status, kind) in [
@@ -1069,7 +1067,6 @@ enum Seat {
 }
 
 /// The chat-completions caller's own spelling of busbar's overloaded 503 kind, read off the plane's
-
 fn overloaded_kind_on_chat_completions() -> String {
 
     struct NoHost;
@@ -1094,7 +1091,6 @@ fn overloaded_kind_on_chat_completions() -> String {
 }
 
 /// One chat-completions request at a two-lane pool with the faulty hook in `seat`: (status, error
-
 async fn fire_faulty(
     seat: Seat,
     fault: Fault,
@@ -1137,11 +1133,6 @@ async fn fire_faulty(
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/gate_policy_503_literals_tests.rs::decision_gate_that_cannot_complete_has_its_own_503_body`
-
-
-
-
-
 #[tokio::test]
 async fn decision_gate_that_cannot_complete_has_its_own_503_body() {
     let (status, kind, message, _) =
@@ -1151,11 +1142,6 @@ async fn decision_gate_that_cannot_complete_has_its_own_503_body() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/gate_policy_503_literals_tests.rs::decision_gate_restriction_leaving_no_lane_has_its_own_503_body`
-
-
-
-
-
 #[tokio::test]
 async fn decision_gate_restriction_leaving_no_lane_has_its_own_503_body() {
     let (status, kind, message, _) = fire_faulty(
@@ -1169,11 +1155,6 @@ async fn decision_gate_restriction_leaving_no_lane_has_its_own_503_body() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/gate_policy_503_literals_tests.rs::base_policy_that_cannot_select_has_its_own_503_body`
-
-
-
-
-
 #[tokio::test]
 async fn base_policy_that_cannot_select_has_its_own_503_body() {
     let (status, kind, message, _) =
@@ -1183,11 +1164,6 @@ async fn base_policy_that_cannot_select_has_its_own_503_body() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/gate_policy_503_literals_tests.rs::base_policy_restriction_leaving_no_lane_has_its_own_503_body`
-
-
-
-
-
 #[tokio::test]
 async fn base_policy_restriction_leaving_no_lane_has_its_own_503_body() {
     let (status, kind, message, _) = fire_faulty(
@@ -1201,12 +1177,6 @@ async fn base_policy_restriction_leaving_no_lane_has_its_own_503_body() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/gate_policy_503_literals_tests.rs::decision_gate_that_cannot_complete_only_refuses_when_declared_load_bearing`
-
-
-
-
-
-
 #[tokio::test]
 async fn decision_gate_that_cannot_complete_only_refuses_when_declared_load_bearing() {
     let (_status, _kind, message, dispatched) =
@@ -1220,12 +1190,6 @@ async fn decision_gate_that_cannot_complete_only_refuses_when_declared_load_bear
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_seam_tests.rs::reject_kind_mapping_matches_status_semantics`
-
-
-
-
-
-
 #[tokio::test]
 async fn reject_kind_mapping_matches_status_semantics_required_hook_unavailable() {
     assert_eq!(busbar_kernel::hooks::REQUIRED_HOOK_UNAVAILABLE_STATUS, 503);
@@ -1293,11 +1257,6 @@ async fn settled_count(tap: &CountingTap) -> usize {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_seam_tests.rs::substrate_fire_stage_taps_honors_group_scope_via_host_seam`
-
-
-
-
-
 #[tokio::test]
 async fn substrate_fire_stage_taps_honors_group_scope_via_host_seam() {
     async fn fired_for(groups_of_caller: &[&str]) -> usize {
@@ -1330,14 +1289,6 @@ async fn substrate_fire_stage_taps_honors_group_scope_via_host_seam() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_seam_tests.rs::unreadable_content_reaches_the_gate_and_is_forwarded`
-
-
-
-
-
-
-
-
 #[tokio::test]
 async fn unreadable_content_reaches_the_gate_and_is_forwarded() {
     let (seen, gate) = capturing(true, false, None);
@@ -1457,13 +1408,6 @@ async fn fire_chat_completions(rig: &Rig, body: &Value) -> crate::rig::Answered 
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/usage_tap_tests.rs::apply_rewrite_to_body_swaps_messages_and_is_fail_safe`
-
-
-
-
-
-
-
 #[tokio::test]
 async fn apply_rewrite_to_body_swaps_messages_and_is_fail_safe() {
     let hook = FixedRewrite::rewriting(
@@ -1526,12 +1470,6 @@ async fn apply_rewrite_to_body_swaps_messages_and_is_fail_safe() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/usage_tap_tests.rs::apply_global_rewrites_chains_in_order`
-
-
-
-
-
-
 #[tokio::test]
 async fn apply_global_rewrites_chains_in_order() {
     async fn chained(first: &'static str, second: &'static str) -> (Value, Vec<(String, String)>) {
@@ -1571,10 +1509,6 @@ async fn apply_global_rewrites_chains_in_order() {
 }
 
 /// LEGACY `crates/busbar-llm/src/unit/tests/approve.rs::with_no_seat_installed_the_step_is_a_no_op_exactly_as_the_live_path_is`
-
-
-
-
 #[tokio::test]
 async fn with_no_seat_installed_the_step_is_a_no_op_exactly_as_the_live_path_is() {
     let rig = Rig::new(one(), None, Hooks::default());
@@ -1602,15 +1536,6 @@ async fn with_no_seat_installed_the_step_is_a_no_op_exactly_as_the_live_path_is(
 }
 
 /// LEGACY `crates/busbar-llm/src/unit/tests/approve.rs::the_first_veto_wins_and_nothing_after_it_is_consulted`
-
-
-
-
-
-
-
-
-
 #[tokio::test]
 async fn the_first_veto_wins_and_nothing_after_it_is_consulted() {
     let vetoing = FixedRewrite::new(
@@ -1652,11 +1577,6 @@ async fn the_first_veto_wins_and_nothing_after_it_is_consulted() {
 }
 
 /// LEGACY `crates/busbar-llm/src/unit/tests/route.rs::completion_tap_fires_once_on_the_walk_and_never_on_a_pre_forward_refusal`
-
-
-
-
-
 #[tokio::test]
 async fn completion_tap_fires_once_on_the_walk_and_never_on_a_pre_forward_refusal() {
     let (tap, entry) = counting_tap(Vec::new());
@@ -1702,15 +1622,6 @@ async fn completion_tap_fires_once_on_the_walk_and_never_on_a_pre_forward_refusa
 }
 
 /// LEGACY `crates/busbar-llm/src/unit/tests/route.rs::completion_tap_carries_response_tokens_out_when_declared`
-
-
-
-
-
-
-
-
-
 #[tokio::test]
 async fn completion_tap_carries_no_response_tokens_out_as_in_1_5_5() {
     async fn tapped(declared: bool) -> Value {
@@ -1743,10 +1654,6 @@ async fn completion_tap_carries_no_response_tokens_out_as_in_1_5_5() {
 }
 
 /// Q128 arch u58 (HIGH): AN AD-HOC ROUTE THAT MISNAMES ITS MODEL'S PROVIDER is refused behind the
-
-
-
-
 #[tokio::test]
 async fn an_adhoc_provider_mismatch_is_judged_behind_the_callers_grant() {
     use busbar_contract::caps::{Outcome, ReasonCode, StepName};

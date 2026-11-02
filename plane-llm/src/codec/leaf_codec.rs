@@ -12,7 +12,6 @@ use busbar_contract::codec::{CodecError, IngressReject, WireBody};
 use bytes::Bytes;
 
 /// One leaf operation's four codec fns in one dialect: the egress request writer, the ingress response
-
 pub struct LeafCodec<Q: 'static, A: 'static> {
     pub write_request: fn(&Q) -> Bytes,
     pub write_response: fn(&A) -> WireBody,
@@ -21,7 +20,6 @@ pub struct LeafCodec<Q: 'static, A: 'static> {
 }
 
 /// A DIALECT'S ROW OF THE LEAF-OP SUPPORT MATRIX, as data: `Some` for each leaf op the dialect
-
 pub struct LeafCodecs {
     pub embeddings: Option<LeafCodec<EmbeddingsReq, EmbeddingsResp>>,
     pub rerank: Option<LeafCodec<RerankReq, RerankResp>>,
@@ -44,7 +42,6 @@ impl LeafCodecs {
 }
 
 /// The `(operation, protocol)` cell: the named dialect's declared codec for the op `pick` selects.
-
 fn cell<Q, A>(
     proto: &str,
     pick: fn(&'static LeafCodecs) -> Option<&'static LeafCodec<Q, A>>,
@@ -53,7 +50,6 @@ fn cell<Q, A>(
 }
 
 /// The write cell for `proto`. An unknown protocol, or one not speaking the op, is `unreachable!`:
-
 fn write_cell<Q, A>(
     proto: &str,
     pick: fn(&'static LeafCodecs) -> Option<&'static LeafCodec<Q, A>>,

@@ -24,7 +24,6 @@ fn req(system: Vec<IrBlock>, messages: Vec<IrMessage>) -> IrRequest {
 }
 
 /// The flat rendering a consumer builds: system text, then one `(role, joined text)` per turn.
-
 fn flatten(r: &IrRequest) -> (Option<String>, Vec<(&'static str, String)>) {
     let items = project(r);
     let sys: Vec<String> = items
@@ -50,7 +49,6 @@ fn flatten(r: &IrRequest) -> (Option<String>, Vec<(&'static str, String)>) {
 }
 
 /// # THE BYPASS THAT MUST NOT REOPEN
-
 #[test]
 fn every_opaque_reasoning_shape_projects_the_marker_and_never_its_payload() {
     let shapes = [
@@ -121,7 +119,6 @@ fn every_opaque_reasoning_shape_projects_the_marker_and_never_its_payload() {
 }
 
 /// Reasoning busbar CAN read is ordinary content and is shown. A client replaying a multi-turn body
-
 #[test]
 fn readable_reasoning_is_projected_as_text() {
     let r = req(
@@ -149,7 +146,6 @@ fn readable_reasoning_is_projected_as_text() {
 }
 
 /// A turn whose every block is structurally text-less still appears. The old contract's LETTER
-
 #[test]
 fn a_turn_with_no_projectable_content_still_appears() {
     let r = req(
@@ -182,7 +178,6 @@ fn a_turn_with_no_projectable_content_still_appears() {
 }
 
 /// Tool-call ARGUMENTS and tool-result CONTENT are projected, attributed to the turn that carried
-
 #[test]
 fn tool_arguments_and_results_carry_the_turn_they_belong_to() {
     let r = req(
@@ -235,7 +230,6 @@ fn tool_arguments_and_results_carry_the_turn_they_belong_to() {
 }
 
 /// The system slot is its own slot, never turn 0, on every dialect — because on the IR there is one
-
 #[test]
 fn the_system_prompt_is_its_own_slot_and_never_a_turn() {
     let r = req(
@@ -253,7 +247,6 @@ fn the_system_prompt_is_its_own_slot_and_never_a_turn() {
 }
 
 /// A request with no system prompt yields no system items at all — "absent" and "present but empty"
-
 #[test]
 fn an_absent_system_prompt_projects_no_system_items() {
     let r = req(Vec::new(), vec![turn(IrRole::User, vec![text("hi")])]);
@@ -262,7 +255,6 @@ fn an_absent_system_prompt_projects_no_system_items() {
 }
 
 /// # THE TRIPWIRE THAT IS NOW A STRUCTURAL FACT
-
 #[test]
 fn text_chars_is_exactly_what_a_content_granted_hook_is_shown() {
     let r = req(
@@ -304,7 +296,6 @@ fn text_chars_is_exactly_what_a_content_granted_hook_is_shown() {
 }
 
 /// The `max_tokens` signal is the READER's normalized value, whatever field the dialect spelled it
-
 #[test]
 fn the_shape_signals_come_from_the_normalized_ir() {
     let r = IrRequest {
@@ -329,14 +320,12 @@ fn the_shape_signals_come_from_the_normalized_ir() {
 }
 
 /// The marker is BYTE-IDENTICAL to the one the raw-body projection substitutes today.
-
 #[test]
 fn opaque_marker_is_byte_identical_to_the_projection_it_replaces() {
     assert_eq!(OPAQUE_CONTENT_MARKER, "[busbar:redacted_reasoning]");
 }
 
 /// Structured tool-result members are content, not silence. A dialect's `{"json": …}`
-
 #[test]
 fn a_structured_tool_result_member_is_projected_as_data() {
     let r = req(
@@ -365,7 +354,6 @@ fn a_structured_tool_result_member_is_projected_as_data() {
 }
 
 /// A cache breakpoint on a block changes nothing about what is projected. Recorded because
-
 #[test]
 fn cache_breakpoints_do_not_change_what_is_projected() {
     let r = req(
@@ -416,7 +404,6 @@ fn screening_digest_distinguishes_authors() {
 }
 
 /// Without length-prefix framing, `("ab","c")` and `("a","bc")` would hash the same concatenated
-
 #[test]
 fn screening_digest_framing_prevents_a_concatenation_collision() {
     let a = ContentItem::Text {
@@ -433,7 +420,6 @@ fn screening_digest_framing_prevents_a_concatenation_collision() {
 }
 
 /// The VARIANT is part of a piece's identity. A `Text` body that happens to equal a `Data`
-
 #[test]
 fn screening_digest_distinguishes_variants_with_identical_text() {
     let value = serde_json::json!({"a": 1});

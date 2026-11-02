@@ -546,7 +546,6 @@ pub(super) fn read_block_with_origin(
 }
 
 /// Whether [`read_block_with_origin`] reads `block_val` into the IR: a kind in [`BLOCK_KINDS`] that carries a
-
 pub(super) fn is_read_into_ir(block_val: &serde_json::Value) -> bool {
     let Some(obj) = block_val.as_object() else {
         return true;
@@ -556,7 +555,6 @@ pub(super) fn is_read_into_ir(block_val: &serde_json::Value) -> bool {
 }
 
 /// Read a content-block array into the IR: every block [`is_read_into_ir`] keeps, in order. A
-
 #[cfg(test)]
 pub(super) fn read_blocks(
     arr: &[serde_json::Value],

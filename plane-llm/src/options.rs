@@ -119,7 +119,6 @@ const fn query(name: &'static str, check: Check) -> WireOption {
 }
 
 /// Anthropic Messages API, `anthropic-version: 2023-06-01`. Docs: <https://docs.anthropic.com/en/api/versioning>
-
 pub const ANTHROPIC: &[WireOption] = &[
     header(
         "anthropic-version",
@@ -129,7 +128,6 @@ pub const ANTHROPIC: &[WireOption] = &[
 ];
 
 /// OpenAI Chat Completions and Responses, and Azure OpenAI, which serves both. Docs:
-
 pub const OPENAI: &[WireOption] = &[
     forced_header("OpenAI-Organization", Check::Token),
     forced_header("OpenAI-Project", Check::Token),
@@ -137,7 +135,6 @@ pub const OPENAI: &[WireOption] = &[
 ];
 
 /// Gemini API (`generativelanguage.googleapis.com` v1beta) and Vertex AI, through Google's API system
-
 pub const GEMINI: &[WireOption] = &[
     forced_header("X-Goog-User-Project", Check::Token),
     header("X-Goog-Quota-User", Check::Text),
@@ -146,7 +143,6 @@ pub const GEMINI: &[WireOption] = &[
 ];
 
 /// Amazon Bedrock runtime: the `InvokeModel` / `InvokeModelWithResponseStream` request headers, which
-
 pub const BEDROCK: &[WireOption] = &[
     invoke_header(
         "X-Amzn-Bedrock-Trace",
@@ -165,7 +161,6 @@ pub const BEDROCK: &[WireOption] = &[
 ];
 
 /// Cohere v2 Chat. Docs: <https://docs.cohere.com/reference/chat> (`X-Client-Name`). `authorization`
-
 pub const COHERE: &[WireOption] = &[header("X-Client-Name", Check::Text)];
 
 /// The options the far end of `dialect` accepts; none for a dialect the plane does not speak.
@@ -182,7 +177,6 @@ pub fn catalogue(dialect: &str) -> &'static [WireOption] {
 }
 
 /// busbar's own provider keys: the kernel's (the destination, the credential and its auth binding,
-
 pub const BUSBAR_KEYS: &[&str] = &[
     "api_key",
     "protocol",
@@ -203,7 +197,6 @@ pub const BUSBAR_KEYS: &[&str] = &[
 ];
 
 /// Credential and auth fields, which no option sets: busbar presents the provider's `api_key`
-
 const CREDENTIALS: &[&str] = &[
     "authorization",
     "proxy-authorization",
@@ -220,7 +213,6 @@ const CREDENTIALS: &[&str] = &[
 ];
 
 /// Hop-by-hop and connection-level fields (RFC 9110 §7.6.1), which the transport writes for each
-
 const HOP_BY_HOP: &[&str] = &[
     "connection",
     "keep-alive",
@@ -250,7 +242,6 @@ pub struct SetOption {
 }
 
 /// The entry on `list` that `key` names: a head field without regard to case, a query parameter
-
 fn find(list: &'static [WireOption], key: &str) -> Option<&'static WireOption> {
     list.iter().find(|o| match o.place {
         Place::Header => o.name.eq_ignore_ascii_case(key),
@@ -365,7 +356,6 @@ pub fn accepted(dialect: &str) -> String {
 }
 
 /// READ ONE PROVIDER'S OPTIONS: every key of its block that is not one of [`BUSBAR_KEYS`],
-
 pub fn read(
     provider: &str,
     dialect: &str,

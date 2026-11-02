@@ -20,7 +20,6 @@ pub fn probe_body(
 }
 
 /// The path a probe of `lane` is sent to, before encoding: the provider's fixed path, else the
-
 #[must_use]
 pub fn probe_path(lane: &Lane) -> String {
     lane.path.clone().unwrap_or_else(|| {

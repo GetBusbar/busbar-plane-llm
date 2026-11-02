@@ -421,7 +421,6 @@ fn test_gemini_read_response_events_function_call() {
 }
 
 /// Helper: split a concatenated OpenAI SSE byte stream into its per-frame JSON chunk objects
-
 fn openai_sse_chunks(bytes: &[u8]) -> Vec<serde_json::Value> {
     let text = std::str::from_utf8(bytes).expect("openai SSE is utf-8");
     let mut chunks = Vec::new();
@@ -441,7 +440,6 @@ fn openai_sse_chunks(bytes: &[u8]) -> Vec<serde_json::Value> {
 }
 
 /// OpenAI per-chunk identity: the real OpenAI API repeats the top-level
-
 #[test]
 fn test_openai_ingress_per_chunk_identity_repeated() {
     let mut t = StreamTranslate::new("openai", "anthropic").expect("openai ingress translator");
@@ -509,7 +507,6 @@ fn test_openai_ingress_per_chunk_identity_repeated() {
 }
 
 /// The OpenAI ingress chunk-identity replay (behind the `StreamFraming`
-
 #[test]
 fn test_openai_ingress_mid_stream_error_envelope_unchanged_by_identity() {
     let mut t = StreamTranslate::new("openai", "anthropic").expect("openai ingress translator");
@@ -566,7 +563,6 @@ fn test_openai_ingress_mid_stream_error_envelope_unchanged_by_identity() {
 }
 
 /// Bedrock messageStop+metadata fan-out (real latencyMs): a bedrock->bedrock stream must
-
 #[test]
 fn test_bedrock_to_bedrock_stream_roundtrips_stop_and_metadata() {
     assert!(
@@ -642,7 +638,6 @@ fn test_bedrock_to_bedrock_stream_roundtrips_stop_and_metadata() {
 }
 
 /// On a BEDROCK-ingress cross-protocol stream the translator's OUTPUT is binary
-
 #[test]
 fn test_bedrock_ingress_ir_usage_carries_real_tokens() {
     let mut t = StreamTranslate::new("bedrock", "openai").expect("bedrock ingress translator");
@@ -681,7 +676,6 @@ fn test_bedrock_ingress_ir_usage_carries_real_tokens() {
 }
 
 /// A Gemini `cachedContent` reference is dropped on the cross-protocol seam (no
-
 #[test]
 fn gemini_cached_content_warns_naming_truncation_and_billing() {
     use busbar_test_kit::warn_capture::WarnCapture;
@@ -755,7 +749,6 @@ fn gemini_cached_content_warns_naming_truncation_and_billing() {
 }
 
 /// Google's `CitationSource.startIndex`/`endIndex` are documented measured in
-
 #[test]
 fn gemini_citation_byte_indices_convert_to_characters() {
     let text = "héllo wörld";
@@ -800,7 +793,6 @@ fn gemini_citation_byte_indices_convert_to_characters() {
 }
 
 /// Writer inverse: `write_gemini_citation`
-
 #[test]
 fn gemini_writer_reemits_char_indices_as_bytes_for_foreign_citations() {
     let text = "héllo wörld";

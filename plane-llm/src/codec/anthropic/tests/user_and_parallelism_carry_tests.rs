@@ -12,7 +12,6 @@ fn tools_json() -> serde_json::Value {
 }
 
 /// OpenAI -> Anthropic: `user` lands as `metadata.user_id`; `parallel_tool_calls: false`
-
 #[test]
 fn openai_user_and_parallel_carry_to_anthropic() {
     let body = serde_json::json!({
@@ -37,7 +36,6 @@ fn openai_user_and_parallel_carry_to_anthropic() {
 }
 
 /// Anthropic -> OpenAI: `metadata.user_id` lands as `user`; `disable_parallel_tool_use: true`
-
 #[test]
 fn anthropic_user_and_parallel_carry_to_openai() {
     let body = serde_json::json!({
@@ -58,7 +56,6 @@ fn anthropic_user_and_parallel_carry_to_openai() {
 }
 
 /// A tool-less request carrying `parallel_tool_calls` must NOT emit the flag on OpenAI egress —
-
 #[test]
 fn parallel_tool_calls_omitted_on_openai_egress_without_tools() {
     let body = serde_json::json!({
@@ -77,7 +74,6 @@ fn parallel_tool_calls_omitted_on_openai_egress_without_tools() {
 }
 
 /// Absence round-trips as absence: a request that never carried either field must not GAIN
-
 #[test]
 fn absence_gains_nothing() {
     let body = serde_json::json!({
@@ -152,7 +148,6 @@ fn parallel_without_directive_synthesizes_auto_only_with_tools() {
 }
 
 /// A NATIVE Anthropic `metadata` object (riding `extra`) beats the promoted carry on the
-
 #[test]
 fn native_metadata_wins_over_promoted_user() {
     let body = serde_json::json!({
@@ -186,7 +181,6 @@ fn enabled_parallelism_survives_both_anthropic_seams() {
 }
 
 /// `/v1/responses` DOES model top-level `parallel_tool_calls`, identically to Chat
-
 #[test]
 fn responses_parallel_tool_calls_round_trips() {
     use super::super::openai_responses::{ResponsesReader, ResponsesWriter};

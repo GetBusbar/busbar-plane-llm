@@ -7,7 +7,6 @@ use super::*;
 use crate::codec::ir::StreamDecodeState;
 
 /// THE TRUNCATED-STREAM RECOVERY PATH. `recover_truncated_usage` parses the trailing `usageMetadata`
-
 #[test]
 fn recover_truncated_usage_reads_float_encoded_counts() {
     let reader = GeminiReader;
@@ -32,7 +31,6 @@ fn recover_truncated_usage_reads_float_encoded_counts() {
 }
 
 /// THE BUFFERED PATH. A native, non-streamed `generateContent` response with every usage field
-
 #[test]
 fn buffered_read_response_reads_float_encoded_counts() {
     let body = serde_json::json!({
@@ -74,7 +72,6 @@ fn buffered_read_response_reads_float_encoded_counts() {
 }
 
 /// THE STREAMING PATH. The identical float-spelled `usageMetadata` on the terminal `finishReason`
-
 #[test]
 fn streaming_terminal_reads_float_encoded_counts() {
     let reader = GeminiReader;
@@ -113,7 +110,6 @@ fn streaming_terminal_reads_float_encoded_counts() {
 }
 
 /// THE ADDITIVE SUM, WITH EXACTLY ONE TERM FLOAT-SPELLED. `gemini_usage` sums four terms into the
-
 #[test]
 fn additive_sum_is_correct_when_exactly_one_term_is_float_spelled() {
     let usage_metadata = serde_json::json!({
@@ -149,7 +145,6 @@ fn additive_sum_is_correct_when_exactly_one_term_is_float_spelled() {
 }
 
 /// AN UNREADABLE IMAGE COUNT IS RECORDED AS UNKNOWN: THE ANSWER IS SERVED, THE COUNT NEVER 0.
-
 #[test]
 fn an_unreadable_image_count_is_recorded_as_unknown_and_the_answer_served() {
     let wire = br#"{"predictions":[{"bytesBase64Encoded":"aGk="}],"usageMetadata":{"promptTokenCount":"27","candidatesTokenCount":5}}"#;
@@ -201,7 +196,6 @@ fn an_unreadable_image_count_is_recorded_as_unknown_and_the_answer_served() {
 }
 
 /// THE TRANSCRIPTION READER REFUSES AN UNREADABLE BILLED COUNT ON ITS OWN (LLM3#6) — reached on
-
 #[test]
 fn an_unreadable_transcription_count_refuses_itself_and_the_transcript_is_served() {
     let wire = br#"{"candidates":[{"content":{"parts":[{"text":"hi"}]}}],"usageMetadata":{"promptTokenCount":[],"candidatesTokenCount":5}}"#;

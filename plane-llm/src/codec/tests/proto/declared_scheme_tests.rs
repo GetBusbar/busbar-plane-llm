@@ -25,7 +25,6 @@ fn presentation(h: &CredentialHeader) -> serde_json::Value {
 }
 
 /// A declared scheme's DATA, in the fixture's spelling (the region function is compared by its
-
 fn describe(scheme: &EgressScheme) -> serde_json::Value {
     match scheme {
         EgressScheme::Static {
@@ -65,7 +64,6 @@ const DECLARED: [&ProtocolDecl; 6] = [
 ];
 
 /// Every dialect in this plane's declaration table declares its egress scheme, and the fixture
-
 #[test]
 fn every_dialect_declaring_a_credential_builder_has_a_declared_twin() {
     let doc = fixture();
@@ -85,7 +83,6 @@ fn every_dialect_declaring_a_credential_builder_has_a_declared_twin() {
 }
 
 /// #83a S2-a: every dialect DECLARES its scheme and carries no builder, so no credential ever passes
-
 #[test]
 fn the_declared_dialects_carry_a_scheme_and_no_builder() {
     let doc = fixture();
@@ -109,7 +106,6 @@ fn the_declared_dialects_carry_a_scheme_and_no_builder() {
 }
 
 /// The signing dialect's region is a declared pure function of the host: it answers every host in the
-
 #[test]
 fn the_declared_region_answers_every_fixture_host() {
     let Some(EgressScheme::SigV4 { region_of_host, .. }) =
@@ -128,7 +124,6 @@ fn the_declared_region_answers_every_fixture_host() {
 }
 
 /// THE STATIC HEADERS: the one dialect whose every request carries a version header declares it —
-
 #[test]
 fn only_the_versioned_dialect_declares_a_static_header() {
     for decl in DECLARED {

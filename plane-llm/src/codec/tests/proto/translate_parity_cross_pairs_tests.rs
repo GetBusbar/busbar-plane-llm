@@ -7,13 +7,11 @@ use super::translate_parity_golden_tests::check_golden;
 use serde_json::{json, Value};
 
 /// The lane wire model stamped on the egress request (mirrors `rewrite_model_if_needed`); shared with
-
 const LANE_MODEL: &str = "gpt-4o-mini";
 /// Fixed epoch handed to `prepare_for_ingress` for the synthesized `created` boundary signal.
 const FIXED_NOW: u64 = 1_752_000_000;
 
 /// The production REQUEST translate steps for an arbitrary `ingress`→`egress` lane, byte-for-byte.
-
 fn translate_request(ingress: &'static str, egress: &str, body: &str) -> Vec<u8> {
     let ingress_p = crate::codec::proto_codec::protocol_for(ingress).expect("ingress protocol");
     let egress_p = crate::codec::proto_codec::protocol_for(egress).expect("egress protocol");
@@ -45,7 +43,6 @@ fn translate_request(ingress: &'static str, egress: &str, body: &str) -> Vec<u8>
 }
 
 /// Shape-assert an ingress-synthesized id at `obj[key]` (`<prefix><base62 tail>`) and normalize it to
-
 fn normalize_id(obj: &mut serde_json::Map<String, Value>, key: &str, prefix: &str) {
     if let Some(id) = obj.get(key).and_then(Value::as_str).map(str::to_owned) {
         assert!(
@@ -61,7 +58,6 @@ fn normalize_id(obj: &mut serde_json::Map<String, Value>, key: &str, prefix: &st
 }
 
 /// Normalize the Cohere response writer's synthesized `id`. Unlike the other ingress writers'
-
 fn normalize_cohere_id(obj: &mut serde_json::Map<String, Value>) {
     if let Some(id) = obj.get("id").and_then(Value::as_str).map(str::to_owned) {
         let b = id.as_bytes();
@@ -87,7 +83,6 @@ fn normalize_cohere_id(obj: &mut serde_json::Map<String, Value>) {
 }
 
 /// Normalize whatever id(s) the given `ingress` response writer synthesizes. The sibling file's
-
 fn normalize_ingress_ids(ingress: &str, out: &mut Value) {
     let Some(obj) = out.as_object_mut() else {
         return;
@@ -137,7 +132,6 @@ fn normalize_ingress_ids(ingress: &str, out: &mut Value) {
 }
 
 /// The production RESPONSE translate steps for an arbitrary `egress`→`ingress` lane, byte-for-byte,
-
 fn translate_response(egress: &str, ingress: &'static str, body: &str) -> Vec<u8> {
     let egress_p = crate::codec::proto_codec::protocol_for(egress).expect("egress protocol");
     let ingress_p = crate::codec::proto_codec::protocol_for(ingress).expect("ingress protocol");
@@ -251,7 +245,6 @@ const RESPONSES_RESPONSE_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// Bedrock Converse REQUEST bodies (client=bedrock): plain, system+inferenceConfig+toolConfig,
-
 const BEDROCK_REQUEST_CORPUS: &[(&str, &str)] = &[
     (
         "plain",
@@ -268,7 +261,6 @@ const BEDROCK_REQUEST_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// Cohere v2 chat REQUEST bodies (client=cohere): plain, sampling+system+tools+tool_choice,
-
 const COHERE_REQUEST_CORPUS: &[(&str, &str)] = &[
     (
         "plain",
@@ -285,7 +277,6 @@ const COHERE_REQUEST_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// Bedrock Converse RESPONSE bodies (backend=bedrock): plain+usage, tool_use, reasoningContent. The
-
 const BEDROCK_RESPONSE_CORPUS: &[(&str, &str)] = &[
     (
         "plain",
@@ -302,7 +293,6 @@ const BEDROCK_RESPONSE_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// Cohere v2 chat RESPONSE bodies (backend=cohere): plain+search_units usage, tool_use, tool_plan
-
 const COHERE_RESPONSE_CORPUS: &[(&str, &str)] = &[
     (
         "plain",
@@ -323,7 +313,6 @@ const COHERE_RESPONSE_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// OpenAI Chat RESPONSE bodies (backend=openai) for the `resp_o2b`/`resp_o2c` writer lanes: plain,
-
 const OPENAI_RESPONSE_CORPUS: &[(&str, &str)] = &[
     (
         "plain",

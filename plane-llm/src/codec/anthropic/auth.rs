@@ -8,7 +8,6 @@ use crate::codec::keys;
 
 impl AnthropicWriter {
     /// Build the native error envelope for a resolved `error.type`. Native bodies carry a top-level
-
     pub(super) fn error_envelope(
         host: &dyn busbar_contract::codec::CodecHost,
         error_type: &str,
@@ -22,7 +21,6 @@ impl AnthropicWriter {
     }
 
     /// The same envelope with the `request_id` supplied (see [`request_id_from_entropy`]), for a
-
     pub fn error_envelope_with_request_id(
         error_type: &str,
         message: &str,

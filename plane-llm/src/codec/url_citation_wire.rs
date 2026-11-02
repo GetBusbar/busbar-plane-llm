@@ -4,7 +4,6 @@
 //! The `url_citation` `annotations` wire to IR-citation mapping shared by the Chat and Responses
 
 /// Build a Responses `annotations` array from the IR citations annotating a span of assistant text
-
 pub fn url_annotations(
     text: &str,
     base: usize,
@@ -30,7 +29,6 @@ pub fn url_annotations(
 }
 
 /// Build a Chat `annotations` array. Same citation rules as [`url_annotations`], different shape:
-
 pub fn chat_url_annotations(
     text: &str,
     base: usize,
@@ -65,7 +63,6 @@ fn citation_title<'a>(c: &'a crate::codec::ir::IrCitation, url: &'a str) -> &'a 
 }
 
 /// Resolve a citation's character span within `text`, shifted by `base`; shared by both shapes so the
-
 pub(crate) fn citation_span(
     text: &str,
     base: usize,
@@ -100,7 +97,6 @@ pub(crate) fn citation_span(
 }
 
 /// Read an OpenAI-family `annotations` array (`url_citation` entries) into IR citations, shared by
-
 pub fn read_url_annotations(annotations: &serde_json::Value) -> Vec<crate::codec::ir::IrCitation> {
     let mut out = Vec::new();
     let Some(arr) = annotations.as_array() else {
@@ -150,7 +146,6 @@ pub fn read_url_annotations(annotations: &serde_json::Value) -> Vec<crate::codec
 }
 
 /// The OpenAI Files API id an IR attachment references, if any (SHR-03). OpenAI Chat
-
 pub fn files_api_id(source: &crate::codec::ir::IrImageSource) -> Option<&str> {
     match source {
         crate::codec::ir::IrImageSource::Vendor { vendor, value }
@@ -166,5 +161,4 @@ pub fn files_api_id(source: &crate::codec::ir::IrImageSource) -> Option<&str> {
 }
 
 /// The `Vendor` tags naming the OpenAI Files namespace (the Chat and Responses readers'), kept in
-
 pub const FILES_API_VENDOR_TAGS: [&str; 2] = ["openai", "responses"];

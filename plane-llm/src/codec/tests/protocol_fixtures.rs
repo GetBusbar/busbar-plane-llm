@@ -12,7 +12,6 @@ use crate::codec::openai_responses::{ResponsesReader, ResponsesWriter};
 
 impl Protocol {
     /// Construct an Anthropic protocol instance — TEST FIXTURE SHIM. The dialect is an extracted
-
     pub fn anthropic() -> Self {
         Self::new(
             PROTO_ANTHROPIC,
@@ -22,31 +21,26 @@ impl Protocol {
     }
 
     /// Construct an OpenAI protocol instance — TEST FIXTURE SHIM, same rationale as
-
     pub fn openai() -> Self {
         Self::new(PROTO_OPENAI, OpenAiReader, OpenAiWriter)
     }
 
     /// Construct a Gemini protocol instance — TEST FIXTURE SHIM, same rationale as
-
     pub fn gemini() -> Self {
         Self::new(PROTO_GEMINI, GeminiReader, GeminiWriter)
     }
 
     /// Construct an OpenAI Responses protocol instance — TEST FIXTURE SHIM, same rationale as
-
     pub fn responses() -> Self {
         Self::new(PROTO_RESPONSES, ResponsesReader, ResponsesWriter)
     }
 
     /// Construct a Bedrock protocol instance — TEST FIXTURE SHIM, same rationale as
-
     pub fn bedrock() -> Self {
         Self::new(PROTO_BEDROCK, BedrockReader, BedrockWriter)
     }
 
     /// Construct a Cohere (v2 chat) protocol instance — TEST FIXTURE SHIM, same rationale as
-
     pub fn cohere() -> Self {
         Self::new(PROTO_COHERE, CohereReader, CohereWriter)
     }

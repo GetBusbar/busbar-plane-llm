@@ -6,7 +6,6 @@
 use super::*;
 
 /// `bedrock/request/inferenceConfig.stopSequences` — Bedrock nests stop sequences under
-
 #[test]
 fn bedrock_carry_request_stop_sequences() {
     let reader = BedrockReader;
@@ -31,7 +30,6 @@ fn bedrock_carry_request_stop_sequences() {
 }
 
 /// `bedrock/request/toolConfig.tools` and `bedrock/request/toolConfig.toolChoice` — the tool
-
 #[test]
 fn bedrock_carry_request_tool_config() {
     let reader = BedrockReader;
@@ -87,7 +85,6 @@ fn bedrock_carry_request_tool_config() {
 }
 
 /// `bedrock/request/content[].toolUse.{toolUseId,name,input}` — an assistant turn's tool call must
-
 #[test]
 fn bedrock_carry_request_tool_use() {
     let reader = BedrockReader;
@@ -139,7 +136,6 @@ fn bedrock_carry_request_tool_use() {
 }
 
 /// `bedrock/request/content[].toolResult.{toolUseId,content,status}` — a tool result must reach
-
 #[test]
 fn bedrock_carry_request_tool_result() {
     let reader = BedrockReader;
@@ -198,7 +194,6 @@ fn bedrock_carry_request_tool_result() {
 }
 
 /// `bedrock/request/content[].reasoningContent.reasoningText.{text,signature}` and
-
 #[test]
 fn bedrock_carry_request_reasoning_content() {
     let reader = BedrockReader;
@@ -265,7 +260,6 @@ fn bedrock_carry_request_reasoning_content() {
 }
 
 /// `bedrock/request/additionalModelRequestFields` — the model-specific escape hatch. Captured
-
 #[test]
 fn bedrock_carry_request_additional_model_request_fields() {
     let reader = BedrockReader;
@@ -291,7 +285,6 @@ fn bedrock_carry_request_additional_model_request_fields() {
 }
 
 /// Bedrock-specific request members with no cross-protocol analog, each captured into `extra` and
-
 #[test]
 fn bedrock_carry_request_verbatim_extras() {
     let reader = BedrockReader;
@@ -329,7 +322,6 @@ fn bedrock_carry_request_verbatim_extras() {
 }
 
 /// `bedrock/request/content[].image.source.s3Location` — an S3-referenced image (no inline bytes).
-
 #[test]
 fn bedrock_carry_request_image_s3_location() {
     let reader = BedrockReader;
@@ -356,7 +348,6 @@ fn bedrock_carry_request_image_s3_location() {
 }
 
 /// `bedrock/request/content[].document.source.s3Location`, `.document.citations`, `.document.context`
-
 #[test]
 fn bedrock_carry_request_document_provider_fields() {
     let reader = BedrockReader;
@@ -407,7 +398,6 @@ fn bedrock_carry_request_document_provider_fields() {
 }
 
 /// `bedrock/request/content[].video.source.s3Location` — a Converse `video` block with an S3 source.
-
 #[test]
 fn bedrock_carry_request_video_s3_location() {
     let reader = BedrockReader;
@@ -429,7 +419,6 @@ fn bedrock_carry_request_video_s3_location() {
 }
 
 /// `bedrock/request/content[].cachePoint.type` — an inline prompt-cache breakpoint. The native
-
 #[test]
 fn bedrock_carry_request_cache_point() {
     let reader = BedrockReader;
@@ -457,7 +446,6 @@ fn bedrock_carry_request_cache_point() {
 }
 
 /// `bedrock/request/content[].guardContent` — an inline Guardrails span. Bedrock-specific; captured
-
 #[test]
 fn bedrock_carry_request_guard_content() {
     let reader = BedrockReader;
@@ -486,7 +474,6 @@ fn bedrock_carry_request_guard_content() {
 }
 
 /// `bedrock/response/output.message.role`, `bedrock/response/output.message.content` and
-
 #[test]
 fn bedrock_carry_response_output_and_stop_reason() {
     let reader = BedrockReader;
@@ -545,7 +532,6 @@ fn bedrock_carry_response_output_and_stop_reason() {
 }
 
 /// `bedrock/response/usage.{inputTokens,outputTokens,totalTokens,cacheReadInputTokens,
-
 #[test]
 fn bedrock_carry_response_usage() {
     let reader = BedrockReader;
@@ -615,7 +601,6 @@ fn bedrock_carry_response_usage() {
 }
 
 /// `bedrock/response/metrics.latencyMs` — a native Converse response always carries the request
-
 #[test]
 fn bedrock_carry_response_metrics_latency_ms() {
     let writer = BedrockWriter;
@@ -653,7 +638,6 @@ fn bedrock_carry_response_metrics_latency_ms() {
 }
 
 /// `bedrock/response/trace.guardrail` and `bedrock/response/trace.promptRouter` — Bedrock-only
-
 #[test]
 fn bedrock_carry_response_trace_documented_drop() {
     let reader = BedrockReader;
@@ -689,7 +673,6 @@ fn bedrock_carry_response_trace_documented_drop() {
 }
 
 /// Bedrock response members with no neutral-IR carrier. DOCUMENTED cross-protocol drop; the
-
 #[test]
 fn bedrock_carry_response_documented_drops() {
     let reader = BedrockReader;
@@ -722,7 +705,6 @@ fn bedrock_carry_response_documented_drops() {
 }
 
 /// `bedrock/response/stream:{messageStart,contentBlockStart,contentBlockDelta,contentBlockStop,
-
 #[test]
 fn bedrock_carry_stream_frame_types() {
     use crate::codec::ir::{IrDelta, IrStreamEvent};

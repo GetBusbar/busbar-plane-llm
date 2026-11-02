@@ -27,7 +27,6 @@ fn response_roundtrip(body: serde_json::Value) -> serde_json::Value {
 }
 
 /// A rich Cohere v2 request exercising every request member the gate enumerates. Callers assert on
-
 fn rich_request() -> serde_json::Value {
     json!({
         "model": "command-r-plus",
@@ -77,7 +76,6 @@ fn rich_request() -> serde_json::Value {
 }
 
 /// The assistant message the writer emits carrying `tool_calls` (the 3rd inbound message: index 3 on
-
 fn find_message<'a>(
     out: &'a serde_json::Value,
     role: &str,
@@ -92,7 +90,6 @@ fn find_message<'a>(
 }
 
 /// Watches: `messages[].role`, `messages[].content`, `content[].type=text.text`,
-
 #[test]
 fn cohere_request_messages_and_tools_survive_roundtrip() {
     let out = request_roundtrip(rich_request());
@@ -165,7 +162,6 @@ fn cohere_request_messages_and_tools_survive_roundtrip() {
 }
 
 /// Watches: `max_tokens`, `stop_sequences`, `temperature`, `seed`, `frequency_penalty`,
-
 #[test]
 fn cohere_request_sampling_controls_survive_roundtrip() {
     let out = request_roundtrip(rich_request());
@@ -201,7 +197,6 @@ fn cohere_request_sampling_controls_survive_roundtrip() {
 }
 
 /// Watches: `citation_options`, `safety_mode`, `strict_tools` — Cohere-specific request members with
-
 #[test]
 fn cohere_request_provider_specific_survive_same_proto() {
     let out = request_roundtrip(rich_request());
@@ -222,7 +217,6 @@ fn cohere_request_provider_specific_survive_same_proto() {
 }
 
 /// Watches: `model`. The chat `model` is NOT carried by the reader/writer pair — it is stamped onto
-
 #[test]
 fn cohere_request_model_is_stamped_by_routing_lane() {
     let mut body = request_roundtrip(rich_request());
@@ -283,7 +277,6 @@ fn cohere_response_identity_and_tool_calls_survive_roundtrip() {
 }
 
 /// Watches: `usage.billed_units.input_tokens`, `usage.billed_units.output_tokens`,
-
 #[test]
 fn cohere_response_billed_units_survive_roundtrip() {
     let out = response_roundtrip(json!({
@@ -312,7 +305,6 @@ fn cohere_response_billed_units_survive_roundtrip() {
 }
 
 /// Watches: `response/logprobs`. Cohere v2 response logprobs map to the neutral per-span entries
-
 #[test]
 fn cohere_response_logprobs_drop_is_warned() {
     let body = json!({
@@ -367,7 +359,6 @@ fn stream_usage() -> crate::codec::ir::IrUsage {
 }
 
 /// Watches: `stream:message-start`, `stream:content-start`, `stream:content-delta`,
-
 #[test]
 fn cohere_stream_events_reach_a_cohere_client() {
     use crate::codec::ir::{IrBlockMeta, IrDelta, IrRole, IrStreamEvent};
@@ -484,7 +475,6 @@ fn cohere_stream_events_reach_a_cohere_client() {
 }
 
 /// Watches: `stream:citation-end`. Cohere natively brackets each citation with a `citation-start`
-
 #[test]
 fn cohere_stream_citation_end_pairs_with_start() {
     use crate::codec::ir::{IrCitation, IrDelta, IrStreamEvent};

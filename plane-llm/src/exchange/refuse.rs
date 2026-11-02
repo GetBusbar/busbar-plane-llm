@@ -101,7 +101,6 @@ fn kind_of_status(status: u16) -> &'static str {
 }
 
 /// The kind a hook's refusal wears, by the status the hook chose (the previous release's
-
 #[must_use]
 pub fn gate_kind(status: u16) -> &'static str {
     match status {
@@ -116,7 +115,6 @@ pub fn gate_kind(status: u16) -> &'static str {
 }
 
 /// RENDER A HOOK'S REFUSAL in `envelope`'s dialect: the hook's own status and words, as the
-
 #[must_use]
 pub fn gate_refusal(
     host: &dyn busbar_contract::codec::CodecHost,
@@ -128,7 +126,6 @@ pub fn gate_refusal(
 }
 
 /// The sentence the previous release answered a model with when it named no pool and no configured
-
 #[must_use]
 pub fn model_not_found(model: &str, shaped: Option<&str>) -> String {
     shaped.map_or_else(
@@ -138,13 +135,11 @@ pub fn model_not_found(model: &str, shaped: Option<&str>) -> String {
 }
 
 /// Whether a reason is an authentication refusal (its class is `Unauthenticated`): those answer in
-
 fn is_authentication(reason: &str) -> bool {
     class_of_word(reason) == Some(RefusalClass::Unauthenticated)
 }
 
 /// RENDER A KERNEL REFUSAL in `envelope`'s dialect: `reason` is the reason's code on the plane ABI,
-
 #[must_use]
 pub fn kernel_refusal(
     host: &dyn busbar_contract::codec::CodecHost,

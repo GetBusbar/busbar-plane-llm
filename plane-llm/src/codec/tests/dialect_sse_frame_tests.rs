@@ -4,7 +4,6 @@ use super::*;
 use busbar_contract::protocol::find_frame_terminator;
 
 /// The event-stream grammar names three line terminators — CRLF, a lone LF, a lone CR — and a
-
 #[test]
 fn every_spec_line_terminator_pairing_ends_a_frame() {
     assert_eq!(find_frame_terminator(b"data: a\r\rrest"), Some((7, 2)));
@@ -26,7 +25,6 @@ fn every_spec_line_terminator_pairing_ends_a_frame() {
 }
 
 /// `parse_sse_frame` used `str::lines()`, which does not split on a bare CR — a bare-CR frame
-
 #[test]
 fn parse_sse_frame_splits_on_bare_cr() {
     assert_eq!(
@@ -49,7 +47,6 @@ fn parse_sse_frame_splits_on_bare_cr() {
 }
 
 /// The cheap `event:`-name probe split on LF alone, so a bare-CR frame came back as the WHOLE
-
 #[test]
 fn sse_event_type_splits_on_bare_cr() {
     assert_eq!(

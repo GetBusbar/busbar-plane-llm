@@ -175,7 +175,6 @@ fn gemini_service_tier_and_store_cross_both_ways() {
 }
 
 /// Gemini -> Gemini through the IR keeps the caller's exact `serviceTier`, a word the slot cannot
-
 #[test]
 fn gemini_service_tier_same_dialect_keeps_the_raw_word() {
     for tier in ["standard", "unspecified"] {

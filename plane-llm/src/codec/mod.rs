@@ -144,7 +144,6 @@ pub mod proto_stream;
 pub mod wire_shim;
 
 /// This plane's own declaration of `name`, read off [`DECLS`]. Every codec lookup by dialect name
-
 #[must_use]
 pub fn decl_of(name: &str) -> Option<&'static busbar_contract::protocol::ProtocolDecl> {
     DECLS.iter().copied().find(|d| d.name == name)
@@ -157,7 +156,6 @@ mod codec_host_tests;
 #[path = "tests/dialect_classify.rs"]
 pub(crate) mod dialect_classify;
 /// This crate's test host (the host and the classifier are dev-only): the codec host a shipped
-
 #[cfg(test)]
 #[path = "tests/test_host.rs"]
 pub(crate) mod test_host;
@@ -166,7 +164,6 @@ pub(crate) mod test_host;
 pub(crate) mod usage_census;
 
 /// Every dialect this plugin declares, in operator-visible order.
-
 pub(crate) const DIALECTS: &[&proto_codec::DialectEntry] = &[
     &anthropic::ENTRY,
     &openai_chat::ENTRY,
@@ -177,7 +174,6 @@ pub(crate) const DIALECTS: &[&proto_codec::DialectEntry] = &[
 ];
 
 /// Every registered dialect's declaration, in [`DIALECTS`] order (the operator-visible order
-
 pub static DECLS: &[&busbar_contract::protocol::ProtocolDecl] = &decls::<{ DIALECTS.len() }>();
 
 /// [`DIALECTS`]' declarations as an array, evaluated at compile time.
@@ -204,7 +200,6 @@ mod decode_native_tool_id_tests;
 mod leaf_write_dispatch_tests;
 
 /// The cache-tier read tests, anchored to real recorded upstream bodies under
-
 #[cfg(test)]
 #[path = "tests/cache_tier_capture_tests.rs"]
 mod cache_tier_capture_tests;
@@ -214,13 +209,11 @@ mod cache_tier_capture_tests;
 mod image_detail_warn_tests;
 
 /// The codec/IR test suites: the detection, translate-parity, streaming, round-trip and IR goldens
-
 #[cfg(test)]
 #[path = "tests/proto/mod.rs"]
 mod relocated_proto_tests;
 
 /// The bedrock buffered-response to ConverseStream eventstream synthesis suite, driving the
-
 #[cfg(test)]
 #[path = "tests/bedrock_eventstream_tests.rs"]
 mod bedrock_eventstream_tests;
@@ -245,7 +238,6 @@ mod parked_rows_cross_dialect_tests;
 mod carry_probe_tests;
 
 /// The usage-tap count pin: every same-protocol tap fault counts once on the host's counter, under
-
 #[cfg(test)]
 #[path = "tests/usage_tap_count_tests.rs"]
 mod usage_tap_count_tests;

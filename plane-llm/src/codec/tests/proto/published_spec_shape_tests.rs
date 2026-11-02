@@ -7,7 +7,6 @@ use super::*;
 use crate::codec::ir::{IrBlock, IrResponse, IrTokenLogprob, IrUsage};
 
 /// A minimal assistant response carrying `text`, the given stop reason and the given logprobs —
-
 fn resp(
     stop_reason: Option<crate::codec::ir::IrStopReason>,
     logprobs: Vec<IrTokenLogprob>,
@@ -27,7 +26,6 @@ fn resp(
 }
 
 /// PUBLISHED OPENAI SPEC (`openai/openai-openapi` `openapi.yaml`, the pinned commit):
-
 #[test]
 fn openai_logprobs_object_carries_the_required_refusal_member() {
     let lps = vec![IrTokenLogprob {
@@ -51,7 +49,6 @@ fn openai_logprobs_object_carries_the_required_refusal_member() {
 }
 
 /// The Responses writer LIFTS the `content` array out of the Chat logprobs object for an
-
 #[test]
 fn responses_part_logprobs_stay_a_bare_array_after_the_refusal_member_lands() {
     let ir = resp(
@@ -81,7 +78,6 @@ fn responses_part_logprobs_stay_a_bare_array_after_the_refusal_member_lands() {
 }
 
 /// PUBLISHED OPENAI SPEC: `CreateChatCompletionResponse.choices[]` declares
-
 #[test]
 fn buffered_openai_choice_finish_reason_is_never_null() {
     let ir = resp(None, Vec::new(), "oracle-marker");
@@ -98,7 +94,6 @@ fn buffered_openai_choice_finish_reason_is_never_null() {
 }
 
 /// The STREAM chunk schema keeps `nullable: true` on `finish_reason`, so the non-final chunks must
-
 #[test]
 fn streamed_openai_chunk_finish_reason_stays_nullable() {
     let writer = openai_chat::OpenAiWriter;
@@ -120,7 +115,6 @@ fn streamed_openai_chunk_finish_reason_stays_nullable() {
 }
 
 /// PUBLISHED ANTHROPIC SPEC (the Stainless-published OpenAPI document the official SDK pins in
-
 #[test]
 fn anthropic_image_block_start_emits_no_frame() {
     let writer = AnthropicWriter;
@@ -150,7 +144,6 @@ fn anthropic_image_block_start_emits_no_frame() {
 }
 
 /// A TEXT block's start/stop pair must stay intact once the open-index guard exists — the guard
-
 #[test]
 fn anthropic_text_block_start_stop_pair_survives_the_guard() {
     let writer = AnthropicWriter;
@@ -183,7 +176,6 @@ fn anthropic_text_block_start_stop_pair_survives_the_guard() {
 }
 
 /// A REDACTED thinking block emits its start LATE — from the delta that carries the opaque bytes,
-
 #[test]
 fn anthropic_redacted_thinking_block_stop_follows_the_written_start() {
     let writer = AnthropicWriter;
@@ -248,7 +240,6 @@ fn anthropic_redacted_thinking_block_stop_follows_the_written_start() {
 }
 
 /// PUBLISHED ANTHROPIC SPEC: `ErrorResponse.error` is discriminated on `type` over exactly nine
-
 #[test]
 fn anthropic_error_type_stays_inside_the_published_union() {
     let writer = AnthropicWriter;
@@ -288,7 +279,6 @@ fn anthropic_error_type_stays_inside_the_published_union() {
 }
 
 /// PUBLISHED OPENAI SPEC: `FunctionToolCall` (the Responses `function_call` output item) declares
-
 #[test]
 fn responses_output_item_added_seeds_the_required_arguments_member() {
     let writer = openai_responses::ResponsesWriter;

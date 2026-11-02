@@ -7,7 +7,6 @@ use super::super::proto_codec::Protocol;
 use serde_json::json;
 
 /// The `generationConfig` sampling knobs are each promoted into a typed IR field on read and
-
 #[test]
 fn gemini_request_sampling_knobs_survive() {
     let body = json!({
@@ -76,7 +75,6 @@ fn gemini_request_logprobs_ask_survives() {
 }
 
 /// Structured output: `responseMimeType` + `responseSchema` normalize into the IR response_format
-
 #[test]
 fn gemini_request_response_format_survives() {
     let schema = json!({"type": "object", "properties": {"x": {"type": "string"}}});
@@ -112,7 +110,6 @@ fn gemini_request_response_format_survives() {
 }
 
 /// The thinking ask `generationConfig.thinkingConfig.thinkingBudget` reaches the IR reasoning
-
 #[test]
 fn gemini_request_thinking_budget_survives() {
     let body = json!({
@@ -190,7 +187,6 @@ fn gemini_request_tools_survive() {
 }
 
 /// `toolConfig.functionCallingConfig` → IR tool_choice → re-emitted (the raw toolConfig also rides
-
 #[test]
 fn gemini_request_tool_config_survives() {
     let body = json!({
@@ -218,7 +214,6 @@ fn gemini_request_tool_config_survives() {
 }
 
 /// `safetySettings`, `labels`, and the unmodeled `generationConfig` sub-fields
-
 #[test]
 fn gemini_request_provider_specific_fields_survive_same_proto() {
     let safety = json!([{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"}]);
@@ -290,7 +285,6 @@ fn gemini_request_provider_specific_fields_survive_same_proto() {
 }
 
 /// Every representable `parts[]` construct survives read → write: text, a `thought` reasoning part
-
 #[test]
 fn gemini_request_content_parts_survive() {
     let body = json!({
@@ -402,7 +396,6 @@ fn gemini_request_content_parts_survive() {
 }
 
 /// `parts[].executableCode` and `parts[].codeExecutionResult` are the code-interpreter tool's
-
 #[test]
 fn gemini_code_execution_parts_drop_cross_proto_without_corruption() {
     let req = json!({
@@ -454,7 +447,6 @@ fn gemini_code_execution_parts_drop_cross_proto_without_corruption() {
 }
 
 /// `candidates[].content`, `candidates[].finishReason`, top-level `modelVersion` and `responseId`
-
 #[test]
 fn gemini_response_core_fields_survive() {
     let body = json!({
@@ -499,7 +491,6 @@ fn gemini_response_core_fields_survive() {
 }
 
 /// `candidates[].citationMetadata` re-emits same-protocol, and `candidates[].groundingMetadata`
-
 #[test]
 fn gemini_response_citations_survive() {
     let cited = json!({
@@ -613,7 +604,6 @@ fn gemini_response_logprobs_result_survives() {
 }
 
 /// `usageMetadata.cachedContentTokenCount` (→ cache_read) and `usageMetadata.toolUsePromptTokenCount`
-
 #[test]
 fn gemini_response_usage_buckets_survive() {
     let body = json!({
@@ -664,7 +654,6 @@ fn gemini_response_usage_buckets_survive() {
 }
 
 /// `promptFeedback.blockReason` (a prompt-level content block, no candidates) reaches the IR as a
-
 #[test]
 fn gemini_response_prompt_feedback_block_reason_survives() {
     let body = json!({
@@ -687,7 +676,6 @@ fn gemini_response_prompt_feedback_block_reason_survives() {
 }
 
 /// The provider-specific response fields have no cross-protocol home, so they are carried as a
-
 #[test]
 fn gemini_response_provider_specific_fields_drop_cross_proto_without_corruption() {
     let body = json!({
@@ -745,7 +733,6 @@ fn gemini_response_provider_specific_fields_drop_cross_proto_without_corruption(
 }
 
 /// `usageMetadata.trafficType` (ON_DEMAND vs PROVISIONED) reaches the IR's usage-detail attribution
-
 #[test]
 fn gemini_vertex_traffic_type_survives() {
     let body = json!({
@@ -789,7 +776,6 @@ fn gemini_vertex_traffic_type_survives() {
 }
 
 /// The top-level `createTime` (RFC3339) reaches the IR's usage-detail carrier (see
-
 #[test]
 fn gemini_vertex_create_time_survives() {
     let body = json!({
@@ -821,7 +807,6 @@ fn gemini_vertex_create_time_survives() {
 }
 
 /// `groundingMetadata.groundingChunks[].web.domain` reaches the IR (stashed in `IrCitation::raw` —
-
 #[test]
 fn gemini_vertex_grounding_chunk_domain_survives() {
     let body = json!({

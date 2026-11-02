@@ -15,7 +15,6 @@ fn req_with_format(rf: IrResponseFormat) -> crate::codec::ir::IrRequest {
 }
 
 /// ONE typed directive, projected by EVERY native-structured-output writer, must land in THAT
-
 #[test]
 fn every_writer_emits_its_native_shape() {
     let schema = serde_json::json!({"type":"object","properties":{"x":{"type":"string"}}});
@@ -89,7 +88,6 @@ fn every_writer_emits_its_native_shape() {
 }
 
 /// And the read side: each protocol's NATIVE structured-output request canonicalizes into the
-
 #[test]
 fn every_reader_canonicalizes_to_typed_ir() {
     let oi = OpenAiReader
@@ -143,7 +141,6 @@ fn req_with_tool_choice_no_tools() -> crate::codec::ir::IrRequest {
 }
 
 /// A `tool_choice` with NO accompanying `tools` is a guaranteed 400 on every vendor that models the
-
 #[test]
 fn tool_choice_without_tools_is_omitted_on_every_writer() {
     use busbar_test_kit::warn_capture::WarnCapture;
@@ -224,7 +221,6 @@ fn req_with_stop(stop: Vec<String>) -> crate::codec::ir::IrRequest {
 }
 
 /// The IR's `stop` is an unbounded `Vec<String>` (no protocol enforces a cap on ingress), so a
-
 #[test]
 fn stop_sequences_clamped_per_vendor_cap() {
     let stops: Vec<String> = (0..8).map(|i| format!("STOP{i}")).collect();
@@ -278,7 +274,6 @@ fn stop_sequences_clamped_per_vendor_cap() {
 }
 
 /// Egress: an OpenAI/Anthropic caller who DID set `parallel_tool_calls` and routes to
-
 #[test]
 fn parallel_tool_calls_discarded_on_gemini_cohere_bedrock_warns() {
     use busbar_test_kit::warn_capture::WarnCapture;
@@ -396,7 +391,6 @@ fn openai_to_cohere_exactly_cap_stop_sequences_are_forwarded_whole() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/stop_sequence_cap_degrade_tests.rs::openai_to_gemini_over_cap_stop_sequences_is_clamped_not_rejected`:
-
 #[test]
 fn openai_to_gemini_over_cap_stop_sequences_are_clamped_not_rejected() {
     let out = rehome_xreq(
@@ -416,7 +410,6 @@ fn openai_to_gemini_over_cap_stop_sequences_are_clamped_not_rejected() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/stop_sequence_cap_degrade_tests.rs::anthropic_to_openai_over_cap_stop_sequences_is_clamped_not_rejected`:
-
 #[test]
 fn anthropic_to_openai_over_cap_stop_sequences_are_clamped_not_rejected() {
     let out = rehome_xreq(

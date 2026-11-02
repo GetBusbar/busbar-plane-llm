@@ -35,7 +35,6 @@ fn translate(ingress: &str, egress: &str, body: &Value) -> (Vec<String>, WarnCap
 }
 
 /// Translate the far end's answer `body` (`egress`) for a caller of `ingress`: the audit rows and
-
 fn answer(egress: &str, ingress: &str, body: &Value) -> (Vec<String>, WarnCapture) {
     let _ = protocol_for(egress);
     let ctx = crate::exchange::reply::whole::WholeCtx {
@@ -67,7 +66,6 @@ fn warn_of(cap: &WarnCapture, path: &str, text: &str) -> Option<String> {
 }
 
 /// The writer's drop is audited as `path` and warned once on the drop path with `diag`, keeping the
-
 fn on_the_drop_path(audited: &[String], cap: &WarnCapture, path: &str, diag: &str, text: &str) {
     assert!(
         audited.iter().any(|a| a == path),
@@ -92,7 +90,6 @@ fn on_the_drop_path(audited: &[String], cap: &WarnCapture, path: &str, diag: &st
 }
 
 /// A Gemini caller's reasoning-off ask (`thinkingBudget: 0`), which carries no ask across dialects
-
 #[test]
 fn a_request_member_drop_is_named_by_the_callers_row() {
     let (audited, cap) = translate(
@@ -111,7 +108,6 @@ fn a_request_member_drop_is_named_by_the_callers_row() {
 }
 
 /// anthropic writer: a Responses caller's `input_image` by OpenAI `file_id` has no Anthropic source,
-
 #[test]
 fn a_request_block_drop_is_named_by_the_callers_block_container() {
     let (audited, cap) = translate(
@@ -138,7 +134,6 @@ fn a_request_block_drop_is_named_by_the_callers_block_container() {
 }
 
 /// openai_chat response writer: an Anthropic answer's thinking block has no Chat completion field,
-
 #[test]
 fn an_answer_drop_is_named_by_the_far_ends_block_container() {
     let (audited, cap) = answer(
@@ -230,7 +225,6 @@ fn responses_writer_drop_is_on_the_drop_path() {
 }
 
 /// Outside a TRANSLATE attempt (a direct writer call) the writer's own warn is said unchanged, with
-
 #[test]
 fn outside_an_attempt_the_writers_own_warn_is_said() {
     use crate::codec::proto_codec::ProtocolWriter as _;
@@ -253,7 +247,6 @@ fn outside_an_attempt_the_writers_own_warn_is_said() {
 }
 
 /// The caller's request is refused by its own dialect's reader: the seam answers in that
-
 fn refused_natively(ingress: &str, egress: &str, body: &Value) {
     let _ = protocol_for(ingress);
     let handler = crate::codec::decl_of(ingress)
@@ -288,7 +281,6 @@ fn anthropic_image(media_type: Value) -> Value {
 }
 
 /// Bedrock writer: an image whose media type is outside Converse's `ImageFormat` union is DROPPED
-
 #[test]
 fn bedrock_drops_an_image_format_it_has_no_member_for_never_png() {
     let (wire, audited, cap) =
@@ -331,7 +323,6 @@ fn bedrock_carries_an_image_format_that_maps() {
 }
 
 /// Wrong-typed `media_type` (a mapped field) is Anthropic's own 400, not an image read as `""`
-
 #[test]
 fn a_wrong_typed_image_media_type_is_the_callers_error() {
     refused_natively("anthropic", "bedrock", &anthropic_image(json!(5)));
@@ -348,7 +339,6 @@ fn gemini_budget(budget: Value) -> Value {
 }
 
 /// Gemini's "the model decides" (`thinkingBudget: -1`) has no OpenAI form: DROPPED on the drop
-
 #[test]
 fn a_gemini_dynamic_budget_is_dropped_never_replaced_by_medium() {
     for (egress, member, text) in [
@@ -384,7 +374,6 @@ fn a_gemini_dynamic_budget_is_dropped_never_replaced_by_medium() {
 }
 
 /// A Gemini budget that maps is carried: a positive count bucketizes onto OpenAI's word, and
-
 #[test]
 fn a_gemini_budget_that_maps_is_carried() {
     let (wire, audited, _) = translate_body("gemini", "openai", &gemini_budget(json!(16384)));
@@ -405,7 +394,6 @@ fn a_gemini_budget_that_maps_is_carried() {
 }
 
 /// Wrong-typed `thinkingBudget` (a mapped field) is Gemini's own 400, never silently left out
-
 #[test]
 fn a_wrong_typed_gemini_budget_is_the_callers_error() {
     for bad in [
@@ -489,7 +477,6 @@ fn a_request_readers_unknown_modality_is_on_the_drop_path() {
 }
 
 /// An ANSWER reader's drop: audited as `path` and warned once on the drop path with `diag`. (The
-
 fn on_the_answer_drop_path(
     audited: &[String],
     cap: &WarnCapture,

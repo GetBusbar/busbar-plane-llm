@@ -20,7 +20,6 @@ pub struct RerankReq {
 }
 
 /// The rerank family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. The `query`
-
 impl busbar_contract::ir::facts::IrFacts for RerankReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::RERANK
@@ -69,7 +68,6 @@ pub struct RerankResult {
 }
 
 /// The meter class billed searches are ledgered and priced under (a rerank's search units, and an
-
 pub const SEARCH_UNITS_CLASS: &str = "search_units";
 
 /// Rerank response IR.
@@ -83,7 +81,6 @@ pub struct RerankResp {
 
 impl RerankResp {
     /// Billing projection: no token meter on either wire. The search units Cohere billed
-
     pub fn billing(&self) -> Option<Billing> {
         Some(match self.search_units {
             Some(count) => Billing::Counted {

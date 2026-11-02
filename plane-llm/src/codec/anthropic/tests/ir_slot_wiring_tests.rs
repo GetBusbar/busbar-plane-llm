@@ -13,7 +13,6 @@ fn read(body: &Value) -> crate::codec::ir::IrRequest {
 }
 
 /// The egress seam, then the Anthropic writer on a lane with `caps`. `extra` is cleared by the
-
 fn egress(
     mut req: crate::codec::ir::IrRequest,
     caps: &crate::codec::egress_prep::LaneCaps,
@@ -66,7 +65,6 @@ fn anthropic_response(stop_reason: &str, stop_details: Value) -> Value {
 }
 
 /// ANT-09: `thinking:{type:"disabled"}` is the explicit OFF ask, and the Anthropic writer emits it
-
 #[test]
 fn ant09_thinking_disabled_reads_as_off_and_writes_disabled() {
     let body = with(base(), "thinking", json!({"type": "disabled"}));
@@ -80,7 +78,6 @@ fn ant09_thinking_disabled_reads_as_off_and_writes_disabled() {
 }
 
 /// ANT-09: `output_config.effort` `xhigh` / `max` read as the IR-09 words above High and are written
-
 #[test]
 fn ant09_effort_xhigh_and_max_are_carried() {
     use crate::codec::ir::{IrReasoningAsk::Effort, IrReasoningEffort as E};
@@ -110,7 +107,6 @@ fn ant09_effort_xhigh_and_max_are_carried() {
 }
 
 /// ANT-11: `model_context_window_exceeded` reads as MaxTokens + ContextWindowExceeded, and an
-
 #[test]
 fn ant11_context_window_stop_round_trips_buffered() {
     let body = anthropic_response("model_context_window_exceeded", Value::Null);
@@ -173,7 +169,6 @@ fn ant11_context_window_stop_round_trips_stream() {
 }
 
 /// IR-02: a refusal's `stop_details` (category, explanation) is read and written back, buffered
-
 #[test]
 fn ir02_refusal_stop_details_are_carried() {
     let details = json!({"type": "refusal", "category": "cyber", "explanation": "declined"});
@@ -227,7 +222,6 @@ fn ir02_refusal_stop_details_are_carried() {
 }
 
 /// ANT-13: web search / web fetch / code execution read into the typed hosted-tool slot (with
-
 #[test]
 fn ant13_server_tools_read_into_hosted_slot() {
     use crate::codec::ir::IrHostedTool as H;
@@ -277,7 +271,6 @@ fn ant13_server_tools_read_into_hosted_slot() {
 }
 
 /// A hosted tool that crossed the seam (from Responses, Chat `web_search_options` or Gemini) is
-
 #[test]
 fn hosted_tools_that_crossed_the_seam_are_dropped_on_anthropic_egress() {
     let mut ir = read(&base());
@@ -396,7 +389,6 @@ fn ir12_document_citations_and_context_are_carried() {
 }
 
 /// IR-18: an Anthropic-read signature is marked Anthropic; on Anthropic egress a thinking block
-
 #[test]
 fn ir18_only_anthropic_signatures_are_sent() {
     let body = with(
@@ -443,7 +435,6 @@ fn ir18_only_anthropic_signatures_are_sent() {
 }
 
 /// The "N" slots: Anthropic has no member for them, so they are reported as dropped and nothing is
-
 #[test]
 fn n_slots_are_reported_dropped_and_not_written() {
     let mut ir = read(&base());
@@ -484,7 +475,6 @@ fn n_slots_are_reported_dropped_and_not_written() {
 }
 
 /// IR-04 placement: `service_tier` moved from "always raw in `extra`" to a parked mapping row. The
-
 #[test]
 fn ir04_same_dialect_service_tier_bytes_are_the_callers() {
     let protocol = protocol_for("anthropic").unwrap();

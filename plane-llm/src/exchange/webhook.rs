@@ -4,7 +4,6 @@ use serde::Deserialize;
 use serde_json::Value;
 
 /// The top-level section this plane owns for its webhook receivers (a Statement section that is
-
 pub const SECTION: &str = "webhooks";
 
 /// The path the OpenAI Responses receiver answers on: exact, POST only.
@@ -21,7 +20,6 @@ pub struct Webhooks {
 }
 
 /// The receivers the plane's owned sections switch on (`PlaneOpenIn::owned`: one JSON object keyed by
-
 pub fn from_owned(owned: &[u8]) -> Result<Webhooks, String> {
     if owned.is_empty() {
         return Ok(Webhooks::default());
@@ -49,13 +47,11 @@ pub struct Event {
 }
 
 /// Why a delivery's body was refused (400): it is not a JSON object, or a field the receiver reads
-
 pub const MALFORMED: &str =
     "malformed OpenAI Responses webhook event: expected a JSON object with a \
      non-empty string `type` and a `data` object carrying a non-empty string `id`";
 
 /// Read a delivery's body. `type` and `data.id` are required non-empty strings; the optional `id`
-
 pub fn read_event(body: &[u8]) -> Result<Event, &'static str> {
     let value: Value = serde_json::from_slice(body).map_err(|_| MALFORMED)?;
     let obj = value.as_object().ok_or(MALFORMED)?;
@@ -87,7 +83,6 @@ pub fn read_event(body: &[u8]) -> Result<Event, &'static str> {
 }
 
 /// THE ACKNOWLEDGEMENT a read delivery is answered with (200, `application/json`): receipt, and
-
 #[must_use]
 pub fn ack(event: &Event) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({

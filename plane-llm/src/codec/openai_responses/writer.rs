@@ -1,7 +1,6 @@
 use super::*;
 
 /// One Responses SSE frame: the event name, and its data, whose `type` IS the event name (spelled
-
 fn event(name: &'static str, mut data: serde_json::Value) -> (String, serde_json::Value) {
     if let Some(obj) = data.as_object_mut() {
         obj.insert(keys::TYPE.to_string(), serde_json::Value::from(name));
@@ -15,7 +14,6 @@ impl ProtocolWriter for ResponsesWriter {
     }
 
     /// Latch the original ingress request body so `write_response_events` can answer the spec's
-
     fn set_request_echo(&self, ingress_request_body: &serde_json::Value) {
         self.store_request_echo(ingress_request_body);
     }
@@ -53,7 +51,6 @@ impl ProtocolWriter for ResponsesWriter {
     }
 
     /// `input` may be a list of items or a bare string (one implicit user turn); either is replaced
-
     fn apply_rewrite_to_ingress_body(
         &self,
         obj: &mut serde_json::Map<String, serde_json::Value>,
@@ -1395,7 +1392,6 @@ impl ProtocolWriter for ResponsesWriter {
     }
 
     /// Native Responses error envelope, the OpenAI shape SDKs decode into `APIError`:
-
     fn write_error(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -1451,7 +1447,6 @@ impl ProtocolWriter for ResponsesWriter {
 }
 
 /// One IR image to a Responses `input_image` part, or `None` when the source has no Responses
-
 fn input_image_part(
     source: &crate::codec::ir::IrImageSource,
     detail: Option<crate::codec::ir::IrImageDetail>,
@@ -1492,7 +1487,6 @@ fn input_image_source_part(source: &crate::codec::ir::IrImageSource) -> Option<s
 }
 
 /// One IR attachment to a Responses `input_file` part, or `None` when it has no Responses form.
-
 fn input_file_part(
     kind: crate::codec::ir::IrMediaKind,
     source: &crate::codec::ir::IrImageSource,
@@ -1549,7 +1543,6 @@ fn input_file_part(
 }
 
 /// A `ToolResult`'s content as the `function_call_output.output` value (RSP-10): a string, or an
-
 fn function_call_output_value(content: &[crate::codec::ir::IrBlock]) -> serde_json::Value {
     let text_of = |b: &crate::codec::ir::IrBlock| -> Option<String> {
         match b {
@@ -1593,7 +1586,6 @@ fn function_call_output_value(content: &[crate::codec::ir::IrBlock]) -> serde_js
 }
 
 /// The response surface cannot carry a generated attachment. The scoped source origin names the
-
 fn drop_response_block(block: &crate::codec::ir::IrBlock) {
     crate::codec::drops::writer_drop!(
         crate::codec::drops::block(block.kind_name()),

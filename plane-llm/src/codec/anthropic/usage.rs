@@ -8,7 +8,6 @@ use crate::codec::keys;
 use crate::codec::usage_count::{read_usage, CountRead, CountSlot, UsageCount};
 
 /// Anthropic's usage counts, as data. The four totals come first, then the 5m/1h cache-creation
-
 pub(super) const USAGE: &[UsageCount] = &[
     (CountSlot::Input, CountRead::Zero(&[keys::INPUT_TOKENS])),
     (CountSlot::Output, CountRead::Zero(&[keys::OUTPUT_TOKENS])),
@@ -46,7 +45,6 @@ pub(super) const USAGE: &[UsageCount] = &[
 pub(super) const COUNT_LABEL: &str = super::VENDOR_NAME;
 
 /// A wire `usage` object (`None` when the frame carries none) to the IR usage: the [`USAGE`] table
-
 pub(super) fn read_anthropic_usage(
     usage_val: Option<&serde_json::Value>,
 ) -> Result<crate::codec::ir::IrUsage, IrError> {
@@ -59,7 +57,6 @@ pub(super) fn read_anthropic_usage(
 }
 
 /// The `cache_creation` tier object `{ephemeral_5m_input_tokens, ephemeral_1h_input_tokens}`; the
-
 pub(super) fn write_cache_creation_object(usage: &crate::codec::ir::IrUsage) -> serde_json::Value {
     let d = &usage.detail;
     let any_tier =
@@ -74,7 +71,6 @@ pub(super) fn write_cache_creation_object(usage: &crate::codec::ir::IrUsage) -> 
 }
 
 /// `usage.output_tokens_details`: `{thinking_tokens: N}` when known, else `null`. Required by both
-
 pub(super) fn write_output_tokens_details(usage: &crate::codec::ir::IrUsage) -> serde_json::Value {
     match usage.detail.reasoning_tokens {
         Some(t) => serde_json::json!({ (super::THINKING_TOKENS): t }),
@@ -83,7 +79,6 @@ pub(super) fn write_output_tokens_details(usage: &crate::codec::ir::IrUsage) -> 
 }
 
 /// `usage.server_tool_use`: `{web_search_requests, web_fetch_requests}` when a server-tool count is
-
 pub(super) fn write_server_tool_use(usage: &crate::codec::ir::IrUsage) -> serde_json::Value {
     match usage.detail.web_search_requests {
         Some(n) => {
@@ -94,7 +89,6 @@ pub(super) fn write_server_tool_use(usage: &crate::codec::ir::IrUsage) -> serde_
 }
 
 /// The full wire `usage` object of a `Message` (the buffered response and the
-
 pub(super) fn write_usage_object(usage: Option<&crate::codec::ir::IrUsage>) -> serde_json::Value {
     let zero = crate::codec::ir::IrUsage::default();
     let usage = usage.unwrap_or(&zero);
@@ -139,7 +133,6 @@ pub(super) fn write_usage_object(usage: Option<&crate::codec::ir::IrUsage>) -> s
 }
 
 /// The IR served tier to a `usage.service_tier` word, or `None` when Anthropic has none. The IR
-
 pub(super) fn anthropic_served_tier(tier: Option<&str>) -> Option<&'static str> {
     let word = tier?;
     let mapped = match word {
@@ -161,7 +154,6 @@ pub(super) fn anthropic_served_tier(tier: Option<&str>) -> Option<&'static str> 
 }
 
 /// The wire `usage` object of a `message_delta` (`MessageDeltaUsage`). `input_tokens`,
-
 pub(super) fn write_message_delta_usage(usage: &crate::codec::ir::IrUsage) -> serde_json::Value {
     let mut usage_map = serde_json::Map::new();
     usage_map.insert(

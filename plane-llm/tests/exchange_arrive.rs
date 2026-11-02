@@ -220,7 +220,6 @@ use busbar_plane_llm::refusal::reason;
 use serde_json::json;
 
 /// The host the exchange is handed: a fixed entropy byte, so a dialect that mints a request id
-
 struct FixedHost;
 
 impl busbar_contract::codec::CodecHost for FixedHost {
@@ -290,7 +289,6 @@ fn gemini_from_openai<'a>(a: &'a Arrived, model: &'a str, json_array: bool) -> W
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/auth_native_envelope_tests.rs::test_residual_dialect_inference`.
-
 #[test]
 fn every_paths_refusal_envelope_is_read_off_its_shape() {
     for (path, dialect) in [
@@ -316,7 +314,6 @@ fn every_paths_refusal_envelope_is_read_off_its_shape() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/auth_native_envelope_tests.rs::test_every_router_ingress_path_maps_to_non_fallback_proto`.
-
 #[test]
 fn every_served_ingress_path_names_its_own_dialect() {
     for (path, dialect) in [
@@ -341,7 +338,6 @@ fn every_served_ingress_path_names_its_own_dialect() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/auth_native_envelope_tests.rs::the_residual_dialect_table_shapes_fallback_errors`.
-
 #[test]
 fn the_fallback_refusals_shape_table_is_the_released_one() {
     for (path, dialect) in [
@@ -369,7 +365,6 @@ fn the_fallback_refusals_shape_table_is_the_released_one() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_adhoc_rejects_unconfigured_provider_model`.
-
 #[test]
 fn the_adhoc_route_reaches_configured_models_only() {
     let catalogue = Shaping::from_settings(&json!({
@@ -418,7 +413,6 @@ fn the_adhoc_route_reaches_configured_models_only() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_path_resolves_model_and_stream`.
-
 #[test]
 fn a_buffered_gemini_arrival_routes_by_its_url_model_and_reads_gemini_back() {
     let body = r#"{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}"#;
@@ -449,7 +443,6 @@ fn a_buffered_gemini_arrival_routes_by_its_url_model_and_reads_gemini_back() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_path_model_injects_model_and_stream_into_body`.
-
 #[test]
 fn a_path_model_arrival_carries_the_urls_model_and_stream_both_ways() {
     for (target, model, stream) in [
@@ -469,7 +462,6 @@ fn a_path_model_arrival_carries_the_urls_model_and_stream_both_ways() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_malformed_path_no_colon_is_404`.
-
 #[test]
 fn a_colon_less_gemini_path_is_a_gemini_404() {
     let d = no(
@@ -494,7 +486,6 @@ fn a_colon_less_gemini_path_is_a_gemini_404() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_empty_model_is_404`.
-
 #[test]
 fn an_empty_gemini_model_is_a_404() {
     let d = no(
@@ -507,7 +498,6 @@ fn an_empty_gemini_model_is_a_404() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_v1_surface_error_echoes_v1_not_v1beta`.
-
 #[test]
 fn the_stable_gemini_surface_echoes_v1_and_its_colon_less_path_is_openai_shaped() {
     let d = no("/v1/models/foo:countTokens", &json(), br#"{"contents":[]}"#);
@@ -525,7 +515,6 @@ fn the_stable_gemini_surface_echoes_v1_and_its_colon_less_path_is_openai_shaped(
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_v1beta_surface_error_still_echoes_v1beta`.
-
 #[test]
 fn the_beta_gemini_surface_still_echoes_v1beta() {
     let d = no(
@@ -540,7 +529,6 @@ fn the_beta_gemini_surface_still_echoes_v1beta() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_v1_no_action_returns_openai_shaped_404`.
-
 #[test]
 fn the_ambiguous_stable_prefix_reads_openai_and_the_beta_prefix_reads_gemini() {
     for target in [
@@ -574,7 +562,6 @@ fn the_ambiguous_stable_prefix_reads_openai_and_the_beta_prefix_reads_gemini() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_model_with_colon_splits_on_last_colon`.
-
 #[test]
 fn a_gemini_model_with_a_colon_splits_on_the_last_colon() {
     let a = ok(
@@ -588,7 +575,6 @@ fn a_gemini_model_with_a_colon_splits_on_the_last_colon() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_percent_decode_colon`.
-
 #[test]
 fn percent_decode_reads_an_encoded_colon() {
     assert_eq!(percent_decode("%3A"), ":");
@@ -599,7 +585,6 @@ fn percent_decode_reads_an_encoded_colon() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_percent_decode_period_and_plain`.
-
 #[test]
 fn percent_decode_reads_an_encoded_period_and_passes_plain_text() {
     assert_eq!(percent_decode("a%2Eb"), "a.b");
@@ -610,7 +595,6 @@ fn percent_decode_reads_an_encoded_period_and_passes_plain_text() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_percent_decode_malformed_escape_passes_through`.
-
 #[test]
 fn percent_decode_leaves_a_malformed_escape_verbatim() {
     assert_eq!(percent_decode("%XY"), "%XY");
@@ -618,7 +602,6 @@ fn percent_decode_leaves_a_malformed_escape_verbatim() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_percent_decode_trailing_percent_is_safe`.
-
 #[test]
 fn percent_decode_passes_a_trailing_percent_safely() {
     assert_eq!(percent_decode("abc%"), "abc%");
@@ -634,7 +617,6 @@ fn model_refusal(target: &str, body: &[u8]) -> (u16, Value) {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_cohere_empty_model_is_400_native_envelope`.
-
 #[test]
 fn a_cohere_empty_model_is_coheres_400() {
     let (status, body) = model_refusal("/v2/chat", br#"{"model":"","messages":[]}"#);
@@ -650,7 +632,6 @@ fn a_cohere_empty_model_is_coheres_400() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_responses_empty_model_is_400_native_envelope`.
-
 #[test]
 fn a_responses_empty_model_is_an_invalid_request_400() {
     let (status, body) = model_refusal("/v1/responses", br#"{"model":"","input":"hi"}"#);
@@ -659,7 +640,6 @@ fn a_responses_empty_model_is_an_invalid_request_400() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_openai_numeric_model_is_400_native_envelope`.
-
 #[test]
 fn an_openai_numeric_model_is_an_invalid_request_400() {
     let (status, body) = model_refusal("/v1/chat/completions", br#"{"model":42,"messages":[]}"#);
@@ -668,7 +648,6 @@ fn an_openai_numeric_model_is_an_invalid_request_400() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_cohere_numeric_model_is_400_native_envelope`.
-
 #[test]
 fn a_cohere_null_model_is_coheres_400() {
     let (status, body) = model_refusal("/v2/chat", br#"{"model":null,"messages":[]}"#);
@@ -684,7 +663,6 @@ fn a_cohere_null_model_is_coheres_400() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_responses_numeric_model_is_400_native_envelope`.
-
 #[test]
 fn a_responses_bool_model_is_an_invalid_request_400() {
     let (status, body) = model_refusal("/v1/responses", br#"{"model":true,"input":"hi"}"#);
@@ -693,7 +671,6 @@ fn a_responses_bool_model_is_an_invalid_request_400() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_non_object_body_is_400`.
-
 #[test]
 fn a_bedrock_non_object_body_is_a_validation_400() {
     let d = no("/model/foo/converse", &json(), b"[1,2]");
@@ -705,7 +682,6 @@ fn a_bedrock_non_object_body_is_a_validation_400() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_percent_encoded_model_id_converse_stream`.
-
 #[test]
 fn a_percent_encoded_bedrock_model_is_decoded_and_streamed() {
     let a = ok(
@@ -728,7 +704,6 @@ fn a_percent_encoded_bedrock_model_is_decoded_and_streamed() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_model_not_found_uses_native_message`.
-
 #[test]
 fn a_gemini_unknown_model_reads_geminis_versioned_sentence() {
     for (target, version) in [
@@ -754,7 +729,6 @@ fn a_gemini_unknown_model_reads_geminis_versioned_sentence() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_v1_stable_stream_generate_content_alt_sse`.
-
 #[test]
 fn the_stable_gemini_surface_streams_events_with_alt_sse() {
     let a = ok(
@@ -773,7 +747,6 @@ fn the_stable_gemini_surface_streams_events_with_alt_sse() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_v1_stable_stream_generate_content_no_alt_sse`.
-
 #[test]
 fn the_stable_gemini_surface_without_alt_sse_reads_a_json_array() {
     let a = ok(
@@ -812,7 +785,6 @@ fn the_stable_gemini_surface_without_alt_sse_reads_a_json_array() {
 }
 
 /// Rehomes `crates/busbar-llm/src/tests/arrival_tests.rs::test_query_has_alt_sse`.
-
 #[test]
 fn only_a_genuine_alt_sse_pair_selects_event_framing() {
     for (query, events) in [
@@ -836,7 +808,6 @@ fn only_a_genuine_alt_sse_pair_selects_event_framing() {
 }
 
 /// Rehomes `crates/busbar-llm/src/tests/arrival_tests.rs::test_gemini_api_version_prefix_mapping`.
-
 #[test]
 fn geminis_version_echo_follows_the_path_prefix() {
     for (target, version) in [
@@ -857,7 +828,6 @@ fn geminis_version_echo_follows_the_path_prefix() {
 }
 
 /// Rehomes `crates/busbar-llm/src/tests/arrival_tests.rs::the_gemini_parse_reads_its_own_url_space`.
-
 #[test]
 fn the_gemini_url_space_reads_every_fact() {
     let read = |target: &str| ok(target, &json(), br#"{"contents":[]}"#);
@@ -896,7 +866,6 @@ fn the_gemini_url_space_reads_every_fact() {
 }
 
 /// Rehomes `crates/busbar-llm/src/tests/arrival_tests.rs::the_bedrock_parse_reads_its_own_url_space`.
-
 #[test]
 fn the_bedrock_url_space_reads_every_fact() {
     let converse = br#"{"messages":[{"role":"user","content":[{"text":"hi"}]}]}"#;
@@ -952,7 +921,6 @@ fn same_handler(x: &dyn OperationHandler, y: &dyn OperationHandler) -> bool {
 }
 
 /// Rehomes `crates/busbar-llm/src/tests/arrival_tests.rs::the_url_facts_drive_the_two_steps_to_the_live_paths_answer`.
-
 #[test]
 fn the_url_facts_land_on_the_live_splice_and_the_live_handler() {
     let gemini = br#"{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}"#;
@@ -1021,7 +989,6 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::the_path_model_step_injects_the_members_into_the_callers_bytes`.
-
 #[test]
 fn every_recorded_request_keeps_its_bytes_under_the_path_model_splice() {
     for (name, body) in corpus() {
@@ -1051,7 +1018,6 @@ fn every_recorded_request_keeps_its_bytes_under_the_path_model_splice() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::the_url_model_and_stream_flag_win_over_the_body`.
-
 #[test]
 fn the_urls_model_and_stream_win_over_the_bodys() {
     let body = br#"{"model":"from-the-body","stream":false,"x":1}"#;
@@ -1070,7 +1036,6 @@ fn the_urls_model_and_stream_win_over_the_bodys() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::the_array_stream_shim_is_spliced_only_when_asked`.
-
 #[test]
 fn the_array_stream_key_is_spliced_only_when_asked() {
     let key = shim_key();
@@ -1109,7 +1074,6 @@ fn the_array_stream_key_is_spliced_only_when_asked() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::an_absent_content_type_is_read_as_json`.
-
 #[test]
 fn an_arrival_with_no_content_type_is_read_as_json() {
     let a = ok("/v1/chat/completions", &head(&[]), br#"{"model":"m"}"#);
@@ -1118,7 +1082,6 @@ fn an_arrival_with_no_content_type_is_read_as_json() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::a_json_content_type_with_parameters_still_parses`.
-
 #[test]
 fn a_json_content_type_with_a_charset_still_parses() {
     let a = ok(
@@ -1131,7 +1094,6 @@ fn a_json_content_type_with_a_charset_still_parses() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::the_refusal_set_is_three_and_they_do_not_collide`.
-
 #[test]
 fn the_arrival_refusal_set_is_three_distinct_400s() {
     let parse = no("/v1beta/models/m:generateContent", &json(), b"{not json");
@@ -1160,7 +1122,6 @@ fn the_arrival_refusal_set_is_three_distinct_400s() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/audit.rs::audit_refused_matches_the_live_rejected_terminal`.
-
 #[test]
 fn a_pre_forward_refusal_renders_the_released_400_before_any_unit() {
     let d = no("/v1/chat/completions", &json(), br#"{"messages":[]}"#);
@@ -1191,7 +1152,6 @@ fn a_pre_forward_refusal_renders_the_released_400_before_any_unit() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::every_recorded_request_decodes_to_the_live_paths_model`.
-
 #[test]
 fn every_recorded_request_reads_the_released_model() {
     for (name, body) in corpus() {
@@ -1216,7 +1176,6 @@ fn every_recorded_request_reads_the_released_model() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::a_url_model_wins_over_the_body`.
-
 #[test]
 fn a_url_model_wins_over_the_bodys() {
     for (target, body) in [
@@ -1238,7 +1197,6 @@ fn a_url_model_wins_over_the_bodys() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::a_multipart_body_with_no_model_field_is_a_missing_model`.
-
 #[test]
 fn a_multipart_arrival_with_no_model_part_is_a_missing_model() {
     let h = head(&[("content-type", "multipart/form-data; boundary=zz")]);
@@ -1251,7 +1209,6 @@ fn a_multipart_arrival_with_no_model_part_is_a_missing_model() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::the_ladder_floor_catches_every_shape_of_no_model`.
-
 #[test]
 fn every_shape_of_no_model_is_the_missing_model_400() {
     for raw in [
@@ -1279,7 +1236,6 @@ fn every_shape_of_no_model_is_the_missing_model_400() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::the_two_handler_misses_carry_the_live_arms_distinct_bytes`.
-
 #[test]
 fn the_two_operation_misses_render_distinct_404s_in_every_dialect() {
     for dialect in [
@@ -1325,7 +1281,6 @@ fn the_two_operation_misses_render_distinct_404s_in_every_dialect() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::the_body_entry_point_answers_the_handler_miss_before_the_parse_miss`.
-
 #[test]
 fn a_body_model_arrival_answers_the_operation_miss_before_the_parse_miss() {
     for target in ["/v1/chat", "/nowhere"] {
@@ -1341,7 +1296,6 @@ fn a_body_model_arrival_answers_the_operation_miss_before_the_parse_miss() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::the_path_model_entry_point_answers_the_parse_miss_first`.
-
 #[test]
 fn a_path_model_arrival_answers_the_parse_miss_first() {
     for target in ["/v1beta/models/m:generateContent", "/model/m/converse"] {
@@ -1355,7 +1309,6 @@ fn a_path_model_arrival_answers_the_parse_miss_first() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::the_refusal_set_is_three_and_they_do_not_collide` (the decode set).
-
 #[test]
 fn the_decode_refusal_set_is_two_404s_and_a_400_with_distinct_sentences() {
     let missing = no("/v1/chat/completions", &json(), br#"{"messages":[]}"#);
@@ -1381,7 +1334,6 @@ fn the_decode_refusal_set_is_two_404s_and_a_400_with_distinct_sentences() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::the_whole_step_resolves_both_facts_for_a_recorded_request`.
-
 #[test]
 fn every_recorded_body_model_resolves_the_same_model_both_spellings() {
     let mut seen = 0;
@@ -1417,7 +1369,6 @@ fn every_recorded_body_model_resolves_the_same_model_both_spellings() {
 }
 
 /// A HOOK'S REWRITE IS SPLICED INTO THE CALLER'S BYTES, never re-serialized ("hook `rw` edits,
-
 #[test]
 fn a_hook_rewrite_splices_only_the_members_it_changes() {
     use busbar_plane_llm::exchange::project::apply_rewrite;
@@ -1486,7 +1437,6 @@ fn a_rerank_and_an_embedding_state_that_a_rewrite_does_not_apply() {
 }
 
 /// A CHAT NEVER STATES THAT A REWRITE DOES NOT APPLY: a chat's rewrite is spliced into its
-
 #[test]
 fn a_chat_never_states_that_a_rewrite_does_not_apply() {
     use busbar_plane_llm::exchange::project::{apply_rewrite, rewrite_flags};

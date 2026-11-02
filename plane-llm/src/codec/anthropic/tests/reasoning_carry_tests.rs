@@ -6,7 +6,6 @@ use crate::codec::egress_prep::{EgressPrep, LaneCaps};
 use crate::codec::ir::{IrReasoningAsk, IrReasoningEffort};
 
 /// A lane that declares adaptive thinking (Opus 4.7+/5.x, Sonnet 5, Fable). Every word-form
-
 fn adaptive(ir: &crate::codec::ir::IrRequest) -> serde_json::Value {
     anthropic_writer().write_request_for_lane(
         crate::codec::test_host::HOST,
@@ -29,7 +28,6 @@ fn openai_effort_body(effort: &str) -> serde_json::Value {
 }
 
 /// OpenAI `reasoning_effort` word -> Anthropic ADAPTIVE thinking + `output_config.effort` (ANT-10):
-
 #[test]
 fn openai_effort_projects_to_anthropic_adaptive_effort() {
     let ir = super::super::openai_chat::OpenAiReader
@@ -47,7 +45,6 @@ fn openai_effort_projects_to_anthropic_adaptive_effort() {
 }
 
 /// The same word-form ask on a lane that does NOT declare adaptive thinking (the default — Haiku
-
 #[test]
 fn effort_on_a_default_lane_is_budget_tokens() {
     let ir = super::super::openai_chat::OpenAiReader
@@ -73,7 +70,6 @@ fn effort_on_a_default_lane_is_budget_tokens() {
 }
 
 /// Anthropic budget -> Gemini `thinkingBudget` is a straight number copy; and Gemini's
-
 #[test]
 fn budgets_copy_between_anthropic_and_gemini() {
     let body = serde_json::json!({
@@ -147,7 +143,6 @@ fn budget_bucketizes_to_effort_words() {
 }
 
 /// The Anthropic clamp on a NUMERIC ask: budget must leave >=1024 answer tokens under
-
 #[test]
 fn anthropic_clamps_and_drops_by_max_tokens() {
     let budget_ir = |max_tokens: u32| crate::codec::ir::IrRequest {
@@ -179,7 +174,6 @@ fn anthropic_clamps_and_drops_by_max_tokens() {
 }
 
 /// Anthropic rejects modified temperature/top_p alongside thinking: both are omitted (observably via
-
 #[test]
 fn thinking_omits_incompatible_sampling_knobs() {
     let mut body = openai_effort_body("low");
@@ -215,7 +209,6 @@ fn thinking_omits_incompatible_sampling_knobs() {
 }
 
 /// Anthropic rejects top_k modifications alongside thinking: top_k must be dropped when the
-
 #[test]
 fn thinking_omits_top_k() {
     let body = serde_json::json!({
@@ -250,7 +243,6 @@ fn thinking_omits_top_k() {
 }
 
 /// THE GATE: prepare_for_egress clears the ask when the lane did not claim the capability and
-
 #[test]
 fn seam_gate_clears_or_stamps() {
     let prep = |allowed: bool| EgressPrep {
@@ -301,7 +293,6 @@ fn seam_gate_clears_or_stamps() {
 }
 
 /// CROSS-protocol Gemini egress MUST request `includeThoughts: true` alongside the budget, or
-
 #[test]
 fn gemini_cross_protocol_egress_requests_include_thoughts() {
     let ir = super::super::openai_chat::OpenAiReader
@@ -349,7 +340,6 @@ fn responses_effort_round_trips() {
 }
 
 /// A tiny cross-protocol budget (below the `low` table entry) must NOT emit the o-series-
-
 #[test]
 fn small_budget_maps_to_low_not_minimal_on_openai() {
     let body = serde_json::json!({
@@ -367,7 +357,6 @@ fn small_budget_maps_to_low_not_minimal_on_openai() {
 }
 
 /// A disabled-form `thinking` param reads as the explicit OFF ask (IR-09, ANT-09) and still rides
-
 #[test]
 fn disabled_thinking_stays_in_extra() {
     let body = serde_json::json!({

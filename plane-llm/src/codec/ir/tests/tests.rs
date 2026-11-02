@@ -36,7 +36,6 @@ fn reasoning_ask_to_budget_and_to_effort_use_the_table() {
 }
 
 /// `billable_tokens` sums all four token fields with `saturating_add` (the operands are
-
 #[test]
 fn test_billable_tokens_sum_and_saturation() {
     let u = IrUsage {
@@ -106,7 +105,6 @@ fn test_read_stop_sequences_drops_empty_strings() {
 }
 
 /// THE THREE OPAQUE SHAPES, read through the REAL readers, asserted from the IR ALONE.
-
 #[test]
 fn all_three_opaque_reasoning_shapes_read_as_opaque_from_the_ir() {
     let cases: [(&str, crate::codec::proto_codec::Protocol, Value); 3] = [
@@ -162,7 +160,6 @@ fn all_three_opaque_reasoning_shapes_read_as_opaque_from_the_ir() {
 }
 
 /// The negative half, so `is_opaque` cannot pass the test above by answering `true` to everything.
-
 #[test]
 fn readable_blocks_are_not_opaque() {
     let cases = [

@@ -51,7 +51,6 @@ fn read_entry(entry: &serde_json::Value) -> Option<IrTopLogprob> {
 }
 
 /// OpenAI's `logprobs` object to neutral IR entries. Byte vectors are all-or-nothing: filtering an
-
 pub fn read_token_logprobs(v: Option<&serde_json::Value>) -> Vec<IrTokenLogprob> {
     let entries = match v.and_then(|logprobs| logprobs.get(keys::CONTENT)) {
         None | Some(serde_json::Value::Null) => return Vec::new(),
@@ -89,7 +88,6 @@ pub fn read_token_logprobs(v: Option<&serde_json::Value>) -> Vec<IrTokenLogprob>
 }
 
 /// Neutral IR logprobs to OpenAI's `logprobs` object. `bytes` is synthesized from the token's UTF-8
-
 pub fn write_token_logprobs(lps: &[IrTokenLogprob]) -> serde_json::Value {
     let content: Vec<serde_json::Value> = lps
         .iter()

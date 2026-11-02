@@ -108,7 +108,6 @@ pub struct Units {
 
 impl Units {
     /// The units of a token usage: its four token tiers, and every open class it counted (a turn's
-
     #[must_use]
     pub fn of(usage: Option<&TokenUsage>, mut open: BTreeMap<String, u64>) -> Self {
         let u = usage.cloned().unwrap_or_default();
@@ -203,7 +202,6 @@ fn json_array(ctx: &ReplyCtx<'_>) -> bool {
 }
 
 /// A WHOLE answer, rendered here in full (a translated answer, a judged failure, a refusal): its head
-
 fn answered<'a>(r: Rendered, units: Units, verdict: Verdict, fault: Option<Fault>) -> Piece<'a> {
     let mut fields = r.fields;
     if !fields
@@ -491,14 +489,12 @@ impl Reply {
     }
 
     /// The piece fed next reads its [`At`]: only the last piece of an answer taken whole (its
-
     #[must_use]
     pub fn takes_time(&self, last: bool) -> bool {
         last && matches!(self.state, State::Whole { .. })
     }
 
     /// The answer retains its reported work on cancellation: a usable relay, or a whole answer
-
     #[must_use]
     pub fn partial(&self) -> bool {
         match &self.state {
@@ -509,7 +505,6 @@ impl Reply {
     }
 
     /// CUT the answer: the far end's transfer failed (`transport`) or the kernel's ceiling for it
-
     pub fn cut(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,

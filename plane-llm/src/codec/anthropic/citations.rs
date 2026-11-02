@@ -7,7 +7,6 @@ use super::*;
 use crate::codec::keys;
 
 /// Map one raw citation object to a neutral [`crate::codec::ir::IrCitation`], keeping the source
-
 pub(super) fn read_citation(val: &serde_json::Value) -> crate::codec::ir::IrCitation {
     let kind = val
         .get(keys::TYPE)
@@ -66,7 +65,6 @@ pub(super) fn read_citation(val: &serde_json::Value) -> crate::codec::ir::IrCita
 }
 
 /// True when `raw` is an Anthropic citation object (its `type` is a known variant). Gates the
-
 pub(super) fn is_anthropic_citation_shape(raw: &serde_json::Value) -> bool {
     matches!(
         raw.get(keys::TYPE).and_then(|v| v.as_str()),
@@ -81,7 +79,6 @@ pub(super) fn is_anthropic_citation_shape(raw: &serde_json::Value) -> bool {
 }
 
 /// Map a neutral [`crate::codec::ir::IrCitation`] to an Anthropic citation object. A present `raw`
-
 pub(super) fn write_citation(c: &crate::codec::ir::IrCitation) -> Option<serde_json::Value> {
     write_citation_in_context(c, false)
 }
@@ -200,7 +197,6 @@ fn representable_citation(
 }
 
 /// The members every Anthropic document-location variant shares — `document_index`,
-
 fn document_location(
     c: &crate::codec::ir::IrCitation,
     obj: &mut serde_json::Map<String, serde_json::Value>,

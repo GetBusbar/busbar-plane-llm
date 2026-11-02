@@ -23,7 +23,6 @@ const CACHED_CONTENT: &str = "cachedContent";
 pub const GEMINI_SKIP_THOUGHT_SIGNATURE: &str = "skip_thought_signature_validator";
 
 /// Warn when an image detail hint has no cross-protocol representation.
-
 pub fn warn_dropped_image_details(ir: &IrRequest) {
     fn walk(blocks: &[crate::codec::ir::IrBlock]) {
         for block in blocks {
@@ -218,7 +217,6 @@ pub fn chat_prepare_for_egress(ir: &mut IrRequest, prep: &EgressPrep) {
 }
 
 /// The members the caller's request holds in `extra` do not cross a translate attempt: each is
-
 pub fn drop_request_extra(ir: &mut IrRequest, ingress_protocol: &str) {
     if ir
         .extra
@@ -266,7 +264,6 @@ pub fn drop_request_extra(ir: &mut IrRequest, ingress_protocol: &str) {
 }
 
 /// What a translate attempt's answer drops: the far end's vendor-scoped response metadata, content
-
 pub fn drop_untranslatable_response(egress_protocol: &str, body: &Value) {
     crate::codec::dialect::drop_untranslatable_response_metadata(egress_protocol, body);
     super::proto_codec::with_reader(egress_protocol, |r| {
@@ -283,7 +280,6 @@ pub fn drop_untranslatable_response(egress_protocol: &str, body: &Value) {
 }
 
 /// Chat cross-protocol ingress preparation. Clears, as normalizations not drops:
-
 pub fn chat_prepare_for_ingress(ir: &mut IrResponse, ingress_protocol: &str, now_epoch: u64) {
     ir.id = None;
     ir.system_fingerprint = None;
@@ -295,7 +291,6 @@ pub fn chat_prepare_for_ingress(ir: &mut IrResponse, ingress_protocol: &str, now
 }
 
 /// IR-18: a reasoning signature another family minted is wrapped in the busbar provenance envelope
-
 fn envelope_foreign_signatures(ir: &mut IrResponse, ingress_protocol: &str) {
     let Some(p) = super::proto_codec::protocol_for(ingress_protocol) else {
         return;
@@ -316,16 +311,13 @@ fn envelope_foreign_signatures(ir: &mut IrResponse, ingress_protocol: &str) {
 }
 
 /// Chat token-usage billing projection. It delegates to [`crate::codec::ir::IrUsage::to_token_usage`],
-
 pub fn chat_usage(r: &IrResponse) -> Option<Billing> {
     Some(Billing::Tokens(r.usage.to_token_usage()))
 }
 
 /// The chat request handle: the request, plus the egress lane's declared capabilities, which the
-
 pub struct ChatReqHandle(pub IrRequest, pub crate::codec::egress_prep::LaneCaps);
 /// The chat response handle: the response, and the translation cap its plane enforces
-
 pub struct ChatRespHandle(pub IrResponse, pub usize);
 
 impl Sealed for ChatReqHandle {}
@@ -443,7 +435,6 @@ impl IrHandle for ChatRespHandle {
 }
 
 /// A protocol's chat operation. The field names the protocol whose `proto_codec` reader/writer are
-
 pub struct ChatOperation(pub &'static str);
 
 impl ChatOperation {

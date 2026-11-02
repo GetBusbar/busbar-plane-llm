@@ -65,7 +65,6 @@ impl Dropped {
     }
 
     /// A drop of the IR slot `name`, named on the open attempt by the caller's wire path for it
-
     pub fn slot(
         name: &'static str,
         diag: &'static Diagnostic,
@@ -80,7 +79,6 @@ impl Dropped {
     }
 
     /// The IR names whose rows spell this slot drop's wire path, first found wins (default: the
-
     pub fn rows(mut self, rows: &'static [&'static str]) -> Dropped {
         self.at = At::Slot(rows);
         self
@@ -155,7 +153,6 @@ pub const fn wire(path: &'static str) -> Member {
 }
 
 /// The IR's content-block kinds ([`crate::codec::ir::IrBlock::kind_name`]), spelled once: the
-
 pub mod kind {
     pub const TEXT: &str = "text";
     pub const IMAGE: &str = "image";
@@ -184,7 +181,6 @@ pub const THINKING: Member = block(kind::THINKING);
 pub const HOSTED_TOOL: Member = block(kind::HOSTED_TOOL);
 
 /// The IR request members a drop names, spelled once (the dialects' `REQUEST_CODE_NAMES` and
-
 pub mod name {
     pub const N: &str = "n";
     pub const REASONING: &str = "reasoning";
@@ -243,13 +239,11 @@ macro_rules! writer_drop {
 pub(crate) use writer_drop;
 
 /// The name resolver: the wire path (notation A, as its map file's rows spell it) at which request
-
 pub fn wire_path(dialect: &str, name: &str, rows: &[&str]) -> String {
     resolve(dialect, name, rows).unwrap_or_else(|| name.to_string())
 }
 
 /// [`wire_path`]: a map-file row for it, else the path the dialect's reader carries it from by code
-
 pub fn resolve(dialect: &str, name: &str, rows: &[&str]) -> Option<String> {
     let rows = if rows.is_empty() { &[name][..] } else { rows };
     crate::codec::proto_codec::with_reader(dialect, |r| {
@@ -267,7 +261,6 @@ pub fn resolve(dialect: &str, name: &str, rows: &[&str]) -> Option<String> {
 }
 
 /// The CALLER's wire path for the IR name `name`, for a drop warned outside [`note`] (a writer's
-
 pub fn caller_path(name: &str) -> String {
     let ingress = OPEN.with(|o| {
         o.borrow()
@@ -322,7 +315,6 @@ pub(crate) fn block_scope(origin: Option<&crate::codec::ir::IrBlockOrigin>) -> B
 }
 
 /// Run a writer's projection of one block with its captured origin. Scope exit restores the
-
 pub fn with_block_origin<T>(
     origin: Option<&crate::codec::ir::IrBlockOrigin>,
     f: impl FnOnce() -> T,
@@ -332,7 +324,6 @@ pub fn with_block_origin<T>(
 }
 
 /// Project the exact child entry retained by the reader, without deriving a native path from
-
 pub(crate) fn child_scope(index: usize) -> BlockScope {
     let origin = OPEN.with(|slot| {
         slot.borrow()
@@ -356,7 +347,6 @@ thread_local! {
 }
 
 /// One open translate attempt. Opening installs it on this thread and keeps the enclosing one
-
 pub(crate) struct ScopeGuard {
     outer: Option<Option<Open>>,
     thread: std::thread::ThreadId,
@@ -389,7 +379,6 @@ impl ScopeGuard {
     }
 
     /// A guard is closed on the thread that opened it; a debug build panics otherwise (not while
-
     fn check_thread(&self) {
         if cfg!(debug_assertions) && !std::thread::panicking() {
             assert_eq!(
@@ -412,7 +401,6 @@ impl std::ops::Drop for ScopeGuard {
 }
 
 /// Run `f` as one translate attempt: every [`note`] inside warns once per path, and the paths come
-
 pub fn scope<T>(seam: Seam<'_>, f: impl FnOnce() -> T) -> (T, Vec<String>) {
     let guard = ScopeGuard::open(seam, Vec::new());
     let out = f();
@@ -421,12 +409,10 @@ pub fn scope<T>(seam: Seam<'_>, f: impl FnOnce() -> T) -> (T, Vec<String>) {
 }
 
 /// A caller-authored IR block may have no native source metadata. Keep that absence explicit;
-
 const UNATTRIBUTED_BLOCK_PATH: &str = "ir.block.kind";
 const UNATTRIBUTED_BLOCK_DETAIL: &str = "native block source metadata is unavailable";
 
 /// Drop one member on the open attempt: one warn naming its captured native path (first time
-
 pub fn note(d: Dropped) {
     let context = OPEN.with(|slot| {
         slot.borrow().as_ref().map(|open| {
@@ -512,7 +498,6 @@ pub struct Parked {
 }
 
 /// The wire paths of the request members `extra` holds, none of which a TRANSLATE attempt carries:
-
 pub fn extra_paths(
     extra: &Map<String, Value>,
     parked: &[Parked],
@@ -569,7 +554,6 @@ pub struct Blocks {
 
 impl Blocks {
     /// The kind of `block` the reader does not model (`""` for a tagged block that names no kind);
-
     fn unmodelled_kind<'v>(&self, block: &'v Value) -> Option<&'v str> {
         let obj = block.as_object()?;
         match self.tag {
@@ -595,7 +579,6 @@ impl Blocks {
     }
 
     /// The notation-A path of every block kind in `body` the reader does not model, each once, in
-
     pub fn unmodelled(&self, body: &Value) -> Vec<String> {
         let mut blocks = Vec::new();
         collect(body, self.at, &mut blocks);
@@ -617,7 +600,6 @@ impl Blocks {
 }
 
 /// Every value at the notation-A steps `at` below `v` (`name[]` walks an array member, `name` an
-
 fn collect<'v>(v: &'v Value, at: &[&str], out: &mut Vec<&'v Value>) {
     let Some((step, rest)) = at.split_first() else {
         out.push(v);
@@ -661,7 +643,6 @@ pub fn note_unmodelled_blocks(grammar: &[Blocks], body: &Value, message: &'stati
 }
 
 /// Run `f` as one more piece of a translate attempt spanning calls (a stream, one frame per call): a
-
 pub fn scope_more<T>(seam: Seam<'_>, seen: &mut Vec<String>, f: impl FnOnce() -> T) -> T {
     let guard = ScopeGuard::open(seam, std::mem::take(seen));
     let out = f();
@@ -777,7 +758,6 @@ impl Carried {
     }
 
     /// `path` as the drop lists spell it, and the answer's list it is read in too when it lies
-
     fn spelled<'p>(&self, path: &'p str) -> (Cow<'p, str>, &'static [&'static str]) {
         let Some(r) = self.reroot else {
             return (Cow::Borrowed(path), &[]);
@@ -796,7 +776,6 @@ impl Carried {
     }
 
     /// The listed drops that start with `prefix` (already spelled): one contiguous run of each
-
     fn listed<'a>(
         &'a self,
         prefix: &'a str,
@@ -858,7 +837,6 @@ impl Carried {
     }
 
     /// Whether the walk names the member at `path` (or the member above it that holds it) when an
-
     pub fn names_path(&self, path: &str) -> bool {
         let cuts = path
             .char_indices()
@@ -876,7 +854,6 @@ impl Carried {
     }
 
     /// The notation-A path of every member of `body` (read at `root`, `""` for the document's
-
     pub fn unmapped(&self, root: &str, body: &Value) -> Vec<String> {
         if !root.is_empty() {
             match self.cover(root) {
@@ -946,7 +923,6 @@ pub const UNMAPPED_ANSWER_MEMBER: &str =
      the request to a same-protocol lane if the member is load-bearing";
 
 /// Drop, on the open attempt, every member of `body` (read at `root`) that `carried` does not
-
 pub fn note_unmapped(carried: &Carried, root: &str, body: &Value) {
     for path in carried.unmapped(root, body) {
         note(Dropped::new(
@@ -958,7 +934,6 @@ pub fn note_unmapped(carried: &Carried, root: &str, body: &Value) {
 }
 
 /// Read one far-end stream frame on a translate attempt, for either host (the engine's stream
-
 pub fn read_stream_frame(
     host: &dyn busbar_contract::codec::CodecHost,
     seam: Seam<'_>,

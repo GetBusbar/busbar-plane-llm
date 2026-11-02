@@ -337,7 +337,6 @@ fn url_citations(v: &Value) -> Vec<Value> {
 }
 
 /// SHR-01: an OpenAI Chat backend's `url_citation` (with its character span) reaches a Responses
-
 #[test]
 fn shr01_chat_citation_with_its_span_reaches_a_responses_client() {
     let body = json!({
@@ -384,7 +383,6 @@ fn shr01_responses_citation_keeps_its_span_for_a_chat_client() {
 }
 
 /// The span rule's other half: offsets a citation carries into the CITED DOCUMENT (an Anthropic
-
 #[test]
 fn shr01_document_offsets_are_never_written_as_an_answer_span() {
     let c = crate::codec::ir::IrCitation {
@@ -415,7 +413,6 @@ fn shr01_document_offsets_are_never_written_as_an_answer_span() {
 }
 
 /// SEAM (`chat_prepare_for_ingress`): the matched stop string survives the buffered seam. A
-
 #[test]
 fn seam_matched_stop_sequence_survives_the_buffered_seam() {
     let mut ir = crate::codec::ir::IrResponse {
@@ -447,7 +444,6 @@ fn seam_matched_stop_sequence_survives_the_buffered_seam() {
 }
 
 /// The seam still normalizes what no target can carry: the backend's id format never reaches a
-
 #[test]
 fn seam_still_mints_a_native_id_and_clears_the_chat_only_fingerprint() {
     let body = json!({
@@ -464,7 +460,6 @@ fn seam_still_mints_a_native_id_and_clears_the_chat_only_fingerprint() {
 }
 
 /// SHR-03: one OpenAI Files id namespace, two dialect tags. The shared helper reads the id off a
-
 #[test]
 fn shr03_openai_file_id_is_read_from_either_openai_dialects_reference() {
     use crate::codec::ir::IrImageSource;
@@ -492,7 +487,6 @@ fn shr03_openai_file_id_is_read_from_either_openai_dialects_reference() {
 }
 
 /// The tags ARE what the two OpenAI readers stamp: a Chat `file.file_id` part and a Responses
-
 #[test]
 fn shr03_both_openai_readers_produce_a_reference_the_helper_resolves() {
     fn first_media_source(ir: &crate::codec::ir::IrRequest) -> crate::codec::ir::IrImageSource {
@@ -525,7 +519,6 @@ fn shr03_both_openai_readers_produce_a_reference_the_helper_resolves() {
 }
 
 /// Through the production write (`write_egress_request` with the lane model), a cross-protocol
-
 #[test]
 fn bedrock_thinking_is_written_for_no_lane_model() {
     use busbar_contract::ir::handle::IrHandle;

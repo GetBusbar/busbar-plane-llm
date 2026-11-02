@@ -22,9 +22,6 @@ use busbar_plane_llm::dialect::DIALECTS;
 use busbar_plane_llm::refusal::REFUSAL_STATUSES;
 
 /// The recorded cells, in busbar's tree. This file compiles only into the composition root's
-
-
-
 fn golden() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testing/shadow-oracle/golden/1.5.5/cells")
 }
@@ -81,12 +78,6 @@ fn every_dialect(condition: &str, reason: ReasonCode) -> Vec<(String, &'static s
 }
 
 /// LEGACY `crates/busbar-llm/tests/llm_refusal_statuses.rs::every_recorded_llm_refusal_wears_the_status_the_driver_chooses`
-
-
-
-
-
-
 #[test]
 fn every_recorded_llm_refusal_wears_the_status_the_driver_chooses() {
     let config = config();
@@ -144,10 +135,6 @@ fn every_recorded_llm_refusal_wears_the_status_the_driver_chooses() {
 }
 
 /// LEGACY `crates/busbar-llm/tests/llm_refusal_statuses.rs::every_stated_row_differs_from_the_kernel_default`
-
-
-
-
 #[test]
 fn every_stated_row_differs_from_the_kernel_default() {
     assert!(!REFUSAL_STATUSES.is_empty(), "the plane states its rows");
@@ -163,12 +150,6 @@ fn every_stated_row_differs_from_the_kernel_default() {
 }
 
 /// LEGACY `crates/busbar-llm/tests/llm_refusal_statuses.rs::p_item_refusal_reason_collapse_no_llm_refusal_reads_as_an_internal_error`
-
-
-
-
-
-
 #[test]
 fn p_item_refusal_reason_collapse_no_llm_refusal_reads_as_an_internal_error() {
     use busbar_contract::abi::plane::{class_of, RefusalClass};

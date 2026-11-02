@@ -45,7 +45,6 @@ pub struct TranscriptionReq {
 }
 
 /// The transcription family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. The
-
 impl busbar_contract::ir::facts::IrFacts for TranscriptionReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::TRANSCRIPTION
@@ -127,7 +126,6 @@ pub struct SpeechReq {
 
 impl SpeechReq {
     /// The TTS request-seam meter. TTS bills by input size (tts-1/-hd: characters), knowable only here:
-
     pub fn billing(&self) -> Option<Billing> {
         Some(Billing::Characters {
             count: self.input.chars().count() as u64,
@@ -136,7 +134,6 @@ impl SpeechReq {
 }
 
 /// The speech family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. Every caller
-
 impl busbar_contract::ir::facts::IrFacts for SpeechReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::SPEECH

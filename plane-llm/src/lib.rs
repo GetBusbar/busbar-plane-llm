@@ -14,5 +14,4 @@ pub mod plane_door;
 pub mod refusal;
 
 /// THE PLANE'S DECLARED METADATA (`declares.json`): the `declares` section its signed tarball carries
-
 pub const DECLARES: &str = include_str!("../declares.json");

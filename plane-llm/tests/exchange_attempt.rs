@@ -236,7 +236,6 @@ fn a_same_dialect_unknown_body_member_goes_out() {
 }
 
 /// A body-model caller that smuggles busbar's own array-stream router key into its body is not a
-
 #[test]
 fn a_body_model_callers_smuggled_router_key_never_reaches_the_far_end() {
     let h = head(&[("content-type", "application/json")]);
@@ -369,7 +368,6 @@ fn the_usage_ask_is_a_splice_after_the_opening_brace_or_in_place() {
 }
 
 /// BUSBAR IS INVISIBLE TO UPSTREAMS, THE URL TOO: a same-dialect attempt carries the caller's own
-
 #[test]
 fn the_callers_query_goes_out_on_a_same_dialect_attempt() {
     assert_eq!(
@@ -401,7 +399,6 @@ fn the_callers_query_goes_out_on_a_same_dialect_attempt() {
 }
 
 /// A signed dialect's attempt carries no caller query until its signer signs the canonical query
-
 #[test]
 fn a_signed_dialects_attempt_carries_no_query_yet() {
     assert_eq!(
@@ -411,7 +408,6 @@ fn a_signed_dialects_attempt_carries_no_query_yet() {
 }
 
 /// A path-model same-dialect relay sends the caller's bytes: the `model` and `stream` the arrival
-
 #[test]
 fn a_path_model_same_dialect_request_reaches_the_far_end_as_the_caller_wrote_it() {
     let h = head(&[("content-type", "application/json")]);
@@ -429,7 +425,6 @@ fn a_path_model_same_dialect_request_reaches_the_far_end_as_the_caller_wrote_it(
 }
 
 /// A conversation history carrying a `custom` tool call (a type the IR does not model) is relayed
-
 #[test]
 fn a_history_with_a_custom_tool_call_relays_byte_identical() {
     let h = head(&[("content-type", "application/json")]);
@@ -440,7 +435,6 @@ fn a_history_with_a_custom_tool_call_relays_byte_identical() {
 }
 
 /// TENANT SELECTORS COME FROM BUSBAR'S CONFIG: a provider's `OpenAI-Organization` /
-
 #[test]
 fn the_providers_tenant_goes_out_and_the_callers_does_not() {
     let shaping = Shaping::from_settings(&json!({
@@ -471,7 +465,6 @@ fn the_providers_tenant_goes_out_and_the_callers_does_not() {
 }
 
 /// THE DIALECT'S STATIC FIELDS (anthropic declares
-
 #[test]
 fn no_client_header_leaves_egress_unchanged() {
     let none = head(&[]);
@@ -534,7 +527,6 @@ fn no_client_header_leaves_egress_unchanged() {
 }
 
 /// THE PREVIOUS RELEASE'S HEADER-MAP ORDER (oracle `egress.auth|cred-identity|*`, `route.529|*`): a
-
 #[test]
 fn a_same_dialect_callers_fields_keep_busbars_positions() {
     let h = head(&[
@@ -564,7 +556,6 @@ fn a_same_dialect_callers_fields_keep_busbars_positions() {
 }
 
 /// THE `accept` FIELD IS BUSBAR'S OWN (1.5.5's bytes: the oracle's same-dialect cells, e.g.
-
 #[test]
 fn a_same_dialect_callers_accept_never_replaces_busbars_own() {
     let h = head(&[("accept", "*/*"), ("x-trace", "a")]);
@@ -595,7 +586,6 @@ const DIALECTS: [&str; 6] = [
 ];
 
 /// One provider of `dialect` serving one model `member` (sent as `wire` when given), in pool `p`;
-
 fn one_lane(
     dialect: &str,
     member: &str,
@@ -628,7 +618,6 @@ fn far_json(r: &FarRequest) -> Value {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/client_header_forwarding_tests.rs::same_dialect_anthropic_forwards_every_client_header`.
-
 #[test]
 fn a_same_dialect_anthropic_callers_own_version_beta_and_trace_go_out() {
     let h = head(&[
@@ -659,7 +648,6 @@ fn a_same_dialect_anthropic_callers_own_version_beta_and_trace_go_out() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/client_header_forwarding_tests.rs::same_dialect_openai_forwards_headers_and_unknown_body_fields`.
-
 #[test]
 fn a_same_dialect_openai_callers_fields_and_unknown_member_go_out() {
     let h = head(&[
@@ -685,7 +673,6 @@ fn a_same_dialect_openai_callers_fields_and_unknown_member_go_out() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/client_header_forwarding_tests.rs::neutral_apply_replaces_then_appends`.
-
 #[test]
 fn a_callers_two_values_replace_busbars_default_then_append() {
     let h = head(&[
@@ -718,7 +705,6 @@ fn a_callers_two_values_replace_busbars_default_then_append() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/client_header_forwarding_tests.rs::the_tenant_comes_from_config_never_from_the_caller`.
-
 #[test]
 fn the_tenant_comes_from_config_on_every_route_and_never_from_the_caller() {
     let caller = |ct: &'static str| {
@@ -778,7 +764,6 @@ fn the_tenant_comes_from_config_on_every_route_and_never_from_the_caller() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/egress_target_tests.rs::egress_targets_match_reference_composition_all_protocols`.
-
 #[test]
 fn every_dialects_chat_target_is_its_released_path_both_stream_intents() {
     let h = head(&[("content-type", "application/json")]);
@@ -845,7 +830,6 @@ fn every_dialects_chat_target_is_its_released_path_both_stream_intents() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/egress_target_tests.rs::egress_targets_honor_azure_path_override_with_query`.
-
 #[test]
 fn a_provider_path_with_a_query_is_the_target_verbatim() {
     let fixed = "/openai/deployments/gpt-4o/chat/completions?api-version=2024-06-01";
@@ -869,7 +853,6 @@ fn a_provider_path_with_a_query_is_the_target_verbatim() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_egress_accept_matches_native_sdk`.
-
 #[test]
 fn every_far_end_reads_its_native_sdks_accept() {
     let h = head(&[("content-type", "application/json")]);
@@ -897,7 +880,6 @@ fn every_far_end_reads_its_native_sdks_accept() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_forward_once_cross_protocol_strips_source_only_extra_keys`.
-
 #[test]
 fn an_openai_callers_source_only_keys_never_reach_an_anthropic_far_end() {
     let h = head(&[("content-type", "application/json")]);
@@ -960,7 +942,6 @@ fn whole_ctx<'a>(a: &'a Arrived, egress: &'a str, model: &'a str) -> WholeCtx<'a
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_cohere_ingress_to_openai_backend`.
-
 #[test]
 fn a_cohere_caller_reaches_an_openai_far_end_and_back() {
     let h = head(&[
@@ -994,7 +975,6 @@ fn a_cohere_caller_reaches_an_openai_far_end_and_back() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_responses_ingress_to_anthropic_backend`.
-
 #[test]
 fn a_responses_caller_reaches_an_anthropic_far_end_and_back() {
     let h = head(&[("content-type", "application/json")]);
@@ -1020,7 +1000,6 @@ fn a_responses_caller_reaches_an_anthropic_far_end_and_back() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_same_protocol_passthrough_strips_shim_keys`.
-
 #[test]
 fn a_bedrock_same_dialect_relay_carries_no_routing_members() {
     let h = head(&[("content-type", "application/json")]);
@@ -1037,7 +1016,6 @@ fn a_bedrock_same_dialect_relay_carries_no_routing_members() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_json_array_shim_not_leaked_cross_protocol`.
-
 #[test]
 fn a_gemini_json_array_callers_router_key_never_reaches_a_body_model_far_end() {
     let h = head(&[("content-type", "application/json")]);
@@ -1055,7 +1033,6 @@ fn a_gemini_json_array_callers_router_key_never_reaches_a_body_model_far_end() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_reject_response_tests.rs::unsupported_sub_op_rejects_with_404_naming_op_and_model`.
-
 #[test]
 fn an_unsupported_sub_operation_is_a_404_naming_the_operation_and_the_model() {
     let refused = ingress_reject(
@@ -1082,7 +1059,6 @@ fn an_unsupported_sub_operation_is_a_404_naming_the_operation_and_the_model() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_reject_response_tests.rs::bad_request_reject_keeps_the_unchanged_generic_400`.
-
 #[test]
 fn a_bad_request_reject_is_the_generic_400() {
     let refused = ingress_reject("openai", &IngressReject::BadRequest("x".into()));
@@ -1097,7 +1073,6 @@ fn a_bad_request_reject_is_the_generic_400() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/lazy_body_tests.rs::a_same_dialect_hop_is_the_callers_bytes_with_governed_splices`.
-
 #[test]
 fn a_same_dialect_hop_is_the_callers_bytes_with_the_governed_splices_only() {
     let cases: [(&str, &str, &str, &str, &str); 8] = [
@@ -1165,7 +1140,6 @@ fn a_same_dialect_hop_is_the_callers_bytes_with_the_governed_splices_only() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/multi_candidate_degrade_tests.rs::openai_to_anthropic_n_gt_1_is_forwarded_not_rejected`.
-
 #[test]
 fn an_openai_n_over_one_to_anthropic_is_forwarded_without_n() {
     let h = head(&[("content-type", "application/json")]);
@@ -1182,7 +1156,6 @@ fn an_openai_n_over_one_to_anthropic_is_forwarded_without_n() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/multi_candidate_degrade_tests.rs::gemini_ingress_to_openai_candidate_count_gt_1_is_forwarded_not_rejected`.
-
 #[test]
 fn a_gemini_candidate_count_over_one_to_openai_is_forwarded() {
     let h = head(&[("content-type", "application/json")]);
@@ -1197,7 +1170,6 @@ fn a_gemini_candidate_count_over_one_to_openai_is_forwarded() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/multi_candidate_degrade_tests.rs::openai_to_openai_n_gt_1_is_preserved_verbatim`.
-
 #[test]
 fn a_same_dialect_openai_n_over_one_is_relayed_unchanged() {
     let h = head(&[("content-type", "application/json")]);
@@ -1210,7 +1182,6 @@ fn a_same_dialect_openai_n_over_one_is_relayed_unchanged() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/multi_candidate_degrade_tests.rs::multi_input_embeddings_to_gemini_embeds_first_not_rejected`.
-
 #[test]
 fn multi_input_embeddings_to_gemini_embed_the_first() {
     let h = head(&[("content-type", "application/json")]);
@@ -1229,7 +1200,6 @@ fn multi_input_embeddings_to_gemini_embed_the_first() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/multi_candidate_degrade_tests.rs::single_input_embeddings_to_gemini_is_allowed`.
-
 #[test]
 fn single_input_embeddings_to_gemini_are_written() {
     let h = head(&[("content-type", "application/json")]);
@@ -1312,7 +1282,6 @@ fn released_path(
 }
 
 /// RFC 3986 percent-encoding of a path with `/` kept, as 1.5.5's `sign_and_wire_path_parts` did
-
 fn released_wire(url_path: &str) -> (String, String) {
     fn encode(p: &str) -> String {
         p.bytes()
@@ -1342,7 +1311,6 @@ fn released_wire(url_path: &str) -> (String, String) {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/plane_attempt_parity_tests.rs::the_planes_attempt_path_is_the_engines_url_after_its_base`.
-
 #[test]
 fn every_dialect_operation_shape_and_stream_intent_reads_the_released_far_path() {
     let shapes: [(&str, Option<&str>, Option<&str>); 4] = [
@@ -1419,7 +1387,6 @@ fn every_dialect_operation_shape_and_stream_intent_reads_the_released_far_path()
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/request_short_circuit_tests.rs::pristine_same_proto_is_byte_identical_body_model`.
-
 #[test]
 fn a_pristine_same_dialect_body_is_byte_identical_for_four_body_model_dialects() {
     let h = head(&[("content-type", "application/json")]);
@@ -1459,7 +1426,6 @@ fn a_pristine_same_dialect_body_is_byte_identical_for_four_body_model_dialects()
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/request_short_circuit_tests.rs::claude_on_vertex_drops_model_and_injects_anthropic_version`.
-
 #[test]
 fn claude_on_vertex_drops_the_model_and_names_the_vertex_version() {
     let vbase = "/v1/projects/p/locations/us-central1/publishers/anthropic/models";
@@ -1491,7 +1457,6 @@ fn claude_on_vertex_drops_the_model_and_names_the_vertex_version() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/request_short_circuit_tests.rs::invalidator_2_stream_on_path_model_egress_forces_non_pristine`.
-
 #[test]
 fn a_stream_member_never_reaches_a_path_model_far_end() {
     let h = head(&[("content-type", "application/json")]);
@@ -1509,7 +1474,6 @@ fn a_stream_member_never_reaches_a_path_model_far_end() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/request_short_circuit_tests.rs::invalidator_4_same_proto_model_shim_strip_forces_non_pristine`.
-
 #[test]
 fn a_body_model_member_never_reaches_a_same_dialect_path_model_far_end() {
     let h = head(&[("content-type", "application/json")]);
@@ -1535,7 +1499,6 @@ fn a_body_model_member_never_reaches_a_same_dialect_path_model_far_end() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/request_short_circuit_tests.rs::same_proto_gemini_thought_signature_round_trips_verbatim`.
-
 #[test]
 fn a_same_dialect_gemini_thought_signature_relays_verbatim() {
     let h = head(&[("content-type", "application/json")]);
@@ -1550,7 +1513,6 @@ fn a_same_dialect_gemini_thought_signature_relays_verbatim() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/stop_sequence_cap_degrade_tests.rs::cohere_to_cohere_over_cap_stop_sequences_is_preserved_verbatim`.
-
 #[test]
 fn a_same_dialect_cohere_over_cap_stop_list_goes_out_whole() {
     let h = head(&[("content-type", "application/json")]);
@@ -1619,7 +1581,6 @@ fn cohere_bounds_native_attempt_preserves_bytes_without_clamping_or_diagnostics(
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/translate_offload_tests.rs::huge_body_translates_via_offload_and_forwards`.
-
 #[test]
 fn a_huge_body_is_written_like_a_small_one() {
     let h = head(&[("content-type", "application/json")]);
@@ -1658,7 +1619,6 @@ fn a_huge_body_is_written_like_a_small_one() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/attempt/tests/assemble.rs::a_wrong_typed_stream_options_is_refused_before_any_send`.
-
 #[test]
 fn every_wrong_typed_stream_options_is_refused_before_any_send() {
     let h = head(&[("content-type", "application/json")]);
@@ -1689,7 +1649,6 @@ fn every_wrong_typed_stream_options_is_refused_before_any_send() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/attempt/tests/assemble.rs::the_injector_answers_err_on_a_wrong_typed_stream_options`.
-
 #[test]
 fn the_injector_hands_the_callers_bytes_back_on_a_wrong_typed_stream_options() {
     let body: &[u8] = br#"{"stream":true,"stream_options":"x"}"#;
@@ -1707,7 +1666,6 @@ fn count_of(haystack: &[u8], needle: &[u8]) -> usize {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/engine_tests/inject_include_usage_tests.rs::injector_idempotent_when_stream_options_already_present`.
-
 #[test]
 fn an_existing_stream_options_is_set_in_place_never_duplicated() {
     let body = br#"{"model":"gpt-4o","stream":true,"stream_options":{"include_usage":false},"messages":[]}"#;
@@ -1740,7 +1698,6 @@ fn an_existing_stream_options_is_set_in_place_never_duplicated() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/engine_tests/inject_include_usage_tests.rs::injector_tolerates_leading_whitespace`.
-
 #[test]
 fn the_usage_ask_lands_behind_mixed_leading_whitespace() {
     let out = try_inject_stream_include_usage(b"  \n\t{\"model\":\"m\",\"stream\":true}".to_vec())
@@ -1754,7 +1711,6 @@ fn the_usage_ask_lands_behind_mixed_leading_whitespace() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/engine_tests/inject_include_usage_tests.rs::injector_falls_back_on_empty_or_non_object`.
-
 #[test]
 fn an_empty_object_gains_the_ask_and_a_non_object_passes() {
     let out = try_inject_stream_include_usage(b"{}".to_vec()).expect("asked");
@@ -1769,7 +1725,6 @@ fn an_empty_object_gains_the_ask_and_a_non_object_passes() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/engine_tests/inject_include_usage_tests.rs::injector_does_not_overrun_an_all_whitespace_body`.
-
 #[test]
 fn an_all_whitespace_body_passes_the_injector_untouched() {
     let out = try_inject_stream_include_usage(b"   \n\t ".to_vec()).expect("unchanged");
@@ -1777,7 +1732,6 @@ fn an_all_whitespace_body_passes_the_injector_untouched() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/engine_tests/inject_include_usage_tests.rs::upgrades_existing_stream_options_preserving_siblings`.
-
 #[test]
 fn an_existing_false_is_overwritten_and_its_siblings_kept() {
     let body = br#"{"model":"gpt-4o","stream":true,"stream_options":{"include_usage":false,"foo":1},"messages":[]}"#;
@@ -1792,7 +1746,6 @@ fn an_existing_false_is_overwritten_and_its_siblings_kept() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/engine_tests/inject_include_usage_tests.rs::keeps_existing_true`.
-
 #[test]
 fn a_caller_already_opted_in_stays_opted_in() {
     let out = try_inject_stream_include_usage(
@@ -1814,7 +1767,6 @@ fn a_caller_already_opted_in_stays_opted_in() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/engine_tests/inject_include_usage_tests.rs::an_existing_stream_options_is_edited_in_place`.
-
 #[test]
 fn the_usage_ask_edits_an_existing_stream_options_in_place_byte_for_byte() {
     for (input, want) in [
@@ -1842,7 +1794,6 @@ fn the_usage_ask_edits_an_existing_stream_options_in_place_byte_for_byte() {
 }
 
 /// A CROSS-DIALECT REQUEST LIFTS THE SYSTEM TURN: an openai caller's `system` message, sent to an
-
 #[test]
 fn a_cross_dialect_request_lifts_the_system_turn_out_of_the_messages() {
     let h = head(&[("content-type", "application/json")]);
@@ -1860,7 +1811,6 @@ fn a_cross_dialect_request_lifts_the_system_turn_out_of_the_messages() {
 }
 
 /// AN OMITTED `max_tokens` IS FILLED, AN EXPLICIT ONE KEPT: an openai caller that omits
-
 #[test]
 fn an_omitted_max_tokens_is_filled_and_an_explicit_one_is_kept() {
     let shaping = Shaping::from_settings(&json!({

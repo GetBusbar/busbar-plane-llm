@@ -25,7 +25,6 @@ use crate::rig::{member, Answered, Hooks, Pool, Rig};
 
 
 /// Every hook access the node journal holds for `name` (the journal is process-wide: every hook
-
 fn accesses(name: &str) -> Vec<Access> {
     node_recent()
         .into_iter()
@@ -226,7 +225,6 @@ async fn a_global_tap_leaves_an_access_amendment_only_when_handed_the_prompt() {
 
 
 /// The exact strings a `prompt: ro` hook is shown for `body` posted to `path`, flattened across
-
 async fn gate_view(path: &str, content_type: &str, body: &[u8]) -> (String, usize) {
     let (seen, policy) = capturing(true, false, None);
     let rig = Rig::new(
@@ -358,7 +356,6 @@ struct Seen {
 }
 
 /// A headroom-shaped compressor: echoes every turn as `{role, content}`, keeps a `system` turn and
-
 struct Compressor(Mutex<Option<Seen>>);
 
 #[async_trait::async_trait]
@@ -408,7 +405,6 @@ impl RoutingPolicy for Compressor {
 }
 
 /// One rw hook over `v` posted to `path` in a same-dialect pool served by `provider`: what the
-
 async fn rewrite(path: &str, provider: &'static str, v: Value) -> (Seen, Value) {
     let hook = Arc::new(Compressor(Mutex::new(None)));
     let rig = Rig::new(
@@ -583,7 +579,6 @@ async fn responses_instructions_are_system_and_a_system_item_is_a_turn() {
 
 
 /// `v` posted to `path` in a same-dialect pool served by `provider`, under a rw hook answering
-
 async fn rewritten(path: &str, provider: &'static str, v: Value, messages: Vec<Value>) -> Value {
     let rig = Rig::new(
         Pool {
@@ -612,7 +607,6 @@ async fn rewritten(path: &str, provider: &'static str, v: Value, messages: Vec<V
 }
 
 /// The plane's own rewrite step over `body` arriving at `target`: the rewritten body, `None` when
-
 fn applied(target: &str, body: &[u8], rewrite: &Value) -> Option<Value> {
     use busbar_plane_llm::exchange::arrive::arrive;
     use busbar_plane_llm::exchange::project::apply_rewrite;
@@ -633,14 +627,6 @@ fn applied(target: &str, body: &[u8], rewrite: &Value) -> Option<Value> {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/usage_tap_tests.rs::apply_rewrite_renders_per_dialect`
-
-
-
-
-
-
-
-
 #[tokio::test]
 async fn apply_rewrite_renders_per_dialect() {
     let rewrite = vec![
@@ -689,12 +675,6 @@ async fn apply_rewrite_renders_per_dialect() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/usage_tap_tests.rs::gemini_rewrite_role_round_trips_model_and_assistant`
-
-
-
-
-
-
 #[tokio::test]
 async fn gemini_rewrite_role_round_trips_model_and_assistant() {
     let (seen, policy) = capturing(true, false, None);

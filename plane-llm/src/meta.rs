@@ -6,7 +6,6 @@ use busbar_contract::ids::OpClassId;
 pub const KEY: &str = "llm";
 
 /// The operation classes a unit of this plane can be: the classes that price a unit, so no wider than
-
 pub const OP_CLASSES: &[OpClassId] = &[
     OpClassId::new("chat"),
     OpClassId::new("embeddings"),
@@ -25,7 +24,6 @@ macro_rules! help_tagline {
 }
 
 /// The one-line description `busbar --help` opens with (`busbar <version> — <this>`), byte for byte
-
 pub const HELP_TAGLINE: &str = help_tagline!();
 
 /// [`HELP_ENDPOINTS`]'s text, spelled once for it and for [`CLI_HELP_TEXT`].
@@ -46,11 +44,9 @@ macro_rules! help_endpoints {
 }
 
 /// This plane's lines in the `ENDPOINTS` block of `busbar --help` (the doors its dialects answer on),
-
 pub const HELP_ENDPOINTS: &str = help_endpoints!();
 
 /// The same rows as the door's tail states them (`PlaneTail::cli_help`), in the contract's grammar
-
 pub const CLI_HELP_TEXT: &str = concat!(
     "\u{1e}tagline\u{1f}",
     help_tagline!(),
@@ -59,7 +55,6 @@ pub const CLI_HELP_TEXT: &str = concat!(
 );
 
 /// The provider keys this plane owns, per form of a `providers:` entry, stated in its Statement's
-
 pub const PROVIDER_KEYS: &str = r#"{
   "catalog": {
     "deny_unknown": false,

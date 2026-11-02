@@ -44,7 +44,6 @@ pub fn strip_router_shim_keys(v: &mut Value, egress_protocol: &str) -> bool {
 }
 
 /// Bytes-per-token divisor for the truncated-tail billing floor. Conservative (~4 bytes/token is
-
 pub const TRUNCATED_TAIL_BYTES_PER_TOKEN: u64 = 4;
 
 #[cfg(test)]

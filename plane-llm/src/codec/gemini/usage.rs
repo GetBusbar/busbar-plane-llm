@@ -4,7 +4,6 @@ use super::*;
 use crate::codec::usage_count::{read_usage, CountRead, CountSlot, UsageCount};
 
 /// Gemini's usage counts, as data. `cachedContentTokenCount` is a slice inside `promptTokenCount`, so
-
 pub(super) const USAGE: &[UsageCount] = &[
     (
         CountSlot::Input,
@@ -59,7 +58,6 @@ pub(super) const USAGE: &[UsageCount] = &[
 ];
 
 /// A Gemini response (or stream frame) to IR usage: `usageMetadata` through [`USAGE`], plus what
-
 pub(super) fn read_gemini_usage(
     data: &serde_json::Value,
 ) -> Result<crate::codec::ir::IrUsage, IrError> {
@@ -96,7 +94,6 @@ const MODALITY_IMAGE: &str = "IMAGE";
 const MODALITY_VIDEO: &str = "VIDEO";
 
 /// `usageMetadata.{prompt,candidates,cache}TokensDetails[]{modality,tokenCount}` -> the IR's
-
 fn read_by_modality(u: &serde_json::Value) -> Option<crate::codec::ir::IrUsageByModality> {
     if !MODALITY_LISTS.iter().any(|l| u.get(*l).is_some()) {
         return None;
@@ -147,7 +144,6 @@ pub(super) fn write_by_modality(
 }
 
 /// [`read_gemini_usage`] for a fixture the test already knows carries readable counts. Test-only:
-
 #[cfg(test)]
 pub(super) fn gemini_usage(data: &serde_json::Value) -> crate::codec::ir::IrUsage {
     read_gemini_usage(data).expect("test fixture carries readable usage counts")

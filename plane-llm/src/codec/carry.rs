@@ -53,7 +53,6 @@ pub enum Slot {
 }
 
 /// The control order: every request control a dialect may have no form for, in the order dropped
-
 pub const CONTROL_ORDER: &[Slot] = &[
     Slot::TopK,
     Slot::Stop,
@@ -97,7 +96,6 @@ pub enum Dir {
 }
 
 /// One row of a word table: `(wire word, neutral word, direction)`. Reading takes the FIRST
-
 pub type Word = (&'static str, &'static str, Dir);
 
 /// How a row's slot value is spelled on the wire.
@@ -211,7 +209,6 @@ impl Field {
     }
 
     /// `clamp = [min, max]`, `clamp_warn`, `clamp_parameter`: clamp finite numeric writes, warning
-
     pub const fn clamp(mut self, min: f64, max: f64, warn: &'static str, parameter: bool) -> Field {
         self.clamp = Some(Clamp {
             min,
@@ -243,7 +240,6 @@ pub struct Egress {
 }
 
 /// A dialect's field table: its row groups, walked in order (a group shared by two dialects is
-
 pub type Table = &'static [&'static [Field]];
 
 impl Slot {
@@ -281,7 +277,6 @@ impl Slot {
     }
 
     /// The slot's name, the IR field's. A dropped control's warn and audit row use the caller's wire
-
     pub fn name(self) -> &'static str {
         match self {
             Slot::Metadata => "metadata",
@@ -307,7 +302,6 @@ impl Slot {
     }
 
     /// Whether the request carries the control: set, or (stop) non-empty, or (output modalities)
-
     pub fn carried(self, r: &IrRequest) -> bool {
         match self {
             Slot::OutputModalities => r
@@ -328,7 +322,6 @@ impl Slot {
     }
 
     /// Fill the slot from its neutral JSON value when it is still empty and the value is of the
-
     fn fill(self, r: &mut IrRequest, v: &Value) {
         fn first<T>(slot: &mut Option<T>, v: Option<T>) {
             if slot.is_none() {
@@ -428,7 +421,6 @@ fn put(out: &mut Map<String, Value>, path: &[&str], v: Value) {
 }
 
 /// The read walk: fill every slot `table` names from the wire body `obj`, then park in `extra` each
-
 pub fn read_fields(table: Table, obj: &Map<String, Value>, ir: &mut IrRequest) {
     for f in rows(table) {
         let Some(raw) = at(obj, f.path) else {
@@ -500,7 +492,6 @@ fn warn_drop(d: &DropIf, slot: Slot, req: &IrRequest) {
 }
 
 /// Clamp `v` into `[min, max]`: `(the value to write, whether the clamp changed it)`. A non-finite
-
 pub fn clamp(v: f64, min: f64, max: f64) -> (f64, bool) {
     if !v.is_finite() {
         return (v, false);
@@ -510,7 +501,6 @@ pub fn clamp(v: f64, min: f64, max: f64) -> (f64, bool) {
 }
 
 /// The write walk: emit every slot of `table` that `req` carries into `out` at its wire path through
-
 pub fn write_fields(table: Table, req: &IrRequest, egress: Egress, out: &mut Map<String, Value>) {
     for f in rows(table) {
         let Some(mut v) = value_of(f, req) else {
@@ -592,7 +582,6 @@ pub fn write_fields(table: Table, req: &IrRequest, egress: Egress, out: &mut Map
 }
 
 /// The derived drops: controls of [`CONTROL_ORDER`] that `req` carries and this dialect cannot write
-
 pub fn dropped<'a>(
     table: Table,
     controls: &'a [(Slot, Handled)],
@@ -623,7 +612,6 @@ fn handled(controls: &[(Slot, Handled)], slot: Slot) -> Option<Handled> {
 }
 
 /// The one drop warn: one per [`dropped`] control, in the dialect's words (its `[controls]` text for
-
 pub fn warn_drops(
     table: Table,
     controls: &[(Slot, Handled)],
@@ -644,7 +632,6 @@ pub fn warn_drops(
 }
 
 /// A dropped control's own warn. With `value`, the warn names the dropped value under the slot's
-
 fn warn_slot(slot: Slot, text: &str, value: bool, req: &IrRequest) {
     let path = crate::codec::drops::caller_path(slot.name());
     match (slot, value) {
@@ -699,7 +686,6 @@ fn warn_slot(slot: Slot, text: &str, value: bool, req: &IrRequest) {
 }
 
 /// Keep in `extra` every top-level member of `obj` that `table` does not model (same-dialect
-
 pub fn keep_unmodelled(table: Table, obj: &Map<String, Value>, extra: &mut Map<String, Value>) {
     for (key, value) in obj {
         if !models(table, key) {
@@ -709,13 +695,11 @@ pub fn keep_unmodelled(table: Table, obj: &Map<String, Value>, extra: &mut Map<S
 }
 
 /// Whether `table` carries the wire path `path` ACROSS dialects: a row that names a slot. A `prim`
-
 pub fn crosses(table: Table, path: &[&str]) -> bool {
     rows(table).any(|f| f.path == path && !matches!(f.codec, ValueCodec::Prim(_)))
 }
 
 /// The name resolver's table half: the notation-A wire path at which `table` spells the IR name
-
 pub fn wire_path(table: Table, name: &str) -> Option<String> {
     let slot_rows: Vec<&[&str]> = rows(table)
         .filter(|f| f.slot != Slot::Structure && f.slot.name() == name)
@@ -745,13 +729,11 @@ pub fn wire_path(table: Table, name: &str) -> Option<String> {
 }
 
 /// Whether `key` is a top-level member `table` models (the reader keeps every other member in
-
 pub fn models(table: Table, key: &str) -> bool {
     keys(table).any(|k| k == key)
 }
 
 /// The top-level members `table` models: every single-key path. (A nested row's container is the
-
 pub fn keys(table: Table) -> impl Iterator<Item = &'static str> {
     rows(table).filter_map(|f| match f.path {
         [key] => Some(*key),

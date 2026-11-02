@@ -4,7 +4,6 @@
 //! IR/wire projection helpers shared across the LLM dialect codecs: the image-source pair
 
 /// Reconstruct an OpenAI/Responses `image_url` string from an [`crate::codec::ir::IrImageSource`],
-
 pub fn image_url_from_ir(source: &crate::codec::ir::IrImageSource) -> Option<String> {
     match source {
         crate::codec::ir::IrImageSource::Url(url) => Some(url.clone()),
@@ -17,7 +16,6 @@ pub fn image_url_from_ir(source: &crate::codec::ir::IrImageSource) -> Option<Str
 }
 
 /// Decompose an OpenAI/Responses `image_url` string into the IR image source, inverse of
-
 pub fn parse_image_url(url: &str) -> crate::codec::ir::IrImageSource {
     if let Some(rest) = url.strip_prefix("data:") {
         if let Some((meta, payload)) = rest.split_once(',') {
@@ -35,7 +33,6 @@ pub fn parse_image_url(url: &str) -> crate::codec::ir::IrImageSource {
 }
 
 /// Signal that this egress dialect cannot express [`crate::codec::ir::IrTool::strict`], naming the
-
 pub fn warn_dropped_tool_strict(tools: &[crate::codec::ir::IrTool], egress: &'static str) {
     let named: Vec<&str> = tools
         .iter()
@@ -56,7 +53,6 @@ pub fn warn_dropped_tool_strict(tools: &[crate::codec::ir::IrTool], egress: &'st
 }
 
 /// The minimal one-token "ping" IR request a health probe serializes through a dialect's own
-
 pub fn ping_request() -> crate::codec::ir::IrRequest {
     use crate::codec::ir::{IrBlock, IrMessage, IrRequest, IrRole};
 
@@ -76,7 +72,6 @@ pub fn ping_request() -> crate::codec::ir::IrRequest {
 }
 
 /// Synthesize a deterministic non-empty `call_…` tool-call id for a response tool call whose
-
 pub(crate) fn synth_response_tool_call_id(ordinal: usize, name: &str) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -86,7 +81,6 @@ pub(crate) fn synth_response_tool_call_id(ordinal: usize, name: &str) -> String 
 }
 
 /// Decode a tool-call `arguments` field into the IR tool input. OpenAI's shape is a JSON string
-
 pub(crate) fn tool_input_from_arguments(v: Option<&serde_json::Value>) -> serde_json::Value {
     match v {
         Some(serde_json::Value::String(s)) => crate::codec::json::parse_str(s)

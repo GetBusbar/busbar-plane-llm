@@ -67,7 +67,6 @@ const OPENAI_COUNT_CLASSES: &[(&str, Class)] = &[
 ];
 
 /// The integer members the pinned wire lock declares under `usage` on `section` (`response` or
-
 fn lock_usage_counts(section: &str) -> Vec<String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../testing/llm-conformance/wire/openai.wire.json");
@@ -130,7 +129,6 @@ fn note_of(u: &crate::codec::ir::IrUsage) -> Note {
 }
 
 /// The ledgered units and the identity note on each read path: buffered, streamed, truncated
-
 fn read_all_paths(usage: &serde_json::Value) -> [(Units, Note, u64); 3] {
     let body = serde_json::json!({
         "id": "chatcmpl-census",
@@ -184,7 +182,6 @@ fn read_all_paths(usage: &serde_json::Value) -> [(Units, Note, u64); 3] {
 }
 
 /// EVERY COUNT IN THE WIRE LOCK HAS A CLASS, AND THE READER HONOURS IT ON EVERY PATH. Reporting 7
-
 #[test]
 fn every_usage_count_in_the_wire_lock_is_ledgered_or_a_declared_slice() {
     let counts = lock_usage_counts("response");
@@ -258,7 +255,6 @@ fn every_usage_count_in_the_wire_lock_is_ledgered_or_a_declared_slice() {
 }
 
 /// AN OPENAI-COMPATIBLE BACKEND THAT COUNTS REASONING OUTSIDE `completion_tokens`: the stated total
-
 #[test]
 fn a_total_above_the_ledgered_classes_ledgers_the_remainder_as_unitemized_tokens() {
     let usage = serde_json::json!({

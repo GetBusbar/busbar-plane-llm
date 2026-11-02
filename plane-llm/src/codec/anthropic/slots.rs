@@ -37,13 +37,11 @@ pub(super) fn validate_hosted_tool(tool: &serde_json::Value) -> Result<(), super
 }
 
 /// Versioned `type` prefixes of the Anthropic server tools whose KIND the IR models (IR-11). The
-
 pub(super) const HOSTED_TYPE_PREFIX_WEB_SEARCH: &str = "web_search_";
 pub(super) const HOSTED_TYPE_PREFIX_WEB_FETCH: &str = "web_fetch_";
 pub(super) const HOSTED_TYPE_PREFIX_CODE_EXECUTION: &str = "code_execution_";
 
 /// An Anthropic server tool of a KIND the IR models → [`crate::codec::ir::IrHostedTool`] (IR-11, ANT-13).
-
 pub(super) fn read_hosted_tool(
     tool_val: &serde_json::Value,
 ) -> Option<crate::codec::ir::IrHostedTool> {

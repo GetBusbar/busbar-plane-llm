@@ -29,7 +29,6 @@ impl CodecHost for TestHost {
 pub const HOST: &dyn CodecHost = &TestHost;
 
 /// The class the host's classifier places `raw` in with an EMPTY operator `error_map`, read off the
-
 pub fn classified(raw: &RawUpstreamError) -> CanonicalSignal {
     let path =
         std::path::PathBuf::from(std::env::var_os("BUSBAR_CHECKOUT").expect(
@@ -66,7 +65,6 @@ pub fn screened(items: &[busbar_contract::ir::facts::ContentItem<'_>]) -> Vec<St
 }
 
 /// The stop reason of a non-stream response read from its RAW BYTES the way the same-protocol
-
 pub(crate) fn raw_stop_reason(
     reader: &dyn crate::codec::proto_codec::ProtocolReader,
     body: &[u8],

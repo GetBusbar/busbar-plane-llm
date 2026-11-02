@@ -6,7 +6,6 @@
 use super::*;
 
 /// stream:`metadata.usage` — the ConverseStream terminal usage frame. Float-encoded
-
 #[test]
 fn stream_metadata_float_token_counts_survive_as_integers() {
     let reader = BedrockReader;
@@ -55,7 +54,6 @@ fn stream_metadata_float_token_counts_survive_as_integers() {
 }
 
 /// Buffered `read_response().usage` — `inputTokens`/`outputTokens`/`cacheWriteInputTokens`/
-
 #[test]
 fn buffered_response_float_usage_counts_survive_as_integers() {
     let reader = BedrockReader;
@@ -91,7 +89,6 @@ fn buffered_response_float_usage_counts_survive_as_integers() {
 }
 
 /// MONEY BUG regression (truncated-tail recovery path): a HEAD-truncated non-stream billing buffer
-
 #[test]
 fn recover_truncated_usage_float_token_counts_survive_as_integers() {
     let reader = BedrockReader;

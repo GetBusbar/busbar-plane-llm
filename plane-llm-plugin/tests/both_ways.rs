@@ -92,7 +92,6 @@ const CALLER: &[Field] = &[
     field(b"anthropic-version", b"2023-06-01"),
 ];
 /// An openai caller's head: no `anthropic-version`, whose header claim outranks the
-
 const OPENAI_CALLER: &[Field] = &[field(b"content-type", b"application/json")];
 /// What the far end answers: 7 tokens in, 3 out.
 const ANSWER: &[u8] = br#"{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":7,"output_tokens":3}}"#;
@@ -465,7 +464,6 @@ fn linked(d: &Dispatcher) -> Plugin<Plane> {
 }
 
 /// This crate's dropped-in image, the `busbar-plane-llm-plugin` cdylib `cargo test` builds beside
-
 fn dropped(d: &Dispatcher) -> Plugin<Plane> {
     let exe = std::env::current_exe().expect("the test binary has a path");
     let deps = exe.parent().expect("target/<profile>/deps");
@@ -532,7 +530,6 @@ fn a_usage_tap_fault_rides_one_window_of_the_doors_answer() {
 }
 
 /// The same far end, model and pool, with a translation cap below [`ANSWER`]'s length: the
-
 const SETTINGS_CAPPED: &[u8] = br#"{
     "providers": { "ant": { "protocol": "anthropic", "base_url": "https://anthropic.example" } },
     "models": { "claude": { "provider": "ant" } },
@@ -541,7 +538,6 @@ const SETTINGS_CAPPED: &[u8] = br#"{
 }"#;
 
 /// One openai caller's unit against the anthropic far end, its whole answer [`ANSWER`]: the far
-
 fn translated(p: &Plugin<Plane>, unit: u64) -> String {
     assert!(
         arrive_with(p, unit, b"/v1/chat/completions", OPENAI_CALLER, CHAT)
@@ -605,7 +601,6 @@ fn the_translate_cap_the_settings_carry_is_the_one_the_door_enforces() {
 }
 
 /// A call capture for the hand-built table entry below: one slot per thread, as `plugin_door!`
-
 struct TestCapture;
 impl CaptureHome for TestCapture {
     fn retention() -> &'static busbar_contract::abi::sdk::capture::CaptureRetention {
@@ -675,7 +670,6 @@ fn red_a_door_that_stops_counting_the_far_ends_units_answers_differently() {
 }
 
 /// Provider credential keys pass through the plugin loader.
-
 mod provider_keys_through_the_loader {
     use busbar_contract::abi::mechanism::{extensions, rendering};
     use busbar_contract::provider_keys::{decode, EXT_PROVIDER_KEYS};
@@ -685,7 +679,6 @@ mod provider_keys_through_the_loader {
     use busbar_plugin_loader::dispatch::rendering_of;
 
     /// The door's signed Statement rendering carries the descriptor under the one extensions key, as
-
     #[test]
     fn the_door_states_its_provider_keys_in_its_statement_extensions() {
         let stated = rendering_of(plane_door::door).expect("the door renders its Statement");
@@ -701,7 +694,6 @@ mod provider_keys_through_the_loader {
     }
 
     /// The one loader reads the descriptor off the bound door into the plane's registration, decoded
-
     #[test]
     fn the_loader_hands_the_provider_keys_on_in_the_registration() {
         let reg = registration(linked_probe(plane_door::door, "provider-keys-probe"))
@@ -717,7 +709,6 @@ mod provider_keys_through_the_loader {
 }
 
 /// THE DOOR'S UNITS ACROSS ATTEMPTS, driven through the one loader like the witness above. They live
-
 mod door_units {
     use std::mem::zeroed;
     use std::sync::Arc;
@@ -788,7 +779,6 @@ mod door_units {
     const STREAM_CHAT: &[u8] =
         br#"{"model":"p","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}"#;
     /// The far end's stream before its connection dropped: its start (7 tokens in, 1 out so far) and
-
     const STREAM_START: &[u8] = b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"large\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":7,\"output_tokens\":1}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n";
 
     fn door() -> (Dispatcher, Plugin<Plane>) {
@@ -952,7 +942,6 @@ mod door_units {
     }
 
     /// RED: the door forgot the unit on its retry verdict, so the second ATTEMPT was a FAULT and the
-
     #[test]
     fn a_retry_verdict_keeps_the_unit_and_the_failover_reaches_the_next_member() {
         let (_d, p) = door();
@@ -1000,7 +989,6 @@ mod door_units {
     }
 
     /// RED: a door that keeps every retried unit leaves one behind when the kernel will not fail the
-
     #[test]
     fn a_final_answer_ends_the_unit_whatever_its_verdict() {
         let (_d, p) = door();
@@ -1047,7 +1035,6 @@ mod door_units {
     }
 
     /// A STREAM CUT AFTER ITS FIRST BYTE (`PIECE_CUT`; row-159 plane-llm L1#2), `$`: the caller's answer
-
     #[test]
     fn a_cut_stream_ends_in_the_callers_error_and_bills_what_streamed() {
         let (_d, p) = door();
@@ -1102,7 +1089,6 @@ mod door_units {
     }
 
     /// THE SAME STREAM, COMPLETE (the control): its last piece unmarked ends on the caller's clean
-
     #[test]
     fn a_stream_that_completes_ends_cleanly() {
         let (_d, p) = door();
@@ -1133,7 +1119,6 @@ mod door_units {
     }
 
     /// A SAME-DIALECT WHOLE ANSWER CUT MID-BODY streams what arrived and bills no tokens. Under
-
     #[test]
     fn a_same_dialect_answer_cut_mid_body_streams_what_arrived_and_bills_no_tokens() {
         let (_d, p) = door();
@@ -1192,7 +1177,6 @@ mod door_units {
     }
 
     /// A CALLER THAT LEAVES WHILE THE LAST WINDOW OF A COMPLETED STREAM IS BEING WRITTEN (row-159
-
     #[test]
     fn a_caller_that_leaves_during_the_last_window_bills_what_the_stream_stated() {
         let (_d, p) = door();
@@ -1348,7 +1332,6 @@ mod door_units {
 }
 
 /// The door brought up on [`SETTINGS`]: settings checked, opened, hydrated and started, as the
-
 fn opened(dispatcher: &Dispatcher) -> Plugin<Plane> {
     let door = linked(dispatcher);
     let mut validate = Frame::new(
@@ -1410,7 +1393,6 @@ fn fee_line() -> String {
 }
 
 /// One whole caller unit on a fresh door: arrive, attempt, the caller's body, then the far end's
-
 fn one_unit(status: u32, answer: &'static [u8]) -> (String, String, String) {
     let dispatcher = Dispatcher::new(DispatchConfig::default());
     let door = opened(&dispatcher);
@@ -1496,7 +1478,6 @@ const REDIRECT_BODY: &[u8] =
     b"<html><body>Moved: https://elsewhere.invalid/v1/messages</body></html>";
 
 /// A 3XX FROM THE PROVIDER IS A FAILURE, NOT FOLLOWED (security.md: redirects are refused on the
-
 #[test]
 fn a_3xx_from_the_provider_is_a_failure_not_followed() {
     let fee = fee_line();

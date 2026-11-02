@@ -6,7 +6,6 @@
 use super::*;
 
 /// IR-08. `input_image.detail` → the IR detail. An unknown word is dropped with a warn rather than
-
 pub(super) fn read_image_detail(
     item: &serde_json::Value,
 ) -> Option<crate::codec::ir::IrImageDetail> {
@@ -25,7 +24,6 @@ pub(super) fn read_image_detail(
 }
 
 /// IR-17. Which reasoning array a Responses `reasoning` item filled: `content[]` alone is full
-
 pub(super) fn reasoning_kind(item: &serde_json::Value) -> Option<crate::codec::ir::IrThinkingKind> {
     let has_text = |key: &str| {
         item.get(key).and_then(|a| a.as_array()).is_some_and(|arr| {
@@ -44,7 +42,6 @@ pub(super) fn reasoning_kind(item: &serde_json::Value) -> Option<crate::codec::i
 }
 
 /// IR-17 writer half: the `summary` / `content` members of a written `reasoning` item. A `Summary`
-
 pub(super) fn insert_reasoning_text(
     item: &mut serde_json::Map<String, serde_json::Value>,
     text: &str,
@@ -65,7 +62,6 @@ pub(super) fn insert_reasoning_text(
 }
 
 /// IR-18 (RSP-13). Whether a thinking signature may be written as `encrypted_content`: only a blob
-
 pub(super) fn own_signature(origin: Option<crate::codec::ir::IrSignatureOrigin>) -> bool {
     matches!(
         origin,
@@ -74,7 +70,6 @@ pub(super) fn own_signature(origin: Option<crate::codec::ir::IrSignatureOrigin>)
 }
 
 /// IR-10 (RSP-15). The Responses `tool_choice:{type:"allowed_tools", mode, tools:[…]}` form to the IR
-
 pub(super) fn read_allowed_tools(
     o: &serde_json::Map<String, serde_json::Value>,
 ) -> Option<(crate::codec::ir::IrToolChoice, Vec<String>)> {
@@ -110,7 +105,6 @@ pub(super) fn read_allowed_tools(
 }
 
 /// IR-10 writer half: the subset as the Responses `allowed_tools` tool choice. `Required` →
-
 pub(super) fn write_allowed_tools(
     names: &[String],
     choice: Option<&crate::codec::ir::IrToolChoice>,
@@ -136,7 +130,6 @@ const WEB_SEARCH_KEYS: [&str; 4] = [
 ];
 
 /// IR-11. A Responses hosted tool the IR models neutrally: `web_search` / `web_search_preview` to
-
 pub(super) fn read_hosted_tool(tool: &serde_json::Value) -> Option<crate::codec::ir::IrHostedTool> {
     let obj = tool.as_object()?;
     match obj.get(keys::TYPE).and_then(|t| t.as_str())? {
@@ -187,7 +180,6 @@ pub(super) fn read_hosted_tool(tool: &serde_json::Value) -> Option<crate::codec:
 }
 
 /// IR-11 writer half: a neutral hosted tool in Responses spelling, or `None` for a kind with no tool
-
 pub(super) fn write_hosted_tool(
     tool: &crate::codec::ir::IrHostedTool,
 ) -> Option<serde_json::Value> {
@@ -246,7 +238,6 @@ pub(super) fn write_hosted_tool(
 }
 
 /// IR-14 reader half: the role of the folded system entries. `Some(Developer)` / `Some(System)` only
-
 pub(super) fn system_role(
     saw_system: bool,
     saw_developer: bool,

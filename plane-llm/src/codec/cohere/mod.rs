@@ -26,13 +26,11 @@ mod reader;
 mod writer;
 
 /// Build this dialect's wire codec. A fresh instance per resolution (the writer carries per-stream
-
 pub fn protocol() -> Protocol {
     Protocol::new(VENDOR_NAME, CohereReader, CohereWriter)
 }
 
 /// Router detection: the v2/v1 chat paths (`/v2/chat`, `/v1/chat`, rung 8) and the v2 embed/rerank
-
 fn claims(
     _h: busbar_contract::protocol::HeadFields<'_>,
     path: &str,
@@ -128,7 +126,6 @@ pub(crate) const ENTRY: super::proto_codec::DialectEntry = super::proto_codec::D
 const PATH_UPSTREAM: &str = "/v2/chat";
 
 /// Read a Cohere v2 `message.citations[]` array into neutral IR citations. Cohere spells one
-
 pub fn read_cohere_citations(citations: &serde_json::Value) -> Vec<crate::codec::ir::IrCitation> {
     let mut out = Vec::new();
     let Some(arr) = citations.as_array() else {
@@ -178,7 +175,6 @@ pub fn read_cohere_citations(citations: &serde_json::Value) -> Vec<crate::codec:
 }
 
 /// Project a neutral [`crate::codec::ir::IrCitation`] into Cohere v2's citation object, the inverse
-
 fn write_cohere_citation(
     c: &crate::codec::ir::IrCitation,
     span: Option<(i64, i64)>,
@@ -251,7 +247,6 @@ fn write_cohere_citations(blocks: &[crate::codec::ir::IrBlock]) -> Vec<serde_jso
 }
 
 /// A projected citation must carry some meaning in the target wire; never substitute `{}` for
-
 fn citation_representable(citation: &crate::codec::ir::IrCitation) -> bool {
     citation
         .raw
@@ -278,7 +273,6 @@ fn response_projection_error() -> IrError {
 }
 
 /// The `vendor` tag on an [`crate::codec::ir::IrImageSource::Vendor`] this protocol produces: a Cohere
-
 const VENDOR_NAME: &str = "cohere";
 
 const BINARY: &str = "binary";
@@ -391,7 +385,6 @@ const SOURCE_STREAM_TOOL_CALL: crate::codec::ir::IrBlockSource = crate::codec::i
     path: "tool-call-start",
 };
 /// The Cohere v2 request content grammar (`codec::drops`). A part of any other kind is named as
-
 const REQUEST_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::Blocks {
     at: &["messages[]", "content[]"],
     tag: Some(keys::TYPE),
@@ -424,7 +417,6 @@ const RESPONSE_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::B
 }];
 
 /// What this dialect's answers carry beyond its map file's rows (drop walk, design F3 "Drops").
-
 const RESPONSE_CODE: &[&str] = &["usage.cached_tokens", "model"];
 const STREAM_CODE: &[&str] = &[];
 
@@ -451,15 +443,12 @@ const UBINARY: &str = "ubinary";
 const UINT8: &str = "uint8";
 
 /// Cap on distinct tool-call frame indices in `state.open_tools` for one stream. The set is never
-
 const MAX_TRACKED_TOOL_FRAMES: usize = 4096;
 
 /// Sentinel recorded in `state.open_tools` the first time a text block opens, encoding that "a text
-
 const TEXT_BLOCK_SEEN_SENTINEL: usize = usize::MAX;
 
 /// Bound on the upstream-controlled stream-frame `index` at every tool-call read site, matching
-
 const MAX_TOOL_FRAME_INDEX: u64 = MAX_TRACKED_TOOL_FRAMES as u64;
 
 const ET_MESSAGE_START: &str = "message-start";
@@ -467,14 +456,11 @@ const ET_MESSAGE_END: &str = "message-end";
 const ET_CONTENT_START: &str = "content-start";
 const ET_CONTENT_DELTA: &str = "content-delta";
 /// Stream `type` of the tool-plan-delta event, the streamed `message.tool_plan` (the assistant's
-
 const ET_TOOL_PLAN_DELTA: &str = "tool-plan-delta";
 
 /// Cohere v2's streamed-citation frame. The writer once suppressed streamed citations on the belief
-
 const ET_CITATION_START: &str = "citation-start";
 /// Stream `type` of the citation-end event, the structural close that pairs with each
-
 const ET_CITATION_END: &str = "citation-end";
 const ET_CONTENT_END: &str = "content-end";
 const ET_TOOL_CALL_START: &str = "tool-call-start";
@@ -500,7 +486,6 @@ const COHERE_TOOL_CHOICE_REQUIRED: &str = "REQUIRED";
 const COHERE_TOOL_CHOICE_NONE: &str = "NONE";
 
 /// Read the upstream-controlled stream-frame `index`, defaulting to 0 when absent/non-numeric, and
-
 fn clamp_frame_index(data: &serde_json::Value) -> usize {
     data.get(keys::INDEX)
         .and_then(|i| i.as_u64())
@@ -509,7 +494,6 @@ fn clamp_frame_index(data: &serde_json::Value) -> usize {
 }
 
 /// Normalize Cohere v2's `tool_choice` (a top-level enum string) into the IR union so a forced
-
 fn read_cohere_tool_choice(
     val: Option<&serde_json::Value>,
 ) -> Option<crate::codec::ir::IrToolChoice> {
@@ -521,7 +505,6 @@ fn read_cohere_tool_choice(
 }
 
 /// Read a Cohere v2 `response_format` into [`crate::codec::ir::IrResponseFormat`]. The only code that
-
 fn read_cohere_response_format(
     v: &serde_json::Value,
 ) -> Option<crate::codec::ir::IrResponseFormat> {
@@ -554,7 +537,6 @@ fn write_cohere_response_format(rf: &crate::codec::ir::IrResponseFormat) -> serd
 }
 
 /// Read Cohere v2's request `thinking` into the IR reasoning ask (see `read_request`):
-
 fn read_cohere_reasoning(
     v: Option<&serde_json::Value>,
 ) -> Option<crate::codec::ir::IrReasoningAsk> {
@@ -575,7 +557,6 @@ fn read_cohere_reasoning(
 }
 
 /// Project the IR reasoning ask into Cohere v2's `thinking`, inverse of [`read_cohere_reasoning`]. A
-
 fn write_cohere_reasoning(
     ask: crate::codec::ir::IrReasoningAsk,
     table: [u32; 4],
@@ -595,7 +576,6 @@ fn write_cohere_reasoning(
 }
 
 /// Read a Cohere v2 document (`{"id"?: "…", "data": {…}}`: a user content part's `document`, or an
-
 fn read_cohere_document(doc: &serde_json::Value) -> crate::codec::ir::IrBlock {
     let text_document = |text: &str, name: Option<&str>| crate::codec::ir::IrBlock::Media {
         kind: crate::codec::ir::IrMediaKind::Document,
@@ -651,7 +631,6 @@ fn read_cohere_document(doc: &serde_json::Value) -> crate::codec::ir::IrBlock {
 }
 
 /// Read the `detail` of a Cohere v2 `image_url` object (`"auto"|"low"|"high"`) into the requested
-
 fn read_cohere_image_detail(
     image_url: Option<&serde_json::Value>,
 ) -> Option<crate::codec::ir::IrImageDetail> {
@@ -669,7 +648,6 @@ fn read_cohere_image_detail(
 }
 
 /// Read a Cohere v2 tool-result `document` part (`{"id"?: "…", "data": …}`) into the IR (the ANT-17
-
 fn read_cohere_tool_result_document(doc: &serde_json::Value) -> crate::codec::ir::IrBlock {
     match doc.get(keys::DATA) {
         Some(serde_json::Value::String(text)) => crate::codec::ir::IrBlock::text(text.clone()),
@@ -693,7 +671,6 @@ fn read_cohere_tool_result_document(doc: &serde_json::Value) -> crate::codec::ir
 }
 
 /// The document object Cohere's top-level `documents` carries for an IR document Media (COH-18):
-
 fn write_cohere_document(
     source: &crate::codec::ir::IrImageSource,
     name: Option<&str>,
@@ -721,7 +698,6 @@ fn write_cohere_document(
 }
 
 /// Read one Cohere v2 `LogprobItem` (`{"text", "token_ids", "logprobs"}`) into
-
 fn read_cohere_logprob(item: &serde_json::Value) -> Option<crate::codec::ir::IrTokenLogprob> {
     let text = item.get(keys::TEXT)?.as_str()?;
     let lps = item.get(keys::LOGPROBS)?.as_array()?;
@@ -739,7 +715,6 @@ fn read_cohere_logprob(item: &serde_json::Value) -> Option<crate::codec::ir::IrT
 }
 
 /// Cohere v2 `finish_reason` to canonical [`crate::codec::ir::IrStopReason`]; the only read-side
-
 fn read_cohere_stop_reason(token: &str) -> crate::codec::ir::IrStopReason {
     use crate::codec::ir::IrStopReason as S;
     match token {
@@ -756,7 +731,6 @@ fn read_cohere_stop_reason(token: &str) -> crate::codec::ir::IrStopReason {
 }
 
 /// Map a canonical IR stop reason to a valid Cohere v2 `finish_reason`. `ERROR` is first-class
-
 fn write_cohere_stop_reason(reason: crate::codec::ir::IrStopReason) -> &'static str {
     use crate::codec::ir::IrStopReason as S;
     match reason {
@@ -770,7 +744,6 @@ fn write_cohere_stop_reason(reason: crate::codec::ir::IrStopReason) -> &'static 
 }
 
 /// Cohere's `usage.tokens.input_tokens` for an IR usage: the whole prompt. The IR's `input_tokens`
-
 fn cohere_prompt_tokens(usage: &crate::codec::ir::IrUsage) -> u64 {
     usage
         .input_tokens
@@ -779,7 +752,6 @@ fn cohere_prompt_tokens(usage: &crate::codec::ir::IrUsage) -> u64 {
 }
 
 /// Format 16 bytes as a UUID-shaped (8-4-4-4-12 lowercase hex) token. Native Cohere v2 chat ids are
-
 fn format_uuid_layout(bytes: &[u8; 16]) -> String {
     let s = ::hex::encode(bytes);
     format!(
@@ -793,7 +765,6 @@ fn format_uuid_layout(bytes: &[u8; 16]) -> String {
 }
 
 /// Synthesize a Cohere-shaped response id where the backend supplied none (cross-protocol). Native
-
 fn synthesize_cohere_id(host: &dyn busbar_contract::codec::CodecHost) -> Result<String, IrError> {
     let mut bytes = [0u8; 16];
     if !host.fill_entropy(&mut bytes) {
@@ -807,13 +778,11 @@ fn synthesize_cohere_id(host: &dyn busbar_contract::codec::CodecHost) -> Result<
 }
 
 /// Number of genuine tool frames currently recorded in `state.open_tools` (excludes the
-
 fn cohere_tracked_tool_count(state: &crate::codec::ir::StreamDecodeState) -> usize {
     state.open_tools.len() - usize::from(state.open_tools.contains(&TEXT_BLOCK_SEEN_SENTINEL))
 }
 
 /// Record a `tool-call-start` for wire `frame_idx`, ASSIGNING it a stable IR block index, and return
-
 fn cohere_assign_tool_ir_index(
     state: &mut crate::codec::ir::StreamDecodeState,
     frame_idx: usize,
@@ -834,7 +803,6 @@ fn cohere_assign_tool_ir_index(
 }
 
 /// Resolve the IR block index the text content block claims for THIS stream, assigning it on first
-
 fn cohere_text_ir_index(state: &mut crate::codec::ir::StreamDecodeState) -> usize {
     let ti = state
         .text_index
@@ -845,11 +813,9 @@ fn cohere_text_ir_index(state: &mut crate::codec::ir::StreamDecodeState) -> usiz
 }
 
 /// First key of the reserved range a streamed `thinking` CONTENT block is recorded under in
-
 const THINKING_FRAME_BASE: usize = usize::MAX / 2;
 
 /// The IR index of the `thinking` content block that is open right now, if one is. A thinking
-
 fn cohere_open_thinking_index(state: &crate::codec::ir::StreamDecodeState) -> Option<usize> {
     if state.thinking_block_open && !state.text_block_open {
         state
@@ -863,7 +829,6 @@ fn cohere_open_thinking_index(state: &crate::codec::ir::StreamDecodeState) -> Op
 }
 
 /// Open a new `thinking` content block: claim its IR index and emit its `BlockStart`. `None` (and
-
 fn cohere_open_thinking_block(
     state: &mut crate::codec::ir::StreamDecodeState,
     out: &mut Vec<IrStreamEvent>,
@@ -895,7 +860,6 @@ fn cohere_close_thinking_block(
 }
 
 /// Close the text slot (the answer's text block, or the leading `tool-plan-delta` block that rides
-
 fn cohere_close_text_slot(
     state: &mut crate::codec::ir::StreamDecodeState,
     out: &mut Vec<IrStreamEvent>,
@@ -912,7 +876,6 @@ fn cohere_close_text_slot(
 }
 
 /// The `thinking` text a Cohere content object carries, when the object IS a thinking part: its
-
 fn cohere_thinking_part(content: &serde_json::Value) -> Option<&str> {
     let obj = content.as_object()?;
     let ty = obj.get(keys::TYPE).and_then(|t| t.as_str());
@@ -930,7 +893,6 @@ pub struct CohereReader;
 
 impl CohereReader {
     /// True when the upstream error body carries Cohere v2's oversized-request ("context length
-
     fn body_signals_context_length(body: &[u8]) -> bool {
         let lower = String::from_utf8_lossy(body).to_lowercase();
         lower.contains("too many tokens")
@@ -996,7 +958,6 @@ struct CohereCitationBlock {
 }
 
 /// Value-namespace constructor for [`CohereWriter`]. A `const` and a struct may share a name (they
-
 #[allow(non_upper_case_globals)]
 #[allow(clippy::declare_interior_mutable_const)]
 pub const CohereWriter: CohereWriter = CohereWriter {
@@ -1036,7 +997,6 @@ impl CohereWriter {
     }
 
     /// THE STREAM'S `id`: the first one wins. Returns the id already captured for this stream if
-
     fn carried_stream_id(
         &self,
         mint: impl FnOnce() -> Result<String, IrError>,
@@ -1055,7 +1015,6 @@ impl CohereWriter {
     }
 
     /// Record that a `tool-call-start` frame was emitted at IR block `index`, so the matching
-
     fn mark_tool_open(&self, index: usize) -> usize {
         let mut stream = self.stream.lock();
         stream.open_tool_indices.insert(index);
@@ -1063,13 +1022,11 @@ impl CohereWriter {
     }
 
     /// Return true and forget `index` if it was a previously-opened tool-call block; false if no
-
     fn take_tool_open(&self, index: usize) -> bool {
         self.stream.lock().open_tool_indices.remove(&index)
     }
 
     /// Record that a `content-start` frame was emitted for text block `index`, so the matching
-
     fn mark_text_open(&self, index: usize) -> usize {
         let mut stream = self.stream.lock();
         stream.open_text_indices.insert(index);
@@ -1152,7 +1109,6 @@ impl CohereWriter {
     }
 
     /// Return true and forget `index` if a `content-start` was emitted for that text block; false if
-
     fn take_text_open(&self, index: usize) -> bool {
         self.stream.lock().open_text_indices.remove(&index)
     }

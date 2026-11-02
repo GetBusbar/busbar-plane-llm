@@ -7,7 +7,6 @@ use super::*;
 use serde_json::json;
 
 /// Backs: `frequency_penalty`, `presence_penalty`, `seed`, `n`, `top_p`, `logprobs`, `top_logprobs`,
-
 #[test]
 fn openai_carry_request_sampling_and_output_controls() {
     let body = json!({
@@ -76,7 +75,6 @@ fn openai_carry_request_sampling_and_output_controls() {
 }
 
 /// Backs: `logit_bias`, `modalities`, `prediction`, `audio`, `service_tier`, `store`, `metadata`,
-
 #[test]
 fn openai_carry_request_provider_specific_extra_fields() {
     let body = json!({
@@ -133,7 +131,6 @@ fn openai_carry_request_provider_specific_extra_fields() {
 }
 
 /// Backs: `messages[].name`, `messages[].tool_calls`, `messages[].tool_call_id`,
-
 #[test]
 fn openai_carry_request_message_and_content_fields() {
     let body = json!({
@@ -225,7 +222,6 @@ fn openai_carry_request_message_and_content_fields() {
 }
 
 /// Backs: `response/id`, `response/object`, `response/created`, `response/model`,
-
 #[test]
 fn openai_carry_response_identity_and_choice_fields() {
     let body = json!({
@@ -305,7 +301,6 @@ fn openai_carry_response_identity_and_choice_fields() {
 }
 
 /// Backs: `choices[].message.refusal`. A structured-outputs / safety refusal arrives as
-
 #[test]
 fn openai_carry_response_message_refusal() {
     let body = json!({
@@ -330,7 +325,6 @@ fn openai_carry_response_message_refusal() {
 }
 
 /// Backs: `usage.prompt_tokens_details.cached_tokens`, `usage.prompt_tokens_details.audio_tokens`,
-
 #[test]
 fn openai_carry_response_usage_sub_buckets() {
     let body = json!({
@@ -404,7 +398,6 @@ fn openai_carry_response_usage_sub_buckets() {
 }
 
 /// Backs: `stream:choices[].delta.role`, `stream:choices[].delta.content`,
-
 #[test]
 fn openai_carry_stream_delta_fields() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -539,7 +532,6 @@ fn openai_carry_stream_delta_fields() {
 }
 
 /// Backs: `response/service_tier`, `choices[].message.audio`.
-
 #[test]
 fn openai_response_provider_specific_fields_drop_only_on_cross_proto_reserialize() {
     let body = json!({

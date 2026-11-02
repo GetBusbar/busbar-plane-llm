@@ -9,7 +9,6 @@ use busbar_contract::protocol::HeadFields;
 use busbar_contract::{Count, SlabBytes};
 
 /// The row lookup every [`RequestHandler::operation_handler`] is, stated once. Rows are
-
 pub fn cell_of(cells: &'static [Cell], op: OpVerb) -> Option<&'static dyn OperationHandler> {
     cells
         .iter()
@@ -18,7 +17,6 @@ pub fn cell_of(cells: &'static [Cell], op: OpVerb) -> Option<&'static dyn Operat
 }
 
 /// The (verb to upstream path) lookup for protocols whose egress paths are constants rather than
-
 pub fn path_of(paths: &'static [(OpVerb, &'static str)], op: OpVerb) -> Option<&'static str> {
     paths
         .iter()
@@ -65,7 +63,6 @@ pub struct ImageOutput {
 }
 
 /// Render an exact duration back onto the wire: the only place a billable quantity becomes a double.
-
 #[must_use]
 pub fn duration_seconds_to_wire(seconds: Count) -> f64 {
     seconds.micros() as f64 / 1_000_000.0_f64
@@ -84,19 +81,15 @@ pub const KIND_TIMEOUT: &str = "timeout";
 pub const KIND_SERVER_ERROR: &str = ERR_TYPE_SERVER_ERROR;
 
 /// Provider error-code token for a request exceeding the model's context window. Returned for
-
 pub const PROVIDER_CODE_CONTEXT_LENGTH: &str = "context_length_exceeded";
 
 /// Busbar-internal `provider_signal` label for an IR-parse failure (the lane label the breaker and
-
 pub const SIGNAL_IR_PARSE: &str = "ir_parse";
 
 /// Client-visible detail for a mid-stream abort (upstream dropped or a translate step failed after
-
 pub const STREAM_ABORT_DETAIL: &str = "The response stream was interrupted.";
 
 /// The value of the first field in `fields` named `name` (any case) whose value is a legal header
-
 #[must_use]
 pub fn head_field<'a>(fields: HeadFields<'a>, name: &str) -> Option<&'a [u8]> {
     fields

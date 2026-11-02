@@ -20,21 +20,18 @@ use bytes::Bytes;
 use serde_json::{json, Value};
 
 /// Endpoint paths, on both the egress side (`upstream_path`) and the ingress match
-
 const PATH_CHAT: &str = "/v2/chat";
 const PATH_EMBED: &str = "/v2/embed";
 const PATH_RERANK: &str = "/v2/rerank";
 
 pub struct CohereRequestHandler;
 /// This protocol's own chat instance; remove it and the registry arm and chat 404s via the
-
 static CHAT: super::super::chat_handle::ChatOperation =
     super::super::chat_handle::ChatOperation(VENDOR_NAME);
 static EMB: CohereEmbeddings = CohereEmbeddings;
 static RERANK: CohereRerank = CohereRerank;
 
 /// Cohere's row of the support matrix, as data. A verb absent from it is the standard no-handler
-
 static CELLS: &[busbar_contract::codec::Cell] = &[
     (OpVerb::CHAT, &CHAT),
     (OpVerb::EMBEDDINGS, &EMB),
@@ -69,7 +66,6 @@ impl RequestHandler for CohereRequestHandler {
 }
 
 /// Cohere `embedding_types` name for an IR encoding, 1:1 with Cohere v2's six, so a requested
-
 fn cohere_embedding_type(f: &EncFmt) -> &'static str {
     match f {
         EncFmt::Float => FLOAT,
@@ -92,7 +88,6 @@ const ALL_ENCODINGS: [EncFmt; 6] = [
 ];
 
 /// Inverse of [`cohere_embedding_type`]: the full 1:1 map (not only base64), so an `int8`/`uint8`/
-
 fn cohere_encoding_format(s: &str) -> EncFmt {
     match s {
         keys::BASE64 => EncFmt::Base64,
@@ -105,7 +100,6 @@ fn cohere_encoding_format(s: &str) -> EncFmt {
 }
 
 /// Cohere v2 embeddings (`/v2/embed`). `input_type` is required (default: a document role). As
-
 struct CohereEmbeddings;
 
 leaf_op! {
@@ -238,7 +232,6 @@ pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
 }
 
 /// Cohere v2 rerank (`/v2/rerank`): `{model, query, documents[], top_n?}` to `{results: [{index,
-
 struct CohereRerank;
 
 leaf_op! {

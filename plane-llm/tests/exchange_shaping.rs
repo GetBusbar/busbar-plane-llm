@@ -83,7 +83,6 @@ fn a_generation_the_plane_cannot_serve_is_refused() {
 }
 
 /// THE DEALT SECTION ALONE (the boot's stage 3g deal hands the plane `{pools: ...}`, no `models`):
-
 #[test]
 fn a_pools_section_dealt_alone_names_no_unknown_model() {
     let dealt = json!({ "pools": { "op": { "members": [{ "model": "test-model" }] } } });
@@ -104,7 +103,6 @@ fn empty_settings_are_an_empty_generation_with_the_defaults() {
 }
 
 /// THE TRANSLATE CAP IS THE SETTINGS': the cap a generation enforces is the
-
 #[test]
 fn the_translate_cap_is_the_one_the_settings_carry_else_the_default() {
     let s = Shaping::from_settings(&json!({ "limits": { "request_body_max_bytes": 131072 } }))
@@ -132,7 +130,6 @@ fn the_glob_takes_prefix_suffix_and_middle_wildcards() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/attempt_timeout_precedence_tests.rs::effective_reasoning_member_override_wins`
-
 #[test]
 fn effective_reasoning_member_override_wins() {
     let mut v = settings();
@@ -177,7 +174,6 @@ fn effective_reasoning_member_override_wins() {
 }
 
 /// A MODEL'S OWN `protocol` OVERRIDES ITS PROVIDER'S: the
-
 #[test]
 fn a_models_protocol_overrides_its_providers_and_an_unknown_one_is_refused() {
     let mut v = settings();
@@ -199,7 +195,6 @@ fn a_models_protocol_overrides_its_providers_and_an_unknown_one_is_refused() {
 }
 
 /// AN EMPTY `model_capabilities` READS AS AN ABSENT ONE: the
-
 #[test]
 fn an_empty_model_capabilities_reads_as_an_absent_one() {
     let absent = settings();

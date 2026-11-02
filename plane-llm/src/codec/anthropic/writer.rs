@@ -21,7 +21,6 @@ impl ProtocolWriter for AnthropicWriter {
     }
 
     /// Replace only the minted top-level `request_id`, and only where the writer put one, with the
-
     fn write_error_from_entropy(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,

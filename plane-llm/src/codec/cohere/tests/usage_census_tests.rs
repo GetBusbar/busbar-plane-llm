@@ -20,7 +20,6 @@ enum Turn {
 }
 
 /// What each Cohere `usage` count IS, as the move one more of it makes on the ledgered units
-
 const COHERE_COUNT_CLASSES: &[(&str, (Turn, Ledgered))] = &[
     ("tokens.input_tokens", (Turn::Raw, at(IN, 1))),
     ("tokens.output_tokens", (Turn::Raw, at(OUT, 1))),
@@ -142,7 +141,6 @@ fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {
 }
 
 /// A chat's billed search units reach the ledger as `search_units` and its billed classifications
-
 #[test]
 fn chat_search_units_and_classifications_each_ledger_one_line() {
     let usage = base_usage(Turn::Billed);

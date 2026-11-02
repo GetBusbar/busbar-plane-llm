@@ -4,7 +4,6 @@ use super::super::proto_codec::{ProtocolReader, ProtocolWriter};
 use super::{anthropic_writer, AnthropicReader, AnthropicWriter};
 
 /// `metadata`, `service_tier`, `container`, `betas`: Anthropic-specific request knobs with no
-
 #[test]
 fn anthropic_request_provider_specific_fields_carry() {
     let body = serde_json::json!({
@@ -29,11 +28,9 @@ fn anthropic_request_provider_specific_fields_carry() {
 }
 
 /// A top-level request member no dialect table, row or reader names (DIALECT-FIDELITY F4's synthetic
-
 const UNKNOWN_MEMBER: &str = "x_busbar_unknown_member";
 
 /// The unknown member's value: nested, mixed-type, and key-ordered unusually, so a writer that
-
 fn unknown_member_value() -> serde_json::Value {
     serde_json::json!({"z": [1, {"y": null, "a": "keep"}], "b": 2.5, "a": {"nested": true}})
 }
@@ -133,7 +130,6 @@ fn anthropic_request_tool_choice_carry() {
 }
 
 /// `thinking` (the request ASK): `{type:"enabled",budget_tokens}` promotes to the IR reasoning ask
-
 #[test]
 fn anthropic_request_thinking_carry() {
     let body = serde_json::json!({
@@ -159,7 +155,6 @@ fn anthropic_request_thinking_carry() {
 }
 
 /// text.cache_control / text.citations / image.source.url / image.cache_control /
-
 #[test]
 fn anthropic_content_block_field_carry() {
     let body = serde_json::json!({
@@ -230,7 +225,6 @@ fn anthropic_content_block_field_carry() {
 }
 
 /// thinking.thinking / thinking.signature — an assistant `thinking` block (with the mandatory
-
 #[test]
 fn anthropic_thinking_content_block_carry() {
     let body = serde_json::json!({
@@ -251,7 +245,6 @@ fn anthropic_thinking_content_block_carry() {
 }
 
 /// document.source.url / document.context / document.citations / document.cache_control.
-
 #[test]
 fn anthropic_document_block_carry() {
     let body = serde_json::json!({
@@ -310,7 +303,6 @@ fn anthropic_document_block_carry() {
 }
 
 /// search_result.source / search_result.title / search_result.content — a `search_result` block is
-
 #[test]
 fn anthropic_search_result_block_carry() {
     let body = serde_json::json!({
@@ -340,7 +332,6 @@ fn anthropic_search_result_block_carry() {
 }
 
 /// usage.server_tool_use.web_search_requests / usage.service_tier — Anthropic usage attribution now
-
 #[test]
 fn anthropic_response_usage_extras_carry() {
     let body = serde_json::json!({
@@ -378,7 +369,6 @@ fn anthropic_response_usage_extras_carry() {
 }
 
 /// stream:message_start / content_block_start / content_block_stop / message_delta / message_stop —
-
 #[test]
 fn anthropic_stream_event_roundtrip_carry() {
     let writer = AnthropicWriter;
@@ -450,7 +440,6 @@ fn anthropic_stream_event_roundtrip_carry() {
 }
 
 /// stream:content_block_delta.{text_delta,input_json_delta,thinking_delta,signature_delta,
-
 #[test]
 fn anthropic_stream_delta_roundtrip_carry() {
     let rw = |delta: serde_json::Value| -> serde_json::Value {
@@ -636,7 +625,6 @@ fn streamed_redacted_reasoning_preserves_bytes_on_anthropic_egress() {
 }
 
 /// Buffered `Message`: `stop_details`, `container` (null), `content[].citations` (null on a text
-
 #[test]
 fn anthropic_response_carries_every_spec_required_member_with_default_shapes() {
     let resp = crate::codec::ir::IrResponse {
@@ -709,7 +697,6 @@ fn anthropic_response_carries_every_spec_required_member_with_default_shapes() {
 }
 
 /// The same members, where the source DID report values, pass through unchanged: reported tiers,
-
 #[test]
 fn anthropic_response_spec_required_members_pass_reported_values_through() {
     let body = serde_json::json!({
@@ -755,7 +742,6 @@ fn anthropic_response_spec_required_members_pass_reported_values_through() {
 }
 
 /// A cache write whose tier split is unknown (a foreign backend that reports only the total) must
-
 #[test]
 fn anthropic_response_cache_creation_is_null_when_total_known_but_tiers_are_not() {
     let resp = crate::codec::ir::IrResponse {
@@ -786,7 +772,6 @@ fn anthropic_response_cache_creation_is_null_when_total_known_but_tiers_are_not(
 }
 
 /// Streaming: `message_start.message` is the same full `Message` shape (`stop_details`,
-
 #[test]
 fn anthropic_stream_events_carry_every_spec_required_member() {
     use crate::codec::ir::{IrBlockMeta, IrStreamEvent};

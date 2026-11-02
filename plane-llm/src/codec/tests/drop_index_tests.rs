@@ -224,7 +224,6 @@ impl tracing::Subscriber for CountWarnings {
 }
 
 /// Run the exact test binary under `sudo perf stat -e instructions` at 2048 and 8192 keys,
-
 #[test]
 #[ignore = "manual hardware-instruction scaling witness; see the drop-index design report"]
 fn drop_index_full_request_instruction_probe() {

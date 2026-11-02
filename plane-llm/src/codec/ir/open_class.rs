@@ -6,23 +6,18 @@
 use crate::codec::ir::rerank::SEARCH_UNITS_CLASS;
 
 /// Cohere chat `usage.billed_units.classifications`: the classification units Cohere bills, a
-
 pub const CLASSIFICATIONS_CLASS: &str = "classifications";
 
 /// Anthropic `usage.server_tool_use.web_fetch_requests`: the server-side URL fetches a turn made.
-
 pub const WEB_FETCH_REQUESTS_CLASS: &str = "web_fetch_requests";
 
 /// The tokens a provider's stated total counts above the itemized buckets this dialect reads (OpenAI
-
 pub const UNITEMIZED_TOKENS_CLASS: &str = "unitemized_tokens";
 
 /// The images a per-image provider returned (dall-e, Imagen, Titan, SDXL: one per `data` entry),
-
 pub const IMAGES_CLASS: &str = "images";
 
 /// The audio duration a transcription far end reported (whisper `usage.seconds`), in whole
-
 pub const AUDIO_MS_CLASS: &str = "audio_ms";
 
 /// Bedrock guardrail `invocationMetrics.usage.automatedReasoningPolicies`.
@@ -39,7 +34,6 @@ pub const GUARDRAIL_CONTENT_POLICY_UNITS_CLASS: &str = "guardrail_content_policy
 pub const GUARDRAIL_CONTEXTUAL_GROUNDING_POLICY_UNITS_CLASS: &str =
     "guardrail_contextual_grounding_policy_units";
 /// Bedrock guardrail `invocationMetrics.usage.sensitiveInformationPolicyFreeUnits` (AWS prices
-
 pub const GUARDRAIL_SENSITIVE_INFORMATION_POLICY_FREE_UNITS_CLASS: &str =
     "guardrail_sensitive_information_policy_free_units";
 /// Bedrock guardrail `invocationMetrics.usage.sensitiveInformationPolicyUnits`.
@@ -54,7 +48,6 @@ pub const GUARDRAIL_WORD_POLICY_UNITS_CLASS: &str = "guardrail_word_policy_units
 const COUNT: &str = "count";
 
 /// Every open class this plane declares, `(class, family)`, in the tail's order after the four token
-
 pub const OPEN_CLASSES: &[(&str, &str)] = &[
     (SEARCH_UNITS_CLASS, "units"),
     (CLASSIFICATIONS_CLASS, COUNT),
@@ -81,7 +74,6 @@ pub const OPEN_CLASS_COUNT: usize = 15;
 const _: () = assert!(OPEN_CLASSES.len() == OPEN_CLASS_COUNT);
 
 /// Bedrock's guardrail usage counts (`GuardrailUsage`), each with the open class it is ledgered
-
 pub const GUARDRAIL_COUNT_CLASSES: &[(&str, &str)] = &[
     (
         "automatedReasoningPolicies",

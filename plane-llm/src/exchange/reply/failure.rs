@@ -23,7 +23,6 @@ pub struct FarError<'a> {
 }
 
 /// The request-id head field a caller of `ingress` reads, forwarding the far end's own id (the
-
 pub(crate) fn request_id_field(
     host: &dyn busbar_contract::codec::CodecHost,
     ingress: &str,
@@ -38,7 +37,6 @@ pub(crate) fn request_id_field(
 }
 
 /// What the far end's dialect reads off its error answer: the codes and types its error shape
-
 #[must_use]
 pub fn raw_error(far: &str, operation: OpVerb, status: u16, body: &[u8]) -> RawUpstreamError {
     raw_error_with_head(far, operation, status, &[], body)
@@ -67,7 +65,6 @@ pub fn raw_error_with_head(
 const OVERLOADED_STATUS: u16 = 529;
 
 /// The class an operator's `error_map` entry names. An entry that names no class is ignored, and
-
 fn mapped_class(value: &str) -> Option<StatusClass> {
     let class = StatusClass::parse(value);
     if class.is_none() {
@@ -77,7 +74,6 @@ fn mapped_class(value: &str) -> Option<StatusClass> {
 }
 
 /// The class of a far-end error of `status` (the status its dialect's reading carries) under the
-
 #[must_use]
 pub fn normalize(
     status: u16,
@@ -122,7 +118,6 @@ pub fn normalize(
 }
 
 /// The far end's error relayed as it arrived (busbar is invisible on a same-dialect answer): its
-
 #[must_use]
 pub fn relay_verbatim(ingress: &str, far: &FarError<'_>) -> Rendered {
     let fields: Vec<(String, Vec<u8>)> = far
@@ -139,7 +134,6 @@ pub fn relay_verbatim(ingress: &str, far: &FarError<'_>) -> Rendered {
 }
 
 /// The far end's error as the caller reads it when the walk ends on it: across dialects, reshaped
-
 #[must_use]
 pub fn relay(
     host: &dyn busbar_contract::codec::CodecHost,
@@ -155,7 +149,6 @@ pub fn relay(
 }
 
 /// A client fault as the caller reads it: across dialects, reshaped with the kind its class names
-
 #[must_use]
 pub fn client_fault(
     host: &dyn busbar_contract::codec::CodecHost,
@@ -180,7 +173,6 @@ pub fn client_fault(
 }
 
 /// The caller dialect's own authentication refusal, for a far end that refused the deployment's
-
 #[must_use]
 pub fn auth_failure(host: &dyn busbar_contract::codec::CodecHost, ingress: &str) -> Rendered {
     let d = decl(ingress);
@@ -206,7 +198,6 @@ pub struct Judged {
 }
 
 /// JUDGE a far-end error: `passthrough` says the far end was reached with the caller's own
-
 #[must_use]
 pub fn judge(
     host: &dyn busbar_contract::codec::CodecHost,

@@ -72,7 +72,6 @@ struct Fixture {
 }
 
 /// THE view: the protocol's real reader, then the surviving projection.
-
 fn ir_view(f: &Fixture) -> Result<View, String> {
     let proto = crate::codec::proto_codec::protocol_for(f.proto)
         .unwrap_or_else(|| panic!("no protocol registered for '{}'", f.proto));
@@ -84,7 +83,6 @@ fn ir_view(f: &Fixture) -> Result<View, String> {
 }
 
 /// Reduce the successor projection to the same [`View`] the LHS reduces to.
-
 fn project_ir(ir: &IrRequest) -> View {
     let mut system_pieces: Vec<String> = Vec::new();
     let mut turns: Vec<(String, Vec<String>)> = Vec::new();
@@ -116,7 +114,6 @@ fn project_ir(ir: &IrRequest) -> View {
 }
 
 /// Real request bodies across all six formats.
-
 fn corpus() -> Vec<Fixture> {
     vec![
         // ── OPENAI ────────────────────────────────────────────────────────────────────────────
@@ -411,7 +408,6 @@ fn corpus() -> Vec<Fixture> {
 }
 
 /// One fixture's view rendered as a single canonical line. Deliberately a string rather than a
-
 fn render_view(measured: &Result<View, String>) -> String {
     match measured {
         Err(_) => "REJECTED".to_string(),
@@ -439,7 +435,6 @@ fn render_corpus() -> String {
 }
 
 /// THE PIN. Regenerate deliberately, never reflexively: every line here is what a `prompt: ro` hook
-
 const CORPUS_GOLDEN: &str = include_str!("golden/hook_ir_projection.txt");
 
 #[test]
@@ -456,7 +451,6 @@ fn the_surviving_projection_matches_its_pinned_golden() {
 }
 
 /// # THE NINE INTENDED DIVERGENCES, CHECKED RATHER THAN CLAIMED
-
 #[test]
 fn the_nine_intended_divergences_are_the_ones_that_landed() {
     let view = |name: &str| -> Result<View, String> {
@@ -525,7 +519,6 @@ fn the_nine_intended_divergences_are_the_ones_that_landed() {
 }
 
 /// The opacity decisions, asserted as a set rather than one fixture at a time: three wire shapes
-
 #[test]
 fn every_opaque_shape_projects_the_marker_and_never_the_bytes() {
     for (name, secret) in [
@@ -551,7 +544,6 @@ fn every_opaque_shape_projects_the_marker_and_never_the_bytes() {
 }
 
 /// # THE CORPUS WALK IS PROTOCOL-BLIND
-
 #[test]
 fn corpus_covers_every_known_protocol() {
     let covered: std::collections::BTreeSet<&str> = corpus().iter().map(|f| f.proto).collect::<_>();
