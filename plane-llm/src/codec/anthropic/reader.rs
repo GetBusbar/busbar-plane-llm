@@ -563,7 +563,14 @@ impl ProtocolReader for AnthropicReader {
             }
             EVT_MESSAGE_STOP => Some(IrStreamEvent::MessageStop),
             keys::ERROR_WORD => {
-                let err_val = data.get(keys::ERROR_WORD)?;
+                let Some(err_val) = data.get(keys::ERROR_WORD) else {
+                    // The native error marker is a failure even when its nested body is absent.
+                    return Some(IrStreamEvent::Error(IrError {
+                        class: StatusClass::ServerError,
+                        provider_signal: None,
+                        retry_after: None,
+                    }));
+                };
                 // Carry the upstream error `type` as-is, `None` when omitted. Do not default it to
                 // `Some("")`: the writer would emit `"type": ""` where native carries a real type
                 // or `null`.
