@@ -551,8 +551,13 @@ pub fn warn_error_map_class_unrecognized(value: &str) {
     static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
     // Poisoning is harmless here (the set only dedupes a warning); recover the guard either way.
-    let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
-    if seen.insert(value.to_string()) {
+    let fresh = {
+        let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
+        seen.insert(value.to_string())
+    };
+    // A subscriber is a caller callback and may re-enter classification. The dedupe mutex
+    // protects only the insertion, never the callback.
+    if fresh {
         tracing::warn!(
             error_map_value = value,
             "error_map maps an error to an unrecognized status class; the mapping is IGNORED and \
@@ -561,6 +566,10 @@ pub fn warn_error_map_class_unrecognized(value: &str) {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "tests/diagnostics_reentry_tests.rs"]
+mod reentry_tests;
 
 /// Every code this plane defines, in catalog order, for the composition root's
 /// `install_diagnostics`.
