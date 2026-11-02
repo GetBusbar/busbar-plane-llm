@@ -871,7 +871,7 @@ async fn size_signal_and_projection_agree_on_tool_role_content() {
 #[tokio::test]
 async fn hook_content_uncapped_by_default_and_omits_whole_when_opted_in() {
     // The ceiling is process-global: hold the lock every limits installer in the binary holds.
-    let _lock = busbar_kernel::config::limits::LIMITS_TEST_LOCK.lock().await;
+    let _lock = busbar_kernel_testkit::limits::LIMITS_TEST_LOCK.lock().await;
     let big = "x".repeat(200_000);
     let body = json!({"messages": [{"role": "user", "content": big}]});
 
