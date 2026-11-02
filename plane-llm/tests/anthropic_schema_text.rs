@@ -56,12 +56,12 @@ fn absent_openai_parameters_reach_anthropic_as_an_empty_object_schema() {
         .read_request(&body)
         .expect("OpenAI permits omitted parameters");
     let expected = json!({"type":"object","properties":{}});
-    assert_eq!(ir.tools[0].input_schema, expected);
     let wire = protocol_for("anthropic")
         .unwrap()
         .writer()
         .write_request(&SevensHost, &ir);
     assert_eq!(wire.pointer("/tools/0/input_schema"), Some(&expected));
+    assert_eq!(ir.tools[0].input_schema, expected);
 
     let raw = serde_json::to_vec(&body).unwrap();
     let translated = hop("openai", "anthropic", &body, &raw);
