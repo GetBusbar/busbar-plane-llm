@@ -316,6 +316,115 @@ fn ordinary_metadata_and_repeated_usage_keep_the_existing_cumulative_contract() 
     }
 }
 
+struct UsageWarnings(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+impl tracing::Subscriber for UsageWarnings {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        *metadata.level() == tracing::Level::WARN
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        if event.metadata().target().ends_with("::codec::usage_count") {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+#[test]
+fn an_existing_usage_bearing_ir_event_refuses_and_warns_each_bad_count_only_once() {
+    for ingress in ["anthropic", "openai", "gemini"] {
+        let warnings = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        tracing::subscriber::with_default(UsageWarnings(warnings.clone()), || {
+            let mut translated = stream(ingress);
+            translated.feed(
+                &Host,
+                &frame(
+                    "message_start",
+                    &start(
+                        Some(json!("assistant")),
+                        json!({
+                            "input_tokens":"unreadable", "output_tokens":9
+                        }),
+                    ),
+                ),
+            );
+            assert_eq!(counts(&translated), Some((0, 9)));
+        });
+        assert_eq!(
+            warnings.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "{ingress}: the fallback must not reread an accepted usage-bearing IR frame"
+        );
+    }
+}
+
+#[test]
+fn recovered_detail_and_open_counts_keep_the_same_cumulative_precedence() {
+    for ingress in ["anthropic", "openai", "gemini"] {
+        let mut translated = stream(ingress);
+        translated.feed(&Host, &frame("message_start", &start(None, json!({
+            "input_tokens":5000, "cache_creation_input_tokens":17,"cache_read_input_tokens":42,
+            "cache_creation":{"ephemeral_5m_input_tokens":17,"ephemeral_1h_input_tokens":0},
+            "service_tier":"batch"
+        }))));
+        for _ in 0..2 {
+            translated.feed(
+                &Host,
+                &frame(
+                    "message_delta",
+                    &json!({"usage":{
+                        "output_tokens":812,"output_tokens_details":{"thinking_tokens":27},
+                        "server_tool_use":{"web_search_requests":3,"web_fetch_requests":2}
+                    }}),
+                ),
+            );
+        }
+        let usage = translated.usage().unwrap();
+        assert_eq!((usage.input_tokens, usage.output_tokens), (5000, 812));
+        assert_eq!(usage.detail.cache_creation_5m_input_tokens, Some(17));
+        assert_eq!(usage.detail.cache_creation_1h_input_tokens, Some(0));
+        assert_eq!(usage.detail.reasoning_tokens, Some(27));
+        assert_eq!(usage.detail.service_tier.as_deref(), Some("batch"));
+        let billed = usage.to_token_usage();
+        assert_eq!(billed.cache_creation, Some(17));
+        assert_eq!(billed.cache_read, Some(42));
+        assert_eq!(billed.open_units.get("search_units"), Some(&3));
+        assert_eq!(billed.open_units.get("web_fetch_requests"), Some(&2));
+    }
+}
+
+#[test]
+fn malformed_optional_counts_do_not_erase_valid_recovered_siblings() {
+    for ingress in ["anthropic", "openai", "gemini"] {
+        let mut translated = stream(ingress);
+        translated.feed(
+            &Host,
+            &frame(
+                "message_start",
+                &start(
+                    None,
+                    json!({
+                        "input_tokens":5000.0,"output_tokens":812.0,
+                        "cache_creation_input_tokens":"bad", "cache_read_input_tokens":42,
+                        "server_tool_use":{"web_search_requests":"bad","web_fetch_requests":3}
+                    }),
+                ),
+            ),
+        );
+        let usage = translated.usage().unwrap().to_token_usage();
+        assert_eq!((usage.input, usage.output), (5000, 812));
+        assert_eq!(usage.cache_creation, None);
+        assert_eq!(usage.cache_read, Some(42));
+        assert!(!usage.open_units.contains_key("search_units"));
+        assert_eq!(usage.open_units.get("web_fetch_requests"), Some(&3));
+    }
+}
+
 struct Context {
     arrived: Arrived,
     lane: Lane,
@@ -409,6 +518,10 @@ fn actual_reply_transport_failure_settles_the_reported_start_and_tail() {
             (5000, 812),
             "{ingress}: {cut:?}"
         );
+        assert_eq!(cut.units.cache_write, 17);
+        assert_eq!(cut.units.cache_read, 42);
+        assert_eq!(cut.units.open.get("search_units"), Some(&3));
+        assert_eq!(cut.units.open.get("web_fetch_requests"), Some(&2));
         assert!(!cut.units.floor);
         assert_eq!(cut.verdict, Verdict::Hard);
         assert_eq!(cut.fault, Some(Fault::Transient("mid-stream")));
@@ -498,5 +611,27 @@ fn native_upstream_error_keeps_its_existing_refund_disposition() {
         assert_eq!(piece.verdict, Verdict::Hard);
         assert_eq!(piece.fault, Some(Fault::Transient("stream-terminal-error")));
         assert!(piece.done);
+    }
+}
+
+#[test]
+fn recovered_usage_stays_observable_but_native_error_refunds_the_final_reply() {
+    for ingress in ["anthropic", "openai", "gemini"] {
+        let mut frames = content_frames();
+        frames.push(frame(
+            "error",
+            &json!({"type":"error","error":{"type":"overloaded_error","message":"try later"}}),
+        ));
+        let mut translated = stream(ingress);
+        for native in &frames {
+            translated.feed(&Host, native);
+        }
+        assert_eq!(counts(&translated), Some((5000, 812)));
+        assert!(translated.terminal_error().is_some());
+        let (piece, _) = finish_reply(ingress, &frames);
+        assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (0, 0));
+        assert!(piece.units.open.is_empty());
+        assert_eq!(piece.fault, Some(Fault::Transient("stream-terminal-error")));
+        assert_eq!(piece.verdict, Verdict::Hard);
     }
 }
