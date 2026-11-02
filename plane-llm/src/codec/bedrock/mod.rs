@@ -2129,7 +2129,9 @@ pub fn bedrock_response_to_eventstream(
                 push(
                     &IrStreamEvent::BlockDelta {
                         index,
-                        delta: IrDelta::InputJsonDelta(input.to_string()),
+                        delta: IrDelta::InputJsonDelta(
+                            crate::codec::dialect::tool_arguments_to_string(input),
+                        ),
                     },
                     &mut out,
                 );

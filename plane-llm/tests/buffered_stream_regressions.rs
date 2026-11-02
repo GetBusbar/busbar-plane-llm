@@ -104,7 +104,7 @@ fn synthesized_tool_arguments_preserve_partial_json_text() {
         "usage": {"prompt_tokens": 9, "completion_tokens": 3, "total_tokens": 12}
     }))
     .unwrap();
-    for ingress in ["openai", "responses"] {
+    for ingress in ["openai", "responses", "bedrock"] {
         let request = json!({"model": "model", "stream": true});
         let piece = reply(
             ingress,
@@ -113,7 +113,17 @@ fn synthesized_tool_arguments_preserve_partial_json_text() {
             &far,
         );
         assert!(piece.synthesized, "{ingress}");
-        let arguments: String = frames(&piece.bytes)
+        let decoded = if ingress == "bedrock" {
+            let mut body = piece.bytes.to_vec();
+            busbar_plane_llm::codec::eventstream::drain_frames_checked(&mut body, None)
+                .0
+                .into_iter()
+                .map(|(_, payload)| serde_json::from_slice::<Value>(&payload).unwrap())
+                .collect()
+        } else {
+            frames(&piece.bytes)
+        };
+        let arguments: String = decoded
             .iter()
             .filter_map(|frame| match ingress {
                 "openai" => frame
@@ -122,6 +132,7 @@ fn synthesized_tool_arguments_preserve_partial_json_text() {
                 "responses" if frame["type"] == "response.function_call_arguments.delta" => {
                     frame["delta"].as_str()
                 }
+                "bedrock" => frame.pointer("/delta/toolUse/input")?.as_str(),
                 _ => None,
             })
             .collect();
