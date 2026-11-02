@@ -161,17 +161,53 @@ fn a_recovered_start_backfills_the_next_real_terminal_event() {
         assert_eq!(usage.cache_read_input_tokens, Some(42));
         assert_eq!(usage.cache_creation_input_tokens, Some(17));
         assert_eq!(usage.detail.cache_creation_5m_input_tokens, Some(17));
-        let path = if ingress == "openai" {
-            "/usage/prompt_tokens"
+        // The foreign wire's prompt total includes the cache tiers; compare against the
+        // existing valid-start writer path rather than confusing it with uncached IR input.
+        let mut ordinary = stream(ingress);
+        ordinary.feed(&Host, &frame("message_start", &start(Some(json!("assistant")), json!({
+            "input_tokens":5000, "cache_read_input_tokens":42,
+            "cache_creation_input_tokens":17,
+            "cache_creation":{"ephemeral_5m_input_tokens":17,"ephemeral_1h_input_tokens":0}
+        }))));
+        let mut expected = ordinary.feed(
+            &Host,
+            &frame(
+                "message_delta",
+                &json!({
+                    "type":"message_delta", "delta":{"stop_reason":"end_turn"},
+                    "usage":{"output_tokens":812}
+                }),
+            ),
+        );
+        expected.extend(ordinary.finish(&Host));
+        let key = if ingress == "openai" {
+            "usage"
         } else {
-            "/usageMetadata/promptTokenCount"
+            "usageMetadata"
         };
+        let usage_frames = |bytes: &[u8]| {
+            json_frames(bytes)
+                .into_iter()
+                .filter_map(|value| value.get(key).cloned())
+                .collect::<Vec<_>>()
+        };
+        let expected = usage_frames(&expected);
         assert!(
-            json_frames(&output)
-                .iter()
-                .any(|f| f.pointer(path) == Some(&json!(5000))),
-            "the real terminal usage must carry the start backfill: {ingress}: {}",
-            String::from_utf8_lossy(&output)
+            !expected.is_empty(),
+            "the existing writer must emit terminal usage"
+        );
+        let prompt_key = if ingress == "openai" {
+            "prompt_tokens"
+        } else {
+            "promptTokenCount"
+        };
+        assert!(expected
+            .iter()
+            .any(|usage| usage[prompt_key] == json!(5059)));
+        assert_eq!(
+            usage_frames(&output),
+            expected,
+            "the recovered start must produce exactly the existing terminal usage: {ingress}"
         );
     }
 }
