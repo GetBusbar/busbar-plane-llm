@@ -76,8 +76,9 @@ Direct malformed metadata tests retain ABI +1/-1, layout xor1/zero, three Statem
 branches, all six wrong-kind loads linked/dropped, plane answer-layout refusal, and actual six-need no-table/Probe behavior. Failed READY
 retains its exact plugin text and one invocation. Declared-needs/profile checks remain.
 
-The allocation gates use a binary-local System allocator counter for alloc/alloc_zeroed/realloc.
-All existing warmed-forward, echo-scaling and host-resolution allocation thresholds remain exact.
+The allocation measurements use a binary-local System allocator counter for alloc/alloc_zeroed/realloc.
+The host-resolution comparison remains exact. Two numeric ceilings are retired by the later root
+policy recorded below; all forwarding and failed-entropy behavior remains asserted.
 No payload inspection, allocator framework or new fake product is introduced.
 
 ## Framework selfchecks retired, and unresolved core mapping
@@ -145,3 +146,33 @@ OS getrandom. Other host services refuse. Both actual deliveries retain the orig
 200/chat.completion and refreshed-64-byte-cap refusal assertions; an additional per-door counter
 asserts the actual translation draws host entropy. No product logic, expected answer or cap changes.
 Source causality and the corrected candidate's native result require the lane executor's rerun.
+
+## Explicit root-policy retirement of numeric ceilings
+
+Authority: root instruction relayed by diet_planes under KICKOFF STRICT 2/3. This change retires
+ONLY the committed 107 warmed-forward maximum and 92000 large-body allocation-delta maximum,
+their constants, their pass/fail comparisons and bound narration. It does not raise either bound,
+add an ignore/skip, change a payload, hide an allocator observation or optimize production blindly.
+Both counts remain printed as diagnostic performance observations without a numeric acceptance gate.
+
+Old → new retained tests in tests/alloc_gate.rs:
+
+- alloc_gate_openai_passthrough_forward → openai_same_dialect_forward_completes_successfully:
+  the warm call and all four observed calls still assert status 200. Every actual forward still
+  asserts a nonempty far-end body and a completed whole answer. The exact request bytes remain.
+- alloc_gate_request_echo_body_materialized_once →
+  small_and_4000_message_stream_requests_complete_successfully: exact one/4000-message payloads,
+  both initial status-200 assertions and the measured (200,200) assertion remain. Every forward
+  retains the nonempty far body and whole-answer assertion. Allocation delta remains diagnostic.
+- resolving_every_dialect_by_name_allocates_nothing →
+  resolving_every_dialect_by_name_adds_no_allocation_overhead: all six dialects retain exact
+  resolved == direct allocation comparison. This is a relative behavioral property, not an
+  arbitrary numeric ceiling.
+- buffered_stream_synthesis_still_refuses_failed_entropy remains unchanged and asserts 500.
+
+Preserved RED evidence: exact pre-diet d19e29a with the old Counting allocator measured 120,
+exceeding the old 107 maximum, under the same SDK/compiler/profile and actual image hash prefix
+0ff0482c. The no-kit c69 candidate also measured 120. Thus the failing ceiling predates this
+migration; retirement follows the explicit policy above and is not a claimed performance fix.
+The read-only proposal to avoid header/path copying remains external analysis, unimplemented.
+Fresh native qualification of this exact source head is still required by the lane executor.
