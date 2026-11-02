@@ -138,6 +138,17 @@ pub fn write_image_request(r: &crate::codec::ir::image::ImageReq) -> Bytes {
 
 /// IR to Titan image response wire ([`BedrockImage::write_response`]).
 pub fn write_image_response(r: &crate::codec::ir::image::ImageResp) -> WireBody {
+    for image in &r.images {
+        if image.b64.is_none() && image.url.is_some() {
+            crate::codec::drops::writer_drop!(
+                crate::codec::drops::member("ir.images[].url"),
+                &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                [path = "ir.images[].url",],
+                "Bedrock image response: dropping ir.images[].url because Titan requires base64; \
+                 native image source metadata is unavailable"
+            );
+        }
+    }
     let images: Vec<&str> = r.images.iter().filter_map(|i| i.b64.as_deref()).collect();
     WireBody::json(SlabBytes::from(
         serde_json::to_vec(&json!({ (super::IMAGES): images })).unwrap_or_default(),
