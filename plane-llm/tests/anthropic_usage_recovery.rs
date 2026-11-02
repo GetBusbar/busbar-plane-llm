@@ -479,7 +479,13 @@ impl Context {
 
 fn content_frames() -> Vec<Vec<u8>> {
     vec![
-        frame("message_start", &start(None, json!({"input_tokens":5000}))),
+        frame(
+            "message_start",
+            &start(
+                None,
+                json!({"input_tokens":5000,"cache_creation_input_tokens":17,"cache_read_input_tokens":42,"server_tool_use":{"web_search_requests":3,"web_fetch_requests":2}}),
+            ),
+        ),
         frame(
             "content_block_start",
             &json!({"index":0,"content_block":{"type":"text","text":""}}),
