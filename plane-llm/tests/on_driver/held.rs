@@ -3,10 +3,6 @@
 
 //! Hook behavior exercised through the LLM plane driver.
 
-
-
-
-
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -14,7 +10,7 @@ use busbar_contract::hooks::{
     Candidate, PolicyResult, RewriteReply, RoutingContext, RoutingDecision, RoutingPolicy,
     RoutingRequest, TransformOutcome,
 };
-use busbar_kernel::audit::amend::{node_recent, Access, AmendBody, Reader};
+use busbar_kernel::audit::amend::{Access, AmendBody, Reader};
 use busbar_kernel::config::PolicyOnError;
 use busbar_kernel::hooks::{FallbackHook, ResolvedPolicy};
 use serde_json::{json, Value};
@@ -22,11 +18,10 @@ use serde_json::{json, Value};
 use super::policies::{capturing, RewritingGate};
 use crate::rig::{member, Answered, Hooks, Pool, Rig};
 
-
-
-/// Every hook access the node journal holds for `name` (the journal is process-wide: every hook
-fn accesses(name: &str) -> Vec<Access> {
-    node_recent()
+/// Hook accesses recorded by this rig's node journal for `name`.
+fn accesses(rig: &Rig, name: &str) -> Vec<Access> {
+    rig.amendments()
+        .recent()
         .into_iter()
         .filter_map(|a| match a.body {
             AmendBody::Access(access) if access.reader == Reader::Hook && access.name == name => {
@@ -103,7 +98,7 @@ fn one() -> Pool {
     }
 }
 
-async fn decide(resolved: ResolvedPolicy) {
+async fn decide(resolved: ResolvedPolicy) -> Rig {
     let rig = Rig::new(
         one(),
         None,
@@ -113,18 +108,19 @@ async fn decide(resolved: ResolvedPolicy) {
         },
     );
     rig.fire(&access_body()).await;
+    rig
 }
 
 #[tokio::test]
 async fn a_decision_gate_handed_the_prompt_leaves_exactly_one_access_amendment() {
-    decide(policy(
+    let rig = decide(policy(
         named("access-decide-prompt"),
         true,
         true,
         Vec::new(),
     ))
     .await;
-    let seen = accesses("access-decide-prompt");
+    let seen = accesses(&rig, "access-decide-prompt");
     assert_eq!(seen.len(), 1, "one access per hand-over: {seen:?}");
     assert_eq!(seen[0].op_class.as_str(), "anthropic");
     assert_eq!(
@@ -136,14 +132,14 @@ async fn a_decision_gate_handed_the_prompt_leaves_exactly_one_access_amendment()
 
 #[tokio::test]
 async fn a_decision_gate_handed_only_the_shape_leaves_no_access_amendment() {
-    decide(policy(
+    let rig = decide(policy(
         named("access-decide-shape"),
         false,
         true,
         Vec::new(),
     ))
     .await;
-    assert!(accesses("access-decide-shape").is_empty());
+    assert!(accesses(&rig, "access-decide-shape").is_empty());
 }
 
 #[tokio::test]
@@ -159,9 +155,9 @@ async fn an_on_error_fallback_handed_the_prompt_leaves_its_own_access_amendment(
         send_user: false,
         on_empty: PolicyOnError::Reject,
     };
-    decide(policy(primary, true, false, vec![fallback])).await;
-    assert_eq!(accesses("access-primary-fails").len(), 1);
-    let seen = accesses("access-fallback-prompt");
+    let rig = decide(policy(primary, true, false, vec![fallback])).await;
+    assert_eq!(accesses(&rig, "access-primary-fails").len(), 1);
+    let seen = accesses(&rig, "access-fallback-prompt");
     assert_eq!(
         seen.len(),
         1,
@@ -183,8 +179,8 @@ async fn an_on_error_fallback_without_the_prompt_grant_leaves_no_access_amendmen
         send_user: false,
         on_empty: PolicyOnError::Reject,
     };
-    decide(policy(primary, true, false, vec![fallback])).await;
-    assert!(accesses("access-fallback-shape").is_empty());
+    let rig = decide(policy(primary, true, false, vec![fallback])).await;
+    assert!(accesses(&rig, "access-fallback-shape").is_empty());
 }
 
 #[tokio::test]
@@ -198,7 +194,7 @@ async fn a_rewrite_hook_handed_the_prompt_leaves_exactly_one_access_amendment() 
         },
     );
     rig.fire(&access_body()).await;
-    let seen = accesses("access-rewrite");
+    let seen = accesses(&rig, "access-rewrite");
     assert_eq!(seen.len(), 1, "one access per hand-over: {seen:?}");
     assert_eq!(seen[0].fields, vec!["content".to_string()]);
 }
@@ -218,11 +214,9 @@ async fn a_global_tap_leaves_an_access_amendment_only_when_handed_the_prompt() {
         "max_tokens": 10
     }))
     .await;
-    assert_eq!(accesses("access-tap-prompt").len(), 1);
-    assert!(accesses("access-tap-shape").is_empty());
+    assert_eq!(accesses(&rig, "access-tap-prompt").len(), 1);
+    assert!(accesses(&rig, "access-tap-shape").is_empty());
 }
-
-
 
 /// The exact strings a `prompt: ro` hook is shown for `body` posted to `path`, flattened across
 async fn gate_view(path: &str, content_type: &str, body: &[u8]) -> (String, usize) {
@@ -285,7 +279,6 @@ async fn image_body_is_no_longer_gate_blind() {
 
 #[tokio::test]
 async fn speech_body_projects_input_and_instructions() {
-
     let v: Value = serde_json::from_str(include_str!("speech_request.json"))
         .expect("the speech request fixture is JSON");
     let (view, _) = json_view("/v1/audio/speech", v).await;
@@ -343,8 +336,6 @@ async fn transcription_prompt_is_seen_through_the_byte_seam() {
         "the multipart transcription prompt must be screenable through the byte reader"
     );
 }
-
-
 
 /// What a hook was shown.
 #[derive(Debug, Clone, PartialEq)]
@@ -576,8 +567,6 @@ async fn responses_instructions_are_system_and_a_system_item_is_a_turn() {
     assert_eq!(c.message_count, 2);
 }
 
-
-
 /// `v` posted to `path` in a same-dialect pool served by `provider`, under a rw hook answering
 async fn rewritten(path: &str, provider: &'static str, v: Value, messages: Vec<Value>) -> Value {
     let rig = Rig::new(
@@ -587,7 +576,10 @@ async fn rewritten(path: &str, provider: &'static str, v: Value, messages: Vec<V
         },
         None,
         Hooks {
-            rewrites: vec![(Duration::from_millis(500), Arc::new(RewritingGate(messages)))],
+            rewrites: vec![(
+                Duration::from_millis(500),
+                Arc::new(RewritingGate(messages)),
+            )],
             ..Hooks::default()
         },
     );
