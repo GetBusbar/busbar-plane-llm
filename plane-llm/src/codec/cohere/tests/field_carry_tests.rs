@@ -4,7 +4,6 @@
 //! FIELD-COVERAGE CARRY TESTS for the Cohere v2 Chat dialect.
 
 use super::*;
-use busbar_test_kit::warn_capture::WarnCapture;
 use serde_json::json;
 
 /// Read a Cohere request body → IR → write it back on the Cohere wire.
@@ -315,8 +314,24 @@ fn cohere_response_logprobs_drop_is_warned() {
         "usage": {"tokens": {"input_tokens": 1, "output_tokens": 1}}
     });
 
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
+    struct Log(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Log {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer = std::sync::Arc::clone(&output);
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_max_level(tracing::Level::WARN)
+        .with_writer(move || Log(std::sync::Arc::clone(&writer)))
+        .finish();
     let (ir, out) = tracing::subscriber::with_default(subscriber, || {
         let ir = CohereReader
             .read_response(crate::codec::test_host::HOST, &body)
@@ -334,12 +349,13 @@ fn cohere_response_logprobs_drop_is_warned() {
     );
     assert_eq!(ir.logprobs[0].token, "hi");
     assert_eq!(ir.logprobs[0].logprob, -0.75);
+    let messages = String::from_utf8(output.lock().unwrap().clone()).expect("UTF-8 diagnostics");
     assert!(
-        cap.messages()
-            .iter()
+        messages
+            .lines()
             .any(|m| m.contains("logprobs") && m.contains("no")),
         "dropping logprobs on the Cohere writer must warn (never silent): {:?}",
-        cap.messages()
+        messages
     );
     assert!(
         out.get("logprobs").is_none(),
