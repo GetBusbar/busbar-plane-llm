@@ -77,13 +77,12 @@ fn streaming_terminal_refuses_a_stringified_count_and_bills_the_readable_ones() 
 
 #[test]
 fn truncated_recovery_refuses_a_stringified_count_and_recovers_the_readable_ones() {
-    let tail =
-        br#"...cut"}],"usageMetadata":{"promptTokenCount":"1500","candidatesTokenCount":9}}"#;
+    let tail = br#"{"usageMetadata":{"promptTokenCount":"1500","candidatesTokenCount":9}}"#;
     let u = GeminiReader
         .recover_truncated_usage(tail)
         .expect("the readable counts recover");
     assert_eq!((u.input, u.output), (0, 9));
-    let tail = br#"...cut"}],"usageMetadata":{"candidatesTokenCount":9}}"#;
+    let tail = br#"{"usageMetadata":{"candidatesTokenCount":9}}"#;
     let u = GeminiReader
         .recover_truncated_usage(tail)
         .expect("an absent count still recovers");

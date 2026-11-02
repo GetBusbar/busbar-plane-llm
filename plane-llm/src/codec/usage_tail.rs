@@ -1,48 +1,38 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! Tail-usage isolation: the dialect-neutral byte-scan behind each reader's `recover_truncated_usage`.
-//!
-//! A same-protocol non-stream billing buffer whose head was dropped to stay within
-//! `max_translated_body_bytes()` is no longer a well-formed JSON document, so the normal
-//! `Op::extract_usage` parse fails. But the `usage` object sits at or near the tail of every
-//! supported dialect's response as a small self-contained balanced `{...}` value, so it can be
-//! isolated and parsed alone. This module owns that isolation; each reader maps the resulting
-//! `Value` onto the neutral `TokenUsage`.
+//! Usage recovery from a response whose transport ended early. The relay retains the original
+//! prefix while it is within its cap, so root-member custody is provable even if the root never
+//! closes. A headless tail cannot prove whether a `usage` key belongs to the response or a tool's
+//! payload and is never a billing source. Over-cap relays already report no usage.
 
-/// Find the last occurrence of `needle` in `hay`. There can be several `"usage"` substrings (e.g. in
-/// delivered assistant content); the last biases toward the real trailing usage object.
-fn find_last(hay: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || hay.len() < needle.len() {
-        return None;
+/// Skip only JSON whitespace.
+fn whitespace(buf: &[u8], mut at: usize) -> usize {
+    while buf
+        .get(at)
+        .is_some_and(|b| matches!(*b, b' ' | b'\t' | b'\r' | b'\n'))
+    {
+        at += 1;
     }
-    (0..=hay.len() - needle.len())
-        .rev()
-        .find(|&i| &hay[i..i + needle.len()] == needle)
+    at
 }
 
-/// From just past a `"usage"`/`"usageMetadata"` key, skip the `:` and whitespace, then
-/// bracket-match the following `{...}` (string- and escape-aware, so a `}` inside a quoted string
-/// does not close it early). Returns the span including both braces.
-fn balanced_object_after(buf: &[u8], mut i: usize) -> Option<&[u8]> {
-    while i < buf.len() && matches!(buf[i], b' ' | b'\t' | b'\r' | b'\n') {
-        i += 1;
-    }
-    if buf.get(i) != Some(&b':') {
-        return None;
-    }
-    i += 1;
-    while i < buf.len() && matches!(buf[i], b' ' | b'\t' | b'\r' | b'\n') {
-        i += 1;
-    }
-    if buf.get(i) != Some(&b'{') {
-        return None;
-    }
-    let start = i;
-    let mut depth: i32 = 0;
+/// Locate one complete value lexically. The caller validates that exact span as JSON before
+/// advancing, so matching delimiters alone never authenticate a malformed prefix.
+fn complete_value_end(buf: &[u8], start: usize) -> Option<usize> {
+    let first = *buf.get(start)?;
+    let mut depth = 0usize;
     let mut in_str = false;
     let mut escape = false;
-    while i < buf.len() {
+    let container = matches!(first, b'{' | b'[');
+    if !container && first != b'"' {
+        let end = buf[start..]
+            .iter()
+            .position(|b| matches!(*b, b',' | b'}' | b' ' | b'\t' | b'\r' | b'\n'))
+            .map_or(buf.len(), |n| start + n);
+        return (end > start).then_some(end);
+    }
+    for i in start..buf.len() {
         let c = buf[i];
         if in_str {
             if escape {
@@ -51,41 +41,78 @@ fn balanced_object_after(buf: &[u8], mut i: usize) -> Option<&[u8]> {
                 escape = true;
             } else if c == b'"' {
                 in_str = false;
+                if !container {
+                    return Some(i + 1);
+                }
             }
         } else {
             match c {
                 b'"' => in_str = true,
-                b'{' => depth += 1,
-                b'}' => {
-                    depth -= 1;
+                b'{' | b'[' => depth += 1,
+                b'}' | b']' => {
+                    depth = depth.checked_sub(1)?;
                     if depth == 0 {
-                        return Some(&buf[start..=i]);
+                        return Some(i + 1);
                     }
                 }
                 _ => {}
             }
         }
-        i += 1;
     }
     None
 }
 
-/// Isolate the self-contained trailing usage object from a head-truncated response `tail`: find the
-/// last object-valued `key` (`"usage"`, or `"usageMetadata"` for gemini), bracket-match the
-/// `{...}` after it and parse that span. Later scalar metadata members with that name are skipped. `None` when the key is absent or its object does not fit in the retained tail
-/// (never observed; it is a handful of integer fields). The caller maps its dialect's fields.
+/// Recover a complete object-valued root `key` from the original response prefix. Every earlier
+/// root value is structurally located and validated before advancing, so nested tool objects,
+/// strings and a headless tail cannot impersonate usage. An incomplete later member does not
+/// erase a report already received; a complete duplicate root member follows JSON's last-wins rule.
+/// `key` includes JSON quotes, as existing dialect callers spell it.
 pub fn isolate_tail_usage_object(tail: &[u8], key: &[u8]) -> Option<serde_json::Value> {
-    let mut end = tail.len();
-    while let Some(key_pos) = find_last(&tail[..end], key) {
-        if let Some(obj) = balanced_object_after(tail, key_pos + key.len()) {
-            // A later metadata member can share the key but hold a scalar. Keep looking for
-            // the preceding usage object instead of losing the provider's reported counts.
-            return crate::codec::json::parse(obj).ok();
-        }
-        end = key_pos;
+    let expected: String = serde_json::from_slice(key).ok()?;
+    let mut at = whitespace(tail, 0);
+    if tail.get(at) != Some(&b'{') {
+        return None;
     }
-    None
+    at += 1;
+    let mut found = None;
+    loop {
+        at = whitespace(tail, at);
+        if tail.get(at) != Some(&b'"') {
+            return found;
+        }
+        let Some(end) = complete_value_end(tail, at) else {
+            return found;
+        };
+        let Ok(name) = serde_json::from_slice::<String>(&tail[at..end]) else {
+            return found;
+        };
+        at = whitespace(tail, end);
+        if tail.get(at) != Some(&b':') {
+            return found;
+        }
+        at = whitespace(tail, at + 1);
+        let Some(end) = complete_value_end(tail, at) else {
+            return if name == expected { None } else { found };
+        };
+        if serde_json::from_slice::<serde::de::IgnoredAny>(&tail[at..end]).is_err() {
+            return if name == expected { None } else { found };
+        }
+        if name == expected {
+            found = crate::codec::json::parse::<serde_json::Value>(&tail[at..end])
+                .ok()
+                .filter(serde_json::Value::is_object);
+        }
+        at = whitespace(tail, end);
+        if tail.get(at) != Some(&b',') {
+            return found;
+        }
+        at += 1;
+    }
 }
+
+#[cfg(test)]
+#[path = "tests/usage_tail_root_tests.rs"]
+mod root_tests;
 
 /// The longest string value [`StopKeyScanner`] reads. A stop-reason token is a short enum member
 /// (`ERROR`, `MALFORMED_FUNCTION_CALL`); a longer value is not one, and reading it would cost work

@@ -86,12 +86,12 @@ fn streaming_terminal_refuses_a_stringified_count_and_bills_the_readable_ones() 
 
 #[test]
 fn truncated_recovery_refuses_a_stringified_count_and_recovers_the_readable_ones() {
-    let tail = br#"...cut"}]}],"usage":{"input_tokens":"1500","output_tokens":9}}"#;
+    let tail = br#"{"usage":{"input_tokens":"1500","output_tokens":9}}"#;
     let u = ResponsesReader
         .recover_truncated_usage(tail)
         .expect("the readable counts recover");
     assert_eq!((u.input, u.output), (0, 9));
-    let tail = br#"...cut"}]}],"usage":{"output_tokens":9}}"#;
+    let tail = br#"{"usage":{"output_tokens":9}}"#;
     let u = ResponsesReader
         .recover_truncated_usage(tail)
         .expect("an absent count still recovers");
@@ -200,7 +200,7 @@ fn cache_write_tokens_bill_inside_the_input_on_every_path() {
             (streamed.input, streamed.output, streamed.cache_creation),
             (100, 9, None)
         );
-        let tail = format!(r#"...cut"}}]}}],"usage":{usage}}}"#);
+        let tail = format!(r#"{{"usage":{usage}}}"#);
         let recovered = ResponsesReader
             .recover_truncated_usage(tail.as_bytes())
             .expect("the usage recovers");

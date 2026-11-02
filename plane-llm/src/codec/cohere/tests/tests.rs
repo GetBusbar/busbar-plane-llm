@@ -1452,7 +1452,7 @@ fn test_stream_message_end_usage_float_token_counts_survive_as_integers() {
 #[test]
 fn test_recover_truncated_usage_float_token_counts_survive_as_integers() {
     let reader = CohereReader;
-    let tail = br#"... mangled head cut through here"}],"usage":{"tokens":{"input_tokens":27.0,"output_tokens":9.0}}}"#;
+    let tail = br#"{"usage":{"tokens":{"input_tokens":27.0,"output_tokens":9.0}}}"#;
     let usage = reader
         .recover_truncated_usage(tail)
         .expect("usage tail must be recoverable");

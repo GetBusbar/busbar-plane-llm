@@ -76,12 +76,12 @@ fn streaming_usage_frames_refuse_a_stringified_count_and_bill_the_readable_ones(
 
 #[test]
 fn truncated_recovery_refuses_a_stringified_count_and_recovers_the_readable_ones() {
-    let tail = br#"...cut"}],"usage":{"input_tokens":"1500","output_tokens":9}}"#;
+    let tail = br#"{"usage":{"input_tokens":"1500","output_tokens":9}}"#;
     let u = AnthropicReader
         .recover_truncated_usage(tail)
         .expect("the readable counts recover");
     assert_eq!((u.input, u.output), (0, 9));
-    let tail = br#"...cut"}],"usage":{"output_tokens":9}}"#;
+    let tail = br#"{"usage":{"output_tokens":9}}"#;
     let u = AnthropicReader
         .recover_truncated_usage(tail)
         .expect("an absent count still recovers");
@@ -189,7 +189,7 @@ fn unreadable_cache_totals_refuse_only_their_own_counts_on_every_read_path() {
                 expected
             );
         }
-        let tail = format!("cut\"}}],\"usage\":{usage}}}");
+        let tail = format!("{{\"usage\":{usage}}}");
         let recovered = AnthropicReader
             .recover_truncated_usage(tail.as_bytes())
             .unwrap();
@@ -240,7 +240,7 @@ fn streaming_usage_frames_refuse_an_unreadable_cache_tier_or_metered_count_on_it
 #[test]
 fn truncated_recovery_preserves_readable_counts_beside_unreadable_details() {
     for usage in unreadable_detail_usages() {
-        let tail = format!("cut\"}}],\"usage\":{usage}}}");
+        let tail = format!("{{\"usage\":{usage}}}");
         let recovered = AnthropicReader
             .recover_truncated_usage(tail.as_bytes())
             .expect("readable counts survive the refused detail");

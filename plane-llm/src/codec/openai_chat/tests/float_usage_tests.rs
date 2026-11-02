@@ -19,7 +19,7 @@ use crate::codec::ir::StreamDecodeState;
 #[test]
 fn recover_truncated_usage_reads_float_encoded_counts() {
     let reader = OpenAiReader;
-    let tail = br#"..."}}],"usage":{"prompt_tokens":1000.0,"completion_tokens":50.0,"prompt_tokens_details":{"cached_tokens":200.0}}}"#;
+    let tail = br#"{"usage":{"prompt_tokens":1000.0,"completion_tokens":50.0,"prompt_tokens_details":{"cached_tokens":200.0}}}"#;
     let usage = reader
         .recover_truncated_usage(tail)
         .expect("usage tail must be recoverable");

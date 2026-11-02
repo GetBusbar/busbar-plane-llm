@@ -71,12 +71,12 @@ fn streaming_usage_chunk_refuses_a_stringified_count_and_bills_the_readable_ones
 
 #[test]
 fn truncated_recovery_refuses_a_stringified_count_and_recovers_the_readable_ones() {
-    let tail = br#"...cut"}}],"usage":{"prompt_tokens":"1500","completion_tokens":9}}"#;
+    let tail = br#"{"usage":{"prompt_tokens":"1500","completion_tokens":9}}"#;
     let u = OpenAiReader
         .recover_truncated_usage(tail)
         .expect("the readable counts recover");
     assert_eq!((u.input, u.output), (0, 9));
-    let tail = br#"...cut"}}],"usage":{"completion_tokens":9}}"#;
+    let tail = br#"{"usage":{"completion_tokens":9}}"#;
     let u = OpenAiReader
         .recover_truncated_usage(tail)
         .expect("an absent count still recovers");
@@ -143,7 +143,7 @@ fn cache_write_tokens_bill_inside_the_input_on_every_path() {
             (100, 9, None)
         );
 
-        let tail = format!(r#"...cut"}}}}],"usage":{usage}}}"#);
+        let tail = format!(r#"{{"usage":{usage}}}"#);
         let recovered = OpenAiReader
             .recover_truncated_usage(tail.as_bytes())
             .expect("the usage recovers");

@@ -108,7 +108,7 @@ fn buffered_response_float_usage_counts_survive_as_integers() {
 #[test]
 fn recover_truncated_usage_float_token_counts_survive_as_integers() {
     let reader = BedrockReader;
-    let tail = br#"... mangled head cut through here"}],"usage":{"inputTokens":27.0,"outputTokens":9.0,"cacheWriteInputTokens":4.0,"cacheReadInputTokens":3.0}}"#;
+    let tail = br#"{"usage":{"inputTokens":27.0,"outputTokens":9.0,"cacheWriteInputTokens":4.0,"cacheReadInputTokens":3.0}}"#;
     let usage = reader
         .recover_truncated_usage(tail)
         .expect("usage tail must be recoverable");

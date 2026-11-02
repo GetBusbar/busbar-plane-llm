@@ -111,11 +111,10 @@ pub trait ProtocolReader: Send + Sync {
         body: &serde_json::Value,
     ) -> Result<crate::codec::ir::IrRequest, IrError>;
 
-    /// Recover neutral token totals from a head-truncated non-stream response tail. The slice is not
-    /// a well-formed document (its opening structure, or a string it cut through, is gone), so a
-    /// full parse fails; instead isolate the trailing self-contained `usage` object and map this
-    /// dialect's fields onto [`busbar_contract::billing::TokenUsage`]. `None` for a tail without a
-    /// recognizable usage object (the caller bills zero, counted and warned). Defaults to `None`.
+    /// Recover neutral token totals from the original prefix of a non-stream response cut by its
+    /// transport. The root may not close, but a complete root usage member can still be proven.
+    /// A headless tail or a same-named nested object cannot establish provider-reported work.
+    /// Defaults to `None`; over-cap relays do not call recovery or bill a tail.
     fn recover_truncated_usage(
         &self,
         _tail: &[u8],

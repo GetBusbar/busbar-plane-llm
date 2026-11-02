@@ -43,7 +43,7 @@ impl ProtocolReader for CohereReader {
 
     fn recover_truncated_usage(&self, tail: &[u8]) -> Option<busbar_contract::billing::TokenUsage> {
         let v = super::super::usage_tail::isolate_tail_usage_object(tail, b"\"usage\"")?;
-        // The usage object is read as in `read_response` (one table, `USAGE`), so a head-truncated body
+        // The proven root usage is read as in `read_response` (one table, `USAGE`), so a cut body
         // ledgers what its whole twin does: the raw `tokens` counts, with `billed_units` beside them as
         // attribution (`to_token_usage`). An unreadable count is refused alone and bills nothing.
         Some(read_cohere_usage(Some(&v)).ok()?.to_token_usage())

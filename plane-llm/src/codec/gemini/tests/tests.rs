@@ -6595,7 +6595,7 @@ fn recover_truncated_usage_counts_thinking_as_output() {
     let reader = GeminiReader;
     // A HEAD-truncated tail: the opening document structure is gone, but the trailing
     // `usageMetadata` object is intact and self-contained.
-    let tail = br#"... mangled head cut through here"},"finishReason":"MAX_TOKENS"}],"usageMetadata":{"promptTokenCount":1000,"candidatesTokenCount":50,"thoughtsTokenCount":4000,"cachedContentTokenCount":200,"totalTokenCount":5050}}"#;
+    let tail = br#"{"usageMetadata":{"promptTokenCount":1000,"candidatesTokenCount":50,"thoughtsTokenCount":4000,"cachedContentTokenCount":200,"totalTokenCount":5050}}"#;
     let usage = reader
         .recover_truncated_usage(tail)
         .expect("usageMetadata tail must be recoverable");

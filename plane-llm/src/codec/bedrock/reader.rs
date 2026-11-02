@@ -156,39 +156,20 @@ static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
 
 impl ProtocolReader for BedrockReader {
     fn recover_truncated_usage(&self, tail: &[u8]) -> Option<busbar_contract::billing::TokenUsage> {
-        // The turn's `usage`, not a guardrail's. A guardrail's `invocationMetrics.usage` (policy
-        // units) sits under `trace` and can follow the turn's `usage`; the last `"usage"` in the tail
-        // would then name no token count and read as a zero-token turn. Walk back to the last `usage`
-        // that names a token count; none means no recovery (the caller's floor), never zero. The
-        // guardrail units are then read off the trailing `trace`, as buffered.
-        const KEY: &[u8] = b"\"usage\"";
-        let mut end = tail.len();
-        while let Some(at) = tail[..end].windows(KEY.len()).rposition(|w| w == KEY) {
-            if let Some(v) =
-                super::super::usage_tail::isolate_tail_usage_object(&tail[at..end], KEY)
-            {
-                if TOKEN_USAGE_MEMBERS.iter().any(|k| v.get(*k).is_some()) {
-                    // An unreadable billed count is refused alone and bills nothing; readable ones
-                    // recover. The per-TTL cache-write split rides this `usage` too.
-                    let mut usage = read_bedrock_usage(Some(&v)).ok()?;
-                    // Guardrail policy units, as the buffered and streamed reads bill them. The
-                    // answer's `trace` follows the turn's `usage`, so it is in the tail; a `trace`
-                    // before it lies inside the output and is not the answer's.
-                    if let Some(trace) = super::super::usage_tail::isolate_tail_usage_object(
-                        &tail[at..],
-                        b"\"trace\"",
-                    ) {
-                        let mut holder = serde_json::Map::new();
-                        holder.insert(TRACE.to_string(), trace);
-                        usage.detail.open_units =
-                            guardrail_units(&serde_json::Value::Object(holder)).ok()?;
-                    }
-                    return Some(usage.to_token_usage());
-                }
-            }
-            end = at;
+        // Both members must belong to the response root. A tool's input and a guardrail's
+        // invocationMetrics can each contain their own `usage`, which are never turn counters.
+        let v = super::super::usage_tail::isolate_tail_usage_object(tail, b"\"usage\"")?;
+        if !TOKEN_USAGE_MEMBERS.iter().any(|k| v.get(*k).is_some()) {
+            return None;
         }
-        None
+        let mut usage = read_bedrock_usage(Some(&v)).ok()?;
+        if let Some(trace) = super::super::usage_tail::isolate_tail_usage_object(tail, b"\"trace\"")
+        {
+            let mut holder = serde_json::Map::new();
+            holder.insert(TRACE.to_string(), trace);
+            usage.detail.open_units = guardrail_units(&serde_json::Value::Object(holder)).ok()?;
+        }
+        Some(usage.to_token_usage())
     }
 
     fn extract_error(

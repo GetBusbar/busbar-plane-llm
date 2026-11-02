@@ -625,7 +625,7 @@ fn tail_usage_recovery_ignores_later_nonobject_members_named_usage() {
         r#","metadata":{"usage":17}}"#,
     ] {
         let tail = format!(
-            r#"truncated content","usage":{{"prompt_tokens":7,"completion_tokens":11}}{suffix}"#
+            r#"{{"content":"received content","usage":{{"prompt_tokens":7,"completion_tokens":11}}{suffix}"#
         );
         assert_eq!(
             isolate_tail_usage_object(tail.as_bytes(), b"\"usage\""),
@@ -634,15 +634,12 @@ fn tail_usage_recovery_ignores_later_nonobject_members_named_usage() {
     }
     assert_eq!(
         isolate_tail_usage_object(
-            br#"truncated","usage": {"prompt_tokens":7},"other":true}"#,
+            br#"{"content":"received","usage": {"prompt_tokens":7},"other":true}"#,
             b"\"usage\""
         ),
         Some(json!({"prompt_tokens":7}))
     );
-    assert!(
-        isolate_tail_usage_object(br#"truncated","metadata":{"usage":"echo"}}"#, b"\"usage\"")
-            .is_none()
-    );
+    assert!(isolate_tail_usage_object(br#"{"metadata":{"usage":"echo"}}"#, b"\"usage\"").is_none());
 }
 
 #[test]
@@ -650,7 +647,7 @@ fn tail_usage_recovery_accepts_only_json_whitespace() {
     use crate::codec::usage_tail::isolate_tail_usage_object;
     for byte in [0x85, 0xa0, 0x0b, 0x0c] {
         for position in [0, 1] {
-            let mut tail = b"\"usage\"".to_vec();
+            let mut tail = b"{\"usage\"".to_vec();
             if position == 0 {
                 tail.push(byte);
             }
@@ -667,7 +664,7 @@ fn tail_usage_recovery_accepts_only_json_whitespace() {
     }
     assert_eq!(
         isolate_tail_usage_object(
-            b"\"usage\" \t\r\n: \t\r\n{\"prompt_tokens\":7}",
+            b"{\"usage\" \t\r\n: \t\r\n{\"prompt_tokens\":7}",
             b"\"usage\""
         ),
         Some(json!({"prompt_tokens":7}))

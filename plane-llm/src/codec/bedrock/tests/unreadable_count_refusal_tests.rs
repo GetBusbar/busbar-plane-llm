@@ -78,12 +78,12 @@ fn streaming_metadata_refuses_a_stringified_count_and_bills_the_readable_ones() 
 
 #[test]
 fn truncated_recovery_refuses_a_stringified_count_and_recovers_the_readable_ones() {
-    let tail = br#"...cut"}],"usage":{"inputTokens":"1500","outputTokens":9}}"#;
+    let tail = br#"{"usage":{"inputTokens":"1500","outputTokens":9}}"#;
     let u = BedrockReader
         .recover_truncated_usage(tail)
         .expect("the readable counts recover");
     assert_eq!((u.input, u.output), (0, 9));
-    let tail = br#"...cut"}],"usage":{"outputTokens":9}}"#;
+    let tail = br#"{"usage":{"outputTokens":9}}"#;
     let u = BedrockReader
         .recover_truncated_usage(tail)
         .expect("an absent count still recovers");
@@ -173,7 +173,7 @@ fn streaming_metadata_refuses_an_unreadable_cache_count_on_its_own() {
 
 #[test]
 fn truncated_recovery_refuses_an_unreadable_cache_tier_on_its_own() {
-    let tail = br#"...cut"}],"usage":{"inputTokens":5,"outputTokens":9,"cacheDetails":[{"ttl":"5m","inputTokens":"40"}]}}"#;
+    let tail = br#"{"usage":{"inputTokens":5,"outputTokens":9,"cacheDetails":[{"ttl":"5m","inputTokens":"40"}]}}"#;
     let u = BedrockReader
         .recover_truncated_usage(tail)
         .expect("the readable counts recover");

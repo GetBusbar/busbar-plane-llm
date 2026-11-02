@@ -89,12 +89,12 @@ fn streaming_message_end_refuses_a_stringified_count_and_bills_the_readable_ones
 
 #[test]
 fn truncated_recovery_refuses_a_stringified_count_and_recovers_the_readable_ones() {
-    let tail = br#"...cut"}],"usage":{"tokens":{"input_tokens":"1500","output_tokens":9}}}"#;
+    let tail = br#"{"usage":{"tokens":{"input_tokens":"1500","output_tokens":9}}}"#;
     let u = CohereReader
         .recover_truncated_usage(tail)
         .expect("the readable counts recover");
     assert_eq!((u.input, u.output), (0, 9));
-    let tail = br#"...cut"}],"usage":{"tokens":{"output_tokens":9}}}"#;
+    let tail = br#"{"usage":{"tokens":{"output_tokens":9}}}"#;
     let u = CohereReader
         .recover_truncated_usage(tail)
         .expect("an absent count still recovers");
@@ -179,14 +179,14 @@ fn streaming_message_end_refuses_an_unreadable_billed_unit_on_its_own() {
 fn truncated_recovery_refuses_an_unreadable_billed_unit_on_its_own() {
     for field in BILLED_UNIT_FIELDS {
         let tail = format!(
-            r#"...cut"}}],"usage":{{"tokens":{{"input_tokens":10,"output_tokens":5}},"billed_units":{{"{field}":"3"}}}}}}"#
+            r#"{{"usage":{{"tokens":{{"input_tokens":10,"output_tokens":5}},"billed_units":{{"{field}":"3"}}}}}}"#
         );
         let u = CohereReader
             .recover_truncated_usage(tail.as_bytes())
             .unwrap_or_else(|| panic!("billed_units.{field}: the readable counts recover"));
         assert_eq!((u.input, u.output), (10, 5), "{field}");
     }
-    let tail = br#"...cut"}],"usage":{"tokens":{"input_tokens":10,"output_tokens":5},"billed_units":{"search_units":null}}}"#;
+    let tail = br#"{"usage":{"tokens":{"input_tokens":10,"output_tokens":5},"billed_units":{"search_units":null}}}"#;
     let u = CohereReader
         .recover_truncated_usage(tail)
         .expect("a null billed unit still recovers");

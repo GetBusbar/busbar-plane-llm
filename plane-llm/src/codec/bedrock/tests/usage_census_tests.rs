@@ -357,7 +357,7 @@ fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {
 /// policy units and no token; it used to read as a zero-token turn.
 #[test]
 fn a_truncated_body_recovers_the_turns_usage_not_a_guardrails() {
-    let tail = br#"...cut"}]}},"stopReason":"end_turn","usage":{"inputTokens":10,"outputTokens":5,"totalTokens":15},"trace":{"guardrail":{"inputAssessment":{"g1":{"invocationMetrics":{"usage":{"contentPolicyUnits":3,"topicPolicyUnits":1}}}}}}}"#;
+    let tail = br#"{"usage":{"inputTokens":10,"outputTokens":5,"totalTokens":15},"trace":{"guardrail":{"inputAssessment":{"g1":{"invocationMetrics":{"usage":{"contentPolicyUnits":3,"topicPolicyUnits":1}}}}}}}"#;
     let u = BedrockReader
         .recover_truncated_usage(tail)
         .expect("the turn's usage is in the tail");
@@ -370,7 +370,7 @@ fn a_truncated_body_recovers_the_turns_usage_not_a_guardrails() {
         u.open_units
     );
     let only_guardrail =
-        br#"...cut"}}},"trace":{"guardrail":{"inputAssessment":{"g1":{"invocationMetrics":{"usage":{"contentPolicyUnits":3}}}}}}}"#;
+        br#"{"trace":{"guardrail":{"inputAssessment":{"g1":{"invocationMetrics":{"usage":{"contentPolicyUnits":3}}}}}}}"#;
     assert_eq!(
         BedrockReader.recover_truncated_usage(only_guardrail),
         None,

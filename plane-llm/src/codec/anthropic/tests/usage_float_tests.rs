@@ -195,7 +195,7 @@ fn buffered_response_float_usage_counts_survive_as_integers() {
 /// primary read path.
 #[test]
 fn recover_truncated_usage_float_token_counts_survive_as_integers() {
-    let tail = br#"... mangled head cut through here"}],"usage":{"input_tokens":27.0,"output_tokens":9.0,"cache_creation_input_tokens":4.0,"cache_read_input_tokens":3.0}}"#;
+    let tail = br#"{"usage":{"input_tokens":27.0,"output_tokens":9.0,"cache_creation_input_tokens":4.0,"cache_read_input_tokens":3.0}}"#;
     let usage = AnthropicReader
         .recover_truncated_usage(tail)
         .expect("usage tail must be recoverable");
