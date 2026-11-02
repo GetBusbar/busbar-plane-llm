@@ -465,14 +465,7 @@ fn linked(d: &Dispatcher) -> Plugin<Plane> {
 
 /// This crate's dropped-in image, the `busbar-plane-llm-plugin` cdylib `cargo test` builds beside
 fn dropped(d: &Dispatcher) -> Plugin<Plane> {
-    let exe = std::env::current_exe().expect("the test binary has a path");
-    let deps = exe.parent().expect("target/<profile>/deps");
-    let profile = deps.parent().expect("target/<profile>");
-    let file = busbar_plugin_loader::plugin_library_filename("busbar_plane_llm_plugin");
-    let path = [profile.join(&file), deps.join(&file)]
-        .into_iter()
-        .find(|p| p.exists())
-        .unwrap_or_else(|| panic!("this crate's cdylib ({file}) is not built"));
+    let path = plugin_cdylib();
     let stated = rendering_of(plane_door::door).expect("the door renders its Statement");
     load_dropped(&path, &stated, bind(d)).expect("the dropped door loads")
 }
@@ -1519,14 +1512,7 @@ impl busbar_plugin_loader::dispatch::EnvelopeSink for HostLog {
 #[test]
 fn an_unreadable_usage_line_reaches_the_host_log_dropped_in_as_linked() {
     let d = Dispatcher::new(DispatchConfig::default());
-    let exe = std::env::current_exe().expect("the test binary has a path");
-    let deps = exe.parent().expect("target/<profile>/deps").to_path_buf();
-    let profile = deps.parent().expect("target/<profile>").to_path_buf();
-    let file = busbar_plugin_loader::plugin_library_filename("busbar_plane_llm_plugin");
-    let path = [profile.join(&file), deps.join(&file)]
-        .into_iter()
-        .find(|p| p.exists())
-        .unwrap_or_else(|| panic!("this crate's cdylib ({file}) is not built"));
+    let path = plugin_cdylib();
     for dropped_in in [false, true] {
         let log = Arc::new(HostLog::default());
         let bound = Bind {
@@ -1571,4 +1557,22 @@ fn an_unreadable_usage_line_reaches_the_host_log_dropped_in_as_linked() {
             "dropped-in {dropped_in}: the plane's line reaches the host log: {lines:?}"
         );
     }
+}
+
+fn plugin_cdylib() -> std::path::PathBuf {
+    let path = std::path::PathBuf::from(
+        std::env::var_os("BUSBAR_PLUGIN_CDYLIB")
+            .expect("build this plugin and set BUSBAR_PLUGIN_CDYLIB to its fresh cdylib"),
+    );
+    assert!(
+        path.is_absolute(),
+        "BUSBAR_PLUGIN_CDYLIB must be absolute: {}",
+        path.display()
+    );
+    assert!(
+        path.is_file(),
+        "the built plugin cdylib is missing: {}",
+        path.display()
+    );
+    path
 }

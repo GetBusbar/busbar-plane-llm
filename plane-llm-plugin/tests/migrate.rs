@@ -10,20 +10,22 @@ use busbar_plugin_loader::dispatch::load::raw;
 use busbar_plugin_loader::dispatch::migrate::{migrate_door, migrate_library};
 use serde_json::json;
 
-/// This crate's built cdylib (uplifted or under `deps`, newest wins). A missing artifact is a
 fn cdylib() -> PathBuf {
-    let exe = std::env::current_exe().expect("the test binary has a path");
-    let profile = exe
-        .parent()
-        .and_then(|d| d.parent())
-        .expect("target/<profile>");
-    let file = busbar_plugin_loader::plugin_library_filename("busbar_plane_llm_plugin");
-    [profile.join(&file), profile.join("deps").join(&file)]
-        .into_iter()
-        .filter_map(|p| Some((std::fs::metadata(&p).ok()?.modified().ok()?, p)))
-        .max()
-        .map(|(_, p)| p)
-        .unwrap_or_else(|| panic!("the built cdylib {file} is missing: build the workspace first"))
+    let path = PathBuf::from(
+        std::env::var_os("BUSBAR_PLUGIN_CDYLIB")
+            .expect("build this plugin and set BUSBAR_PLUGIN_CDYLIB to its fresh cdylib"),
+    );
+    assert!(
+        path.is_absolute(),
+        "BUSBAR_PLUGIN_CDYLIB must be absolute: {}",
+        path.display()
+    );
+    assert!(
+        path.is_file(),
+        "the built plugin cdylib is missing: {}",
+        path.display()
+    );
+    path
 }
 
 /// The private-destinations corpus shape (busbar `tests/migration-corpus/private-destinations`), as
