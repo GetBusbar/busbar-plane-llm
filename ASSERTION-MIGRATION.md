@@ -88,9 +88,18 @@ No payload inspection, allocator framework or new fake product is introduced.
 - Canary with no configured credentials did no work for these LLM inputs.
 - Transport frame-piece, outbound wrong-field/no-field/second-token and newer-store-schema checks
   were no-ops for this kind/input. No product behavior is retired with them.
-- Macro host-safety checks that inject a new outbound need into the otherwise need-free LLM door
-  (undeclared need, foreign connection and no-table refusal) require the core owner's ordinary
-  host-boundary mapping. These are explicitly unqualified here, not silently reported preserved.
+- The three generic connection negatives formerly injected a new outbound need into this
+  need-free LLM door. Their source transfer is ACKed once on the real declared-needs GitHub
+  product: candidate abd7663be59b670c8cceabaf30475334e771c566, tree
+  86a49682b4f52fbe99edd6247e73b207e4398285. `support/remaining.rs::custody::github_connections_refuse_undeclared_needs_and_other_instances`
+  preserves actual-need open/close, next+u32::MAX exact UndeclaredNeed refusal, foreign READ/WRITE/CLOSE
+  exact NotOwner refusal, and owner-write/close after refusals, through linked/dropped origins.
+  `conformance.rs::github_serving_requires_its_connection_table_through_both_doors` preserves exact
+  named NoConnectionTable and allowed Probe behavior using the actual two declared GitHub needs.
+  Authority: A/diet-loader-d306/transfer-packets/generic-connection-negative-transfer-ack.json,
+  status SOURCE_EQUIVALENCE_ACK_FOR_THREE_ARMS_NATIVE_PENDING (doc_macro_bindings).
+  This source ACK is limited to these three shared loader arms; GitHub native execution is pending,
+  and it waives no per-product behavior, declaration, callback, TLS or guard assertion.
 
 ## Root composition hooks intentionally held
 
@@ -109,5 +118,5 @@ away or replaced by a fake composition. Root source transfer was requested from 
 
 Validation: cargo fmt --all -- --check and git diff --check pass. No build ran without the
 resource coordinator's lane approval. Native compilation/live execution, final SDK compatibility,
-root composition transfer, host-safety mapping and reusable CI artifact production remain explicit
+root composition transfer, GitHub host-safety native execution and reusable CI artifact production remain explicit
 qualification work.
