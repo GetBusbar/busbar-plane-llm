@@ -154,6 +154,19 @@ static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
     request_code_names: super::REQUEST_CODE_NAMES,
 };
 
+/// Smithy restJson1 error identity: suffix before namespace, preserving token case.
+fn normalize_error_identity(value: &str) -> Option<String> {
+    let value = value.trim();
+    let value = value
+        .split_once(':')
+        .map_or(value, |(identity, _)| identity);
+    let value = value
+        .split_once('#')
+        .map_or(value, |(_, identity)| identity)
+        .trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
 impl ProtocolReader for BedrockReader {
     fn recover_truncated_usage(&self, tail: &[u8]) -> Option<busbar_contract::billing::TokenUsage> {
         // Both members must belong to the response root. A tool's input and a guardrail's
@@ -177,25 +190,39 @@ impl ProtocolReader for BedrockReader {
         status: StatusCode,
         body: &[u8],
     ) -> busbar_contract::upstream::RawUpstreamError {
-        // Parse the body once. Errors carry text in `message` and the type in `__type` (e.g.
-        // `ValidationException`), which the breaker's error_map keys on, so it comes from `__type`.
-        let (provider_code, structured_type) =
-            match crate::codec::json::parse::<serde_json::Value>(body) {
-                Ok(json) => {
-                    let provider_code = json
-                        .get(keys::MESSAGE)
-                        .and_then(|m| m.as_str())
-                        .map(String::from);
-                    // `__type` may carry a shape ARN suffix (`com.amazon...#ThrottlingException`);
-                    // keep only the trailing token.
-                    let structured_type = json
-                        .get(super::DUNDER_TYPE)
-                        .and_then(|t| t.as_str())
-                        .map(|t| t.rsplit(['#', '/']).next().unwrap_or(t).to_string());
-                    (provider_code, structured_type)
-                }
-                Err(_) => (None, None),
-            };
+        self.extract_error_with_head(status, &[], body)
+    }
+
+    fn extract_error_with_head(
+        &self,
+        status: StatusCode,
+        head: busbar_contract::protocol::HeadFields<'_>,
+        body: &[u8],
+    ) -> busbar_contract::upstream::RawUpstreamError {
+        let json = crate::codec::json::parse::<serde_json::Value>(body).ok();
+        let provider_code = json
+            .as_ref()
+            .and_then(|json| json.get(keys::MESSAGE))
+            .and_then(|message| message.as_str())
+            .map(String::from);
+        let body_identity = |name: &str| {
+            json.as_ref()
+                .and_then(|json| json.get(name))
+                .and_then(|value| value.as_str())
+                .and_then(normalize_error_identity)
+        };
+        // Local deterministic precedence: first usable header in physical order, then code,
+        // then __type. An unknown but usable identity still wins over later carriers.
+        let structured_type = head
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case(b"x-amzn-errortype"))
+            .find_map(|(_, value)| {
+                std::str::from_utf8(value)
+                    .ok()
+                    .and_then(normalize_error_identity)
+            })
+            .or_else(|| body_identity(keys::CODE))
+            .or_else(|| body_identity(super::DUNDER_TYPE));
 
         // Bedrock has no context-length error code: an oversized request is a generic
         // `ValidationException` with the signal in `message` ("Input is longer than the maximum number

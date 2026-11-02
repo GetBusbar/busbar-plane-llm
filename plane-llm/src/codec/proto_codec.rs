@@ -104,6 +104,17 @@ pub trait ProtocolReader: Send + Sync {
         body: &[u8],
     ) -> busbar_contract::upstream::RawUpstreamError;
 
+    /// Extract with response heads where the wire protocol carries its identity there.
+    /// Readers without header carriers retain their existing body-only interpretation.
+    fn extract_error_with_head(
+        &self,
+        status: StatusCode,
+        _head: busbar_contract::protocol::HeadFields<'_>,
+        body: &[u8],
+    ) -> busbar_contract::upstream::RawUpstreamError {
+        self.extract_error(status, body)
+    }
+
     /// Classify a response into a canonical signal in one call (`extract_error` +
     /// `normalize_raw_error`). The release path runs those two stages explicitly (to apply the
     /// lane's `error_map`); this form has no production caller and only backs the per-protocol
@@ -1056,9 +1067,20 @@ pub fn protocol_error(
     status: u16,
     body: &[u8],
 ) -> busbar_contract::upstream::RawUpstreamError {
+    protocol_error_with_head(name, status, &[], body)
+}
+
+/// The same protocol-local extraction with borrowed response heads, consumed synchronously.
+pub fn protocol_error_with_head(
+    name: &str,
+    status: u16,
+    head: busbar_contract::protocol::HeadFields<'_>,
+    body: &[u8],
+) -> busbar_contract::upstream::RawUpstreamError {
     with_reader(name, |r| {
-        r.extract_error(
+        r.extract_error_with_head(
             StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            head,
             body,
         )
     })

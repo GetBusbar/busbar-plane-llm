@@ -50,13 +50,25 @@ pub(crate) fn request_id_field(
 /// names, or the status alone when the dialect does not serve `operation`.
 #[must_use]
 pub fn raw_error(far: &str, operation: OpVerb, status: u16, body: &[u8]) -> RawUpstreamError {
+    raw_error_with_head(far, operation, status, &[], body)
+}
+
+/// Read the supported operation's error identity from its response heads and body.
+#[must_use]
+pub fn raw_error_with_head(
+    far: &str,
+    operation: OpVerb,
+    status: u16,
+    head: HeadFields<'_>,
+    body: &[u8],
+) -> RawUpstreamError {
     decl(far)
         .filter(|d| d.verbs.contains(&operation))
         .and_then(|d| d.handler)
         .and_then(|rh| rh.operation_handler(operation))
         .map_or_else(
             || RawUpstreamError::from_status(status),
-            |h| h.extract_error(status, body),
+            |_handler| crate::codec::proto_codec::protocol_error_with_head(far, status, head, body),
         )
 }
 
@@ -227,7 +239,7 @@ pub fn judge(
     }
     let sig = normalize(
         far.status,
-        &raw_error(egress, operation, far.status, far.body),
+        &raw_error_with_head(egress, operation, far.status, far.head, far.body),
         error_map,
     );
     let disposition = sig.class.disposition();

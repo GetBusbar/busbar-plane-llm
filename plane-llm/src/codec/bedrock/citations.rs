@@ -95,7 +95,13 @@ pub(super) fn write_bedrock_citation(
     // BED-14: a web citation's url has a native slot, the `web` member of the `location` union
     // (`{url, domain}`). A union holds one member, so a citation already located by character
     // offsets keeps that and drops its url, with a warn.
-    if let Some(u) = url {
+    if c.kind.as_deref() == Some(keys::SEARCH_RESULT_LOCATION) {
+        // Search provenance is a Citation member, independent of the location union. Keep this
+        // routing even when coordinates are missing; neither a web arm nor an index is inferred.
+        if let Some(source) = c.url.as_deref() {
+            obj.insert(keys::SOURCE.to_string(), serde_json::json!(source));
+        }
+    } else if let Some(u) = url {
         if located {
             crate::codec::drops::writer_drop!(
                 crate::codec::drops::TEXT,
@@ -156,7 +162,13 @@ pub(super) fn read_bedrock_citation(c: &serde_json::Value) -> crate::codec::ir::
                 int(Some(m), index),
                 int(Some(m), keys::START),
                 int(Some(m), keys::END),
-                None,
+                if *kind == keys::SEARCH_RESULT_LOCATION {
+                    c.get(keys::SOURCE)
+                        .and_then(|source| source.as_str())
+                        .map(String::from)
+                } else {
+                    None
+                },
             )
         })
     });
