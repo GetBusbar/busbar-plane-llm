@@ -322,7 +322,11 @@ impl Reply {
                 state: State::Whole {
                     status,
                     body: Vec::new(),
-                    head: Vec::new(),
+                    head: if ingress == egress {
+                        head.iter().map(|(n, v)| (n.to_vec(), v.to_vec())).collect()
+                    } else {
+                        Vec::new()
+                    },
                 },
                 invoke: None,
             };
@@ -667,6 +671,30 @@ fn whole_piece<'a>(
         status,
         body,
     );
+    // A synthesized body's framing belongs to the new bytes, not the buffered upstream body.
+    // State it before relaying so an upstream Content-Length can never replace it.
+    w.answer
+        .fields
+        .retain(|(n, _)| !n.eq_ignore_ascii_case("content-length"));
+    w.answer.fields.push((
+        "content-length".to_string(),
+        w.answer.body.len().to_string().into_bytes(),
+    ));
+    // The whole-body renderer may have minted a request id before it had the native head.
+    // Preserve the native one for a same-dialect answer, just as the live relay does.
+    let native_id = wire::ingress_relayed_response_header_names(ctx.arrived.dialect)
+        .first()
+        .and_then(|name| wire::head_value(far_head, name))
+        .and_then(wire::head_text);
+    if native_id.is_some() {
+        if let Some((name, value)) = failure::request_id_field(host, ctx.arrived.dialect, far_head)
+        {
+            w.answer
+                .fields
+                .retain(|(n, _)| !n.eq_ignore_ascii_case(&name));
+            w.answer.fields.push((name, value));
+        }
+    }
     // A same-dialect answer relays the far end's head (its head is empty across dialects).
     wire::relay_far_head(ctx.arrived.dialect, &mut w.answer.fields, far_head);
     let units = Units::of(

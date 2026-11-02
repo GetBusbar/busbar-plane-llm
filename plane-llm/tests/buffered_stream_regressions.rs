@@ -28,6 +28,16 @@ fn reply<'a>(
     head: HeadFields<'_>,
     body: &'a [u8],
 ) -> Piece<'a> {
+    reply_from(ingress, "openai", request, head, body)
+}
+
+fn reply_from<'a>(
+    ingress: &'static str,
+    egress: &'static str,
+    request: Value,
+    head: HeadFields<'_>,
+    body: &'a [u8],
+) -> Piece<'a> {
     let include_usage =
         request.pointer("/stream_options/include_usage") == Some(&Value::Bool(true));
     let arrived = Arrived {
@@ -44,7 +54,7 @@ fn reply<'a>(
     let lane = Lane {
         model: "model".into(),
         provider: "provider".into(),
-        dialect: "openai",
+        dialect: egress,
         path: None,
         path_base: None,
         options: Vec::new(),
@@ -190,4 +200,68 @@ fn synthesized_responses_stream_echoes_the_original_request_members() {
             assert_eq!(frame["response"][key], request[key], "{kind}.{key}");
         }
     }
+}
+
+#[test]
+fn same_dialect_synthesis_keeps_native_headers_with_the_new_body_length() {
+    let far = text_completion();
+    let old_length = far.len().to_string();
+    let head: HeadFields<'_> = &[
+        (b"content-type", b"application/json"),
+        (b"content-length", old_length.as_bytes()),
+        (b"x-request-id", b"req-native"),
+        (b"x-vendor-detail", b"keep"),
+        (b"openai-organization", b"operator-tenant"),
+        (b"set-cookie", b"operator-cookie"),
+    ];
+    let request = json!({"model": "model", "stream": true});
+    let piece = reply("openai", request, head, &far);
+    assert!(piece.synthesized);
+    let fields = &piece.head.as_ref().unwrap().fields;
+    let field = |name: &str| {
+        fields
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_slice())
+    };
+    assert_eq!(field("x-request-id"), Some(b"req-native".as_slice()));
+    assert_eq!(field("x-vendor-detail"), Some(b"keep".as_slice()));
+    assert_eq!(field("openai-organization"), None);
+    assert_eq!(field("set-cookie"), None);
+    assert_eq!(field("content-type"), Some(b"text/event-stream".as_slice()));
+    let length = piece.bytes.len().to_string();
+    assert_eq!(field("content-length"), Some(length.as_bytes()));
+    assert_ne!(piece.bytes.len(), far.len(), "the synthesized body changed");
+}
+
+#[test]
+fn same_dialect_synthesis_replaces_the_renderers_minted_request_id() {
+    let far = serde_json::to_vec(&json!({
+        "id": "msg-native", "type": "message", "role": "assistant", "model": "model",
+        "content": [{"type": "text", "text": "hello"}], "stop_reason": "end_turn",
+        "usage": {"input_tokens": 9, "output_tokens": 3}
+    }))
+    .unwrap();
+    let request = json!({"model": "model", "stream": true});
+    let piece = reply_from(
+        "anthropic",
+        "anthropic",
+        request,
+        &[
+            (b"content-type", b"application/json"),
+            (b"request-id", b"req_native"),
+        ],
+        &far,
+    );
+    assert!(piece.synthesized);
+    let ids: Vec<_> = piece
+        .head
+        .as_ref()
+        .unwrap()
+        .fields
+        .iter()
+        .filter(|(name, _)| name == "request-id")
+        .map(|(_, value)| value.as_slice())
+        .collect();
+    assert_eq!(ids, [b"req_native".as_slice()]);
 }
