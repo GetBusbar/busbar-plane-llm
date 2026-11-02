@@ -149,8 +149,11 @@ mod provider_grammar_fixture {
         );
         assert_eq!(super::PROVIDER_KEYS, text);
         let statement = crate::plane_door::STATEMENT;
-        // STATEMENT holds static bytes constructed from this plane's provider descriptor.
-        let exported = unsafe { statement.extensions.bytes() };
+        // Compare the export's wiring to its canonical backing slice without dereferencing an
+        // ABI pointer. The descriptor itself is parsed through that safe static slice below.
+        let exported = crate::plane_door::EXTENSIONS;
+        assert_eq!(statement.extensions.ptr, exported.as_ptr());
+        assert_eq!(statement.extensions.len, exported.len());
         let actual = busbar_contract::provider_keys::stated(exported)
             .unwrap()
             .unwrap();

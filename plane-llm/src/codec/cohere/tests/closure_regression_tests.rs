@@ -288,11 +288,11 @@ fn mixed_tool_result_parts_keep_their_original_positions() {
     assert_eq!(
         content,
         &vec![
-            IrBlock::text("A".into()),
+            IrBlock::text("A"),
             IrBlock::Json(json!({"text":"B"})),
-            IrBlock::text("C".into()),
-            IrBlock::text("D".into()),
-            IrBlock::text("E".into())
+            IrBlock::text("C"),
+            IrBlock::text("D"),
+            IrBlock::text("E")
         ]
     );
 }

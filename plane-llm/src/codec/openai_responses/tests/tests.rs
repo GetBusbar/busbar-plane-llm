@@ -1,4 +1,5 @@
 use super::*;
+use crate::codec::ir::StreamDecodeState;
 
 #[test]
 fn buffered_provider_generation_errors_remain_failed_in_responses() {

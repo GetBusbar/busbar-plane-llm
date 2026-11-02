@@ -20,7 +20,7 @@ fn read_then_seam(body: &Value) -> IrRequest {
 }
 
 /// A request in the `ingress` dialect read, then put through the cross-protocol seam toward Gemini.
-fn read_then_seam_from(ingress: &str, body: &Value) -> IrRequest {
+fn read_then_seam_from(ingress: &'static str, body: &Value) -> IrRequest {
     let mut ir = crate::codec::proto_codec::protocol_for(ingress)
         .expect("ingress")
         .reader()
