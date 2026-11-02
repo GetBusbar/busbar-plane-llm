@@ -57,13 +57,13 @@ fn streamed_citations_use_the_same_source_projection() {
     BedrockReader.read_response_events(
         host,
         "messageStart",
-        &json!({"role":"assistant"}),
+        &json!({"type":"messageStart","role":"assistant"}),
         &mut state,
     );
     let events = BedrockReader.read_response_events(
         host,
         "contentBlockDelta",
-        &json!({"contentBlockIndex":2,"delta":{"citation":citation}}),
+        &json!({"type":"contentBlockDelta","contentBlockIndex":2,"delta":{"citation":citation}}),
         &mut state,
     );
     let event = events
