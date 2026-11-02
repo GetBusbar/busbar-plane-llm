@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::codec::ir::{IrBlock, IrMessage, IrResponseFormat, IrRole};
+use crate::codec_diagnostics::{diagnostic_texts, warnings, DiagnosticEvents};
 
 fn req_with_format(rf: IrResponseFormat) -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
@@ -143,18 +144,16 @@ fn req_with_tool_choice_no_tools() -> crate::codec::ir::IrRequest {
 /// A `tool_choice` with NO accompanying `tools` is a guaranteed 400 on every vendor that models the
 #[test]
 fn tool_choice_without_tools_is_omitted_on_every_writer() {
-    use busbar_test_kit::warn_capture::WarnCapture;
-
     let req = req_with_tool_choice_no_tools();
     let cohere_writer = CohereWriter;
     let gemini_writer = GeminiWriter;
     let responses_writer = ResponsesWriter;
     let bedrock_writer = BedrockWriter;
 
-    let run = |f: &dyn Fn() -> serde_json::Value| -> (serde_json::Value, WarnCapture) {
-        let cap = WarnCapture::default();
-        let subscriber = cap.clone();
-        let value = tracing::subscriber::with_default(subscriber, f);
+    let run = |f: &dyn Fn() -> serde_json::Value| -> (serde_json::Value, DiagnosticEvents) {
+        let (cap, cap_subscriber) = warnings();
+        let subscriber = cap_subscriber.clone();
+        let value = tracing::dispatcher::with_default(&subscriber, f);
         (value, cap)
     };
     let (a, cap_a) = run(&|| anthropic_writer().write_request(crate::codec::test_host::HOST, &req));
@@ -202,9 +201,17 @@ fn tool_choice_without_tools_is_omitted_on_every_writer() {
         ("Bedrock", &cap_b),
     ] {
         assert!(
-            cap.contains("dropping") && (cap.contains("tool_choice") || cap.contains("toolChoice")),
+            diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains("dropping"))
+                && (diagnostic_texts(&cap)
+                    .iter()
+                    .any(|event| event.contains("tool_choice"))
+                    || diagnostic_texts(&cap)
+                        .iter()
+                        .any(|event| event.contains("toolChoice"))),
             "{name} must warn that it dropped the tool_choice; got {:?}",
-            cap.messages()
+            diagnostic_texts(&cap)
         );
     }
 }
@@ -276,8 +283,6 @@ fn stop_sequences_clamped_per_vendor_cap() {
 /// Egress: an OpenAI/Anthropic caller who DID set `parallel_tool_calls` and routes to
 #[test]
 fn parallel_tool_calls_discarded_on_gemini_cohere_bedrock_warns() {
-    use busbar_test_kit::warn_capture::WarnCapture;
-
     let req = |parallel: Option<bool>| crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
@@ -287,45 +292,62 @@ fn parallel_tool_calls_discarded_on_gemini_cohere_bedrock_warns() {
         ..Default::default()
     };
 
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
     let with_flag = req(Some(true));
     let gemini_writer = GeminiWriter;
     let cohere_writer = CohereWriter;
     let bedrock_writer = BedrockWriter;
-    tracing::subscriber::with_default(subscriber, || {
+    tracing::dispatcher::with_default(&subscriber, || {
         gemini_writer.write_request(crate::codec::test_host::HOST, &with_flag);
         cohere_writer.write_request(crate::codec::test_host::HOST, &with_flag);
         bedrock_writer.write_request(crate::codec::test_host::HOST, &with_flag);
     });
     assert!(
-        cap.contains("parallel_tool_calls") && cap.contains("Gemini"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("parallel_tool_calls"))
+            && diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains("Gemini")),
         "gemini must warn on a carried parallel_tool_calls: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
     assert!(
-        cap.contains("parallel_tool_calls") && cap.contains("Cohere"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("parallel_tool_calls"))
+            && diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains("Cohere")),
         "cohere must warn on a carried parallel_tool_calls: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
     assert!(
-        cap.contains("parallel_tool_calls") && cap.contains("Bedrock"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("parallel_tool_calls"))
+            && diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains("Bedrock")),
         "bedrock must warn on a carried parallel_tool_calls: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 
-    let cap2 = WarnCapture::default();
-    let subscriber2 = cap2.clone();
+    let (cap2, cap2_subscriber) = warnings();
+    let subscriber2 = cap2_subscriber.clone();
     let without_flag = req(None);
-    tracing::subscriber::with_default(subscriber2, || {
+    tracing::dispatcher::with_default(&subscriber2, || {
         gemini_writer.write_request(crate::codec::test_host::HOST, &without_flag);
         cohere_writer.write_request(crate::codec::test_host::HOST, &without_flag);
         bedrock_writer.write_request(crate::codec::test_host::HOST, &without_flag);
     });
     assert!(
-        !cap2.contains("parallel_tool_calls"),
+        !diagnostic_texts(&cap2)
+            .iter()
+            .any(|event| event.contains("parallel_tool_calls")),
         "a request that never carried the flag must not warn about dropping it: {:?}",
-        cap2.messages()
+        diagnostic_texts(&cap2)
     );
 }
 

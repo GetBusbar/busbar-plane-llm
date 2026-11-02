@@ -1,5 +1,6 @@
 use super::*;
 use crate::codec::ir::{IrBlockMeta, IrDelta, IrRole, IrStreamEvent};
+use crate::codec_diagnostics::{debug_diagnostics, diagnostic_texts, warnings};
 
 #[test]
 fn test_gemini_read_response_decode() {
@@ -678,8 +679,6 @@ fn test_bedrock_ingress_ir_usage_carries_real_tokens() {
 /// A Gemini `cachedContent` reference is dropped on the cross-protocol seam (no
 #[test]
 fn gemini_cached_content_warns_naming_truncation_and_billing() {
-    use busbar_test_kit::warn_capture::WarnCapture;
-
     let body = serde_json::json!({
         "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
         "cachedContent": "projects/p/locations/l/cachedContents/c"
@@ -709,10 +708,10 @@ fn gemini_cached_content_warns_naming_truncation_and_billing() {
         ingress: "gemini",
         egress: "openai",
     };
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
     let mut req = ir;
-    let ((), dropped) = tracing::subscriber::with_default(subscriber, || {
+    let ((), dropped) = tracing::dispatcher::with_default(&subscriber, || {
         crate::codec::drops::scope(seam, || {
             crate::codec::chat_handle::chat_prepare_for_egress(&mut req, &prep)
         })
@@ -724,27 +723,34 @@ fn gemini_cached_content_warns_naming_truncation_and_billing() {
     );
 
     assert!(
-        cap.contains("VISIBLE history") && cap.contains("UNCACHED"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("VISIBLE history"))
+            && diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains("UNCACHED")),
         "the diagnostic must name BOTH consequences (truncated history AND full billing): {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 
     let body2 = serde_json::json!({
         "contents": [{"role": "user", "parts": [{"text": "hi"}]}]
     });
     let ir2 = GeminiReader.read_request(&body2).expect("parses");
-    let cap2 = WarnCapture::capturing_debug();
-    let subscriber2 = cap2.clone();
+    let (cap2, cap2_subscriber) = debug_diagnostics();
+    let subscriber2 = cap2_subscriber.clone();
     let mut req2 = ir2;
-    tracing::subscriber::with_default(subscriber2, || {
+    tracing::dispatcher::with_default(&subscriber2, || {
         crate::codec::drops::scope(seam, || {
             crate::codec::chat_handle::chat_prepare_for_egress(&mut req2, &prep)
         })
     });
     assert!(
-        !cap2.contains("cachedContent"),
+        !diagnostic_texts(&cap2)
+            .iter()
+            .any(|event| event.contains("cachedContent")),
         "a request without cachedContent must not warn about dropping it: {:?}",
-        cap2.messages()
+        diagnostic_texts(&cap2)
     );
 }
 

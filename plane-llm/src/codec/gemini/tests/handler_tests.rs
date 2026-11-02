@@ -4,6 +4,7 @@
 //! Tests for `crates/busbar/src/handlers/gemini.rs`.
 
 use super::*;
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 #[test]
 fn path_model_extracts_the_segment_before_the_last_colon() {
@@ -443,15 +444,13 @@ fn embeddings_write_response_emits_the_float_vector() {
 
 #[test]
 fn embeddings_write_request_warns_on_dropped_non_text_input() {
-    use busbar_test_kit::warn_capture::WarnCapture;
-
     let ir = crate::codec::ir::embeddings::EmbeddingsReq {
         input: EmbInput::Images(vec!["data:image/png;base64,AA==".into()]),
         ..Default::default()
     };
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
-    let out = tracing::subscriber::with_default(subscriber, || {
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
+    let out = tracing::dispatcher::with_default(&subscriber, || {
         super::super::super::leaf_codec::embeddings_write_request("gemini", &ir)
     });
 
@@ -459,9 +458,11 @@ fn embeddings_write_request_warns_on_dropped_non_text_input() {
     assert_eq!(v["content"]["parts"][0]["text"], json!(""));
 
     assert!(
-        cap.contains("dropping a non-text embeddings input"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("dropping a non-text embeddings input")),
         "a dropped non-text embeddings input must warn: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 

@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::codec::ir::StreamDecodeState;
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 /// What one `usage` count IS, per OpenAI's usage semantics.
 #[derive(Clone, Copy, Debug)]
@@ -228,8 +229,8 @@ fn a_total_above_the_ledgered_classes_ledgers_the_remainder_as_unitemized_tokens
         "output_tokens_details": {"reasoning_tokens": 20},
         "total_tokens": 35
     });
-    let cap = busbar_test_kit::warn_capture::WarnCapture::default();
-    let read = tracing::subscriber::with_default(cap.clone(), || read_all_paths(&usage));
+    let (cap, cap_subscriber) = warnings();
+    let read = tracing::dispatcher::with_default(&cap_subscriber, || read_all_paths(&usage));
     for (path, (units, note, remainder)) in ["buffered", "streamed"].iter().zip(&read) {
         assert_eq!(*units, (10, 0, 0, 5), "{path}: the itemized counts only");
         assert_eq!(*note, Some((35, 15, 20)), "{path}: the gap is reported");
@@ -244,8 +245,13 @@ fn a_total_above_the_ledgered_classes_ledgers_the_remainder_as_unitemized_tokens
         "truncated: the itemized counts only"
     );
     assert!(
-        cap.contains("usage does not reconcile") && cap.contains("unaccounted=20"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("usage does not reconcile"))
+            && diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains("unaccounted=20")),
         "the gap is WARN-logged: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }

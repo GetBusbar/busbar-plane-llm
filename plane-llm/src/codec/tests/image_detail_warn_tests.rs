@@ -5,8 +5,8 @@
 
 use crate::codec::chat_handle::ChatReqHandle;
 use crate::codec::ir::{IrBlock, IrImageDetail, IrImageSource, IrMessage, IrRequest, IrRole};
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 use busbar_contract::ir::handle::IrHandle;
-use busbar_test_kit::warn_capture::WarnCapture;
 
 const LINE: &str = "dropping image_url.detail: no cross-protocol carrier exists for this \
                     cost/latency hint (not even on a same-protocol OpenAI round-trip)";
@@ -30,11 +30,11 @@ fn warns(egress: &str, blocks: Vec<IrBlock>) -> Vec<String> {
         ..Default::default()
     };
     let mut handle = ChatReqHandle(ir, Default::default());
-    let cap = WarnCapture::default();
-    tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    tracing::dispatcher::with_default(&cap_subscriber, || {
         let _ = handle.write_egress_request(crate::codec::test_host::HOST, egress, "m");
     });
-    cap.messages()
+    diagnostic_texts(&cap)
         .into_iter()
         .filter(|m| m.contains("image_url.detail"))
         .collect()

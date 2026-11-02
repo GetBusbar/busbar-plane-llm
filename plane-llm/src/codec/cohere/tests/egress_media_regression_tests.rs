@@ -4,7 +4,7 @@
 //! Regression net: a top-level `IrBlock::Media` (document/audio/video) on Cohere egress must be
 
 use super::*;
-use busbar_test_kit::warn_capture::WarnCapture;
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 #[test]
 fn anthropic_to_cohere_document_media_warns_not_silent() {
@@ -29,9 +29,9 @@ fn anthropic_to_cohere_document_media_warns_not_silent() {
         ..Default::default()
     };
 
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
-    let out = tracing::subscriber::with_default(subscriber, || {
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
+    let out = tracing::dispatcher::with_default(&subscriber, || {
         let w = CohereWriter;
         w.write_request(crate::codec::test_host::HOST, &ir)
     });
@@ -45,15 +45,17 @@ fn anthropic_to_cohere_document_media_warns_not_silent() {
     );
 
     assert!(
-        cap.contains("dropping attachment on Cohere egress"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("dropping attachment on Cohere egress")),
         "a dropped top-level Media block must warn (drop-with-warn, never silently): {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
     assert!(
-        cap.messages()
+        diagnostic_texts(&cap)
             .iter()
             .any(|m| m.contains("media_kind=document")),
         "the warn must name the dropped media kind: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }

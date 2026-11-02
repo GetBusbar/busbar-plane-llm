@@ -24,10 +24,9 @@ busbar-plane-llm = { path = "../plane-llm" }
 busbar-contract = { workspace = true }
 
 [dev-dependencies]
-# The published suite (`tests/conformance.rs`, `conformance_suite!`) loads the linked door and
+# Ordinary Rust tests (`tests/conformance.rs`) load the linked door and
 # dlopens the built cdylib over busbar's REAL loader: dev-only, never in the shipped artifact. The
 # op-by-op both-ways script (`tests/both_ways.rs`, moved here with the crate from busbar's
 # crates/busbar-plane-llm/tests/conformance.rs) drives the same two doors through it.
 busbar-plugin-loader = { workspace = true }
-busbar-test-kit = { workspace = true }
 serde_json = { workspace = true }

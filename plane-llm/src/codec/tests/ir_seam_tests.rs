@@ -3,6 +3,7 @@
 
 //! IR mapping — the cross-protocol SEAM: what `chat_prepare_for_ingress` and the
 
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 use serde_json::{json, Value};
 
 #[test]
@@ -823,7 +824,7 @@ fn cohere_requests_refuse_unpairable_or_malformed_tool_calls() {
 #[test]
 fn unreadable_usage_attribution_warns_without_changing_billed_totals() {
     use crate::codec::usage_count::{read_usage, refused_any, CountRead, CountSlot};
-    use busbar_test_kit::warn_capture::WarnCapture;
+
     let table = [
         (CountSlot::Input, CountRead::Zero(&["input"])),
         (CountSlot::Output, CountRead::Zero(&["output"])),
@@ -843,8 +844,8 @@ fn unreadable_usage_attribution_warns_without_changing_billed_totals() {
     ];
     let body = json!({"input":10,"output":20,"reasoning_tokens":"bad",
                     "modalities":[{"modality":"audio","audio_tokens":"bad"}]});
-    let capture = WarnCapture::default();
-    let usage = tracing::subscriber::with_default(capture.clone(), || {
+    let (capture, capture_subscriber) = warnings();
+    let usage = tracing::dispatcher::with_default(&capture_subscriber, || {
         read_usage("test", Some(&body), &table)
     })
     .unwrap();
@@ -852,8 +853,12 @@ fn unreadable_usage_attribution_warns_without_changing_billed_totals() {
     assert_eq!(usage.detail.reasoning_tokens, None);
     assert_eq!(usage.detail.output_audio_tokens, None);
     assert!(!refused_any(Some(&body), &table));
-    assert!(capture.contains("reasoning_tokens"));
-    assert!(capture.contains("audio_tokens"));
+    assert!(diagnostic_texts(&capture)
+        .iter()
+        .any(|event| event.contains("reasoning_tokens")));
+    assert!(diagnostic_texts(&capture)
+        .iter()
+        .any(|event| event.contains("audio_tokens")));
     let body = json!({"input":10,"output":20,"reasoning_tokens":7,
                     "modalities":[{"modality":"audio","audio_tokens":0}]});
     let usage = read_usage("test", Some(&body), &table).unwrap();
@@ -880,16 +885,17 @@ fn cohere_requests_refuse_malformed_output_and_tool_controls() {
         );
     }
     for value in [json!("required"), json!({})] {
-        use busbar_test_kit::warn_capture::WarnCapture;
-        let capture = WarnCapture::default();
+        let (capture, capture_subscriber) = warnings();
         let body =
             json!({"model":"m","messages":[{"role":"user","content":"q"}],"tool_choice":value});
-        let request = tracing::subscriber::with_default(capture.clone(), || {
+        let request = tracing::dispatcher::with_default(&capture_subscriber, || {
             protocol.reader().read_request(&body)
         })
         .unwrap();
         assert_eq!(request.tool_choice, None);
-        assert!(capture.contains("unrecognized Cohere tool_choice"));
+        assert!(diagnostic_texts(&capture)
+            .iter()
+            .any(|event| event.contains("unrecognized Cohere tool_choice")));
     }
     let optional = json!({"model":"m","messages":[{"role":"assistant","tool_calls":[
         {"id":"call","function":{"name":"f"}}]}],"tools":null,"max_tokens":null});
@@ -911,7 +917,6 @@ fn cohere_requests_refuse_malformed_output_and_tool_controls() {
 
 #[test]
 fn cohere_targeted_tool_degradation_is_visible() {
-    use busbar_test_kit::warn_capture::WarnCapture;
     let protocol = crate::codec::proto_codec::protocol_for("cohere").unwrap();
     let mut request = crate::codec::ir::IrRequest::default();
     request.tools.push(crate::codec::ir::IrTool {
@@ -925,20 +930,22 @@ fn cohere_targeted_tool_degradation_is_visible() {
     request.tool_choice = Some(crate::codec::ir::IrToolChoice::Tool {
         name: "chosen".into(),
     });
-    let capture = WarnCapture::default();
-    let written = tracing::subscriber::with_default(capture.clone(), || {
+    let (capture, capture_subscriber) = warnings();
+    let written = tracing::dispatcher::with_default(&capture_subscriber, || {
         protocol
             .writer()
             .write_request(crate::codec::test_host::HOST, &request)
     });
     assert_eq!(written["tool_choice"], "REQUIRED");
-    assert!(capture.contains("targeted tool constraint"));
+    assert!(diagnostic_texts(&capture)
+        .iter()
+        .any(|event| event.contains("targeted tool constraint")));
 }
 
 #[test]
 fn bedrock_video_names_never_become_unsupported_wire_members() {
     use crate::codec::ir::{IrBlock, IrImageSource, IrMediaKind, IrMessage, IrRequest, IrRole};
-    use busbar_test_kit::warn_capture::WarnCapture;
+
     let protocol = crate::codec::proto_codec::protocol_for("bedrock").unwrap();
     for nested in [false, true] {
         let media = IrBlock::Media {
@@ -969,8 +976,8 @@ fn bedrock_video_names_never_become_unsupported_wire_members() {
             }],
             ..Default::default()
         };
-        let capture = WarnCapture::default();
-        let written = tracing::subscriber::with_default(capture.clone(), || {
+        let (capture, capture_subscriber) = warnings();
+        let written = tracing::dispatcher::with_default(&capture_subscriber, || {
             protocol
                 .writer()
                 .write_request(crate::codec::test_host::HOST, &request)
@@ -983,7 +990,9 @@ fn bedrock_video_names_never_become_unsupported_wire_members() {
         assert_eq!(video["format"], "webm", "{written}");
         assert_eq!(video["source"]["bytes"], "GkXfow==", "{written}");
         assert!(video.get("name").is_none(), "{written}");
-        assert!(capture.contains("VideoBlock"));
+        assert!(diagnostic_texts(&capture)
+            .iter()
+            .any(|event| event.contains("VideoBlock")));
     }
 }
 
@@ -1034,7 +1043,7 @@ fn leaf_usage_taps_preserve_exact_counts_when_the_payload_is_malformed() {
 #[test]
 fn distinct_dropped_block_kinds_have_distinct_audit_paths() {
     use crate::codec::drops::{self, Direction, Dropped, Seam};
-    use busbar_test_kit::warn_capture::WarnCapture;
+
     let request = crate::codec::proto_codec::protocol_for("anthropic")
         .unwrap()
         .reader()
@@ -1045,8 +1054,8 @@ fn distinct_dropped_block_kinds_have_distinct_audit_paths() {
             ]}
         ]}))
         .unwrap();
-    let capture = WarnCapture::default();
-    let (_, paths) = tracing::subscriber::with_default(capture.clone(), || {
+    let (capture, capture_subscriber) = warnings();
+    let (_, paths) = tracing::dispatcher::with_default(&capture_subscriber, || {
         drops::scope(
             Seam {
                 direction: Direction::Request,
@@ -1074,8 +1083,20 @@ fn distinct_dropped_block_kinds_have_distinct_audit_paths() {
             "messages[].content[].type=document"
         ]
     );
-    assert_eq!(capture.count("path=messages[].content[].type=image"), 1);
-    assert_eq!(capture.count("path=messages[].content[].type=document"), 1);
+    assert_eq!(
+        diagnostic_texts(&capture)
+            .iter()
+            .filter(|event| event.contains("path=messages[].content[].type=image"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        diagnostic_texts(&capture)
+            .iter()
+            .filter(|event| event.contains("path=messages[].content[].type=document"))
+            .count(),
+        1
+    );
     let (_, paths) = drops::scope(
         Seam {
             direction: Direction::Request,
@@ -1152,8 +1173,8 @@ fn drop_diagnostics_allow_subscriber_reentry_without_a_borrow_panic() {
 #[test]
 fn malformed_logprob_bytes_never_become_shortened_valid_tokens() {
     use crate::codec::logprob_wire::{read_token_logprobs, write_token_logprobs};
-    use busbar_test_kit::warn_capture::WarnCapture;
-    let capture = WarnCapture::default();
+
+    let (capture, capture_subscriber) = warnings();
     let body = json!({"content":[
         {"token":"bad","logprob":-1.0,"bytes":[226,null,153]},
         {"token":"bad","logprob":-1.0,"bytes":[1,256,2]},
@@ -1162,14 +1183,16 @@ fn malformed_logprob_bytes_never_become_shortened_valid_tokens() {
             {"token":"valid top","logprob":-1.0,"bytes":[153]}]},
         {"token":"missing-logprob","bytes":[1]}]});
     let entries =
-        tracing::subscriber::with_default(capture.clone(), || read_token_logprobs(Some(&body)));
+        tracing::dispatcher::with_default(&capture_subscriber, || read_token_logprobs(Some(&body)));
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].bytes.as_deref(), Some(&[226, 128][..]));
     assert_eq!(entries[0].top.len(), 1);
     assert_eq!(entries[0].top[0].bytes.as_deref(), Some(&[153][..]));
     let written = write_token_logprobs(&entries);
     assert_eq!(written["content"][0]["bytes"], json!([226, 128]));
-    assert!(capture.contains("dropping malformed logprob entry"));
+    assert!(diagnostic_texts(&capture)
+        .iter()
+        .any(|event| event.contains("dropping malformed logprob entry")));
     let absent = json!({"content":[{"token":"hi","logprob":-0.5}]});
     let written = write_token_logprobs(&read_token_logprobs(Some(&absent)));
     assert_eq!(
@@ -1245,7 +1268,7 @@ fn chat_reader_and_writer_preserve_explicit_null_logprob_bytes() {
 #[test]
 fn bedrock_unrepresentable_document_names_use_the_existing_neutral_label() {
     use crate::codec::ir::{IrBlock, IrImageSource, IrMediaKind, IrMessage, IrRequest, IrRole};
-    use busbar_test_kit::warn_capture::WarnCapture;
+
     let protocol = crate::codec::proto_codec::protocol_for("bedrock").unwrap();
     for name in ["Q3_report.v2.pdf", "two  spaces", ""] {
         let request = IrRequest {
@@ -1265,8 +1288,8 @@ fn bedrock_unrepresentable_document_names_use_the_existing_neutral_label() {
             }],
             ..Default::default()
         };
-        let capture = WarnCapture::default();
-        let written = tracing::subscriber::with_default(capture.clone(), || {
+        let (capture, capture_subscriber) = warnings();
+        let written = tracing::dispatcher::with_default(&capture_subscriber, || {
             protocol
                 .writer()
                 .write_request(crate::codec::test_host::HOST, &request)
@@ -1274,7 +1297,9 @@ fn bedrock_unrepresentable_document_names_use_the_existing_neutral_label() {
         let doc = &written["messages"][0]["content"][0]["document"];
         assert_eq!(doc["name"], "attachment", "{written}");
         assert_eq!(doc["source"]["bytes"], "YQ==", "{written}");
-        assert!(capture.contains("neutral attachment label"));
+        assert!(diagnostic_texts(&capture)
+            .iter()
+            .any(|event| event.contains("neutral attachment label")));
     }
     let body = json!({"messages":[{"role":"user","content":[{"document":{
         "name":"Q3 Report-(final)[2]","format":"pdf","source":{"bytes":"YQ=="}}}]}]});
@@ -1292,8 +1317,8 @@ fn bedrock_unrepresentable_document_names_use_the_existing_neutral_label() {
     }]}]});
     let openai = crate::codec::proto_codec::protocol_for("openai").unwrap();
     let request = openai.reader().read_request(&native).unwrap();
-    let capture = WarnCapture::default();
-    let (written, dropped) = tracing::subscriber::with_default(capture.clone(), || {
+    let (capture, capture_subscriber) = warnings();
+    let (written, dropped) = tracing::dispatcher::with_default(&capture_subscriber, || {
         crate::codec::drops::scope(
             crate::codec::drops::Seam {
                 direction: crate::codec::drops::Direction::Request,
@@ -1311,7 +1336,9 @@ fn bedrock_unrepresentable_document_names_use_the_existing_neutral_label() {
     assert_eq!(document["name"], "attachment", "{written}");
     assert_eq!(document["source"]["bytes"], "JVBERi0=", "{written}");
     assert_eq!(dropped, ["messages[].content[]"]);
-    assert!(capture.contains("neutral attachment label"));
+    assert!(diagnostic_texts(&capture)
+        .iter()
+        .any(|event| event.contains("neutral attachment label")));
 }
 
 #[test]
@@ -1428,7 +1455,7 @@ fn stream_message_start(id: &str) -> crate::codec::ir::IrStreamEvent {
 #[test]
 fn dropped_stream_media_does_not_reserve_a_wire_block_index() {
     use crate::codec::ir::{IrBlock, IrBlockMeta, IrDelta, IrImageSource, IrStreamEvent, IrUsage};
-    use busbar_test_kit::warn_capture::WarnCapture;
+
     for name in ["bedrock", "cohere"] {
         for leading_media in [false, true] {
             let protocol = crate::codec::proto_codec::protocol_for(name).unwrap();
@@ -1438,8 +1465,8 @@ fn dropped_stream_media_does_not_reserve_a_wire_block_index() {
                     .write_response_events(crate::codec::test_host::HOST, event)
             };
             emit(&stream_message_start("id"));
-            let capture = WarnCapture::default();
-            let frames = tracing::subscriber::with_default(capture.clone(), || {
+            let (capture, capture_subscriber) = warnings();
+            let frames = tracing::dispatcher::with_default(&capture_subscriber, || {
                 let mut frames = Vec::new();
                 if !leading_media {
                     frames.extend(emit(&IrStreamEvent::BlockStart {
@@ -1508,7 +1535,9 @@ fn dropped_stream_media_does_not_reserve_a_wire_block_index() {
                 Some(if leading_media { 0 } else { 1 }),
                 "{name} {frames:?}"
             );
-            assert!(capture.contains("dropping generated media"));
+            assert!(diagnostic_texts(&capture)
+                .iter()
+                .any(|event| event.contains("dropping generated media")));
             let usage = frames
                 .iter()
                 .find_map(|(_, value)| {

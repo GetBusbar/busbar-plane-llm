@@ -4,7 +4,7 @@
 //! EVERY BEDROCK CONVERSE USAGE COUNT IS LEDGERED OR A DECLARED SLICE (MONEY-AUDIT A-F1/A-F4;
 
 use super::*;
-use busbar_test_kit::warn_capture::WarnCapture;
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 /// What one count IS, per AWS's Converse semantics.
 #[derive(Clone, Copy, Debug)]
@@ -289,8 +289,8 @@ fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {
                 ((0, 0, 0, 0), None)
             }
         };
-        let cap = WarnCapture::default();
-        let after = tracing::subscriber::with_default(cap.clone(), || {
+        let (cap, cap_subscriber) = warnings();
+        let after = tracing::dispatcher::with_default(&cap_subscriber, || {
             read_all_paths(&usage, trace.as_ref())
         });
         for (path, (b, a)) in ["buffered", "streamed", "truncated"]
@@ -321,9 +321,11 @@ fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {
         }
         if let (Class::AssessmentMetric, Some((_, member))) = (class, &guardrail) {
             assert!(
-                !cap.messages().iter().any(|m| m.contains(member.as_str())),
+                !diagnostic_texts(&cap)
+                    .iter()
+                    .any(|m| m.contains(member.as_str())),
                 "`{field}` is no billed unit and is named on no WARN: {:?}",
-                cap.messages()
+                diagnostic_texts(&cap)
             );
         }
     }
@@ -363,17 +365,22 @@ fn a_total_that_disagrees_is_reported_never_ledgered() {
         "cacheWriteInputTokens": 200,
         "totalTokens": 15
     });
-    let cap = WarnCapture::default();
-    let read = tracing::subscriber::with_default(cap.clone(), || read_all_paths(&usage, None));
+    let (cap, cap_subscriber) = warnings();
+    let read = tracing::dispatcher::with_default(&cap_subscriber, || read_all_paths(&usage, None));
     for (path, r) in ["buffered", "streamed"].iter().zip(&read) {
         assert_eq!(r.0, (10, 1000, 200, 5), "{path}: the itemized counts only");
         assert_eq!(r.1, Some((15, 1215, -1200)), "{path}: the gap is reported");
         assert!(r.3.is_empty(), "{path}: no open class: {:?}", r.3);
     }
     assert!(
-        cap.contains("usage does not reconcile") && cap.contains("identity=bedrock.usage"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("usage does not reconcile"))
+            && diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains("identity=bedrock.usage")),
         "the gap is WARN-logged: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 

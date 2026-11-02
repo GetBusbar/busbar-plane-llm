@@ -2,6 +2,7 @@
 
 use super::super::proto_codec::{ProtocolReader, ProtocolWriter};
 use super::{anthropic_writer, AnthropicReader, AnthropicWriter};
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 /// `metadata`, `service_tier`, `container`, `betas`: Anthropic-specific request knobs with no
 #[test]
@@ -528,8 +529,6 @@ fn anthropic_stream_ping_same_proto_carry() {
 
 #[test]
 fn anthropic_drops_penalties_seed_n_observably() {
-    use busbar_test_kit::warn_capture::WarnCapture;
-
     let ir = crate::codec::ir::IrRequest {
         frequency_penalty: Some(0.5),
         presence_penalty: Some(0.25),
@@ -538,9 +537,9 @@ fn anthropic_drops_penalties_seed_n_observably() {
         ..Default::default()
     };
 
-    let cap = WarnCapture::default();
-    let sub = cap.clone();
-    let out = tracing::subscriber::with_default(sub, || {
+    let (cap, cap_subscriber) = warnings();
+    let sub = cap_subscriber.clone();
+    let out = tracing::dispatcher::with_default(&sub, || {
         anthropic_writer().write_request(crate::codec::test_host::HOST, &ir)
     });
 
@@ -550,11 +549,11 @@ fn anthropic_drops_penalties_seed_n_observably() {
             "{field} must not be emitted on the Anthropic wire: {out}"
         );
         assert!(
-            cap.messages().iter().any(|message| message
+            diagnostic_texts(&cap).iter().any(|message| message
                 .split_whitespace()
                 .any(|member| member == format!("parameter={field}"))),
             "dropping {field} on Anthropic egress must warn: {:?}",
-            cap.messages()
+            diagnostic_texts(&cap)
         );
     }
 

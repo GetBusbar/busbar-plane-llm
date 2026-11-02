@@ -3,6 +3,9 @@
 
 //! One attempt's far-end request.
 
+#[path = "support/codec_diagnostics.rs"]
+mod codec_diagnostics;
+use codec_diagnostics::{diagnostic_texts, warnings};
 mod common;
 
 use common::TestHost;
@@ -1533,8 +1536,8 @@ fn cohere_bounds_combined_foreign_controls_are_clamped_and_audited_once() {
     let s = one_lane("cohere", "command-r-plus", None, &[]);
     let body = r#"{"model":"command-r-plus","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"top_p":1.0,"frequency_penalty":1.5,"presence_penalty":-0.5}"#;
     let a = arrived("/v1/chat/completions", &h, body);
-    let cap = busbar_test_kit::warn_capture::WarnCapture::default();
-    let r = tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    let r = tracing::dispatcher::with_default(&cap_subscriber, || {
         build(HOST, &a, &h, &s, "p", "command-r-plus").expect("translated")
     });
     let wire = far_json(&r);
@@ -1549,7 +1552,7 @@ fn cohere_bounds_combined_foreign_controls_are_clamped_and_audited_once() {
         r.dropped_controls,
         ["top_p", "frequency_penalty", "presence_penalty"]
     );
-    let warnings = cap.messages();
+    let warnings = diagnostic_texts(&cap);
     assert_eq!(warnings.len(), 3, "{warnings:?}");
     for parameter in ["top_p", "frequency_penalty", "presence_penalty"] {
         let path = format!("path={parameter}");
@@ -1570,14 +1573,18 @@ fn cohere_bounds_native_attempt_preserves_bytes_without_clamping_or_diagnostics(
     let s = one_lane("cohere", "command-r-plus", None, &[]);
     let body = r#"{ "model" : "command-r-plus", "messages" : [{ "role" : "user", "content" : "hi" }], "p" : 1.0, "frequency_penalty" : 1.5, "presence_penalty" : -0.5 }"#;
     let a = arrived("/v2/chat", &h, body);
-    let cap = busbar_test_kit::warn_capture::WarnCapture::default();
-    let r = tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    let r = tracing::dispatcher::with_default(&cap_subscriber, || {
         build(HOST, &a, &h, &s, "p", "command-r-plus").expect("relayed")
     });
     assert_eq!(r.body, body.as_bytes());
     assert!(r.pristine);
     assert!(r.dropped_controls.is_empty(), "{:?}", r.dropped_controls);
-    assert!(cap.messages().is_empty(), "{:?}", cap.messages());
+    assert!(
+        diagnostic_texts(&cap).is_empty(),
+        "{:?}",
+        diagnostic_texts(&cap)
+    );
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/translate_offload_tests.rs::huge_body_translates_via_offload_and_forwards`.

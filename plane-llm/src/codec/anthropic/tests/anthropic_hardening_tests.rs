@@ -1,4 +1,5 @@
 use super::*;
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 #[test]
 fn stop_reason_egress_never_leaks_foreign_tokens() {
@@ -2548,8 +2549,6 @@ fn test_anthropic_streaming_safety_stop_reason_maps_to_refusal() {
     );
 }
 
-use busbar_test_kit::warn_capture::WarnCapture;
-
 /// SAMPLING: Anthropic's Messages API does NOT support `frequency_penalty`,
 #[test]
 fn write_request_omits_unsupported_sampling_params() {
@@ -2822,13 +2821,13 @@ fn write_request_no_response_format_warning_when_absent() {
         ..Default::default()
     };
 
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
-    let _ = tracing::subscriber::with_default(subscriber, || {
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
+    let _ = tracing::dispatcher::with_default(&subscriber, || {
         anthropic_writer().write_request(crate::codec::test_host::HOST, &req)
     });
 
-    let msgs = cap.messages();
+    let msgs = diagnostic_texts(&cap);
     assert!(
         !msgs.iter().any(|m| m.contains("response_format")),
         "no response_format warning must fire when the directive is absent; got {msgs:?}"

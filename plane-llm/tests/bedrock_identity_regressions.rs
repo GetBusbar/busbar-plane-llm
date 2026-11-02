@@ -1,4 +1,6 @@
 //! Bedrock wire identity and projection through the production error/whole reply seams.
+#[path = "support/codec_diagnostics.rs"]
+mod codec_diagnostics;
 use busbar_contract::{
     billing::Billing,
     codec::CodecHost,
@@ -10,7 +12,8 @@ use busbar_plane_llm::exchange::reply::{
     failure::{judge, FarError},
     whole::{self, WholeCtx, WholeEnd},
 };
-use busbar_test_kit::warn_capture::WarnCapture;
+use codec_diagnostics::{diagnostic_texts, warnings, DiagnosticEvents};
+
 use serde_json::{json, Value};
 use std::collections::HashMap;
 struct Host;
@@ -250,7 +253,12 @@ fn native_auth_context_and_supported_operation_controls() {
         assert_eq!(result.answer.body, body);
     }
 }
-fn translate(ingress: &str, egress: &str, op: OpVerb, body: &[u8]) -> (whole::Whole, WarnCapture) {
+fn translate(
+    ingress: &str,
+    egress: &str,
+    op: OpVerb,
+    body: &[u8],
+) -> (whole::Whole, DiagnosticEvents) {
     let ctx = WholeCtx {
         ingress,
         egress,
@@ -263,9 +271,10 @@ fn translate(ingress: &str, egress: &str, op: OpVerb, body: &[u8]) -> (whole::Wh
         elapsed_ms: None,
         translate_cap: 65536,
     };
-    let cap = WarnCapture::default();
-    let result =
-        tracing::subscriber::with_default(cap.clone(), || whole::translate(&Host, &ctx, 200, body));
+    let (cap, cap_subscriber) = warnings();
+    let result = tracing::dispatcher::with_default(&cap_subscriber, || {
+        whole::translate(&Host, &ctx, 200, body)
+    });
     assert_eq!(result.end, WholeEnd::Delivered, "{:?}", result.refused);
     (result, cap)
 }
@@ -313,9 +322,19 @@ fn lost_url_images_warn_once_audit_and_preserve_paid_work() {
                 vec!["data"]
             }
         );
-        assert_eq!(cap.count("path=ir.images[].url"), usize::from(drop));
-        assert!(!cap.contains(secret));
-        assert!(!cap.contains("SECRET-IMAGE"));
+        assert_eq!(
+            diagnostic_texts(&cap)
+                .iter()
+                .filter(|event| event.contains("path=ir.images[].url"))
+                .count(),
+            usize::from(drop)
+        );
+        assert!(!diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains(secret)));
+        assert!(!diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("SECRET-IMAGE")));
     }
 }
 fn bedrock_citation() -> Value {
@@ -342,7 +361,9 @@ fn bedrock_search_source_crosses_to_anthropic_with_span_text_and_usage() {
     assert_eq!(out["usage"]["input_tokens"], 11);
     assert_eq!(out["usage"]["output_tokens"], 13);
     assert!(whole.dropped.is_empty(), "{:?}", whole.dropped);
-    assert!(!cap.contains("union"));
+    assert!(!diagnostic_texts(&cap)
+        .iter()
+        .any(|event| event.contains("union")));
 }
 #[test]
 fn anthropic_search_source_crosses_to_bedrock_without_union_conflict() {
@@ -356,8 +377,12 @@ fn anthropic_search_source_crosses_to_bedrock_without_union_conflict() {
     assert_eq!(out["usage"]["inputTokens"], 11);
     assert_eq!(out["usage"]["outputTokens"], 13);
     assert!(whole.dropped.is_empty(), "{:?}", whole.dropped);
-    assert!(!cap.contains("union"));
-    assert!(!cap.contains("opaque:source#7"));
+    assert!(!diagnostic_texts(&cap)
+        .iter()
+        .any(|event| event.contains("union")));
+    assert!(!diagnostic_texts(&cap)
+        .iter()
+        .any(|event| event.contains("opaque:source#7")));
 }
 
 #[test]
@@ -413,8 +438,8 @@ fn native_images_and_citation_responses_retain_literal_bytes() {
             passthrough: false,
             translate_cap: 65536,
         };
-        let cap = WarnCapture::default();
-        let piece = tracing::subscriber::with_default(cap.clone(), || {
+        let (cap, cap_subscriber) = warnings();
+        let piece = tracing::dispatcher::with_default(&cap_subscriber, || {
             Reply::new(&Host, &ctx, 200, &[(b"content-type", b"application/json")]).feed(
                 &Host,
                 &ctx,
@@ -428,7 +453,9 @@ fn native_images_and_citation_responses_retain_literal_bytes() {
         });
         assert_eq!(piece.bytes.as_ref(), body);
         assert!(piece.dropped.is_empty());
-        assert!(!cap.contains("ir.images[].url"));
+        assert!(!diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("ir.images[].url")));
     }
 }
 
@@ -455,5 +482,7 @@ fn dropped_image_urls_keep_recorded_token_usage_and_no_image_charge() {
             "usage.output_tokens"
         ]
     );
-    assert!(!cap.contains("SECRET"));
+    assert!(!diagnostic_texts(&cap)
+        .iter()
+        .any(|event| event.contains("SECRET")));
 }

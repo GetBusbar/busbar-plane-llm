@@ -5,6 +5,7 @@
 
 use super::super::super::bedrock::handler::BedrockRequestHandler;
 use super::*;
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 use serde_json::Value;
 
 fn cohere_wire() -> Vec<u8> {
@@ -122,15 +123,14 @@ fn embeddings_write_request_preserves_multiple_encoding_types_in_order() {
 #[test]
 fn embeddings_write_request_warns_on_dropped_non_text_input() {
     use crate::codec::ir::embeddings::EmbeddingsReq;
-    use busbar_test_kit::warn_capture::WarnCapture;
 
     let ir = EmbeddingsReq {
         input: EmbInput::Images(vec!["data:image/png;base64,AA==".into()]),
         ..Default::default()
     };
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
-    let out = tracing::subscriber::with_default(subscriber, || {
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
+    let out = tracing::dispatcher::with_default(&subscriber, || {
         super::super::super::leaf_codec::embeddings_write_request("cohere", &ir)
     });
 
@@ -138,9 +138,11 @@ fn embeddings_write_request_warns_on_dropped_non_text_input() {
     assert_eq!(v["texts"], json!([]));
 
     assert!(
-        cap.contains("dropping a non-text embeddings input"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("dropping a non-text embeddings input")),
         "a dropped non-text embeddings input must warn: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 

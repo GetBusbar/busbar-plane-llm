@@ -15,12 +15,12 @@
 //! them, so nothing a caller sends is refused.
 
 use super::*;
-use busbar_test_kit::warn_capture::WarnCapture;
+use crate::codec_diagnostics::{diagnostic_texts, warnings, DiagnosticEvents};
 
 /// Run `write` under a warn capture: the wire it wrote, parsed, and the capture.
-fn written(write: impl FnOnce() -> Vec<u8>) -> (Value, WarnCapture) {
-    let cap = WarnCapture::default();
-    let bytes = tracing::subscriber::with_default(cap.clone(), write);
+fn written(write: impl FnOnce() -> Vec<u8>) -> (Value, DiagnosticEvents) {
+    let (cap, cap_subscriber) = warnings();
+    let bytes = tracing::dispatcher::with_default(&cap_subscriber, write);
     (serde_json::from_slice(&bytes).unwrap(), cap)
 }
 
@@ -39,9 +39,11 @@ fn titan_embeddings_writer_drops_normalize_as_1_5_5_did() {
         "exactly v1.5.5's members: {v}"
     );
     assert!(
-        cap.contains("dropping `normalize`"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("dropping `normalize`")),
         "the drop is warned: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
@@ -57,9 +59,11 @@ fn titan_embeddings_writer_omits_normalize_when_absent() {
         "an unset normalize must not be fabricated on the wire: {v}"
     );
     assert!(
-        !cap.contains("dropping"),
+        !diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("dropping")),
         "nothing dropped, nothing warned: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
@@ -96,9 +100,11 @@ fn titan_image_writer_sends_only_the_1_5_5_members() {
         "quality",
     ] {
         assert!(
-            cap.contains(&format!("dropping `{name}`")),
+            diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains(&format!("dropping `{name}`"))),
             "the `{name}` drop is warned: {:?}",
-            cap.messages()
+            diagnostic_texts(&cap)
         );
     }
 }
@@ -114,9 +120,11 @@ fn titan_image_writer_omits_unset_optional_params() {
     assert!(v["imageGenerationConfig"].get("seed").is_none(), "{v}");
     assert!(v["imageGenerationConfig"].get("cfgScale").is_none(), "{v}");
     assert!(
-        !cap.contains("dropping"),
+        !diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("dropping")),
         "nothing dropped, nothing warned: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
@@ -137,9 +145,11 @@ fn bedrock_rerank_writer_drops_return_documents_as_1_5_5_did() {
         "exactly v1.5.5's members: {v}"
     );
     assert!(
-        cap.contains("dropping `return_documents`"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("dropping `return_documents`")),
         "the drop is warned: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 
     let body = br#"{"query":"q","documents":["a"],"return_documents":true}"#;
@@ -165,9 +175,11 @@ fn bedrock_rerank_answer_echoes_no_document_as_1_5_5_did() {
         "exactly v1.5.5's members: {v}"
     );
     assert!(
-        cap.contains("dropping `document`"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("dropping `document`")),
         "the drop is warned: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 

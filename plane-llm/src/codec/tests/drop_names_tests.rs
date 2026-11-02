@@ -7,8 +7,9 @@ use super::tests::prep;
 use crate::codec::egress_prep::EgressPrep;
 use crate::codec::proto_codec::protocol_for;
 use crate::codec::translate::{TranslateCodec as _, TranslateReqInput};
+use crate::codec_diagnostics::{diagnostic_texts, warnings, DiagnosticEvents};
 use busbar_contract::operation::OpVerb;
-use busbar_test_kit::warn_capture::WarnCapture;
+
 use serde_json::{json, Value};
 
 /// The seam's gates for the test: closed (`false`) gates drop the reasoning ask and the cache
@@ -34,7 +35,7 @@ fn translate(
     egress: &str,
     body: &Value,
     gates: Gates,
-) -> (Vec<String>, WarnCapture) {
+) -> (Vec<String>, DiagnosticEvents) {
     let _ = protocol_for(ingress);
     let handler = crate::codec::decl_of(ingress)
         .and_then(|d| d.handler)
@@ -45,8 +46,8 @@ fn translate(
         prompt_caching_allowed: gates.caching,
         ..prep(ingress)
     };
-    let cap = WarnCapture::default();
-    let out = tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    let out = tracing::dispatcher::with_default(&cap_subscriber, || {
         handler.translate_request(
             crate::codec::test_host::HOST,
             TranslateReqInput::Json(body),
@@ -62,9 +63,9 @@ fn translate(
 }
 
 /// Whether a captured warn carries exactly `path=<path>` as one of its fields; `drop_path` picks the
-fn warned(cap: &WarnCapture, path: &str, drop_path: bool) -> bool {
+fn warned(cap: &DiagnosticEvents, path: &str, drop_path: bool) -> bool {
     let field = format!("path={path}");
-    cap.messages()
+    diagnostic_texts(&cap)
         .iter()
         .any(|m| m.split_whitespace().any(|w| w == field) && m.contains("diag=") == drop_path)
 }
@@ -79,7 +80,7 @@ fn gate_named(ingress: &str, egress: &str, body: Value, path: &str, slot: &str) 
     assert!(
         warned(&cap, path, true),
         "{ingress} -> {egress}: the gate's warn carries path={path}: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
     if slot != path {
         assert!(
@@ -89,7 +90,7 @@ fn gate_named(ingress: &str, egress: &str, body: Value, path: &str, slot: &str) 
         assert!(
             !warned(&cap, slot, true),
             "{ingress} -> {egress}: no warn names the IR slot `{slot}`: {:?}",
-            cap.messages()
+            diagnostic_texts(&cap)
         );
     }
 }
@@ -104,7 +105,7 @@ fn control_named(ingress: &str, egress: &str, body: Value, path: &str, slot: &st
     assert!(
         warned(&cap, path, false),
         "{ingress} -> {egress}: the writer's control warn carries path={path}: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
     if slot != path {
         assert!(

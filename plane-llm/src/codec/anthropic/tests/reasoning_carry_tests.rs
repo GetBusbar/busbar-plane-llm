@@ -4,6 +4,7 @@ use super::super::proto_codec::{Protocol, ProtocolReader, ProtocolWriter};
 use super::{anthropic_writer, AnthropicReader};
 use crate::codec::egress_prep::{EgressPrep, LaneCaps};
 use crate::codec::ir::{IrReasoningAsk, IrReasoningEffort};
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 /// A lane that declares adaptive thinking (Opus 4.7+/5.x, Sonnet 5, Fable). Every word-form
 fn adaptive(ir: &crate::codec::ir::IrRequest) -> serde_json::Value {
@@ -118,13 +119,19 @@ fn dynamic_ask_uses_adaptive_thinking_or_is_dropped_observably() {
     let out = adaptive(&ir);
     assert_eq!(out["thinking"], serde_json::json!({"type":"adaptive"}));
     assert!(out.get("output_config").is_none(), "{out}");
-    let cap = busbar_test_kit::warn_capture::WarnCapture::default();
-    let out = tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    let out = tracing::dispatcher::with_default(&cap_subscriber, || {
         anthropic_writer().write_request(crate::codec::test_host::HOST, &ir)
     });
     assert!(out.get("thinking").is_none(), "{out}");
     assert!(out.get("output_config").is_none(), "{out}");
-    assert!(cap.contains("reasoning"), "{:?}", cap.messages());
+    assert!(
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("reasoning")),
+        "{:?}",
+        diagnostic_texts(&cap)
+    );
 }
 
 /// A numeric budget projected onto a WORD protocol bucketizes through the same table.
@@ -182,8 +189,8 @@ fn thinking_omits_incompatible_sampling_knobs() {
     let ir = super::super::openai_chat::OpenAiReader
         .read_request(&body)
         .expect("parses");
-    let cap = busbar_test_kit::warn_capture::WarnCapture::default();
-    let out = tracing::subscriber::with_default(cap.clone(), || adaptive(&ir));
+    let (cap, cap_subscriber) = warnings();
+    let out = tracing::dispatcher::with_default(&cap_subscriber, || adaptive(&ir));
     assert_eq!(out["thinking"]["type"], "adaptive");
     assert_eq!(out["output_config"]["effort"], "low");
     assert!(
@@ -195,7 +202,13 @@ fn thinking_omits_incompatible_sampling_knobs() {
         "top_p must be omitted with thinking (Anthropic 400s on it): {out}"
     );
     for field in ["temperature", "top_p"] {
-        assert!(cap.contains(field), "{:?}", cap.messages());
+        assert!(
+            diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains(field)),
+            "{:?}",
+            diagnostic_texts(&cap)
+        );
     }
 
     let mut plain = openai_effort_body("low");

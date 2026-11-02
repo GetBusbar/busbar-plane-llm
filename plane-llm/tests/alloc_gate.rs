@@ -1,9 +1,35 @@
 //! What the same-dialect relay is allowed to allocate.
 
-use busbar_test_kit::alloc_counter::{allocations_of, Counting};
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
+thread_local! { static FORWARD_ALLOCATIONS: Cell<u64> = const { Cell::new(0) }; }
+struct ForwardAllocator;
+// SAFETY: forwards every allocation and layout unchanged to System; the counter is thread-local.
+unsafe impl GlobalAlloc for ForwardAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        FORWARD_ALLOCATIONS.with(|n| n.set(n.get() + 1));
+        unsafe { System.alloc(layout) }
+    }
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        FORWARD_ALLOCATIONS.with(|n| n.set(n.get() + 1));
+        unsafe { System.alloc_zeroed(layout) }
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+        FORWARD_ALLOCATIONS.with(|n| n.set(n.get() + 1));
+        unsafe { System.realloc(ptr, layout, size) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+}
+fn count_forward_allocations(run: impl FnOnce()) -> u64 {
+    let before = FORWARD_ALLOCATIONS.with(Cell::get);
+    run();
+    FORWARD_ALLOCATIONS.with(|n| n.get() - before)
+}
 
 #[global_allocator]
-static ALLOC: Counting = Counting::new();
+static ALLOC: ForwardAllocator = ForwardAllocator;
 
 /// The generation the served door holds: one openai far end, under a pool that names it.
 fn served_generation() -> busbar_plane_llm::exchange::shaping::Shaping {
@@ -87,7 +113,7 @@ fn alloc_gate_openai_passthrough_forward() {
     let mut min_allocs = u64::MAX;
     for _ in 0..4 {
         let mut status = 0;
-        let count = allocations_of(|| status = one_forward(&shaping, body));
+        let count = count_forward_allocations(|| status = one_forward(&shaping, body));
         assert_eq!(status, 200, "passthrough must be 200");
         min_allocs = min_allocs.min(count);
     }
@@ -130,8 +156,8 @@ fn alloc_gate_request_echo_body_materialized_once() {
     assert_eq!(one_forward(&shaping, &small_body), 200);
     assert_eq!(one_forward(&shaping, &large_body), 200);
     let mut status = (0, 0);
-    let small = allocations_of(|| status.0 = one_forward(&shaping, &small_body));
-    let large = allocations_of(|| status.1 = one_forward(&shaping, &large_body));
+    let small = count_forward_allocations(|| status.0 = one_forward(&shaping, &small_body));
+    let large = count_forward_allocations(|| status.1 = one_forward(&shaping, &large_body));
     assert_eq!(status, (200, 200), "the arm under test must be 200");
     let delta = large.saturating_sub(small);
     println!(
@@ -182,10 +208,10 @@ fn resolving_every_dialect_by_name_allocates_nothing() {
 
         let _ = codec.requested_candidate_count(body);
         let _ = writer.requested_candidate_count(body);
-        let direct = allocations_of(|| {
+        let direct = count_forward_allocations(|| {
             let _ = writer.requested_candidate_count(body);
         });
-        let resolved = allocations_of(|| {
+        let resolved = count_forward_allocations(|| {
             let codec = decl_of(name)
                 .and_then(busbar_contract::protocol::ProtocolDecl::dialect)
                 .expect("declared");

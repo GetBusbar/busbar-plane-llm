@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::codec::ir::IrRequest;
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 /// `default_max_tokens` resolution precedence on the translation seam (only fires when the source
 #[test]
@@ -70,7 +71,6 @@ fn per_model_then_global_then_4096() {
 #[test]
 fn cache_control_breakpoints_clamped_to_four_on_anthropic_egress() {
     use crate::codec::ir::{CacheControl, CacheKind, IrBlock, IrMessage, IrRole};
-    use busbar_test_kit::warn_capture::WarnCapture;
 
     let bp = || {
         Some(CacheControl {
@@ -151,10 +151,10 @@ fn cache_control_breakpoints_clamped_to_four_on_anthropic_egress() {
         ingress: "bedrock",
         egress: "anthropic",
     };
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
     let mut req = ir;
-    tracing::subscriber::with_default(subscriber, || {
+    tracing::dispatcher::with_default(&subscriber, || {
         crate::codec::drops::scope(seam, || {
             crate::codec::chat_handle::chat_prepare_for_egress(&mut req, &prep)
         })
@@ -188,8 +188,13 @@ fn cache_control_breakpoints_clamped_to_four_on_anthropic_egress() {
         "m2a must be dropped (past the cap)"
     );
     assert!(
-        cap.contains("cap of 4") && cap.contains("dropping 2"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("cap of 4"))
+            && diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains("dropping 2")),
         "must warn naming the cap and the dropped count: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }

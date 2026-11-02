@@ -4,6 +4,7 @@
 //! Tests for `crates/busbar/src/handlers/bedrock.rs`.
 
 use super::*;
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 #[test]
 fn invoke_rerank_not_misclassified_by_inputtext_substring() {
@@ -75,15 +76,14 @@ fn embeddings_read_request_captures_input_text() {
 #[test]
 fn embeddings_write_request_warns_on_dropped_non_text_input() {
     use crate::codec::ir::embeddings::EmbeddingsReq;
-    use busbar_test_kit::warn_capture::WarnCapture;
 
     let req = EmbeddingsReq {
         input: EmbInput::Tokens(vec![vec![1, 2, 3]]),
         ..Default::default()
     };
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
-    let out = tracing::subscriber::with_default(subscriber, || {
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
+    let out = tracing::dispatcher::with_default(&subscriber, || {
         super::super::super::leaf_codec::embeddings_write_request("bedrock", &req)
     });
 
@@ -91,9 +91,11 @@ fn embeddings_write_request_warns_on_dropped_non_text_input() {
     assert_eq!(body["inputText"], json!(""));
 
     assert!(
-        cap.contains("dropping a non-text embeddings input"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("dropping a non-text embeddings input")),
         "a dropped non-text embeddings input must warn: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
@@ -128,7 +130,6 @@ fn embeddings_write_read_roundtrip_preserves_input_text() {
 
 #[test]
 fn bedrock_titan_image_drops_size_and_quality_as_1_5_5_did() {
-    use busbar_test_kit::warn_capture::WarnCapture;
     let ir = crate::codec::ir::image::ImageReq {
         model: "amazon.titan-image-generator-v1".into(),
         prompt: Some("a cat".into()),
@@ -139,8 +140,8 @@ fn bedrock_titan_image_drops_size_and_quality_as_1_5_5_did() {
         quality: Some("hd".into()),
         ..Default::default()
     };
-    let cap = WarnCapture::default();
-    let out = tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    let out = tracing::dispatcher::with_default(&cap_subscriber, || {
         super::super::super::leaf_codec::image_write_request("bedrock", &ir)
     });
     let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -154,9 +155,14 @@ fn bedrock_titan_image_drops_size_and_quality_as_1_5_5_did() {
         "exactly v1.5.5's Titan body: {v}"
     );
     assert!(
-        cap.contains("dropping `size`") && cap.contains("dropping `quality`"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("dropping `size`"))
+            && diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains("dropping `quality`")),
         "each drop is warned: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 

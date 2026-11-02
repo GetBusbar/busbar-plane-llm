@@ -5,9 +5,10 @@
 
 use super::*;
 use crate::codec::translate::{TranslateCodec as _, TranslateReqInput};
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 use busbar_contract::codec::EgressWire;
 use busbar_contract::operation::OpVerb;
-use busbar_test_kit::warn_capture::WarnCapture;
+
 use serde_json::json;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -62,20 +63,20 @@ fn drop_index_extra_aliases_keep_first_encounter_order() {
 #[test]
 fn drop_index_seeded_scope_without_notes_keeps_the_vector_verbatim() {
     let mut seen = vec!["zeta".to_string(), "alpha".to_string(), "zeta".to_string()];
-    let cap = WarnCapture::default();
+    let (cap, cap_subscriber) = warnings();
     let answer =
-        tracing::subscriber::with_default(cap.clone(), || scope_more(SEAM, &mut seen, || 17));
+        tracing::dispatcher::with_default(&cap_subscriber, || scope_more(SEAM, &mut seen, || 17));
     assert_eq!(answer, 17);
     assert_eq!(seen, ["zeta", "alpha", "zeta"]);
-    assert!(cap.messages().is_empty());
+    assert!(diagnostic_texts(&cap).is_empty());
     assert!(!is_open());
 }
 
 #[test]
 fn drop_index_seeded_paths_restore_after_nested_unwind() {
     let mut seen = vec!["seed".to_string(), "seed".to_string()];
-    let cap = WarnCapture::default();
-    tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    tracing::dispatcher::with_default(&cap_subscriber, || {
         scope_more(SEAM, &mut seen, || {
             report("seed");
             report("new");
@@ -98,13 +99,34 @@ fn drop_index_seeded_paths_restore_after_nested_unwind() {
     });
     assert_eq!(seen, ["seed", "seed", "new", "tail"]);
     assert_eq!(
-        cap.count("path=seed"),
+        diagnostic_texts(&cap)
+            .iter()
+            .filter(|event| event.contains("path=seed"))
+            .count(),
         1,
         "only the nested attempt warns seed"
     );
-    assert_eq!(cap.count("path=new"), 1);
-    assert_eq!(cap.count("path=tail"), 1);
-    assert_eq!(cap.count("path=outside"), 0);
+    assert_eq!(
+        diagnostic_texts(&cap)
+            .iter()
+            .filter(|event| event.contains("path=new"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        diagnostic_texts(&cap)
+            .iter()
+            .filter(|event| event.contains("path=tail"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        diagnostic_texts(&cap)
+            .iter()
+            .filter(|event| event.contains("path=outside"))
+            .count(),
+        0
+    );
     assert!(!is_open());
 }
 
@@ -162,7 +184,7 @@ fn drop_index_full_request_keeps_each_warning_and_audit_without_payload_values()
         .map(|n| format!("fixture_unknown_{n:06}"))
         .collect();
     assert_eq!(audited, expected);
-    let warnings = cap.messages();
+    let warnings = diagnostic_texts(&cap);
     assert_eq!(warnings.len(), expected.len());
     assert!(warnings
         .iter()
@@ -176,7 +198,7 @@ fn drop_index_full_request_keeps_each_warning_and_audit_without_payload_values()
     let (_, baseline, baseline_cap) =
         super::tests::translate("openai", "anthropic", &request_with_unknown_keys(0));
     assert!(baseline.is_empty());
-    assert!(baseline_cap.messages().is_empty());
+    assert!(baseline_diagnostic_texts(&cap).is_empty());
 }
 
 #[test]
@@ -195,9 +217,8 @@ fn drop_index_unknown_block_kinds_reach_the_full_request_walk_in_encounter_order
             "messages[].content[].type=fixture_a",
         ]
     );
-    assert_eq!(cap.messages().len(), 2);
-    assert!(cap
-        .messages()
+    assert_eq!(diagnostic_texts(&cap).len(), 2);
+    assert!(diagnostic_texts(&cap)
         .iter()
         .all(|message| !message.contains("not logged")));
     assert_eq!(

@@ -7,9 +7,10 @@ use super::*;
 use crate::codec::egress_prep::EgressPrep;
 use crate::codec::proto_codec::protocol_for;
 use crate::codec::translate::{TranslateCodec as _, TranslateReqInput};
+use crate::codec_diagnostics::{diagnostic_texts, warnings, DiagnosticEvents};
 use busbar_contract::codec::EgressWire;
 use busbar_contract::operation::OpVerb;
-use busbar_test_kit::warn_capture::WarnCapture;
+
 use serde_json::{json, Value};
 
 const SEAM: Seam<'static> = Seam {
@@ -37,8 +38,8 @@ pub(super) fn prep(ingress: &str) -> EgressPrep {
 
 #[test]
 fn a_drop_outside_a_translate_attempt_says_nothing() {
-    let cap = WarnCapture::default();
-    tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    tracing::dispatcher::with_default(&cap_subscriber, || {
         note(Dropped::new(
             "logit_bias",
             &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
@@ -46,16 +47,16 @@ fn a_drop_outside_a_translate_attempt_says_nothing() {
         ))
     });
     assert!(
-        cap.messages().is_empty(),
+        diagnostic_texts(&cap).is_empty(),
         "a relay drops nothing: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
 #[test]
 fn a_drop_warns_once_per_path_and_comes_back_for_the_audit() {
-    let cap = WarnCapture::default();
-    let ((), paths) = tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    let ((), paths) = tracing::dispatcher::with_default(&cap_subscriber, || {
         scope(SEAM, || {
             for path in ["logit_bias", "store", "logit_bias"] {
                 note(Dropped::new(
@@ -67,14 +68,30 @@ fn a_drop_warns_once_per_path_and_comes_back_for_the_audit() {
         })
     });
     assert_eq!(paths, ["logit_bias", "store"]);
-    assert_eq!(cap.count("path=logit_bias"), 1, "{:?}", cap.messages());
+    assert_eq!(
+        diagnostic_texts(&cap)
+            .iter()
+            .filter(|event| event.contains("path=logit_bias"))
+            .count(),
+        1,
+        "{:?}",
+        diagnostic_texts(&cap)
+    );
     assert!(
-        cap.contains("diag=BUSBAR-7085")
-            && cap.contains("direction=request")
-            && cap.contains("ingress=openai")
-            && cap.contains("egress=anthropic"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("diag=BUSBAR-7085"))
+            && diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains("direction=request"))
+            && diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains("ingress=openai"))
+            && diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains("egress=anthropic")),
         "the warn names the code, the direction and both dialects: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
@@ -84,15 +101,15 @@ fn a_scope_ends_with_its_attempt_even_on_unwind() {
         scope(SEAM, || panic!("the attempt fails"));
     });
     assert!(unwound.is_err());
-    let cap = WarnCapture::default();
-    tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    tracing::dispatcher::with_default(&cap_subscriber, || {
         note(Dropped::new(
             "store",
             &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
             "dropped",
         ))
     });
-    assert!(cap.messages().is_empty(), "no attempt is left open");
+    assert!(diagnostic_texts(&cap).is_empty(), "no attempt is left open");
 }
 
 fn drop_one(path: &'static str) {
@@ -152,15 +169,24 @@ fn a_closed_scope_leaks_no_drop_entries_into_the_next_call() {
             "a drop outside an attempt writes nothing"
         )
     });
-    let cap = WarnCapture::default();
-    let ((), second) =
-        tracing::subscriber::with_default(cap.clone(), || scope(SEAM, || drop_one("logit_bias")));
+    let (cap, cap_subscriber) = warnings();
+    let ((), second) = tracing::dispatcher::with_default(&cap_subscriber, || {
+        scope(SEAM, || drop_one("logit_bias"))
+    });
     assert_eq!(
         second,
         ["logit_bias"],
         "the second attempt's log starts empty"
     );
-    assert_eq!(cap.count("path=logit_bias"), 1, "{:?}", cap.messages());
+    assert_eq!(
+        diagnostic_texts(&cap)
+            .iter()
+            .filter(|event| event.contains("path=logit_bias"))
+            .count(),
+        1,
+        "{:?}",
+        diagnostic_texts(&cap)
+    );
 }
 
 /// A scope never spans an await, a ticket boundary or a return to the driver, so its guard is
@@ -257,15 +283,15 @@ pub(super) fn translate(
     ingress: &str,
     egress: &str,
     body: &Value,
-) -> (Value, Vec<String>, WarnCapture) {
+) -> (Value, Vec<String>, DiagnosticEvents) {
     let _ = protocol_for(ingress);
     let handler = crate::codec::decl_of(ingress)
         .and_then(|d| d.handler)
         .and_then(|h| h.operation_handler(OpVerb::CHAT))
         .expect("a chat handler");
-    let cap = WarnCapture::default();
+    let (cap, cap_subscriber) = warnings();
     let p = prep(ingress);
-    let out = tracing::subscriber::with_default(cap.clone(), || {
+    let out = tracing::dispatcher::with_default(&cap_subscriber, || {
         handler.translate_request(
             crate::codec::test_host::HOST,
             TranslateReqInput::Json(body),
@@ -298,10 +324,13 @@ fn request_drops(
             "{ingress} -> {egress}: `{path}` must reach the audit: {audited:?}"
         );
         assert_eq!(
-            cap.count(&format!("path={path}")),
+            diagnostic_texts(&cap)
+                .iter()
+                .filter(|event| event.contains(&format!("path={path}")))
+                .count(),
             1,
             "{ingress} -> {egress}: one warn names `{path}`: {:?}",
-            cap.messages()
+            diagnostic_texts(&cap)
         );
     }
     for path in not {
@@ -317,10 +346,13 @@ fn request_drops(
     );
     let (_, audited, cap) = translate(ingress, egress, &without);
     assert!(
-        audited.is_empty() && !cap.contains("path="),
+        audited.is_empty()
+            && !diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains("path=")),
         "{ingress} -> {egress}: RED arm — a request of mapped members drops nothing: {audited:?} \
          {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
@@ -442,7 +474,7 @@ fn responses_request_drops_name_the_wire_path() {
 }
 
 /// Translate the far end's `body` (`egress`) for a caller of `ingress`: the caller's body and the
-fn answer(egress: &str, ingress: &str, body: &Value) -> (String, Vec<String>, WarnCapture) {
+fn answer(egress: &str, ingress: &str, body: &Value) -> (String, Vec<String>, DiagnosticEvents) {
     let _ = protocol_for(egress);
     let ctx = crate::exchange::reply::whole::WholeCtx {
         ingress,
@@ -457,8 +489,8 @@ fn answer(egress: &str, ingress: &str, body: &Value) -> (String, Vec<String>, Wa
         translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let bytes = serde_json::to_vec(body).unwrap();
-    let cap = WarnCapture::default();
-    let whole = tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    let whole = tracing::dispatcher::with_default(&cap_subscriber, || {
         crate::exchange::reply::whole::translate(crate::codec::test_host::HOST, &ctx, 200, &bytes)
     });
     assert_eq!(
@@ -482,13 +514,22 @@ fn response_drops(egress: &str, ingress: &str, with: Value, without: Value, path
             "{egress} -> {ingress}: one audit row names `{path}`: {audited:?}"
         );
         assert_eq!(
-            cap.count(&format!("path={path}")),
+            diagnostic_texts(&cap)
+                .iter()
+                .filter(|event| event.contains(&format!("path={path}")))
+                .count(),
             1,
             "{egress} -> {ingress}: one warn names `{path}`: {:?}",
-            cap.messages()
+            diagnostic_texts(&cap)
         );
     }
-    assert!(cap.contains("direction=response"), "{:?}", cap.messages());
+    assert!(
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("direction=response")),
+        "{:?}",
+        diagnostic_texts(&cap)
+    );
     assert!(
         !body.contains(r#""text":"""#),
         "{egress} -> {ingress}: nothing is substituted for a dropped block: {body}"
@@ -499,9 +540,11 @@ fn response_drops(egress: &str, ingress: &str, with: Value, without: Value, path
         "{egress} -> {ingress}: RED arm: {audited:?}"
     );
     assert!(
-        !cap.contains("path="),
+        !diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("path=")),
         "{egress} -> {ingress}: RED arm — an answer of mapped members drops nothing: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
@@ -940,8 +983,8 @@ fn missing_block_origin_is_explicit_ir_metadata_and_scoped_native_origins_restor
         source: Some(&PARENT),
         children: vec![crate::codec::ir::IrBlockOrigin::at(&CHILD)],
     };
-    let cap = WarnCapture::default();
-    let (_, paths) = tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    let (_, paths) = tracing::dispatcher::with_default(&cap_subscriber, || {
         scope(SEAM, || {
             let drop_image = || {
                 note(Dropped::member(
@@ -966,7 +1009,9 @@ fn missing_block_origin_is_explicit_ir_metadata_and_scoped_native_origins_restor
             "ir.block.kind=image"
         ]
     );
-    assert!(cap.contains("native block source metadata is unavailable"));
+    assert!(diagnostic_texts(&cap)
+        .iter()
+        .any(|event| event.contains("native block source metadata is unavailable")));
 }
 
 #[test]

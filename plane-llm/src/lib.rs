@@ -15,3 +15,7 @@ pub mod refusal;
 
 /// THE PLANE'S DECLARED METADATA (`declares.json`): the `declares` section its signed tarball carries
 pub const DECLARES: &str = include_str!("../declares.json");
+
+#[cfg(test)]
+#[path = "../tests/support/codec_diagnostics.rs"]
+mod codec_diagnostics;

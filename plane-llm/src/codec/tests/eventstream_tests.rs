@@ -4,6 +4,7 @@
 //! The framing codec's unit suite: decode, encode, the header guards and their coded drops, the
 
 use super::*;
+use crate::codec_diagnostics::{debug_diagnostics, diagnostic_texts, warnings};
 
 /// AWS event-stream header name for the human-readable error text an error frame carries alongside
 const HDR_ERROR_MESSAGE: &str = ":error-message";
@@ -492,8 +493,6 @@ fn test_encode_frame_byte_for_byte_matches_reference() {
     );
 }
 
-use busbar_test_kit::warn_capture::WarnCapture;
-
 /// When an oversized `:event-type` makes `push_string_header` reject the header, `encode_frame`
 #[test]
 fn test_encode_frame_oversized_event_type_is_a_coded_debug_drop() {
@@ -501,12 +500,12 @@ fn test_encode_frame_oversized_event_type_is_a_coded_debug_drop() {
 
     let huge_event_type = "e".repeat(u16::MAX as usize + 1);
 
-    let debug_cap = WarnCapture::capturing_debug();
-    let frame = tracing::subscriber::with_default(debug_cap.clone(), || {
+    let (debug_cap, debug_cap_subscriber) = debug_diagnostics();
+    let frame = tracing::dispatcher::with_default(&debug_cap_subscriber, || {
         encode_frame(&huge_event_type, br#"{"x":1}"#)
     });
-    let warn_cap = WarnCapture::default();
-    tracing::subscriber::with_default(warn_cap.clone(), || {
+    let (warn_cap, warn_cap_subscriber) = warnings();
+    tracing::dispatcher::with_default(&warn_cap_subscriber, || {
         encode_frame(&huge_event_type, br#"{"x":1}"#)
     });
 
@@ -516,11 +515,13 @@ fn test_encode_frame_oversized_event_type_is_a_coded_debug_drop() {
     );
     let banner = DIAG.banner().to_string();
     assert!(
-        debug_cap.contains(&banner),
+        diagnostic_texts(&debug_cap)
+            .iter()
+            .any(|event| event.contains(&banner)),
         "the drop must carry diag={banner} so an operator can look it up; captured: {:?}",
-        debug_cap.messages()
+        diagnostic_texts(&debug_cap)
     );
-    let warned = warn_cap.messages();
+    let warned = diagnostic_texts(&warn_cap);
     assert!(
         warned.is_empty(),
         "and it must stay at debug, never an unlatched per-frame WARN, got: {warned:?}"
@@ -534,12 +535,14 @@ fn test_encode_exception_frame_oversized_type_is_a_coded_debug_drop() {
 
     let huge = "x".repeat(u16::MAX as usize + 1);
 
-    let debug_cap = WarnCapture::capturing_debug();
-    let frame = tracing::subscriber::with_default(debug_cap.clone(), || {
+    let (debug_cap, debug_cap_subscriber) = debug_diagnostics();
+    let frame = tracing::dispatcher::with_default(&debug_cap_subscriber, || {
         encode_exception_frame(&huge, "msg")
     });
-    let warn_cap = WarnCapture::default();
-    tracing::subscriber::with_default(warn_cap.clone(), || encode_exception_frame(&huge, "msg"));
+    let (warn_cap, warn_cap_subscriber) = warnings();
+    tracing::dispatcher::with_default(&warn_cap_subscriber, || {
+        encode_exception_frame(&huge, "msg")
+    });
 
     assert!(
         frame.is_empty(),
@@ -547,11 +550,13 @@ fn test_encode_exception_frame_oversized_type_is_a_coded_debug_drop() {
     );
     let banner = DIAG.banner().to_string();
     assert!(
-        debug_cap.contains(&banner),
+        diagnostic_texts(&debug_cap)
+            .iter()
+            .any(|event| event.contains(&banner)),
         "the drop must carry diag={banner}; captured: {:?}",
-        debug_cap.messages()
+        diagnostic_texts(&debug_cap)
     );
-    let warned = warn_cap.messages();
+    let warned = diagnostic_texts(&warn_cap);
     assert!(
         warned.is_empty(),
         "and it must stay at debug, never an unlatched per-frame WARN, got: {warned:?}"

@@ -4,7 +4,7 @@
 //! Regression net: OpenAI Chat audio egress must map an audio mime onto the CLOSED
 
 use super::*;
-use busbar_test_kit::warn_capture::WarnCapture;
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 fn audio_req(media_type: &str) -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
@@ -62,9 +62,9 @@ fn audio_wav_aliases_map_to_wav_format() {
 
 #[test]
 fn unsupported_audio_mime_dropped_with_warn_not_invalid_format() {
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
-    let out = tracing::subscriber::with_default(subscriber, || {
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
+    let out = tracing::dispatcher::with_default(&subscriber, || {
         openai_writer().write_request(crate::codec::test_host::HOST, &audio_req("audio/ogg"))
     });
     assert!(
@@ -72,8 +72,10 @@ fn unsupported_audio_mime_dropped_with_warn_not_invalid_format() {
         "an unrepresentable audio mime must not emit an off-enum format: {out}"
     );
     assert!(
-        cap.contains("dropping audio attachment on OpenAI Chat egress"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("dropping audio attachment on OpenAI Chat egress")),
         "the drop must warn: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }

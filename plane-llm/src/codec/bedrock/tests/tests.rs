@@ -1,5 +1,6 @@
 use super::*;
 use crate::codec::ir::IrUsage;
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 #[test]
 fn stop_reason_reverse_never_leaks_foreign_tokens() {
@@ -4412,16 +4413,14 @@ fn test_bedrock_tool_choice_specific_tool() {
 /// `toolChoice.tool` (force a SPECIFIC tool) is documented Anthropic-Claude-only on
 #[test]
 fn bedrock_specific_tool_choice_warns_it_is_claude_only() {
-    use busbar_test_kit::warn_capture::WarnCapture;
-
     let req = tool_choice_req(Some(crate::codec::ir::IrToolChoice::Tool {
         name: "get_weather".to_string(),
     }));
     let writer = BedrockWriter;
 
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
-    let out = tracing::subscriber::with_default(subscriber, || {
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
+    let out = tracing::dispatcher::with_default(&subscriber, || {
         writer.write_request(crate::codec::test_host::HOST, &req)
     });
 
@@ -4432,9 +4431,11 @@ fn bedrock_specific_tool_choice_warns_it_is_claude_only() {
     assert_eq!(tc, &serde_json::json!({"tool": {"name": "get_weather"}}));
 
     assert!(
-        cap.contains("Claude-only"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("Claude-only")),
         "emitting toolChoice.tool must warn that it is Claude-only on Bedrock: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
@@ -4760,8 +4761,8 @@ fn test_same_protocol_cache_point_no_double_emit() {
 #[test]
 fn test_malformed_media_type_warns_and_drops() {
     for mt in ["image/", "garbage", "image/bmp", "image/svg+xml"] {
-        let cap = busbar_test_kit::warn_capture::WarnCapture::default();
-        let block = tracing::subscriber::with_default(cap.clone(), || {
+        let (cap, cap_subscriber) = warnings();
+        let block = tracing::dispatcher::with_default(&cap_subscriber, || {
             bedrock_image_block(&crate::codec::ir::IrImageSource::Base64 {
                 media_type: mt.to_string(),
                 data: ("QQ==").to_string(),
@@ -4769,10 +4770,13 @@ fn test_malformed_media_type_warns_and_drops() {
         });
         assert!(block.is_none(), "{mt:?} must be dropped, got {block:?}");
         assert_eq!(
-            cap.count("dropping image block on Bedrock egress"),
+            diagnostic_texts(&cap)
+                .iter()
+                .filter(|event| event.contains("dropping image block on Bedrock egress"))
+                .count(),
             1,
             "{mt:?}: one warn: {:?}",
-            cap.messages()
+            diagnostic_texts(&cap)
         );
     }
 

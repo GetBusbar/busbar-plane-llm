@@ -1,5 +1,6 @@
 use super::*;
 use crate::codec::ir::StreamDecodeState;
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 #[test]
 fn buffered_provider_generation_errors_remain_failed_in_responses() {
@@ -784,8 +785,6 @@ fn refusal_events_respect_existing_block_limit_and_tool_collision() {
 /// An `input_file` content block (a legitimate Responses input shape) must not
 #[test]
 fn responses_input_file_degrades_with_warn_not_silent_drop() {
-    use busbar_test_kit::warn_capture::WarnCapture;
-
     let body = serde_json::json!({
         "input": [{
             "type": "message",
@@ -798,9 +797,9 @@ fn responses_input_file_degrades_with_warn_not_silent_drop() {
         }]
     });
 
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
-    let ir = tracing::subscriber::with_default(subscriber, || {
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
+    let ir = tracing::dispatcher::with_default(&subscriber, || {
         ResponsesReader.read_request(&body).expect("read_request")
     });
 
@@ -824,9 +823,9 @@ fn responses_input_file_degrades_with_warn_not_silent_drop() {
         ir.messages[0].content[1]
     );
 
-    let cap2 = WarnCapture::default();
-    let sub2 = cap2.clone();
-    let ir2 = tracing::subscriber::with_default(sub2, || {
+    let (cap2, cap2_subscriber) = warnings();
+    let sub2 = cap2_subscriber.clone();
+    let ir2 = tracing::dispatcher::with_default(&sub2, || {
         ResponsesReader
             .read_request(&serde_json::json!({
                 "model": "gpt-4.1",
@@ -846,9 +845,11 @@ fn responses_input_file_degrades_with_warn_not_silent_drop() {
         ir2.messages[0].content
     );
     assert!(
-        !cap2.contains("some_future_part"),
+        !diagnostic_texts(&cap2)
+            .iter()
+            .any(|event| event.contains("some_future_part")),
         "the read is not a translate attempt: {:?}",
-        cap2.messages()
+        diagnostic_texts(&cap2)
     );
 }
 
@@ -6241,10 +6242,9 @@ fn reasoning_input_item_round_trips_through_request() {
     });
 
     let ir = {
-        use busbar_test_kit::warn_capture::WarnCapture;
-        let cap = WarnCapture::default();
-        let subscriber = cap.clone();
-        tracing::subscriber::with_default(subscriber, || {
+        let (cap, cap_subscriber) = warnings();
+        let subscriber = cap_subscriber.clone();
+        tracing::dispatcher::with_default(&subscriber, || {
             let reader = ResponsesReader;
             reader.read_request(&body).expect("read_request")
         })
@@ -7647,8 +7647,6 @@ fn cross_protocol_egress_into_responses_emits_content_part_bracket() {
 /// A `developer`/`system` item AFTER an earlier conversational turn is still hoisted
 #[test]
 fn mid_conversation_developer_item_is_flagged() {
-    use busbar_test_kit::warn_capture::WarnCapture;
-
     let body = serde_json::json!({
         "input": [
             {"type": "message", "role": "user", "content": "hi"},
@@ -7658,9 +7656,9 @@ fn mid_conversation_developer_item_is_flagged() {
         ]
     });
 
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
-    let ir = tracing::subscriber::with_default(subscriber, || {
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
+    let ir = tracing::dispatcher::with_default(&subscriber, || {
         ResponsesReader.read_request(&body).expect("read_request")
     });
 
@@ -7673,17 +7671,17 @@ fn mid_conversation_developer_item_is_flagged() {
         ir.system
     );
     assert!(
-        cap.contains("appeared AFTER an earlier conversational turn"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("appeared AFTER an earlier conversational turn")),
         "a developer/system item after a conversational turn must warn about the hoist: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
 /// Negative half (REGRESSION PROOF): a `developer`/`system` item BEFORE any conversational turn is
 #[test]
 fn leading_developer_item_does_not_warn() {
-    use busbar_test_kit::warn_capture::WarnCapture;
-
     let body = serde_json::json!({
         "input": [
             {"type": "message", "role": "developer", "content": "be terse"},
@@ -7691,16 +7689,18 @@ fn leading_developer_item_does_not_warn() {
         ]
     });
 
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
-    let _ir = tracing::subscriber::with_default(subscriber, || {
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
+    let _ir = tracing::dispatcher::with_default(&subscriber, || {
         ResponsesReader.read_request(&body).expect("read_request")
     });
 
     assert!(
-        !cap.contains("appeared AFTER an earlier conversational turn"),
+        !diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("appeared AFTER an earlier conversational turn")),
         "a leading developer item must not warn: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 

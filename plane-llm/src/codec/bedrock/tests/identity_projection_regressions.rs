@@ -1,5 +1,6 @@
 use super::*;
-use busbar_test_kit::warn_capture::WarnCapture;
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
+
 use serde_json::json;
 #[test]
 fn search_source_without_coordinates_never_invents_web_or_index() {
@@ -16,12 +17,15 @@ fn search_source_without_coordinates_never_invents_web_or_index() {
             end_index: end,
             ..Default::default()
         };
-        let cap = WarnCapture::default();
-        let out =
-            tracing::subscriber::with_default(cap.clone(), || write_bedrock_citation(&citation))
-                .unwrap();
+        let (cap, cap_subscriber) = warnings();
+        let out = tracing::dispatcher::with_default(&cap_subscriber, || {
+            write_bedrock_citation(&citation)
+        })
+        .unwrap();
         assert_eq!(out, json!({"source":"opaque:source#7"}));
-        assert!(!cap.contains("union"));
+        assert!(!diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("union")));
     }
 }
 #[test]
@@ -41,11 +45,17 @@ fn direct_image_writer_warns_truthful_path_without_url_value() {
         url: Some("https://private.invalid/SECRET".into()),
         ..Default::default()
     });
-    let cap = WarnCapture::default();
-    tracing::subscriber::with_default(cap.clone(), || handler::write_image_response(&response));
-    assert!(cap.contains("ir.images[].url"));
-    assert!(cap.contains("native image source metadata is unavailable"));
-    assert!(!cap.contains("SECRET"));
+    let (cap, cap_subscriber) = warnings();
+    tracing::dispatcher::with_default(&cap_subscriber, || handler::write_image_response(&response));
+    assert!(diagnostic_texts(&cap)
+        .iter()
+        .any(|event| event.contains("ir.images[].url")));
+    assert!(diagnostic_texts(&cap)
+        .iter()
+        .any(|event| event.contains("native image source metadata is unavailable")));
+    assert!(!diagnostic_texts(&cap)
+        .iter()
+        .any(|event| event.contains("SECRET")));
 }
 
 #[test]

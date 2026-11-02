@@ -6,20 +6,21 @@
 use super::tests::{prep, translate as translate_body};
 use crate::codec::proto_codec::protocol_for;
 use crate::codec::translate::{TranslateCodec as _, TranslateReqInput};
+use crate::codec_diagnostics::{diagnostic_texts, warnings, DiagnosticEvents};
 use busbar_contract::operation::OpVerb;
-use busbar_test_kit::warn_capture::WarnCapture;
+
 use serde_json::{json, Value};
 
 /// Translate `body` from `ingress` onto `egress`: what the seam audits, and the warns.
-fn translate(ingress: &str, egress: &str, body: &Value) -> (Vec<String>, WarnCapture) {
+fn translate(ingress: &str, egress: &str, body: &Value) -> (Vec<String>, DiagnosticEvents) {
     let _ = protocol_for(ingress);
     let handler = crate::codec::decl_of(ingress)
         .and_then(|d| d.handler)
         .and_then(|h| h.operation_handler(OpVerb::CHAT))
         .expect("a chat handler");
     let prep = prep(ingress);
-    let cap = WarnCapture::default();
-    let out = tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    let out = tracing::dispatcher::with_default(&cap_subscriber, || {
         handler.translate_request(
             crate::codec::test_host::HOST,
             TranslateReqInput::Json(body),
@@ -35,7 +36,7 @@ fn translate(ingress: &str, egress: &str, body: &Value) -> (Vec<String>, WarnCap
 }
 
 /// Translate the far end's answer `body` (`egress`) for a caller of `ingress`: the audit rows and
-fn answer(egress: &str, ingress: &str, body: &Value) -> (Vec<String>, WarnCapture) {
+fn answer(egress: &str, ingress: &str, body: &Value) -> (Vec<String>, DiagnosticEvents) {
     let _ = protocol_for(egress);
     let ctx = crate::exchange::reply::whole::WholeCtx {
         ingress,
@@ -50,23 +51,29 @@ fn answer(egress: &str, ingress: &str, body: &Value) -> (Vec<String>, WarnCaptur
         translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let bytes = serde_json::to_vec(body).unwrap();
-    let cap = WarnCapture::default();
-    let whole = tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    let whole = tracing::dispatcher::with_default(&cap_subscriber, || {
         crate::exchange::reply::whole::translate(crate::codec::test_host::HOST, &ctx, 200, &bytes)
     });
     (whole.dropped, cap)
 }
 
 /// The one captured warn that carries exactly `path=<path>` and contains `text`.
-fn warn_of(cap: &WarnCapture, path: &str, text: &str) -> Option<String> {
+fn warn_of(cap: &DiagnosticEvents, path: &str, text: &str) -> Option<String> {
     let field = format!("path={path}");
-    cap.messages()
+    diagnostic_texts(&cap)
         .into_iter()
         .find(|m| m.contains(text) && m.split_whitespace().any(|w| w == field))
 }
 
 /// The writer's drop is audited as `path` and warned once on the drop path with `diag`, keeping the
-fn on_the_drop_path(audited: &[String], cap: &WarnCapture, path: &str, diag: &str, text: &str) {
+fn on_the_drop_path(
+    audited: &[String],
+    cap: &DiagnosticEvents,
+    path: &str,
+    diag: &str,
+    text: &str,
+) {
     assert!(
         audited.iter().any(|a| a == path),
         "the writer's drop is audited as `{path}`: {audited:?}"
@@ -74,7 +81,7 @@ fn on_the_drop_path(audited: &[String], cap: &WarnCapture, path: &str, diag: &st
     let warn = warn_of(cap, path, text).unwrap_or_else(|| {
         panic!(
             "one drop-path warn names `{path}` with the writer's text `{text}`: {:?}",
-            cap.messages()
+            diagnostic_texts(&cap)
         )
     });
     assert!(
@@ -82,10 +89,13 @@ fn on_the_drop_path(audited: &[String], cap: &WarnCapture, path: &str, diag: &st
         "the drop-path warn carries {diag}: {warn}"
     );
     assert_eq!(
-        cap.messages().iter().filter(|m| m.contains(text)).count(),
+        diagnostic_texts(&cap)
+            .iter()
+            .filter(|m| m.contains(text))
+            .count(),
         1,
         "the writer's warn is said once, on the drop path: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
@@ -232,17 +242,30 @@ fn outside_an_attempt_the_writers_own_warn_is_said() {
         parallel_tool_calls: Some(true),
         ..Default::default()
     };
-    let cap = WarnCapture::default();
+    let (cap, cap_subscriber) = warnings();
     let writer = crate::codec::gemini::GeminiWriter;
-    tracing::subscriber::with_default(cap.clone(), || {
+    tracing::dispatcher::with_default(&cap_subscriber, || {
         writer.write_request(crate::codec::test_host::HOST, &ir)
     });
     let text = "dropping parallel_tool_calls on Gemini egress";
-    assert_eq!(cap.count(text), 1, "{:?}", cap.messages());
+    assert_eq!(
+        diagnostic_texts(&cap)
+            .iter()
+            .filter(|event| event.contains(text))
+            .count(),
+        1,
+        "{:?}",
+        diagnostic_texts(&cap)
+    );
     assert!(
-        !cap.contains("path=") && !cap.contains("diag="),
+        !diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("path="))
+            && !diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains("diag=")),
         "no drop-path fields outside an attempt: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
@@ -479,7 +502,7 @@ fn a_request_readers_unknown_modality_is_on_the_drop_path() {
 /// An ANSWER reader's drop: audited as `path` and warned once on the drop path with `diag`. (The
 fn on_the_answer_drop_path(
     audited: &[String],
-    cap: &WarnCapture,
+    cap: &DiagnosticEvents,
     path: &str,
     diag: &str,
     text: &str,
@@ -488,12 +511,16 @@ fn on_the_answer_drop_path(
         audited.iter().any(|a| a == path),
         "the reader's drop is audited as `{path}`: {audited:?}"
     );
-    let on_path: Vec<String> = cap
-        .messages()
+    let on_path: Vec<String> = diagnostic_texts(&cap)
         .into_iter()
         .filter(|m| m.contains(text) && m.split_whitespace().any(|w| w == format!("path={path}")))
         .collect();
-    assert_eq!(on_path.len(), 1, "one drop-path warn: {:?}", cap.messages());
+    assert_eq!(
+        on_path.len(),
+        1,
+        "one drop-path warn: {:?}",
+        diagnostic_texts(&cap)
+    );
     assert!(
         on_path[0].contains(&format!("diag={diag}")),
         "{}",
@@ -644,7 +671,9 @@ fn text_only_tool_writers_report_the_actual_child_and_preserve_adjacent_text() {
         assert_eq!(wire["messages"][0]["role"], "tool", "{egress}: {wire}");
         let (control, paths, warnings) = translate_body("responses", egress, &text_only);
         assert!(paths.is_empty(), "{egress}: {paths:?}");
-        assert!(!warnings.contains("dropping non-text block inside a tool result"));
+        assert!(!diagnostic_texts(&warnings)
+            .iter()
+            .any(|event| event.contains("dropping non-text block inside a tool result")));
         assert_eq!(wire["messages"], control["messages"]);
     }
 }
@@ -668,7 +697,7 @@ fn cohere_bounds_cross_dialect(parameter: &str, cases: &[(f64, f64)]) {
         let (wire, audited, cap) = translate_body("openai", "cohere", &body);
         assert_eq!(wire, cohere_bounds_wire(parameter, clamped), "{body}");
         assert_eq!(audited, [parameter], "{body}");
-        let warnings = cap.messages();
+        let warnings = diagnostic_texts(&cap);
         assert_eq!(warnings.len(), 1, "{body}: {warnings:?}");
         let warning = &warnings[0];
         for field in [
@@ -717,7 +746,11 @@ fn cohere_bounds_valid_endpoints_interior_and_absence_do_not_warn_or_audit() {
             let (wire, audited, cap) = translate_body("openai", "cohere", &body);
             assert_eq!(wire, cohere_bounds_wire(parameter, requested), "{body}");
             assert!(audited.is_empty(), "{body}: {audited:?}");
-            assert!(cap.messages().is_empty(), "{body}: {:?}", cap.messages());
+            assert!(
+                diagnostic_texts(&cap).is_empty(),
+                "{body}: {:?}",
+                diagnostic_texts(&cap)
+            );
         }
     }
     let body = json!({"model":"m", "max_tokens":16,
@@ -728,7 +761,11 @@ fn cohere_bounds_valid_endpoints_interior_and_absence_do_not_warn_or_audit() {
         json!({"max_tokens":16, "messages":[{"role":"user", "content":"hi"}]})
     );
     assert!(audited.is_empty(), "{audited:?}");
-    assert!(cap.messages().is_empty(), "{:?}", cap.messages());
+    assert!(
+        diagnostic_texts(&cap).is_empty(),
+        "{:?}",
+        diagnostic_texts(&cap)
+    );
 }
 
 #[test]
@@ -745,15 +782,15 @@ fn cohere_bounds_direct_writer_diagnostics_name_the_actual_parameter_and_values(
                 .reader()
                 .read_request(&body)
                 .unwrap();
-            let cap = WarnCapture::default();
-            let wire = tracing::subscriber::with_default(cap.clone(), || {
+            let (cap, cap_subscriber) = warnings();
+            let wire = tracing::dispatcher::with_default(&cap_subscriber, || {
                 protocol_for("cohere")
                     .unwrap()
                     .writer()
                     .write_request(crate::codec::test_host::HOST, &ir)
             });
             assert_eq!(wire, cohere_bounds_wire(parameter, clamped), "{body}");
-            let warnings = cap.messages();
+            let warnings = diagnostic_texts(&cap);
             assert_eq!(warnings.len(), 1, "{body}: {warnings:?}");
             let warning = &warnings[0];
             for field in [
@@ -776,15 +813,15 @@ fn cohere_bounds_temperature_diagnostic_keeps_its_compatibility_fields() {
         .reader()
         .read_request(&body)
         .unwrap();
-    let cap = WarnCapture::default();
-    let wire = tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    let wire = tracing::dispatcher::with_default(&cap_subscriber, || {
         protocol_for("cohere")
             .unwrap()
             .writer()
             .write_request(crate::codec::test_host::HOST, &ir)
     });
     assert_eq!(wire, cohere_bounds_wire("temperature", 1.0));
-    let warnings = cap.messages();
+    let warnings = diagnostic_texts(&cap);
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     for field in [
         "parameter=temperature",
@@ -808,8 +845,8 @@ fn cohere_bounds_other_temperature_rows_keep_legacy_diagnostic_fields() {
         .read_request(&body)
         .unwrap();
     for dialect in ["anthropic", "bedrock"] {
-        let cap = WarnCapture::default();
-        let wire = tracing::subscriber::with_default(cap.clone(), || {
+        let (cap, cap_subscriber) = warnings();
+        let wire = tracing::dispatcher::with_default(&cap_subscriber, || {
             protocol_for(dialect)
                 .unwrap()
                 .writer()
@@ -821,7 +858,7 @@ fn cohere_bounds_other_temperature_rows_keep_legacy_diagnostic_fields() {
             &wire["temperature"]
         };
         assert_eq!(temperature, &json!(1.0), "{dialect}: {wire}");
-        let warnings = cap.messages();
+        let warnings = diagnostic_texts(&cap);
         assert_eq!(warnings.len(), 1, "{dialect}: {warnings:?}");
         for field in ["requested_temperature=1.8", "clamped_temperature=1"] {
             assert!(
@@ -856,7 +893,7 @@ fn cohere_bounds_gemini_top_p_is_audited_by_the_callers_wire_path() {
         "BUSBAR-7085",
         "Cohere",
     );
-    let warnings = cap.messages();
+    let warnings = diagnostic_texts(&cap);
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     for text in [
         "[0.01, 0.99]",
@@ -884,11 +921,15 @@ fn cohere_bounds_same_dialect_request_relay_preserves_native_bytes() {
         caps: Default::default(),
         path_base: None,
     };
-    let cap = WarnCapture::default();
-    let relayed = tracing::subscriber::with_default(cap.clone(), || {
+    let (cap, cap_subscriber) = warnings();
+    let relayed = tracing::dispatcher::with_default(&cap_subscriber, || {
         crate::exchange::attempt::relay_request(far, "application/json", bytes)
     });
     assert_eq!(relayed.bytes.as_ref(), bytes);
     assert!(relayed.pristine);
-    assert!(cap.messages().is_empty(), "{:?}", cap.messages());
+    assert!(
+        diagnostic_texts(&cap).is_empty(),
+        "{:?}",
+        diagnostic_texts(&cap)
+    );
 }

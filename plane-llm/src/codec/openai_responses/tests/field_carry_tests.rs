@@ -4,7 +4,7 @@
 //! FIELD-COVERAGE CARRY INSTRUMENTS for the `responses` (OpenAI Responses API) dialect.
 
 use super::*;
-use busbar_test_kit::warn_capture::WarnCapture;
+use crate::codec_diagnostics::{diagnostic_texts, warnings, DiagnosticEvents};
 
 fn read_req(body: &serde_json::Value) -> crate::codec::ir::IrRequest {
     ResponsesReader
@@ -90,10 +90,10 @@ fn text_block(text: &str) -> crate::codec::ir::IrBlock {
 }
 
 /// Run `f` with a warn-capturing subscriber and return whatever it produced plus the capture.
-fn with_warns<T>(f: impl FnOnce() -> T) -> (T, WarnCapture) {
-    let cap = WarnCapture::default();
-    let sub = cap.clone();
-    let out = tracing::subscriber::with_default(sub, f);
+fn with_warns<T>(f: impl FnOnce() -> T) -> (T, DiagnosticEvents) {
+    let (cap, cap_subscriber) = warnings();
+    let sub = cap_subscriber.clone();
+    let out = tracing::dispatcher::with_default(&sub, f);
     (out, cap)
 }
 
@@ -369,9 +369,11 @@ fn responses_request_input_image_detail_carried() {
         ir.messages
     );
     assert!(
-        cap.contains("detail"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("detail")),
         "dropping an unknown input_image.detail must warn, naming the field: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
@@ -525,9 +527,11 @@ fn responses_request_reasoning_id_dropped_with_warn() {
         ir.messages
     );
     assert!(
-        cap.contains("rs_carrytest_1"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("rs_carrytest_1")),
         "dropping reasoning-item id must warn, naming the id: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
@@ -932,9 +936,11 @@ fn responses_response_hosted_tool_item_dropped_with_warn() {
         "a web_search_call is carried as the hosted web-search record: {ir:?}"
     );
     assert!(
-        cap.contains("file_search_call"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("file_search_call")),
         "dropping a file_search_call output item must warn, naming the type: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
@@ -958,14 +964,18 @@ fn responses_response_instructions_metadata_dropped_with_warn() {
     });
 
     assert!(
-        cap.contains("instructions"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("instructions")),
         "dropping the response instructions echo must warn: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
     assert!(
-        cap.contains("metadata"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("metadata")),
         "dropping the response metadata echo must warn: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
@@ -1355,9 +1365,11 @@ fn responses_drops_penalties_seed_n_observably() {
     let (_out, cap) = with_warns(|| write_req(&ir));
     for field in ["frequency_penalty", "presence_penalty", "seed", "n"] {
         assert!(
-            cap.contains(field),
+            diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains(field)),
             "dropping {field} on Responses egress must warn: {:?}",
-            cap.messages()
+            diagnostic_texts(&cap)
         );
     }
 

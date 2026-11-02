@@ -1,4 +1,5 @@
 use super::*;
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 #[test]
 fn buffered_annotations_index_content_without_refusal_text() {
@@ -1414,17 +1415,15 @@ fn read_request_preserves_sampling_params_in_extra() {
 /// `reasoning_effort` values the IR has no word for (a spelling newer than this build) must NOT be
 #[test]
 fn unknown_reasoning_effort_survives_in_extra() {
-    use busbar_test_kit::warn_capture::WarnCapture;
-
     let body = serde_json::json!({
         "model": "gpt-5",
         "messages": [{ "role": "user", "content": "hi" }],
         "reasoning_effort": "ultra"
     });
 
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
-    let ir = tracing::subscriber::with_default(subscriber, || {
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
+    let ir = tracing::dispatcher::with_default(&subscriber, || {
         OpenAiReader.read_request(&body).expect("parses")
     });
 
@@ -1439,9 +1438,11 @@ fn unknown_reasoning_effort_survives_in_extra() {
         ir.extra
     );
     assert!(
-        cap.contains("ultra"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("ultra")),
         "the unrecognised value must be warned about: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 
     let out = openai_writer().write_request(crate::codec::test_host::HOST, &ir);
@@ -4846,8 +4847,6 @@ fn write_response_omits_annotations_when_there_are_no_citations() {
 /// `image_url.detail` is carried in the Image block's typed slot (IR-08) — `high` reaches the IR
 #[test]
 fn image_detail_is_carried_and_only_an_unknown_word_warns() {
-    use busbar_test_kit::warn_capture::WarnCapture;
-
     let body = |detail: &str| {
         serde_json::json!({
             "model": "gpt-4o",
@@ -4860,9 +4859,9 @@ fn image_detail_is_carried_and_only_an_unknown_word_warns() {
             }]
         })
     };
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
-    let ir = tracing::subscriber::with_default(subscriber, || {
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
+    let ir = tracing::dispatcher::with_default(&subscriber, || {
         OpenAiReader.read_request(&body("high")).expect("parses")
     });
     assert!(
@@ -4876,24 +4875,32 @@ fn image_detail_is_carried_and_only_an_unknown_word_warns() {
         "{:?}",
         ir.messages[0].content
     );
-    assert!(!cap.contains("detail"), "{:?}", cap.messages());
+    assert!(
+        !diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("detail")),
+        "{:?}",
+        diagnostic_texts(&cap)
+    );
     let out = openai_writer().write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(
         out["messages"][0]["content"][0]["image_url"]["detail"],
         serde_json::json!("high")
     );
 
-    let cap2 = WarnCapture::default();
-    let subscriber2 = cap2.clone();
-    let _ir2 = tracing::subscriber::with_default(subscriber2, || {
+    let (cap2, cap2_subscriber) = warnings();
+    let subscriber2 = cap2_subscriber.clone();
+    let _ir2 = tracing::dispatcher::with_default(&subscriber2, || {
         OpenAiReader
             .read_request(&body("original"))
             .expect("parses")
     });
     assert!(
-        cap2.contains("detail"),
+        diagnostic_texts(&cap2)
+            .iter()
+            .any(|event| event.contains("detail")),
         "an unknown detail word must warn on drop: {:?}",
-        cap2.messages()
+        diagnostic_texts(&cap2)
     );
 }
 
@@ -5126,8 +5133,6 @@ fn response_blank_tool_call_id_is_synthesized() {
 
 #[test]
 fn openai_write_drops_thinking_observably() {
-    use busbar_test_kit::warn_capture::WarnCapture;
-
     let resp = crate::codec::ir::IrResponse {
         content: vec![
             IrBlock::Thinking {
@@ -5151,9 +5156,9 @@ fn openai_write_drops_thinking_observably() {
         ..Default::default()
     };
 
-    let cap = WarnCapture::default();
-    let sub = cap.clone();
-    let out = tracing::subscriber::with_default(sub, || {
+    let (cap, cap_subscriber) = warnings();
+    let sub = cap_subscriber.clone();
+    let out = tracing::dispatcher::with_default(&sub, || {
         openai_writer().write_response(crate::codec::test_host::HOST, &resp)
     });
 
@@ -5163,9 +5168,14 @@ fn openai_write_drops_thinking_observably() {
         "reasoning text must not leak onto the OpenAI wire: {out}"
     );
     assert!(
-        cap.contains("thinking") || cap.contains("reasoning"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("thinking"))
+            || diagnostic_texts(&cap)
+                .iter()
+                .any(|event| event.contains("reasoning")),
         "dropping a thinking block on OpenAI egress must warn: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
@@ -5200,8 +5210,6 @@ fn response_object_tool_arguments_preserved() {
 
 #[test]
 fn response_array_content_image_drop_warns() {
-    use busbar_test_kit::warn_capture::WarnCapture;
-
     let body = serde_json::json!({
         "id": "chatcmpl-x", "object": OBJ_COMPLETION, "created": 1u64, "model": "gpt-4o",
         "choices": [{
@@ -5214,9 +5222,9 @@ fn response_array_content_image_drop_warns() {
         }],
         "usage": {"prompt_tokens": 1, "completion_tokens": 1}
     });
-    let cap = WarnCapture::default();
-    let sub = cap.clone();
-    let ir = tracing::subscriber::with_default(sub, || {
+    let (cap, cap_subscriber) = warnings();
+    let sub = cap_subscriber.clone();
+    let ir = tracing::dispatcher::with_default(&sub, || {
         OpenAiReader
             .read_response(crate::codec::test_host::HOST, &body)
             .expect("read_response")
@@ -5228,9 +5236,11 @@ fn response_array_content_image_drop_warns() {
         .iter()
         .any(|b| matches!(b, IrBlock::Image { .. })));
     assert!(
-        cap.contains("image"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("image")),
         "dropping an image response part must warn: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 

@@ -4,6 +4,7 @@
 //! Tests for `crates/busbar/src/handlers/openai.rs`.
 
 use super::*;
+use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 #[test]
 fn no_cell_lookup() {
@@ -114,15 +115,13 @@ fn embeddings_base64_encoding_format_survives_to_openai_egress() {
 
 #[test]
 fn embeddings_write_request_warns_on_dropped_non_text_input() {
-    use busbar_test_kit::warn_capture::WarnCapture;
-
     let ir = crate::codec::ir::embeddings::EmbeddingsReq {
         input: crate::codec::ir::embeddings::EmbInput::Tokens(vec![vec![1, 2, 3]]),
         ..Default::default()
     };
-    let cap = WarnCapture::default();
-    let subscriber = cap.clone();
-    let out = tracing::subscriber::with_default(subscriber, || {
+    let (cap, cap_subscriber) = warnings();
+    let subscriber = cap_subscriber.clone();
+    let out = tracing::dispatcher::with_default(&subscriber, || {
         super::super::super::leaf_codec::embeddings_write_request("openai", &ir)
     });
 
@@ -130,9 +129,11 @@ fn embeddings_write_request_warns_on_dropped_non_text_input() {
     assert_eq!(v["input"], serde_json::json!([]));
 
     assert!(
-        cap.contains("dropping a non-text embeddings input"),
+        diagnostic_texts(&cap)
+            .iter()
+            .any(|event| event.contains("dropping a non-text embeddings input")),
         "a dropped non-text embeddings input must warn: {:?}",
-        cap.messages()
+        diagnostic_texts(&cap)
     );
 }
 
