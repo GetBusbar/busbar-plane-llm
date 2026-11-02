@@ -9,7 +9,7 @@
 
 use busbar_contract::protocol::{APPLICATION_JSON, EGRESS_UA_DEFAULT};
 
-use super::attempt::{wire_and_canonical_path, FarRequest};
+use super::attempt::{default_head_fields, wire_and_canonical_path, with_option_query, FarRequest};
 use super::decl;
 use super::shaping::Lane;
 
@@ -56,16 +56,12 @@ pub fn request(host: &dyn busbar_contract::codec::CodecHost, lane: &Lane) -> Opt
         body
     };
     let (target, _canonical) = wire_and_canonical_path(&path);
+    let target = with_option_query(lane, &target);
     let user_agent = decl(lane.dialect).map_or(EGRESS_UA_DEFAULT, |d| d.egress_user_agent);
     // The lane's declared static fields first, as an organic request of the lane writes them
     // (`attempt::head_fields`): a far end that requires its version field answers a probe that
     // lacks it with a 400, which the breaker would read as the lane's health.
-    let mut fields: Vec<(String, Vec<u8>)> = lane
-        .statics
-        .iter()
-        .map(|(n, v)| ((*n).to_string(), v.as_bytes().to_vec()))
-        .collect();
-    fields.extend([
+    let (mut fields, forced) = default_head_fields(lane, [
         (
             "content-type".to_string(),
             APPLICATION_JSON.as_bytes().to_vec(),
@@ -73,6 +69,7 @@ pub fn request(host: &dyn busbar_contract::codec::CodecHost, lane: &Lane) -> Opt
         ("user-agent".to_string(), user_agent.as_bytes().to_vec()),
         ("accept".to_string(), APPLICATION_JSON.as_bytes().to_vec()),
     ]);
+    fields.extend(forced);
     Some(FarRequest {
         verb: "POST",
         target,

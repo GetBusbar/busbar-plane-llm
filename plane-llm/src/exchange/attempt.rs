@@ -603,6 +603,25 @@ pub fn option_fields(lane: &Lane) -> (Vec<HeadField>, Vec<HeadField>) {
     (pairs(defaults), pairs(forced))
 }
 
+/// Native static fields and option defaults, followed by the separately returned forced options.
+/// Organic requests overlay caller values before appending the forced fields; probes have no
+/// caller overlay. Both use the same provider version/tenant settings and field order.
+pub(crate) fn default_head_fields(
+    lane: &Lane,
+    standard: [HeadField; 3],
+) -> (Vec<HeadField>, Vec<HeadField>) {
+    let (defaults, forced) = option_fields(lane);
+    let mut fields: Vec<HeadField> = lane.statics.iter().map(|(n, v)| {
+        let value = defaults.iter().find(|(d, _)| n.eq_ignore_ascii_case(d))
+            .map_or_else(|| v.as_bytes().to_vec(), |(_, d)| d.clone());
+        ((*n).to_string(), value)
+    }).collect();
+    fields.extend(standard);
+    fields.extend(defaults.into_iter()
+        .filter(|(d, _)| !lane.statics.iter().any(|(n, _)| n.eq_ignore_ascii_case(d))));
+    (fields, forced)
+}
+
 /// The target with the provider's static query options for `lane` ([`crate::options`]): a default is
 /// added unless the target already has the name (a same-dialect caller's value, or busbar's stream
 /// framing); a forced one replaces any value the target carries. A far end that checks a request
@@ -713,30 +732,13 @@ fn head_fields(
     // The provider's static options: its defaults, which a same-dialect caller's own value
     // replaces below, and its forced ones (tenant and billing selectors), which go out last on
     // every route, the caller's being governed.
-    let (defaults, forced) = option_fields(lane);
     // A native client's user-agent, never a UA-less request; a same-dialect
     // caller's own replaces it below.
     let user_agent = ("user-agent".to_string(), user_agent.as_bytes().to_vec());
     // The dialect's declared static fields first; a same-dialect caller's own value replaces one below.
     // An operator's default of a static field's name (`anthropic-version`) replaces the declared
     // value in place.
-    let mut fields: Vec<(String, Vec<u8>)> = lane
-        .statics
-        .iter()
-        .map(|(n, v)| {
-            let value = defaults
-                .iter()
-                .find(|(d, _)| n.eq_ignore_ascii_case(d))
-                .map_or_else(|| v.as_bytes().to_vec(), |(_, d)| d.clone());
-            ((*n).to_string(), value)
-        })
-        .collect();
-    fields.extend([content_type, user_agent, accept]);
-    fields.extend(
-        defaults
-            .into_iter()
-            .filter(|(d, _)| !lane.statics.iter().any(|(n, _)| n.eq_ignore_ascii_case(d))),
-    );
+    let (mut fields, forced) = default_head_fields(lane, [content_type, user_agent, accept]);
     if arrived.dialect != egress {
         fields.extend(forced);
         return Ok(fields);

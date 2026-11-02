@@ -208,3 +208,45 @@ fn a_probe_carries_the_lanes_static_fields_as_organic_traffic_does() {
         "an api-key override's declaration carries no static field"
     );
 }
+
+#[test]
+fn probes_apply_the_same_provider_options_as_organic_requests() {
+    use busbar_plane_llm::exchange::{arrive::arrive, attempt::build};
+    use busbar_plane_llm::options::Place;
+    let shaping = Shaping::from_settings(&json!({
+        "providers": {
+            "azure": {"protocol":"openai", "base_url":"https://azure.invalid",
+                "path":"/azure/chat", "api-version":"2024-10-21", "OpenAI-Project":"project-1"},
+            "anthropic": {"protocol":"anthropic", "base_url":"https://anthropic.invalid",
+                "anthropic-version":"2023-01-01", "anthropic-beta":["fixture-beta"]},
+            "google": {"protocol":"gemini", "base_url":"https://google.invalid",
+                "X-Goog-User-Project":"billing-project", "X-Goog-Quota-User":"fixture user"},
+            "aws": {"protocol":"bedrock", "base_url":"https://bedrock-runtime.us-east-1.amazonaws.com",
+                "X-Amzn-Bedrock-GuardrailIdentifier":"guardrail", "X-Amzn-Bedrock-GuardrailVersion":"1"}
+        },
+        "models": {
+            "azure":{"provider":"azure"}, "anthropic":{"provider":"anthropic"},
+            "google":{"provider":"google"}, "invoke":{"provider":"aws","protocol":"bedrock-invoke"}
+        }
+    })).expect("configured native options read");
+    let caller: &[(&[u8], &[u8])] = &[(b"content-type", b"application/json")];
+    for model in ["azure", "anthropic", "google", "invoke"] {
+        let lane = shaping.lane(model).unwrap();
+        let probe = request(HOST, lane).expect("probe");
+        let body = serde_json::to_vec(&json!({"model":model,"max_tokens":5,
+            "messages":[{"role":"user","content":"hi"}]})).unwrap();
+        let arrived = arrive("POST", "/v1/messages", caller, &body, &()).unwrap();
+        let organic = build(HOST, &arrived, caller, &shaping, "", model).unwrap();
+        assert_eq!(probe.target, organic.target, "{model}");
+        for option in lane.options.iter().filter(|o| o.place == Place::Header) {
+            assert_eq!(field_value(&probe, &option.wire), field_value(&organic, &option.wire), "{model}: {}", option.wire);
+        }
+        if model == "anthropic" {
+            assert_eq!(field_value(&probe, "anthropic-version"), b"2023-01-01");
+            assert_eq!(probe.fields.iter().filter(|(n, _)| n == "anthropic-version").count(), 1);
+        }
+        if model == "azure" {
+            assert_eq!(probe.target, "/azure/chat?api-version=2024-10-21");
+        }
+    }
+}
