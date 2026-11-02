@@ -15,6 +15,7 @@ use busbar_contract::codec::{
 };
 use busbar_contract::ir::facts::IrFacts;
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 /// What a request-translation hop reads from: a parsed JSON object `Value` (the value-codec fast
 /// path chat overrides to avoid a re-serialize), or opaque bytes plus content-type (a
@@ -164,25 +165,12 @@ pub trait TranslateCodec: OperationHandler {
                 });
                 let (wire, controls) = written?;
                 // A control is named by the caller's wire path for it, as every other drop is.
-                let mut dropped_controls: Vec<String> = Vec::new();
-                for control in controls {
-                    let path = crate::codec::drops::wire_path(prep.ingress_protocol, control, &[]);
-                    if !dropped_controls.contains(&path) {
-                        dropped_controls.push(path);
-                    }
-                }
-                // A writer's drop of a member a control already names by its value
-                // (`tool_choice=none` for `tool_choice`) is that control's drop, recorded once.
-                for path in dropped {
-                    let named = dropped_controls.iter().any(|c| {
-                        c == &path
-                            || c.strip_prefix(path.as_str())
-                                .is_some_and(|rest| rest.starts_with('='))
-                    });
-                    if !named {
-                        dropped_controls.push(path);
-                    }
-                }
+                let dropped_controls = merge_dropped_paths(
+                    controls.into_iter().map(|control| {
+                        crate::codec::drops::wire_path(prep.ingress_protocol, control, &[])
+                    }),
+                    dropped,
+                );
                 Ok(TranslatedRequest {
                     wire,
                     dropped_controls,
@@ -295,8 +283,42 @@ pub trait TranslateCodec: OperationHandler {
     }
 }
 
+/// Keep controls first and ordinary drops in encounter order. A value-qualified earlier path
+/// (`tool_choice=none`) also names its unqualified drop (`tool_choice`), in that direction only.
+fn merge_dropped_paths(
+    controls: impl IntoIterator<Item = String>,
+    dropped: Vec<String>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut named = BTreeSet::new();
+    for path in controls {
+        if named.insert(path.clone()) {
+            out.push(path);
+        }
+    }
+    for path in dropped {
+        let prefix = format!("{path}=");
+        // All keys with this prefix are contiguous. Starting at the full prefix also skips
+        // punctuation siblings such as `tool_choice.detail` that cannot name this drop.
+        let covered = named.contains(&path)
+            || named
+                .range(prefix.clone()..)
+                .next()
+                .is_some_and(|prior| prior.starts_with(&prefix));
+        if !covered {
+            named.insert(path.clone());
+            out.push(path);
+        }
+    }
+    out
+}
+
 impl<T: OperationHandler + ?Sized> TranslateCodec for T {}
 
 #[cfg(test)]
 #[path = "tests/egress_wire_tests.rs"]
 mod egress_wire_tests;
+
+#[cfg(test)]
+#[path = "tests/drop_merge_tests.rs"]
+mod drop_merge_tests;
