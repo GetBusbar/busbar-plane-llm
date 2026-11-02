@@ -539,6 +539,18 @@ impl StreamTranslate {
         if st.ingress_eventstream {
             return None;
         }
+        // Synthesis has the same caller-facing controls as a live relay. The response handle
+        // retained the original request, including Responses' echoed members and Chat's opt-in
+        // usage trailer; a fresh writer otherwise silently uses its defaults for both.
+        if let Some(request) = ir.request_echo.as_ref() {
+            st.set_request_echo(request);
+            st.set_client_include_usage(
+                request
+                    .pointer("/stream_options/include_usage")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+            );
+        }
         // The answer has been through the ingress preparation pass, which already reshaped its tool
         // ids to the client's form. Reshaping again strips only one layer on reverse decode, so the
         // client would echo an id the backend never issued. Tell the pipeline they are client-facing.

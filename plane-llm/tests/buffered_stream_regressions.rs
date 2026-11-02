@@ -119,3 +119,75 @@ fn synthesized_tool_arguments_preserve_partial_json_text() {
         assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (9, 3));
     }
 }
+
+fn text_completion() -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "id": "chatcmpl-native", "object": "chat.completion", "model": "model",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "hello"},
+            "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 9, "completion_tokens": 3, "total_tokens": 12}
+    }))
+    .unwrap()
+}
+
+#[test]
+fn synthesized_chat_usage_obeys_the_original_client_opt_in() {
+    let far = text_completion();
+    for include in [false, true] {
+        let request = json!({"model": "model", "stream": true,
+            "stream_options": {"include_usage": include}});
+        let piece = reply(
+            "openai",
+            request,
+            &[(b"content-type", b"application/json")],
+            &far,
+        );
+        assert!(piece.synthesized);
+        let frames = frames(&piece.bytes);
+        let usage: Vec<_> = frames
+            .iter()
+            .filter_map(|frame| frame.get("usage"))
+            .collect();
+        assert_eq!(usage.len(), usize::from(include));
+        if include {
+            assert_eq!(usage[0]["prompt_tokens"], 9);
+            assert_eq!(usage[0]["completion_tokens"], 3);
+        }
+        assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (9, 3));
+    }
+}
+
+#[test]
+fn synthesized_responses_stream_echoes_the_original_request_members() {
+    let far = text_completion();
+    let request = json!({"model": "model", "stream": true, "input": "hi",
+        "instructions": "Be concise", "temperature": 0.2, "top_p": 0.8,
+        "metadata": {"caller": "fixture"}, "parallel_tool_calls": false,
+        "tools": [{"type": "function", "name": "weather", "parameters": {"type": "object"}}],
+        "tool_choice": "auto"});
+    let piece = reply(
+        "responses",
+        request.clone(),
+        &[(b"content-type", b"application/json")],
+        &far,
+    );
+    assert!(piece.synthesized);
+    let frames = frames(&piece.bytes);
+    for kind in ["response.created", "response.completed"] {
+        let frame = frames
+            .iter()
+            .find(|frame| frame["type"] == kind)
+            .expect(kind);
+        for key in [
+            "instructions",
+            "temperature",
+            "top_p",
+            "metadata",
+            "parallel_tool_calls",
+            "tools",
+            "tool_choice",
+        ] {
+            assert_eq!(frame["response"][key], request[key], "{kind}.{key}");
+        }
+    }
+}
