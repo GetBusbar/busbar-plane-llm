@@ -206,8 +206,7 @@ pub(crate) fn multipart_field<'a>(
 ) -> Option<&'a [u8]> {
     transcription_fields(content_type, body)
         .into_iter()
-        .filter(|field| field.name == name)
-        .next_back()
+        .rfind(|field| field.name == name)
         .map(|field| field.value)
 }
 
