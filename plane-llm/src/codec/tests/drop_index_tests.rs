@@ -222,7 +222,16 @@ fn drop_index_full_request_instruction_probe() {
         .parse()
         .expect("integer probe cardinality");
     assert!((1..=100_000).contains(&n));
-    let body = request_with_unknown_keys(n);
+    let mode = std::env::var("BUSBAR_DROP_INDEX_PROBE_KIND").unwrap_or_else(|_| "keys".into());
+    let body = match mode.as_str() {
+        "keys" => request_with_unknown_keys(n),
+        "blocks" => {
+            let mut blocks = vec![json!({"type": "text", "text": "hello"})];
+            blocks.extend((0..n).map(|index| json!({"type": format!("fixture_{index:06}")})));
+            json!({"model": "m", "messages": [{"role": "user", "content": blocks}]})
+        }
+        _ => panic!("probe mode must be keys or blocks"),
+    };
     let encoded = serde_json::to_vec(&body).unwrap();
     assert!(encoded.len() < busbar_contract::transport::DEFAULT_REQUEST_BODY_MAX_BYTES);
     let handler = crate::codec::decl_of("openai")
@@ -249,12 +258,17 @@ fn drop_index_full_request_instruction_probe() {
     };
     assert_eq!(output.dropped_controls.len(), n);
     for (index, path) in output.dropped_controls.iter().enumerate() {
-        assert_eq!(*path, format!("fixture_unknown_{index:06}"));
+        let expected = match mode.as_str() {
+            "keys" => format!("fixture_unknown_{index:06}"),
+            "blocks" => format!("messages[].content[].type=fixture_{index:06}"),
+            _ => unreachable!(),
+        };
+        assert_eq!(*path, expected);
     }
     assert_eq!(warnings.load(Ordering::Relaxed), n);
     assert_eq!(wire["messages"][0]["content"][0]["text"], "hello");
     println!(
-        "probe_keys={n} body_bytes={} warnings={n} audited={n}",
+        "probe_kind={mode} entries={n} body_bytes={} warnings={n} audited={n}",
         encoded.len()
     );
 }
