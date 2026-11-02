@@ -915,7 +915,9 @@ fn read_openai_tool(tool_val: &serde_json::Value) -> Result<crate::codec::ir::Ir
         .get(keys::PARAMETERS)
         .or_else(|| src.get("input_schema"))
         .cloned()
-        .unwrap_or(serde_json::Value::Null);
+        // OpenAI defines omitted parameters as an empty parameter list. Project that absence
+        // as an object schema; present values keep their existing representation unchanged.
+        .unwrap_or_else(|| serde_json::json!({ "type": "object", "properties": {} }));
 
     Ok(crate::codec::ir::IrTool {
         name,
