@@ -1035,3 +1035,7 @@ mod writer_tests;
 #[cfg(test)]
 #[path = "tests/drop_census_tests.rs"]
 mod census_tests;
+
+#[cfg(test)]
+#[path = "tests/drop_index_tests.rs"]
+mod index_tests;
