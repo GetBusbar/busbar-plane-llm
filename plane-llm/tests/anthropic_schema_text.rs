@@ -107,6 +107,32 @@ fn present_openai_schemas_are_preserved_instead_of_normalized_as_absent() {
 }
 
 #[test]
+fn openai_schema_alias_and_parameters_precedence_keep_present_values() {
+    let alias = json!({"type":"object","properties":{"alias":{"type":"boolean"}}});
+    let primary = json!({"type":"object","properties":{"primary":{"type":"string"}}});
+    for (function, expected) in [
+        (json!({"name":"ping","input_schema":alias}), alias.clone()),
+        (json!({"name":"ping","input_schema":null}), Value::Null),
+        (
+            json!({"name":"ping","parameters":primary,"input_schema":alias}),
+            primary,
+        ),
+        (
+            json!({"name":"ping","parameters":null,"input_schema":alias}),
+            Value::Null,
+        ),
+    ] {
+        let body = openai_request(function);
+        let ir = protocol_for("openai")
+            .unwrap()
+            .reader()
+            .read_request(&body)
+            .expect("the existing schema precedence remains accepted");
+        assert_eq!(ir.tools[0].input_schema, expected);
+    }
+}
+
+#[test]
 fn native_openai_omitted_and_explicit_parameters_keep_the_callers_bytes() {
     for raw in [
         br#"{ "model":"m", "messages":[], "tools":[{"type":"function","function":{"name":"ping"}}] }"#.as_slice(),
@@ -218,6 +244,44 @@ fn native_anthropic_wrong_typed_text_still_relays_byte_for_byte() {
         .expect("native relay does not invoke the IR reader");
     assert!(out.pristine);
     assert_eq!(out.bytes, raw);
+}
+
+#[test]
+fn anthropic_response_text_rejects_present_wrong_types_and_keeps_absent_or_strings() {
+    for text in [
+        Value::Null,
+        json!(123),
+        json!(true),
+        json!({"lost":"content"}),
+        json!(["lost"]),
+    ] {
+        let body = json!({"role":"assistant","content":[{"type":"text","text":text}],
+            "usage":{"input_tokens":7,"output_tokens":9}});
+        let error = protocol_for("anthropic")
+            .unwrap()
+            .reader()
+            .read_response(&SevensHost, &body)
+            .expect_err("malformed upstream text cannot become a successful empty answer");
+        assert_eq!(error.provider_signal.as_deref(), Some("ir_parse"));
+    }
+    for (block, expected) in [
+        (json!({"type":"text"}), ""),
+        (json!({"type":"text","text":""}), ""),
+        (json!({"type":"text","text":"keep this"}), "keep this"),
+    ] {
+        let body = json!({"role":"assistant","content":[block],
+            "usage":{"input_tokens":7,"output_tokens":9}});
+        let ir = protocol_for("anthropic")
+            .unwrap()
+            .reader()
+            .read_response(&SevensHost, &body)
+            .expect("accepted response text keeps existing semantics");
+        assert_eq!(
+            ir.content,
+            vec![busbar_plane_llm::codec::ir::IrBlock::text(expected)]
+        );
+        assert_eq!((ir.usage.input_tokens, ir.usage.output_tokens), (7, 9));
+    }
 }
 
 #[test]
