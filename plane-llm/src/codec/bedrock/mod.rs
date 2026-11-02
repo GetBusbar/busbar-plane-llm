@@ -91,6 +91,20 @@ const TOP_K_CAMEL: &str = "topK";
 const TOTAL_TOKENS_CAMEL: &str = "totalTokens";
 const VALIDATION_EXCEPTION: &str = "validationException";
 
+/// Classification shared by modeled exceptions and explicit AWS error-header frames. Unknown
+/// error codes are server failures; unknown normal events still bypass this function entirely.
+pub(crate) fn stream_error_class(code: &str) -> StatusClass {
+    match code {
+        THROTTLING_EXCEPTION => StatusClass::RateLimit,
+        VALIDATION_EXCEPTION => StatusClass::ClientError,
+        SERVICE_UNAVAILABLE_EXCEPTION => StatusClass::Overloaded,
+        other => {
+            let _ = other;
+            StatusClass::ServerError
+        }
+    }
+}
+
 // Media container / format tokens and their MIME spellings.
 const APPLICATION_MSWORD: &str = "application/msword";
 const APPLICATION_VND_MS_EXCEL: &str = "application/vnd.ms-excel";

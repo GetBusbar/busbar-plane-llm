@@ -6,9 +6,10 @@
 //! (CRC-32/ISO-HDLC); the drift test beside this module holds every encoded frame byte-identical to
 //! the frames the host's (now deleted) copy wrote.
 //!
-//! [`drain_frames_checked`](crate::codec::eventstream::drain_frames_checked) is the production
-//! decoder: it pulls `(event_type, payload)` pairs out of ConverseStream responses for the Bedrock
-//! reader's `read_response_events`. Incremental (a trailing partial frame stays buffered); CRCs are
+//! `drain_frames_signaled` is the production decoder: it pulls events and explicit header-only
+//! errors out of ConverseStream and InvokeModel responses. `drain_frames_checked` retains the
+//! event/payload projection for consumers needing only those bytes. Incremental (a trailing partial
+//! frame stays buffered); CRCs are
 //! not validated on decode (a client consuming well-formed AWS frames). `drain_frames` is a
 //! test-only wrapper that discards the consumed-byte count.
 //!
@@ -75,6 +76,27 @@ pub fn drain_frames_checked(
     drain_frames_counted(buf, consumed_sink, &mut DrainWork::default())
 }
 
+/// A decoded frame retaining an explicit AWS error independently of its optional JSON payload.
+pub(crate) struct DecodedFrame {
+    pub event_type: String,
+    pub payload: Vec<u8>,
+    pub error: Option<FrameError>,
+}
+
+/// `:message-type: error` is a failure even when its code is unknown or absent.
+pub(crate) struct FrameError {
+    pub code: Option<String>,
+    pub message: Option<String>,
+}
+
+/// The production decoder, retaining the header-only error signal for both stream consumers.
+pub(crate) fn drain_frames_signaled(
+    buf: &mut Vec<u8>,
+    consumed_sink: Option<&mut Vec<u8>>,
+) -> (Vec<DecodedFrame>, DrainStatus, usize) {
+    drain_frames_signaled_counted(buf, consumed_sink, &mut DrainWork::default())
+}
+
 /// The work one drain pass did on its buffer, counted where done: the measure the complexity test
 /// holds the drain to, instead of wall-clock time (Law 8: count work units, not time).
 ///
@@ -115,9 +137,25 @@ fn clear_all(buf: &mut Vec<u8>, work: &mut DrainWork) {
 /// [`drain_frames_checked`], counting its buffer work into `work`.
 pub(crate) fn drain_frames_counted(
     buf: &mut Vec<u8>,
-    mut consumed_sink: Option<&mut Vec<u8>>,
+    consumed_sink: Option<&mut Vec<u8>>,
     work: &mut DrainWork,
 ) -> (Vec<(String, Vec<u8>)>, DrainStatus, usize) {
+    let (frames, status, consumed) = drain_frames_signaled_counted(buf, consumed_sink, work);
+    (
+        frames
+            .into_iter()
+            .map(|f| (f.event_type, f.payload))
+            .collect(),
+        status,
+        consumed,
+    )
+}
+
+fn drain_frames_signaled_counted(
+    buf: &mut Vec<u8>,
+    mut consumed_sink: Option<&mut Vec<u8>>,
+    work: &mut DrainWork,
+) -> (Vec<DecodedFrame>, DrainStatus, usize) {
     let mut out = Vec::new();
     let mut status = DrainStatus::Ok;
     // Index marking how much of the front is consumed as complete valid frames. One buffer edit per
@@ -148,9 +186,18 @@ pub(crate) fn drain_frames_counted(
         // Read the frame in place via slices into `rem` (one payload copy) and advance `pos`, not a
         // per-frame throwaway Vec (a second allocation per frame on the hot path).
         let headers = &rem[PRELUDE_LEN..PRELUDE_LEN + headers_len];
-        let event_type = event_type_for_frame(headers);
+        let parsed = parse_frame_headers(headers);
+        let event_type = event_type_from_headers(&parsed);
+        let error = (parsed.message_type.as_deref() == Some(MSG_TYPE_ERROR)).then(|| FrameError {
+            code: parsed.error_code,
+            message: parsed.error_message,
+        });
         let payload = rem[PRELUDE_LEN + headers_len..total_len - CRC_BYTES].to_vec();
-        out.push((event_type, payload));
+        out.push(DecodedFrame {
+            event_type,
+            payload,
+            error,
+        });
         // Capture the frame's verbatim bytes for the same-proto re-emit.
         if let Some(sink) = consumed_sink.as_deref_mut() {
             sink.extend_from_slice(&rem[..total_len]);
@@ -185,6 +232,7 @@ struct FrameHeaders {
     message_type: Option<String>,
     exception_type: Option<String>,
     error_code: Option<String>,
+    error_message: Option<String>,
 }
 
 /// Resolve the event-type token `drain_frames_checked` returns for a frame: `:event-type` verbatim
@@ -192,8 +240,12 @@ struct FrameHeaders {
 /// no `:event-type`) the name with the first letter lowercased (`InternalServerException` to
 /// `internalServerException`) so it matches the reader's exception arms. Empty when neither header
 /// is present (a typeless or malformed frame).
+#[cfg(test)]
 fn event_type_for_frame(headers: &[u8]) -> String {
-    let parsed = parse_frame_headers(headers);
+    event_type_from_headers(&parse_frame_headers(headers))
+}
+
+fn event_type_from_headers(parsed: &FrameHeaders) -> String {
     // An exception frame (`:message-type: exception`): AWS sets no `:event-type`, so use its
     // `:exception-type` normalized to the reader's union-member token (such frames once yielded `""`
     // and were dropped). An unmodeled failure arrives as `:message-type: error` with `:error-code` /
@@ -202,22 +254,22 @@ fn event_type_for_frame(headers: &[u8]) -> String {
     // namespace-strip and first-letter lowercase, so `internalFailure` reaches the error arms like
     // an exception name.
     if parsed.message_type.as_deref() == Some(MSG_TYPE_ERROR) {
-        if let Some(code) = parsed.error_code {
-            return normalize_error_token(&code);
+        if let Some(code) = &parsed.error_code {
+            return normalize_error_token(code);
         }
     }
     if parsed.message_type.as_deref() == Some(MSG_TYPE_EXCEPTION) {
-        if let Some(exc) = parsed.exception_type {
+        if let Some(exc) = &parsed.exception_type {
             // AWS may qualify `:exception-type` with a Smithy namespace / shape ARN prefix (e.g.
             // `com.amazon.coral.service#ThrottlingException`). Keep only the trailing bare name,
             // mirroring `extract_error`'s `rsplit(['#', '/'])` in proto/bedrock.rs, so it matches the
             // reader's exception arms. Use the last non-empty token, not `.next()`: a value ending in
             // a delimiter (`ThrottlingException#`) makes `rsplit` yield an empty first token, dropping
             // the classification to `""`. `unwrap_or(&exc)` covers the all-delimiter case (`"#"`).
-            return normalize_error_token(&exc);
+            return normalize_error_token(exc);
         }
     }
-    parsed.event_type.unwrap_or_default()
+    parsed.event_type.clone().unwrap_or_default()
 }
 
 /// Normalize an AWS failure-name header (`:exception-type` or `:error-code`) to the reader's
@@ -312,6 +364,7 @@ fn parse_frame_headers(mut h: &[u8]) -> FrameHeaders {
                     found.exception_type = Some(v.to_string())
                 }
                 n if n == HDR_ERROR_CODE.as_bytes() => found.error_code = Some(v.to_string()),
+                n if n == HDR_ERROR_MESSAGE.as_bytes() => found.error_message = Some(v.to_string()),
                 _ => {}
             }
         }
@@ -455,6 +508,9 @@ const MSG_TYPE_ERROR: &str = "error";
 
 /// AWS event-stream header name for the error code (error frames only).
 const HDR_ERROR_CODE: &str = ":error-code";
+
+/// The message on a header-only unmodeled failure.
+const HDR_ERROR_MESSAGE: &str = ":error-message";
 
 /// AWS event-stream value-type byte for a UTF-8 string header (type 7 per the spec).
 const HDR_TYPE_STRING: u8 = 7;

@@ -1192,20 +1192,7 @@ impl ProtocolReader for BedrockReader {
                 // Map each of the five exception strings to its StatusClass, co-located with the
                 // string set rather than a `_ => ServerError` default. The `other =>` arm is kept
                 // (not `_`) only because `&str` matches are never exhaustive; the outer pattern is the guard.
-                let class = match exc {
-                    super::THROTTLING_EXCEPTION => StatusClass::RateLimit,
-                    super::VALIDATION_EXCEPTION => StatusClass::ClientError,
-                    super::SERVICE_UNAVAILABLE_EXCEPTION => StatusClass::Overloaded,
-                    super::INTERNAL_SERVER_EXCEPTION | super::MODEL_STREAM_ERROR_EXCEPTION => {
-                        StatusClass::ServerError
-                    }
-                    // Unreachable given the outer guard. A named binding (no `_`, per the no-catch-all
-                    // rule) keeps the arm explicit; ServerError is the safe class.
-                    other => {
-                        let _ = other;
-                        StatusClass::ServerError
-                    }
-                };
+                let class = super::stream_error_class(exc);
                 out.push(IrStreamEvent::Error(busbar_contract::protocol::IrError {
                     class,
                     provider_signal: message.or_else(|| Some(exc.to_string())),

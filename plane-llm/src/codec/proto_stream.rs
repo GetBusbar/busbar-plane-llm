@@ -831,7 +831,7 @@ impl StreamTranslate {
         // float formatting) makes an undecodable frame for an AWS SDK. The drain writes each complete
         // valid frame's bytes straight into `out` via `consumed_sink` (no per-chunk clone), and never
         // a cleared malformed-prelude remainder. Cross-protocol the sink is `None`.
-        let (frames, status, _valid_consumed) = crate::codec::eventstream::drain_frames_checked(
+        let (frames, status, _valid_consumed) = crate::codec::eventstream::drain_frames_signaled(
             &mut self.buf,
             if self.same_proto {
                 Some(&mut out)
@@ -839,7 +839,36 @@ impl StreamTranslate {
                 None
             },
         );
-        for (event_type, payload) in frames {
+        for frame in frames {
+            let crate::codec::eventstream::DecodedFrame {
+                event_type,
+                payload,
+                error,
+            } = frame;
+            if let Some(error) = error {
+                // The failure lives in the framing headers. Its body need not be JSON, and its
+                // code need not name a modeled ConverseStream exception to terminate the unit.
+                let err = IrError {
+                    class: crate::codec::bedrock::stream_error_class(&event_type),
+                    provider_signal: error
+                        .message
+                        .or(error.code)
+                        .or_else(|| Some("AWS event-stream error".to_string())),
+                    retry_after: None,
+                };
+                if self.same_proto {
+                    self.upstream_error = true;
+                    self.terminal_error = err.provider_signal;
+                } else {
+                    self.translate_ir_event(
+                        host,
+                        self.ingress.name_static(),
+                        crate::codec::ir::IrStreamEvent::Error(err),
+                        &mut out,
+                    );
+                }
+                continue;
+            }
             // Same-proto: the frame's bytes are already out; the payload is read only if its event
             // type can carry usage or failure.
             if self.same_proto && !self.egress.reader().same_proto_reads(&event_type, &payload) {

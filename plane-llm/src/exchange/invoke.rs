@@ -28,7 +28,7 @@ use std::borrow::Cow;
 use busbar_contract::protocol::HeadFields;
 use serde_json::Value;
 
-use crate::codec::eventstream::{drain_frames_checked, DrainStatus};
+use crate::codec::eventstream::{drain_frames_signaled, DrainStatus};
 use busbar_contract::spans::{self, Edit};
 
 /// The protocol a model names to be served over the envelope.
@@ -198,8 +198,29 @@ impl Transcoder {
             return out;
         }
         self.pending.extend_from_slice(bytes);
-        let (frames, status, _) = drain_frames_checked(&mut self.pending, None);
-        for (event_type, payload) in frames {
+        let (frames, status, _) = drain_frames_signaled(&mut self.pending, None);
+        for frame in frames {
+            let crate::codec::eventstream::DecodedFrame {
+                event_type,
+                payload,
+                error,
+            } = frame;
+            if let Some(error) = error {
+                let message = error.message.unwrap_or_else(|| {
+                    if payload.is_empty() {
+                        "AWS event-stream error".to_string()
+                    } else {
+                        String::from_utf8_lossy(&payload).into_owned()
+                    }
+                });
+                sse(
+                    &mut out,
+                    "error",
+                    &envelope(kind_of(error.code.as_deref().unwrap_or("")), &message),
+                );
+                self.ended = true;
+                return out;
+            }
             if event_type == CHUNK {
                 let Some(event) = chunk_event(&payload) else {
                     sse(

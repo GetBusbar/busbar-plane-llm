@@ -265,3 +265,125 @@ fn same_dialect_synthesis_replaces_the_renderers_minted_request_id() {
         .collect();
     assert_eq!(ids, [b"req_native".as_slice()]);
 }
+
+fn aws_frame(headers: &[(&str, &str)], payload: &[u8]) -> Vec<u8> {
+    let mut frame = vec![0; 12];
+    for (name, value) in headers {
+        frame.push(u8::try_from(name.len()).unwrap());
+        frame.extend_from_slice(name.as_bytes());
+        frame.push(7);
+        frame.extend_from_slice(&u16::try_from(value.len()).unwrap().to_be_bytes());
+        frame.extend_from_slice(value.as_bytes());
+    }
+    let header_len = u32::try_from(frame.len() - 12).unwrap();
+    let total = u32::try_from(frame.len() + payload.len() + 4).unwrap();
+    frame[..4].copy_from_slice(&total.to_be_bytes());
+    frame[4..8].copy_from_slice(&header_len.to_be_bytes());
+    let prelude_crc = crc32fast::hash(&frame[..8]);
+    frame[8..12].copy_from_slice(&prelude_crc.to_be_bytes());
+    frame.extend_from_slice(payload);
+    let crc = crc32fast::hash(&frame);
+    frame.extend_from_slice(&crc.to_be_bytes());
+    frame
+}
+
+#[test]
+fn explicit_aws_error_headers_fail_the_reply_independently_of_payload_and_code() {
+    use busbar_plane_llm::codec::eventstream::encode_frame;
+    use busbar_plane_llm::exchange::reply::{Fault, Verdict};
+
+    let mut prefix = encode_frame("messageStart", br#"{"role":"assistant"}"#);
+    prefix.extend(encode_frame(
+        "contentBlockDelta",
+        br#"{"contentBlockIndex":0,"delta":{"text":"partial"}}"#,
+    ));
+    prefix.extend(encode_frame(
+        "metadata",
+        br#"{"usage":{"inputTokens":9,"outputTokens":3,"totalTokens":12}}"#,
+    ));
+    for code in [
+        None,
+        Some("InternalFailure"),
+        Some("FutureUnmodeledFailure"),
+    ] {
+        let mut headers = vec![
+            (":message-type", "error"),
+            (":error-message", "upstream terminated"),
+        ];
+        if let Some(code) = code {
+            headers.push((":error-code", code));
+        }
+        for payload in [b"".as_slice(), b"{}".as_slice(), b"not JSON".as_slice()] {
+            let mut far = prefix.clone();
+            far.extend(aws_frame(&headers, payload));
+            for ingress in [
+                "bedrock",
+                "openai",
+                "anthropic",
+                "responses",
+                "gemini",
+                "cohere",
+            ] {
+                let piece = reply_from(
+                    ingress,
+                    "bedrock",
+                    json!({"stream":true}),
+                    &[(b"content-type", b"application/vnd.amazon.eventstream")],
+                    &far,
+                );
+                assert_eq!(piece.verdict, Verdict::Hard, "{ingress}: {code:?}");
+                assert_eq!(
+                    piece.fault,
+                    Some(Fault::Transient("stream-terminal-error")),
+                    "{ingress}"
+                );
+                assert_eq!(
+                    (piece.units.tokens_in, piece.units.tokens_out),
+                    (0, 0),
+                    "{ingress}"
+                );
+                if ingress == "bedrock" {
+                    assert_eq!(piece.bytes.as_ref(), far, "native frames remain verbatim");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn an_unknown_normal_aws_event_is_still_skipped_without_failing_the_reply() {
+    use busbar_plane_llm::exchange::reply::Verdict;
+    let far = aws_frame(
+        &[
+            (":message-type", "event"),
+            (":event-type", "InternalFailure"),
+        ],
+        b"not JSON",
+    );
+    let piece = reply_from(
+        "openai",
+        "bedrock",
+        json!({"stream":true}),
+        &[(b"content-type", b"application/vnd.amazon.eventstream")],
+        &far,
+    );
+    assert_eq!(piece.verdict, Verdict::Ok);
+    assert_eq!(piece.fault, None);
+}
+
+#[test]
+fn invoke_header_only_errors_keep_the_native_error_message() {
+    let far = aws_frame(
+        &[
+            (":message-type", "error"),
+            (":error-code", "ThrottlingException"),
+            (":error-message", "slow down"),
+        ],
+        b"",
+    );
+    let mut transcoder = busbar_plane_llm::exchange::invoke::Transcoder::new();
+    let decoded = frames(&transcoder.feed(&far));
+    assert_eq!(decoded.len(), 1);
+    assert_eq!(decoded[0]["error"]["type"], "rate_limit_error");
+    assert_eq!(decoded[0]["error"]["message"], "slow down");
+}
