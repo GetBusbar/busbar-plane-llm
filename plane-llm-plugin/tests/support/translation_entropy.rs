@@ -109,10 +109,9 @@ impl HostServices for TranslationEntropy {
         let mut bytes = vec![0; len as usize];
         getrandom::fill(&mut bytes).expect("OS entropy for actual LLM translation");
         self.fills.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Stored {
-            bytes,
-            ..Stored::ready(0)
-        }
+        let mut stored = Stored::ready(0);
+        stored.bytes = bytes;
+        stored
     }
     fn records_secret(&self, kind: &str, id: &str, later: Later) -> Ran {
         Ran::Now(Stored::refused(UNSERVED))
