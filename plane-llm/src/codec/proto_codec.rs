@@ -84,6 +84,16 @@ pub const LLM_CHAT_HEAD_KEYS: &[&str] = &["model", "stream", "stream_options", "
 #[path = "tests/protocol_fixtures.rs"]
 mod protocol_fixtures;
 
+/// Reported stream accounting whose unrelated content metadata could not become an IR event.
+/// This carries no content, role, identity, stop reason or success indication.
+#[derive(Debug)]
+pub enum ReportedStreamUsage {
+    /// Counts reported at stream start, retained for later terminal usage backfill.
+    Start(crate::codec::ir::IrUsage),
+    /// A later cumulative report, folded without creating a terminal content event.
+    Trailing(crate::codec::ir::IrUsage),
+}
+
 /// ProtocolReader extracts signals from wire responses (Stage 1a + 1b): provider-specific
 /// normalizers that feed the breaker's Stage 2 classifier.
 pub trait ProtocolReader: Send + Sync {
@@ -143,6 +153,17 @@ pub trait ProtocolReader: Send + Sync {
         &self,
         _body: &serde_json::Value,
     ) -> Option<busbar_contract::billing::TokenUsage> {
+        None
+    }
+
+    /// Independently read native reported work when a parsed stream frame produced no
+    /// usage-bearing content IR. Defaults to no recovery; neither this hook nor its caller
+    /// synthesizes a content or lifecycle event. The already-parsed frame stays borrowed.
+    fn recover_stream_usage(
+        &self,
+        _event_type: &str,
+        _data: &serde_json::Value,
+    ) -> Option<ReportedStreamUsage> {
         None
     }
 
