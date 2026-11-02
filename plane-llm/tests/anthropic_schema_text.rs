@@ -230,7 +230,10 @@ fn absent_and_string_anthropic_text_keep_existing_reader_semantics() {
     let raw = serde_json::to_vec(&body).unwrap();
     let translated = hop("anthropic", "openai", &body, &raw).outcome.unwrap();
     let wire: Value = serde_json::from_slice(&translated.bytes).unwrap();
-    assert_eq!(wire["messages"][0]["content"], "keep this");
+    assert_eq!(
+        wire["messages"][0]["content"],
+        json!([{"type":"text","text":"keep this"}])
+    );
 }
 
 #[test]
