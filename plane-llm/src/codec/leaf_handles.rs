@@ -199,7 +199,7 @@ fn transcription_format_refusal(request: &TranscriptionReq, target: &str) -> Opt
 
 leaf_handles!(EmbeddingsReqHandle(EmbeddingsReq), EmbeddingsRespHandle(EmbeddingsResp), EMBEDDINGS,
     embeddings_write_request, embeddings_write_response,
-    stream: none, req_billing: none, resp_billing: own, refuse_empty: no, refuse_empty_response: no);
+    stream: none, req_billing: none, resp_billing: own, refuse_empty: no, refuse_empty_response: yes);
 leaf_handles!(ImageReqHandle(ImageReq), ImageRespHandle(ImageResp), IMAGE,
     image_write_request, image_write_response,
     stream: none, req_billing: none, resp_billing: own, refuse_empty: no, refuse_empty_response: no);
