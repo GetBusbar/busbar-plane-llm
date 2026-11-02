@@ -22,6 +22,7 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 
 use busbar_contract::diagnostic::Diagnostic;
 use serde_json::{Map, Value};
@@ -307,6 +308,8 @@ struct Open {
     ingress: String,
     egress: String,
     paths: Vec<String>,
+    // Keep seeded frame paths cheap until a note needs membership. The Vec owns audit order.
+    path_index: Option<BTreeSet<String>>,
     block_origin: Option<crate::codec::ir::IrBlockOrigin>,
 }
 
@@ -391,6 +394,7 @@ impl ScopeGuard {
             direction: seam.direction,
             ingress: seam.ingress.to_string(),
             egress: seam.egress.to_string(),
+            path_index: paths.is_empty().then(BTreeSet::new),
             paths,
             block_origin: None,
         };
@@ -492,11 +496,10 @@ pub fn note(d: Dropped) {
         let Some(open) = slot.as_mut() else {
             return false;
         };
-        if open
-            .paths
-            .iter()
-            .any(|path| path.as_str() == d.path.as_ref())
-        {
+        let index = open
+            .path_index
+            .get_or_insert_with(|| open.paths.iter().cloned().collect());
+        if !index.insert(d.path.to_string()) {
             return false;
         }
         // Record before invoking a subscriber: a reentrant report of this same path is a duplicate.
@@ -545,8 +548,9 @@ pub fn extra_paths(
     mapped: impl Fn(&[&str]) -> bool,
 ) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
+    let mut seen = BTreeSet::new();
     let mut push = |p: String| {
-        if !out.contains(&p) {
+        if seen.insert(p.clone()) {
             out.push(p);
         }
     };
@@ -628,13 +632,14 @@ impl Blocks {
         collect(body, self.at, &mut blocks);
         let at = self.at.join(".");
         let mut out: Vec<String> = Vec::new();
+        let mut seen = BTreeSet::new();
         for kind in blocks.into_iter().filter_map(|b| self.unmodelled_kind(b)) {
             let path = match self.tag {
                 Some(_) if kind.is_empty() => at.clone(),
                 Some(tag) => format!("{at}.{tag}={kind}"),
                 None => format!("{at}.{kind}"),
             };
-            if !out.contains(&path) {
+            if seen.insert(path.clone()) {
                 out.push(path);
             }
         }
@@ -1035,3 +1040,7 @@ mod writer_tests;
 #[cfg(test)]
 #[path = "tests/drop_census_tests.rs"]
 mod census_tests;
+
+#[cfg(test)]
+#[path = "tests/drop_index_tests.rs"]
+mod index_tests;
