@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE WIRE WORDS TWO OR MORE DIALECTS SPELL ALIKE: one const each (OWNER 2026-10-01, one spelling
-
 pub const NONE_UPPER: &str = "NONE";
 pub const ADDITIONAL_PROPERTIES: &str = "additionalProperties";
 pub const ALLOWED_DOMAINS: &str = "allowed_domains";

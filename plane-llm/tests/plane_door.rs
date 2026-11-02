@@ -525,8 +525,6 @@ fn the_sticky_key_is_the_pools_header_else_the_chat_bodys_system() {
     assert_eq!(affinity_key("x-session-id", &[], None, Some(&body)), None);
 }
 
-/// EVERY DECLARED OPEN CLASS REACHES THE DURABLE BOOK (owner LEDGER-100): one count of each open
-
 #[test]
 fn every_open_class_becomes_one_reported_count_at_its_tail_index() {
     use busbar_contract::abi::plane::UNITS_REPORTED;
@@ -822,8 +820,6 @@ fn the_signed_claims_name_the_paths_the_previous_release_signed() {
         assert_eq!(by_claims, was_signed, "{path}");
     }
 }
-
-/// RED (CREDENTIAL-LOCKDOWN H8): AN AFFINITY HEADER NEVER NAMES A CREDENTIAL. A pool whose
 
 #[test]
 fn red_an_affinity_header_naming_a_credential_is_refused() {

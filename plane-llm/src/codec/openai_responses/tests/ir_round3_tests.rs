@@ -20,8 +20,6 @@ fn anthropic_off() -> crate::codec::ir::IrRequest {
     ir
 }
 
-/// Item 12: a lane declaring `reasoning_none` gets `reasoning.effort: "none"` for an Off ask; the
-
 #[test]
 fn item12_off_is_reasoning_effort_none_on_a_declaring_lane() {
     let w = protocol_for("responses").unwrap();
@@ -53,7 +51,7 @@ fn sse_payloads(out: &str) -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// Item 16 (IR-17 stream): a Gemini thought (a SUMMARY) streamed to a Responses client streams as
+/// A streamed Gemini thought reaches the Responses summary.
 
 #[test]
 fn item16_gemini_thought_streams_into_the_responses_summary() {
@@ -104,7 +102,7 @@ fn item16_gemini_thought_streams_into_the_responses_summary() {
     assert!(item.get("content").is_none(), "{item}");
 }
 
-/// Item 16, buffered answer synthesized as a stream: the same summary placement.
+/// A buffered answer synthesized as a stream keeps thoughts in the summary.
 #[test]
 fn item16_synthesized_stream_keeps_a_summary_in_summary() {
     let gemini = json!({"candidates": [{"content": {"role": "model", "parts": [

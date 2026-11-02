@@ -4751,8 +4751,6 @@ fn a_translated_stream_into_responses_carries_the_host_clock_created_at() {
     );
 }
 
-/// F25 REHOME row 350, from `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs:2234`
-
 #[test]
 fn an_anthropic_tool_call_id_reaches_an_openai_client_remapped_and_unleaked() {
     let ir_resp = AnthropicReader

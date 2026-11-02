@@ -216,8 +216,6 @@ fn an_unreadable_transcription_count_refuses_itself_and_the_transcript_is_served
     }
 }
 
-/// THE TRANSCRIPTION READER LEDGERS EVERY COUNT GOOGLE REPORTS (LLM3#1, owner LEDGER-100), and its
-
 #[test]
 fn transcription_records_thought_cached_and_tool_use_counts_as_residual_units() {
     let wire = br#"{"candidates":[{"content":{"parts":[{"text":"hi"}]}}],"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":5,"thoughtsTokenCount":40,"cachedContentTokenCount":8,"toolUsePromptTokenCount":3,"totalTokenCount":68}}"#;

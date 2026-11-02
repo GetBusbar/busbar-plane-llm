@@ -20,8 +20,6 @@ fn anthropic_off() -> crate::codec::ir::IrRequest {
     ir
 }
 
-/// Item 12: an Off ask writes no `thinking` on any Bedrock lane, `thinking_always_on` or not: a
-
 #[test]
 fn item12_off_writes_no_thinking_on_any_lane() {
     let w = protocol_for("bedrock").unwrap();
@@ -46,8 +44,6 @@ fn item12_off_writes_no_thinking_on_any_lane() {
         );
     }
 }
-
-/// Item 8, the writer's half: a lane whose catalog entry turns adaptive thinking and native
 
 #[test]
 fn item8_a_word_ask_on_an_adaptive_lane_writes_no_thinking() {
@@ -74,8 +70,6 @@ fn item8_a_word_ask_on_an_adaptive_lane_writes_no_thinking() {
         "{out}"
     );
 }
-
-/// Item 14 (BED-14): a Converse `web` citation location's `domain` rides IrCitation.domain and is
 
 #[test]
 fn item14_web_citation_domain_round_trips() {
@@ -113,8 +107,6 @@ fn item14_web_citation_domain_round_trips() {
         "{out}"
     );
 }
-
-/// Item 14 (IR-04): Converse `serviceTier: {type}` reads into the IR tier and a foreign tier ask
 
 #[test]
 fn item14_converse_service_tier_maps_both_ways() {

@@ -22,7 +22,7 @@ const CACHED_CONTENT: &str = "cachedContent";
 /// Google's documented dummy `thoughtSignature` sentinel.
 pub const GEMINI_SKIP_THOUGHT_SIGNATURE: &str = "skip_thought_signature_validator";
 
-/// 1.5.5's operator warning, restored (TODO 585): an image's requested fidelity a dialect has no slot
+/// Warn when an image detail hint has no cross-protocol representation.
 
 pub fn warn_dropped_image_details(ir: &IrRequest) {
     fn walk(blocks: &[crate::codec::ir::IrBlock]) {

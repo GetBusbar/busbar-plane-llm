@@ -759,8 +759,6 @@ fn coh15_safety_stop_is_not_an_error_for_a_cohere_client() {
     );
 }
 
-/// Cohere `TIMEOUT` is served and billed as 1.5.5 served and billed it: it reads as `Other` (v1.5.5
-
 #[test]
 fn timeout_is_served_and_billed_as_in_1_5_5() {
     use crate::codec::ir::{IrStopReason, IrStreamEvent as E};

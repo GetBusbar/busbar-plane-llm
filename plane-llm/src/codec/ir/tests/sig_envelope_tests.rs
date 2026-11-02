@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! IR-18 provenance survives the CLIENT round trip (architect ruling).
+//! Signature provenance survives a client round trip.
 
 use super::sig_envelope::{self, ENVELOPE_PREFIX};
 use super::IrSignatureOrigin;

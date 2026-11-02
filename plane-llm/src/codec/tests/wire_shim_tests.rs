@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! `tier_usage()`'s OWN dedicated suite (item 307) — until now the function every dialect's usage
+//! Usage tiers and router metadata removal.
 
 use crate::codec::usage_census::tier_usage;
 use busbar_contract::billing::TokenUsage;
@@ -160,8 +160,6 @@ fn unreadable_top_level_cache_count_refuses_before_reaching_tier_usage() {
     );
 }
 
-/// A RESIDUAL NEVER REACHES A BILL (MONEY LAW, owner 2026-10-02). A usage carrying residual units
-
 #[test]
 fn a_residual_never_reaches_a_bill() {
     let billed = TokenUsage {
@@ -216,8 +214,6 @@ fn non_token_open(
     governance
 }
 
-/// A PER-IMAGE ANSWER LEDGERS ITS IMAGES (owner LEDGER-100). dall-e/Imagen/Titan/SDXL answers carry
-
 #[test]
 fn a_per_image_answer_ledgers_one_images_line() {
     let open = non_token_open(busbar_contract::billing::Billing::Images {
@@ -239,8 +235,6 @@ fn a_per_image_answer_ledgers_one_images_line() {
     })
     .is_empty());
 }
-
-/// A TRANSCRIPTION'S REPORTED DURATION LEDGERS WHOLE MILLISECONDS (owner LEDGER-100). whisper's
 
 #[test]
 fn a_transcription_duration_ledgers_one_audio_ms_line() {
@@ -267,8 +261,6 @@ fn a_flat_answer_ledgers_no_open_class() {
 }
 
 const SHIM: &str = crate::codec::gemini::GEMINI_JSON_ARRAY_SHIM_KEY;
-
-/// F25 REHOME row 504, from `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs:294` (`test_strip_router_shim_keys`):
 
 #[test]
 fn strip_router_shim_keys_removes_the_never_native_keys_per_egress() {
@@ -303,8 +295,6 @@ fn strip_router_shim_keys_removes_the_never_native_keys_per_egress() {
         "gemini array key stripped even for body-model ingress"
     );
 }
-
-/// F25 REHOME row 505, from `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs:337`
 
 #[test]
 fn shim_strip_then_rewrite_model_keeps_the_model_cross_protocol() {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE DOOR, BOTH WAYS (`BUSBAR-1.6.0.md` Part 2 #2, THE DESIGN, the section on one table for compiled-in and dropped-in): the linked door
+//! The linked and dynamically loaded LLM doors expose the same behavior.
 
 use std::mem::zeroed;
 use std::sync::Arc;
@@ -490,8 +490,6 @@ fn the_linked_and_the_dropped_in_door_answer_every_op_the_same() {
 /// A same-dialect 2xx body the usage tap cannot read: not JSON, and longer than one narrow window.
 const UNREADABLE: &[u8] = b"{not json: the far end answered 200 with a body no reader can meter";
 
-/// THE USAGE-TAP FAULT RIDES THE DOOR'S ANSWER AS DATA, ONCE (row 155): a same-dialect 2xx body the
-
 #[test]
 fn a_usage_tap_fault_rides_one_window_of_the_doors_answer() {
     let d = Dispatcher::new(DispatchConfig::default());
@@ -563,8 +561,6 @@ fn translated(p: &Plugin<Plane>, unit: u64) -> String {
         0,
     )
 }
-
-/// THE TRANSLATE CAP IS THE SETTINGS' (row 155): the cap the door's codec enforces is the one the
 
 #[test]
 fn the_translate_cap_the_settings_carry_is_the_one_the_door_enforces() {
@@ -678,7 +674,7 @@ fn red_a_door_that_stops_counting_the_far_ends_units_answers_differently() {
     assert_ne!(red, honest);
 }
 
-/// THE PROVIDER KEYS THROUGH THE ONE LOADER (row 155 B1c, ARCHITECT ruling "Option A"): the
+/// Provider credential keys pass through the plugin loader.
 
 mod provider_keys_through_the_loader {
     use busbar_contract::abi::mechanism::{extensions, rendering};
@@ -1434,8 +1430,6 @@ fn one_unit(status: u32, answer: &'static [u8]) -> (String, String, String) {
     (attempt, body, far)
 }
 
-/// THE FEE IS DECIDED BY THE LEG AND THE CLIENT-FACING STATUS (row 719).
-
 #[test]
 fn the_fee_is_decided_by_the_leg_and_the_client_facing_status() {
     let fee = fee_line();
@@ -1540,8 +1534,6 @@ impl busbar_plugin_loader::dispatch::EnvelopeSink for HostLog {
     }
     fn dropped(&self, _: busbar_plugin_loader::dispatch::Dropped) {}
 }
-
-/// THE PLANE'S LOG REACHES THE HOST'S LOG, DROPPED IN AS LINKED (owner ruling 2026-10-27): the
 
 #[test]
 fn an_unreadable_usage_line_reaches_the_host_log_dropped_in_as_linked() {

@@ -89,8 +89,6 @@ fn units(u: &busbar_contract::billing::TokenUsage) -> Units {
     )
 }
 
-/// The `unitemized_tokens` a usage ledgers: the stated total above its itemized classes (owner
-
 fn unitemized(u: &busbar_contract::billing::TokenUsage) -> u64 {
     let l = crate::codec::usage_census::ledgered(u);
     let k = crate::codec::usage_census::slot(crate::codec::ir::open_class::UNITEMIZED_TOKENS_CLASS);

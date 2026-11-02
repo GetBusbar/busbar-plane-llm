@@ -818,8 +818,6 @@ fn drain_frames_checked_scales_linearly_in_frame_count() {
     assert_eq!(work.shifted, PRELUDE_LEN + 2, "only the partial tail moves");
 }
 
-/// The RED arm: the per-frame drain this test exists to catch makes one edit per frame and moves a
-
 #[test]
 fn the_linearity_check_rejects_a_per_frame_drain() {
     let small = per_frame_drain(&mut frames_buffer(1_000));

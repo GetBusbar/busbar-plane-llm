@@ -1,4 +1,4 @@
-//! DF-MAP audit: the Bedrock answer slots and the served tier
+//! Bedrock response field and service tier mapping.
 
 use super::super::proto_codec::protocol_for;
 use serde_json::json;

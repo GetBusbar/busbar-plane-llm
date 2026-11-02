@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE ANTHROPIC USAGE CENSUS (MONEY-AUDIT A-F1; owner 2026-10-02: every billed count lands in an
+//! Anthropic billed usage counts and their classes.
 
 use super::super::proto_codec::ProtocolReader;
 use super::AnthropicReader;
@@ -90,8 +90,6 @@ fn streamed(usage: &serde_json::Value) -> Ledgered {
     let _ = t.finish(crate::codec::test_host::HOST);
     ledgered(&t.usage().expect("the tap captured usage").to_token_usage())
 }
-
-/// EVERY COUNT ANTHROPIC REPORTS IS LEDGERED IN ITS OWN CLASS, ON EVERY READ PATH. RED when the
 
 #[test]
 fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {

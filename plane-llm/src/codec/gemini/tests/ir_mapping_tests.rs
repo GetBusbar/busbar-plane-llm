@@ -410,8 +410,6 @@ fn gem12_audio_token_details_reach_openai() {
     assert_eq!(out["usage"]["completion_tokens"], json!(8), "{out}");
 }
 
-/// A refusal reaches a Gemini client as the native unenumerated `OTHER`, as in 1.5.5 (v1.5.5
-
 #[test]
 fn a_refusal_is_other_for_a_gemini_client() {
     let body = json!({"id": "msg_1", "type": "message", "role": "assistant", "model": "m",

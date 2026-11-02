@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! The 1.5.5 hook tests' own in-process policies: a capturing policy, a canned gate, a rewriting
+//! In-process policies for capturing, gating, and rewriting hook requests.
 
 
 use std::sync::{Arc, Mutex};

@@ -335,8 +335,6 @@ fn ir19_response_modalities_carry() {
     );
 }
 
-/// `thinkingBudget: 0` carries no ask across the seam, as 1.5.5 read it (v1.5.5
-
 #[test]
 fn ir09_thinking_budget_zero_carries_no_ask() {
     let body = json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}],

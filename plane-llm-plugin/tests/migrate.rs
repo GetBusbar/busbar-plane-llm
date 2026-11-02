@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! **THE 1.5.5 UPGRADE THROUGH BOTH DOORS** (`busbar --migrate-config`; FLEET "Plugin-side migrate
+//! Upgrade 1.5.5 LLM configuration through linked and dynamically loaded migration doors.
 
 use std::path::PathBuf;
 

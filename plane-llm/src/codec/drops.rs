@@ -669,7 +669,7 @@ pub fn scope_more<T>(seam: Seam<'_>, seen: &mut Vec<String>, f: impl FnOnce() ->
     out
 }
 
-/// What a dialect's answers carry in one direction (design F3 "Drops", DF-MAP-IR-GAPS section E):
+/// What a dialect's answers carry in one direction:
 /// the paths its map file lists (`map`, generated) and those its code carries that no row names
 /// (`code`: a structural member, keepalive, terminal error). Any other answer member does not cross
 /// a translate attempt, and the walk names it.

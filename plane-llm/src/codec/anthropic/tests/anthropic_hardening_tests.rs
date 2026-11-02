@@ -566,8 +566,6 @@ fn write_response_event_free_text_signal_is_the_message_not_the_type() {
     );
 }
 
-/// v1.5.5 `crates/busbar/src/proto/anthropic/writer.rs:626-666`: a native token signal is written
-
 #[test]
 fn write_response_event_error_type_keeps_a_native_token_verbatim() {
     let err = IrError {
@@ -3728,8 +3726,6 @@ fn duplicate_tool_start_preserves_partial_arguments_and_later_frames() {
     );
 }
 
-/// DESIGN F3 "Drops" (DF-WIRE card item 5): the reader puts NO empty text block in place of a block
-
 #[test]
 fn unmodelled_block_is_left_out_of_the_ir_and_spliced_back_same_dialect() {
     let future = serde_json::json!({"type": "container_upload", "file_id": "file_1"});
@@ -3774,8 +3770,6 @@ fn unmodelled_block_is_left_out_of_the_ir_and_spliced_back_same_dialect() {
         "{out}"
     );
 }
-
-/// THE TAIL RESTATES THIS SCHEME as the `api-key` style's parameters (ARCHITECT RULING 2026-10-03,
 
 #[test]
 fn the_tails_api_key_parameters_restate_the_credential_family_table() {

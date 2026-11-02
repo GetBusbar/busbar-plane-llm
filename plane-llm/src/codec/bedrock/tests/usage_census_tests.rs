@@ -394,8 +394,6 @@ fn usage_on_both_paths(
     read_buffered_and_streamed(usage, trace).map(|u| u.to_token_usage())
 }
 
-/// THE REPORTED UNITS TRAVEL ON THE USAGE, BILLED (owner LEDGER-100, 2026-10-03). Guardrail policy
-
 #[test]
 fn the_reported_units_travel_on_the_usage_billed() {
     use crate::codec::ir::open_class::{
@@ -447,8 +445,6 @@ fn the_reported_units_travel_on_the_usage_billed() {
         );
     }
 }
-
-/// AN UNREADABLE GUARDRAIL COUNT IS REFUSED ON ITS OWN (#42; ARCHITECT ruling 2026-10-15, the rule
 
 #[test]
 fn an_unreadable_guardrail_count_refuses_on_its_own_and_null_is_absence() {

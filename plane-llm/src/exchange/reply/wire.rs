@@ -274,7 +274,7 @@ pub fn token_usage_of(usage: &Option<Billing>) -> Option<TokenUsage> {
     }
 }
 
-/// Every open class a delivery counted that is not a token, by class (owner LEDGER-100: every unit the
+/// Return the non-token usage counts by open class.
 
 #[must_use]
 pub fn open_units_of(usage: &Option<Billing>) -> BTreeMap<String, u64> {

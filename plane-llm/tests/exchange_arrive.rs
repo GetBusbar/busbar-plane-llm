@@ -1451,8 +1451,6 @@ fn rewrite_mark(arrived: &mut Arrived, rewrite: &[u8]) -> u32 {
     rewrite_flags(arrived, rewrite, applied)
 }
 
-/// A RERANK AND AN EMBEDDING STATE THAT A REWRITE DOES NOT APPLY TO THEM (ruling (A) on busbar
-
 #[test]
 fn a_rerank_and_an_embedding_state_that_a_rewrite_does_not_apply() {
     use busbar_contract::abi::plane::PROJECT_REWRITE_NOT_APPLICABLE;

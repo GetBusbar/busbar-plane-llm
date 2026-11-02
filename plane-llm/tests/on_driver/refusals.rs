@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE LLM PLANE'S REFUSAL STATUSES, AS THE PLANE DRIVER CHOOSES THEM, AGAINST 1.5.5 (coverage map
+//! Refusal status compatibility exercised through the LLM plane driver.
 
 
 

@@ -20,8 +20,6 @@ fn anthropic_off() -> crate::codec::ir::IrRequest {
     ir
 }
 
-/// Item 12: a lane declaring `reasoning_none` gets `reasoning_effort: "none"` for an Off ask; the
-
 #[test]
 fn item12_off_is_reasoning_effort_none_on_a_declaring_lane() {
     let w = protocol_for("openai").unwrap();
@@ -84,8 +82,6 @@ fn to_egress(egress: &str, body: &serde_json::Value) -> serde_json::Value {
         .write_request(crate::codec::test_host::HOST, &ir)
 }
 
-/// Item 11 (OAI-09): a Chat custom (grammar) tool reaches a Responses lane as the flat Responses
-
 #[test]
 fn item11_chat_custom_tool_reaches_a_responses_lane() {
     let out = to_egress("responses", &chat_with_custom_tool());
@@ -97,8 +93,6 @@ fn item11_chat_custom_tool_reaches_a_responses_lane() {
     );
     assert!(tools.iter().any(|t| t["name"] == "f"), "{out}");
 }
-
-/// Item 11: a lane with no custom tool (Anthropic) drops it and reports the drop; an OpenAI-origin
 
 #[test]
 fn item11_custom_tool_dropped_and_reported_where_not_representable() {

@@ -1892,8 +1892,6 @@ fn test_stream_unknown_event_is_noop() {
     assert!(evs.is_empty(), "unknown event types produce no IR events");
 }
 
-/// Item 301: a Cohere upstream's STREAMED grounding citation reaches the IR as a
-
 #[test]
 fn test_stream_citations_match_non_stream() {
     let citation = serde_json::json!({
@@ -2007,8 +2005,6 @@ fn test_stream_citations_match_non_stream() {
         .expect("citation delta present");
     assert!(last_cit < stop_pos, "citations precede the text block stop");
 }
-
-/// Item 301 positive control: a `citation-start` with no open text block (a stopped index) emits
 
 #[test]
 fn test_stream_citation_after_content_end_is_dropped() {

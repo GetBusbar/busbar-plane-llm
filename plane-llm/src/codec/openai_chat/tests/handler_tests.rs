@@ -461,8 +461,6 @@ fn a_transcription_whose_audio_carries_the_delimiter_is_refused_at_the_seam() {
     );
 }
 
-/// The boundary is 1.5.5's literal (v1.5.5 `crates/busbar/src/handlers/openai.rs:238`, `:281`), a
-
 #[test]
 fn transcription_boundary_is_1_5_5_s_literal_and_matches_the_declared_content_type() {
     let b = TRANSCRIPTION_BOUNDARY;
@@ -522,8 +520,6 @@ fn embeddings_taps_usage_and_extract_usage_reads_prompt_tokens() {
         .expect("token-metered embeddings yields usage");
     assert_eq!(usage.input, 7);
 }
-
-/// RED before this lane: a same-dialect transcription was never tapped (1.5.5's default `false`),
 
 #[test]
 fn transcription_taps_usage_in_its_own_dialect() {

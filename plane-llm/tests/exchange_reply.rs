@@ -973,8 +973,6 @@ fn far_stream(dialect: &str) -> Vec<u8> {
     }
 }
 
-/// RED ARM of the stream walk: a stream of members every dialect's map or code carries drops
-
 #[test]
 fn a_translated_stream_of_carried_members_drops_nothing() {
     for far in SIX {
@@ -1548,8 +1546,6 @@ mod rehomed_answers {
         }
     }
 
-    /// OWNER 2026-10-27 (busbar answers in the caller's dialect AND mode): a caller that asked for a
-
     #[test]
     fn a_stream_synthesised_from_a_whole_answer_is_marked_and_billed_from_the_body() {
         let body = chat_completion("hi");
@@ -1580,8 +1576,6 @@ mod rehomed_answers {
             (7, 3)
         );
     }
-
-    /// OWNER 2026-10-27 (busbar answers in the caller's dialect AND mode) holds within one dialect
 
     #[test]
     fn a_same_dialect_whole_answer_to_a_stream_ask_is_the_callers_stream() {
@@ -3053,8 +3047,6 @@ const CUT_1_5_5: &[(&str, bool, &[u8])] = &[
 /// The Bedrock caller (1.5.5 sent `InternalServerException`; the union member is `internalServerException`): one exception frame (binary eventstream).
 const CUT_1_5_5_BEDROCK: &str = "000000a7000000659afd09380f3a657863657074696f6e2d74797065070017696e7465726e616c536572766572457863657074696f6e0d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d74797065070009657863657074696f6e7b226d657373616765223a2254686520726573706f6e73652073747265616d2077617320696e7465727275707465642e227de769a380";
 
-/// The members of a Response object signed register entry S-6 adds to 1.5.5's (the spec's required
-
 const S6_RESPONSE_MEMBERS: &[&str] = &[
     "incomplete_details",
     "instructions",
@@ -3148,8 +3140,6 @@ fn a_stream_cut_after_its_first_byte_ends_in_1_5_5s_bytes_for_every_caller_diale
         }
     }
 }
-
-/// A RESPONSES STREAM THE FAR END ENDS AS FAILED BILLS NO TOKENS (`$`: 1.5.5 billed nothing for a stream with a terminal error, v1.5.5
 
 #[test]
 fn a_responses_stream_that_fails_bills_no_tokens_and_agrees_with_its_buffered_twin() {

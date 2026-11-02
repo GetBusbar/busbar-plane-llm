@@ -1,4 +1,4 @@
-//! DF-MAP audit: what the Chat reader now maps into the IR's answer
+//! OpenAI Chat response fields mapped into the intermediate representation.
 
 use super::super::proto_codec::protocol_for;
 use serde_json::json;
@@ -23,8 +23,6 @@ fn read(body: &serde_json::Value) -> crate::codec::ir::IrResponse {
         .read_response(crate::codec::test_host::HOST, body)
         .expect("reads")
 }
-
-/// Ruling 3 (F2 reader tolerance): a replayed custom-tool call is a valid native message; the reader
 
 #[test]
 fn a_replayed_custom_tool_call_is_not_refused() {

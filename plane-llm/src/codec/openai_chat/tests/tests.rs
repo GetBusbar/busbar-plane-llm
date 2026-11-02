@@ -5596,8 +5596,6 @@ fn a_custom_tool_call_in_history_is_skipped_not_refused() {
     assert!(OpenAiReader.read_request(&malformed).is_err());
 }
 
-/// DESIGN F3 "Drops" (DF-WIRE card item 5): a system turn whose parts are all of kinds the reader
-
 #[test]
 fn system_turn_of_unmodelled_parts_gets_no_empty_text() {
     let body = serde_json::json!({

@@ -13,8 +13,6 @@ fn sse_payloads(out: &str) -> Vec<Value> {
         .collect()
 }
 
-/// Item 10: a Chat backend's `service_tier` `flex` / `scale` rides the IR attribution slot; an
-
 #[test]
 fn item10_unknown_served_tier_never_reaches_an_anthropic_client_buffered() {
     for (openai_tier, want) in [
@@ -44,7 +42,6 @@ fn item10_unknown_served_tier_never_reaches_an_anthropic_client_buffered() {
     }
 }
 
-/// Item 10, stream: the `message_delta` usage omits an unknown tier word.
 #[test]
 fn item10_unknown_served_tier_never_reaches_an_anthropic_client_stream() {
     for openai_tier in ["flex", "scale"] {
@@ -122,8 +119,6 @@ fn off_ask() -> crate::codec::ir::IrRequest {
     ir.extra.clear();
     ir
 }
-
-/// Item 12: on a lane declaring `thinking_always_on` (Fable 5.x, Opus 5.5) an Off ask OMITS
 
 #[test]
 fn item12_off_omits_thinking_on_an_always_on_lane() {

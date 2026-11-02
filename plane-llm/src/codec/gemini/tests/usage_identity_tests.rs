@@ -221,8 +221,6 @@ fn a_grounded_turn_bills_the_tool_use_term() {
     assert_eq!(billed.output, 172);
 }
 
-/// THE LEDGER HOLDS WHAT GOOGLE ITEMIZED, AND THE GAP IS ITS OWN LINE (owner 2026-10-02: ledger
-
 #[test]
 fn an_unmodelled_term_is_reported_and_ledgered_as_unitemized_tokens() {
     let body = serde_json::json!({
@@ -265,8 +263,6 @@ fn an_unmodelled_term_is_reported_and_ledgered_as_unitemized_tokens() {
     );
     assert_eq!(note.identity, "gemini.usageMetadata");
 }
-
-/// THE ORACLE CELL `usage.gemini|tool-use|total-not-a-sum` (TODO 576): Google states 64 where its
 
 #[test]
 fn a_total_above_its_terms_ledgers_the_itemized_counts_on_every_path() {
@@ -440,7 +436,7 @@ fn sse_early_frame_usage_metadata_carries_no_counters() {
     );
 }
 
-/// The upstream body of the oracle cell `usage.gemini|stream-grounded|no-tool-use-count` (TODO
+/// The upstream body of oracle cell `usage.gemini|stream-grounded|no-tool-use-count`.
 
 const GROUNDED_STREAM: &str = concat!(
     "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"po\"}],\"role\":\"model\"},\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":18,\"totalTokenCount\":18},\"modelVersion\":\"m-cap\"}\r\n\r\n",
@@ -519,8 +515,6 @@ fn a_grounded_stream_relays_the_155_bytes_and_ledgers_the_itemized_counts() {
     assert!(ledgered.residual_units.is_empty());
 }
 
-/// THE RED ARM: the pin above is not vacuous. The stream b8605a388 relayed (the total's remainder
-
 #[test]
 fn a_grounded_stream_never_relays_the_totals_remainder() {
     let leaked = GROUNDED_STREAM_155.replace(
@@ -554,8 +548,6 @@ const GEMINI_COUNT_CLASSES: &[(&str, (i64, i64, i64))] = &[
     ("candidatesTokenCount", (0, 0, 1)),
     ("thoughtsTokenCount", (0, 0, 1)),
 ];
-
-/// EVERY COUNT GOOGLE REPORTS IS LEDGERED, IN ITS OWN CLASS (owner 2026-10-02: ledger what the plane
 
 #[test]
 fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {

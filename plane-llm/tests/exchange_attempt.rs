@@ -1253,8 +1253,6 @@ const OPS: [(OpVerb, &str); 7] = [
     (OpVerb::RERANK, "rerank"),
 ];
 
-/// 1.5.5's far path for one dialect, operation and stream intent (v1.5.5
-
 fn released_path(
     dialect: &str,
     op: &str,
@@ -1895,8 +1893,6 @@ fn an_omitted_max_tokens_is_filled_and_an_explicit_one_is_kept() {
     );
     assert_eq!(explicit["max_tokens"], 7, "{explicit}");
 }
-
-/// RED (CREDENTIAL-LOCKDOWN H8): A SAME-DIALECT ROUTE FORWARDS NO CALLER CREDENTIAL. The caller's
 
 #[test]
 fn red_a_same_dialect_route_forwards_no_caller_credential() {

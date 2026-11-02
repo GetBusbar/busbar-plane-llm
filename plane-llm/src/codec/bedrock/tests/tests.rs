@@ -732,8 +732,6 @@ fn test_write_error_native_bedrock_shape() {
     assert!(s.contains("\"__type\""));
 }
 
-/// A SPENT BUDGET IS NOT RETRYABLE (OWNER 2026-10-27, 1.5.5's answer): a Bedrock caller whose
-
 #[test]
 fn a_spent_budget_is_400_service_quota_exceeded_not_a_retryable_throttle() {
     assert_eq!(super::DECL.quota_exceeded_status, 400);
@@ -5568,8 +5566,6 @@ fn status_word_golden() {
     }
 }
 
-/// DF-MAP gap 2: the tier that SERVED a Converse answer (`serviceTier.type`) is read into the usage
-
 #[test]
 fn the_served_tier_is_read_and_written() {
     let answer = serde_json::json!({
@@ -5605,8 +5601,6 @@ fn the_served_tier_is_read_and_written() {
     });
     assert_eq!(tier.as_deref(), Some("flex"));
 }
-
-/// THE TAIL RESTATES THIS SCHEME as the `sigv4` style's parameters (ARCHITECT RULING 2026-10-03,
 
 #[test]
 fn the_tails_sigv4_parameters_restate_the_signing_scheme() {
@@ -5678,8 +5672,6 @@ fn rehome_xreq(
     crate::codec::wire_shim::strip_router_shim_keys(&mut out, egress);
     (req, out)
 }
-
-/// F25 REHOME row 108, from `crates/busbar-llm/src/engine/tests/egress_dropped_controls_audit_tests.rs:89`
 
 #[test]
 fn openai_tool_choice_none_onto_bedrock_forwards_and_reports_the_drop() {

@@ -1,4 +1,4 @@
-//! DF-MAP audit: the Responses answer slots.
+//! OpenAI Responses field mapping.
 use super::super::proto_codec::protocol_for;
 use crate::codec::ir::{IrBlock, IrHostedToolKind, IrSearchResult};
 use serde_json::json;

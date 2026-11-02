@@ -200,8 +200,6 @@ fn readable_blocks_are_not_opaque() {
     }
 }
 
-/// COHERE `billed_units` (1.6.0 M1, `BUSBAR-1.6.0.md` THE DESIGN, §7): when Cohere reports a separately-metered billed bucket,
-
 #[test]
 fn cohere_bills_its_raw_tokens_whatever_billed_units_says() {
     let raw_wins_when_absent = IrUsage {
@@ -312,8 +310,6 @@ fn ir09_reasoning_off_and_effort_above_high() {
 
     assert_eq!(Budget(u32::MAX).to_effort(table), Some(High));
 }
-
-/// MONEY LAW (ARCHITECT ruling 2026-10-02, DF-MAP item 4): the by-modality split is presentation
 
 #[test]
 fn usage_by_modality_never_moves_a_billed_figure() {

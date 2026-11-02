@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! `v1.5.5` `crates/busbar/src/proxy/tests/hook_seam_tests.rs`, on the driver: the opt-in grants
+//! Hook opt-in grants exercised through the LLM plane driver.
 
 
 

@@ -128,8 +128,6 @@ fn anthropic_parked_service_tier_crosses_as_its_slot_or_drops() {
     }
 }
 
-/// DF-MAP (design DIALECT FIDELITY F3/F4; the owner's dialect-fidelity standing rule, 2026-10-02): Gemini's
-
 #[test]
 fn gemini_service_tier_and_store_cross_both_ways() {
     let gemini = |tier: &str| {
@@ -196,8 +194,6 @@ fn gemini_service_tier_same_dialect_keeps_the_raw_word() {
         assert_eq!(out.get("store"), Some(&json!(false)), "{out}");
     }
 }
-
-/// DF-MAP: Converse `outputConfig.effort` is the reasoning effort Anthropic (`output_config.effort`)
 
 #[test]
 fn bedrock_output_config_effort_crosses_as_the_reasoning_ask() {

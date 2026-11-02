@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! The Titan/Bedrock InvokeModel writers send exactly the members v1.5.5 sent (LLM2#7; architect
-//! ruling 2026-10-23 R-1: customer-visible behaviour stays v1.5.5's):
+//! The Titan/Bedrock InvokeModel writers preserve the v1.5.5 wire members:
 //!   * embeddings: `inputText` and `dimensions` (v1.5.5 `handlers/bedrock.rs:196-228`);
 //!   * image: `taskType`, `textToImageParams.text`, `imageGenerationConfig.numberOfImages`
 //!     (v1.5.5 `handlers/bedrock.rs:121-131`);

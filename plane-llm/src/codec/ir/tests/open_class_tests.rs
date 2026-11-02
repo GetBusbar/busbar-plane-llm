@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! The open-class table (owner LEDGER-100): every class is named once, the tail's declaration is
+//! Open usage classes and their tail declarations.
 
 use super::*;
 

@@ -359,8 +359,6 @@ fn rehome_xreq(ingress: &'static str, egress: &str, body: &serde_json::Value) ->
         .write_request(crate::codec::test_host::HOST, &req)
 }
 
-/// F25 REHOME row 613, from `crates/busbar-llm/src/engine/tests/stop_sequence_cap_degrade_tests.rs:23`
-
 #[test]
 fn openai_to_cohere_over_cap_stop_sequences_are_clamped_not_rejected() {
     let out = rehome_xreq(
@@ -378,8 +376,6 @@ fn openai_to_cohere_over_cap_stop_sequences_are_clamped_not_rejected() {
         "an over-cap stop list is clamped to Cohere's cap of 5: {out}"
     );
 }
-
-/// F25 REHOME row 614, from `crates/busbar-llm/src/engine/tests/stop_sequence_cap_degrade_tests.rs:63`
 
 #[test]
 fn openai_to_cohere_exactly_cap_stop_sequences_are_forwarded_whole() {

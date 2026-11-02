@@ -6,8 +6,6 @@ use crate::codec::ir::{IrDelta, IrStreamEvent, StreamDecodeState};
 use crate::codec::proto_codec::protocol_for;
 use serde_json::json;
 
-/// Item 18 (GEM-16): a streamed citation on a LATER text block (text -> functionCall -> text) is
-
 #[test]
 fn item18_citation_on_a_later_text_block_is_block_relative() {
     let reader = protocol_for("gemini").unwrap();
@@ -79,8 +77,6 @@ fn bedrock_image_answer() -> crate::codec::ir::IrResponse {
         .read_response(crate::codec::test_host::HOST, &converse)
         .expect("read")
 }
-
-/// Item 17 (IR-21): a generated image in a buffered Bedrock answer reaches a Gemini STREAM client
 
 #[test]
 fn item17_generated_image_streams_to_a_gemini_client() {

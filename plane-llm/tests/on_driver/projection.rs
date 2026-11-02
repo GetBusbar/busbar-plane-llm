@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! `v1.5.5` `crates/busbar/src/proxy/tests/hook_opt_in_projection_tests.rs`, on the driver: what a
+//! Opt-in hook projection exercised through the plane driver.
 
 
 

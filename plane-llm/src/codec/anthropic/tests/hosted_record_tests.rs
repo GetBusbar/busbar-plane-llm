@@ -1,4 +1,4 @@
-//! DF-MAP: an Anthropic `web_search_tool_result` is the IR's
+//! Hosted Anthropic web search results in the intermediate representation.
 
 use super::super::proto_codec::protocol_for;
 use crate::codec::ir::{IrBlock, IrHostedToolKind, IrSearchResult};

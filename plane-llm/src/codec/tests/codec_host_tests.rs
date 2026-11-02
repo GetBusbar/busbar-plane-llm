@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE CODEC READS ONLY THE HOST IT IS HANDED (coordinator ruling 2026-10-14, contract-ABI: the
+//! Codecs read only the host supplied to them.
 
 use busbar_contract::codec::CodecHost;
 

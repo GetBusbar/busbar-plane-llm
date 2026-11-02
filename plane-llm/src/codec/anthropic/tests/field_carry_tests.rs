@@ -51,7 +51,6 @@ fn assert_unknown_member_carried(body: &serde_json::Value, out: &serde_json::Val
     );
 }
 
-/// RED arm of the F4 assertion: a writer that DROPS the unknown member fails it.
 #[test]
 #[should_panic(expected = "must survive the same-dialect hop byte-identical")]
 fn the_unknown_member_check_fails_on_a_drop() {
@@ -60,8 +59,6 @@ fn the_unknown_member_check_fails_on_a_drop() {
     out.as_object_mut().expect("object").remove(UNKNOWN_MEMBER);
     assert_unknown_member_carried(&body, &out);
 }
-
-/// RED arm of the F4 assertion: a writer that REBUILDS the member (here, one nested value coerced)
 
 #[test]
 #[should_panic(expected = "must survive the same-dialect hop byte-identical")]

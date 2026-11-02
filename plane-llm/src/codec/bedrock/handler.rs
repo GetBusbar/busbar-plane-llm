@@ -222,7 +222,7 @@ leaf_op! {
     RerankReqHandle = read_rerank_request,
     RerankRespHandle = read_rerank_response;
     // Search-unit metered like the Cohere cell: buffer the same-protocol non-stream 2xx body so the
-    // tap reads the `meta.billed_units.search_units` it billed (item 134).
+    // tap reads the `meta.billed_units.search_units` it billed.
     fn taps_usage(&self) -> bool {
         true
     }

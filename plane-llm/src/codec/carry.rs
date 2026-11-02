@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! The dialect mapping walker (TODO 36b, stage 0 of the dialect file): one walker for every
+//! Dialect field mapping walker.
 
 use serde_json::{Map, Value};
 

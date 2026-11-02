@@ -195,8 +195,6 @@ fn an_unreadable_embeddings_count_refuses_itself_and_the_answer_is_served() {
     assert_eq!(resp.embeddings.len(), 1, "the vectors are served");
 }
 
-/// THE TRANSCRIPTION READER JUDGES ITS TOKEN COUNTS ONE BY ONE (LLM3#6), as v1.5.5 read them
-
 #[test]
 fn an_unreadable_transcription_count_refuses_itself_and_the_transcript_is_served() {
     use busbar_contract::billing::{Billing, TokenUsage};

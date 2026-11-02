@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! DF-MAP audit, Cohere. The /v2/chat answer has NO member
+//! Cohere response field mapping.
 
 use super::super::proto_codec::protocol_for;
 use serde_json::json;
@@ -34,8 +34,6 @@ fn write(resp: &crate::codec::ir::IrResponse) -> serde_json::Value {
         .writer()
         .write_response(crate::codec::test_host::HOST, resp)
 }
-
-/// The read direction bills the cache hit inside the input, as 1.5.5 did (v1.5.5
 
 #[test]
 fn the_cache_read_count_row_bills_inside_the_input_and_is_written() {

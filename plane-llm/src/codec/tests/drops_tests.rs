@@ -288,8 +288,6 @@ pub(super) fn translate(
     (wire, out.dropped_controls, cap)
 }
 
-/// The drop is warned and audited under `paths`; the RED arm — the request without the unmapped
-
 fn request_drops(
     ingress: &str,
     egress: &str,
@@ -481,8 +479,6 @@ fn answer(egress: &str, ingress: &str, body: &Value) -> (String, Vec<String>, Wa
     )
 }
 
-/// The answer's drop is warned under `paths`; the RED arm — the answer with only what maps —
-
 fn response_drops(egress: &str, ingress: &str, with: Value, without: Value, paths: &[&str]) {
     let (body, audited, cap) = answer(egress, ingress, &with);
     for path in paths {
@@ -566,8 +562,6 @@ fn responses_answer_drops_name_the_wire_path() {
         &["output[].content[].type=x_future"],
     );
 }
-
-/// DF-MAP-IR-GAPS section E: a Responses answer carrying a hosted-tool item the IR has no form for
 
 #[test]
 fn responses_hosted_tool_item_is_dropped_on_the_drop_path() {
@@ -711,8 +705,6 @@ fn the_answer_walk_names_the_shallowest_uncarried_member() {
     );
 }
 
-/// AN ECHOED DEFAULT IS NO UNREPRESENTABLE CONTROL (ARCHITECT RULING 2026-10-04): a Responses
-
 #[test]
 fn an_echoed_request_default_names_no_drop_and_a_caller_set_value_still_does() {
     let carried =
@@ -734,8 +726,6 @@ fn an_echoed_request_default_names_no_drop_and_a_caller_set_value_still_does() {
     named.sort();
     assert_eq!(named, vec!["parallel_tool_calls", "tool_choice", "tools"]);
 }
-
-/// DF-MAP-IR-GAPS SECTION E (ruled: every unmapped response/stream path is named, no extra
 
 #[test]
 fn every_section_e_path_is_named_by_the_drop_walk() {
@@ -765,8 +755,6 @@ fn every_section_e_path_is_named_by_the_drop_walk() {
         missed.join("\n")
     );
 }
-
-/// RED ARM of the buffered answer walk, over the whole golden corpus (every `resp_X2Y_*.json` is an
 
 #[test]
 fn the_answer_walk_names_only_true_drops_over_the_golden_corpus() {
@@ -905,8 +893,6 @@ fn every_drop_list_is_sorted_for_the_walks_search() {
         });
     }
 }
-
-/// F25 REHOME row 109, from `crates/busbar-llm/src/engine/tests/egress_dropped_controls_audit_tests.rs:146`
 
 #[test]
 fn egress_dropped_controls_reports_the_right_controls_per_dialect() {

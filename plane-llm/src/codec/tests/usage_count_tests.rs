@@ -354,7 +354,6 @@ fn a_multi_byte_unreadable_spelling_refuses_rather_than_panicking() {
     assert!(err.spelling.starts_with("\"é"), "{}", err.spelling);
 }
 
-/// `billed_count_opt` keeps ABSENCE distinct from zero and refuses what will not read (item 133).
 #[test]
 fn billed_count_opt_is_none_when_absent_and_refuses_when_unreadable() {
     use super::billed_count_opt;
@@ -643,8 +642,6 @@ fn lenient_struct_maps(flat: &str) -> Vec<String> {
     }
     hits
 }
-
-/// THE READ-THROUGH-THE-SEAM SPELLING OF THE SILENT ZERO (item 306).
 
 #[test]
 fn no_dialect_defaults_a_lenient_count_read() {

@@ -1,4 +1,4 @@
-//! IR MAPPING (owner directive Q57): every field the Anthropic dialect carries that the IR and the
+//! Anthropic field mapping through the intermediate representation.
 
 use super::super::proto_codec::protocol_for;
 use serde_json::{json, Value};
@@ -722,8 +722,6 @@ fn ant18_search_result_citation_source_maps_both_ways() {
     );
 }
 
-/// F25 REHOME row 107, from `crates/busbar-llm/src/engine/tests/egress_dropped_controls_audit_tests.rs:26`
-
 #[test]
 fn openai_json_object_onto_a_default_anthropic_lane_is_dropped_and_reported() {
     let body = json!({
@@ -747,8 +745,6 @@ fn openai_json_object_onto_a_default_anthropic_lane_is_dropped_and_reported() {
         .dropped_egress_controls_for_lane(&ir, &Default::default())
         .contains(&"response_format"));
 }
-
-/// F25 REHOME row 110, from `crates/busbar-llm/src/engine/tests/egress_dropped_controls_audit_tests.rs:245`
 
 #[test]
 fn native_structured_output_lane_drops_schema_less_json_and_reports_it() {

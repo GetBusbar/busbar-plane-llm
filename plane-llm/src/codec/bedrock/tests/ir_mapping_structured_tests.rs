@@ -6,8 +6,6 @@
 use super::*;
 use serde_json::json;
 
-/// The reader promotes no `additionalModelRequestFields` reasoning ask, as in 1.5.5 (v1.5.5
-
 #[test]
 fn a_native_reasoning_ask_is_not_promoted_to_the_ir() {
     let body = json!({
@@ -31,8 +29,6 @@ fn a_native_reasoning_ask_is_not_promoted_to_the_ir() {
         "{back}"
     );
 }
-
-/// A foreign reasoning ask is DROPPED on Bedrock egress, as in 1.5.5 (v1.5.5
 
 #[test]
 fn a_foreign_reasoning_ask_is_dropped_on_bedrock_egress() {

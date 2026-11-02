@@ -1,4 +1,4 @@
-//! ITEM 133 — A PRESENT-BUT-UNREADABLE BILLED COUNT IS REFUSED ON ITS OWN; IT IS NEVER LEDGERED AS
+//! Unreadable billed counts are refused independently while readable counts remain billable.
 
 use super::*;
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! The hook tests the legacy llm crate carries beyond the 1.5.5 set, held on the driver before that
+//! Hook behavior exercised through the LLM plane driver.
 
 
 

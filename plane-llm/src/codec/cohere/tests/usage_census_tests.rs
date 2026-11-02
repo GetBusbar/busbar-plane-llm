@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE COHERE USAGE CENSUS (MONEY-AUDIT A-F1; owner 2026-10-02: every billed count lands in an
+//! Cohere billed usage counts and their classes.
 
 use super::*;
 use crate::codec::usage_census::{
@@ -93,8 +93,6 @@ fn streamed(usage: &serde_json::Value) -> Ledgered {
     let _ = t.finish(crate::codec::test_host::HOST);
     ledgered(&t.usage().expect("the tap captured usage").to_token_usage())
 }
-
-/// EVERY COUNT COHERE REPORTS IS LEDGERED IN ITS OWN CLASS, ON EVERY READ PATH. RED when the reader
 
 #[test]
 fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {

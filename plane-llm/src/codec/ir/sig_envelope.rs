@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! IR-18 signature-provenance envelope (architect ruling).
+//! Signature-provenance envelope for the intermediate representation.
 
 use super::IrSignatureOrigin;
 

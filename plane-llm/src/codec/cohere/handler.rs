@@ -246,7 +246,7 @@ leaf_op! {
     RerankReqHandle = read_rerank_request,
     RerankRespHandle = read_rerank_response;
     // Search-unit metered: buffer the same-protocol non-stream 2xx body so the tap reads
-    // `meta.billed_units.search_units` onto both books, as the cross-protocol path does (item 134);
+    // `meta.billed_units.search_units` onto both books, as the cross-protocol path does;
     // a verbatim relay kept no copy, so the units reached neither.
     fn taps_usage(&self) -> bool {
         true

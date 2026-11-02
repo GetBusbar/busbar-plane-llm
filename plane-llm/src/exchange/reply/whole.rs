@@ -58,8 +58,7 @@ pub struct Whole {
     /// audit row per path (`egress.control_unrepresentable`, `<path> from <dialect>`, degraded). Empty
     /// on a relay and on every end that delivers nothing.
     pub dropped: Vec<String>,
-    /// The caller asked for a stream and reads one synthesised from this one whole body (OWNER
-    /// 2026-10-27: busbar answers in the caller's dialect AND mode). `usage` is this body's own.
+    /// Whether the caller reads a stream synthesized from this whole response.
     pub synthesized: bool,
 }
 

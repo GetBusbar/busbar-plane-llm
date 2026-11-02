@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! THE CARRY PROBE (DF-MAP per-dialect audit, design F3/F4): which wire paths a dialect actually maps
+//! Probe which wire paths each dialect maps.
 
 use serde_json::{json, Map, Value};
 

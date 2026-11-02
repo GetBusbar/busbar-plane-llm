@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! Item 305 — a STREAMED Responses upstream's `url_citation` annotations. A native stream carries
+//! Streamed Responses URL citation annotations.
 
 use super::*;
 

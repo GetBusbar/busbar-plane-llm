@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! TODO 585 (IMAGE-DETAIL-WARN): 1.5.5 warned the operator when an image's `image_url.detail` was
+//! Warn when an image detail hint cannot be represented across protocols.
 
 use crate::codec::chat_handle::ChatReqHandle;
 use crate::codec::ir::{IrBlock, IrImageDetail, IrImageSource, IrMessage, IrRequest, IrRole};

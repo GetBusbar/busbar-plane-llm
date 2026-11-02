@@ -1,4 +1,4 @@
-//! DF-MAP audit (and the served tier, a real miss with
+//! Gemini response field and service tier mapping.
 
 use super::super::proto_codec::protocol_for;
 use crate::codec::ir::IrBlock;

@@ -11,8 +11,6 @@ fn rerank_resp_billing_is_flat() {
     assert_eq!(resp.billing(), Some(Billing::Flat));
 }
 
-/// ITEM 134: the search units Cohere billed REACH THE PRICE. `billing()` hardcoded `Flat` and
-
 #[test]
 fn rerank_resp_billing_counts_search_units_as_an_open_class() {
     let resp = RerankResp {

@@ -37,9 +37,8 @@
 //!   that bills at the input tier exactly as 1.5.5 billed it (no cache-write split).
 //! * openai_chat — `usage.prompt_tokens_details.cache_write_tokens`, same rule, same 1.5.5 source.
 //!
-//! The three 1.5.5 readings are the money baseline (BUSBAR-1.6.0.md THE LLM DIALECT FIDELITY RULE:
-//! "Billing never moves"; CHANGELOG 1.6.0: "The token classes, their figures and every `tokens:` cap
-//! count exactly what 1.5.5 counted"): v1.5.5 `crates/busbar/src/proto/cohere/reader.rs:964-979`
+//! The three 1.5.5 readings preserve the billing baseline: v1.5.5
+//! `crates/busbar/src/proto/cohere/reader.rs:964-979`
 //! and `:709-729`, `crates/busbar/src/proto/openai_responses/reader.rs:1022` and `:1341`,
 //! `crates/busbar/src/proto/openai_chat/reader.rs:966` and `:693` each set the split tier `None`.
 //! * cohere (truncated recovery) — the recovery path and the buffered path must bill the SAME
@@ -402,8 +401,6 @@ fn responses_recorded_body_carries_the_cache_write_member() {
     );
 }
 
-/// `usage.input_tokens_details.cache_write_tokens` bills inside `input_tokens`, as in 1.5.5: only
-
 #[test]
 fn responses_cache_write_tokens_bill_inside_the_input() {
     let recorded = oracle_cell_body("llm__responses__responses__request__ok");
@@ -499,8 +496,6 @@ fn openai_chat_recorded_body_invents_no_cache_write() {
     );
 }
 
-/// `usage.prompt_tokens_details.cache_write_tokens` bills inside `prompt_tokens`, as in 1.5.5
-
 #[test]
 fn openai_chat_cache_write_tokens_bill_inside_the_input() {
     let recorded = oracle_cell_body("llm__openai__openai__request__ok");
@@ -537,8 +532,6 @@ fn openai_chat_cache_write_tokens_bill_inside_the_input() {
         "input_tokens is the reported total less the cached prefix only: {ir:?}"
     );
 }
-
-/// The STREAM's `include_usage` chunk bills the cache write inside the input the same way (v1.5.5
 
 #[test]
 fn openai_chat_cache_write_tokens_ride_the_usage_chunk_inside_the_input() {
