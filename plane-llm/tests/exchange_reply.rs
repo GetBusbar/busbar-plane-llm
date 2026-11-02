@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use busbar_contract::operation::OpVerb;
 use busbar_contract::upstream::{Disposition, RawUpstreamError, StatusClass};
 use busbar_plane_llm::exchange::reply::failure::{
-    FarError, auth_failure, judge, normalize, relay_verbatim,
+    auth_failure, judge, normalize, relay_verbatim, FarError,
 };
 use busbar_plane_llm::exchange::reply::wire::head_field;
 use serde_json::Value;
@@ -300,12 +300,10 @@ fn a_verbatim_relay_carries_every_far_field_but_the_governed_ones() {
         "a plane never invents a head field: {:?}",
         anthropic.fields
     );
-    assert!(
-        anthropic
-            .fields
-            .iter()
-            .any(|(n, _)| n == "openai-organization")
-    );
+    assert!(anthropic
+        .fields
+        .iter()
+        .any(|(n, _)| n == "openai-organization"));
     for dialect in [
         "openai",
         "anthropic",
@@ -1176,7 +1174,7 @@ mod rehomed_answers {
     use busbar_plane_llm::codec::eventstream;
     use busbar_plane_llm::exchange::arrive::PathModel;
     use busbar_plane_llm::exchange::attempt::StreamIntent;
-    use busbar_plane_llm::exchange::reply::{Piece, failure, wire};
+    use busbar_plane_llm::exchange::reply::{failure, wire, Piece};
     use busbar_plane_llm::plane_door::breaker_fault;
     use serde_json::json;
 
@@ -2173,11 +2171,10 @@ mod rehomed_answers {
         let body = chat_completion("hello there");
         let read = answer(&ctx, 200, JSON_HEAD, &[&body], false);
         assert_eq!(read.status, 200);
-        assert!(
-            read.value("content-type")
-                .unwrap_or_default()
-                .starts_with("application/json")
-        );
+        assert!(read
+            .value("content-type")
+            .unwrap_or_default()
+            .starts_with("application/json"));
         let id = read.value("x-amzn-requestid").unwrap_or_default();
         assert!(is_uuid(&id), "{id}");
         let converse = read.json();
@@ -2200,11 +2197,10 @@ mod rehomed_answers {
         let far = chat_stream_events();
         let read = answer(&ctx, 200, SSE_HEAD, &[&far], false);
         assert_eq!(read.status, 200);
-        assert!(
-            read.value("content-type")
-                .unwrap_or_default()
-                .starts_with(EVENTSTREAM)
-        );
+        assert!(read
+            .value("content-type")
+            .unwrap_or_default()
+            .starts_with(EVENTSTREAM));
         let id = read.value("x-amzn-requestid").unwrap_or_default();
         assert!(is_uuid(&id), "{id}");
         let (names, left) = eventstream_names(&read.body);
@@ -2250,11 +2246,10 @@ mod rehomed_answers {
         let pieces: Vec<&[u8]> = far.chunks(23).collect();
         let read = answer(&ctx, 200, head, &pieces, false);
         assert_eq!(read.status, 200);
-        assert!(
-            read.value("content-type")
-                .unwrap_or_default()
-                .starts_with(EVENTSTREAM)
-        );
+        assert!(read
+            .value("content-type")
+            .unwrap_or_default()
+            .starts_with(EVENTSTREAM));
         assert_eq!(read.count("x-amzn-requestid"), 1, "{:?}", read.fields);
         assert_eq!(
             read.value("x-amzn-requestid").as_deref(),
@@ -2293,11 +2288,10 @@ mod rehomed_answers {
         let body = br#"{"output":{"message":{"role":"assistant","content":[{"text":"hi there"}]}},"stopReason":"end_turn","usage":{"inputTokens":5,"outputTokens":3,"totalTokens":8}}"#;
         let read = answer(&ctx, 200, head, &[body], false);
         assert_eq!(read.status, 200);
-        assert!(
-            read.value("content-type")
-                .unwrap_or_default()
-                .starts_with("application/json")
-        );
+        assert!(read
+            .value("content-type")
+            .unwrap_or_default()
+            .starts_with("application/json"));
         assert_eq!(read.count("x-amzn-requestid"), 1, "{:?}", read.fields);
         assert_eq!(
             read.value("x-amzn-requestid").as_deref(),
@@ -2339,11 +2333,10 @@ mod rehomed_answers {
         let far = converse_frames(&[("messageStart", br#"{"role":"assistant"}"#)]);
         let read = answer(&ctx, 200, head, &[&far], true);
         assert_eq!(read.status, 200);
-        assert!(
-            read.value("content-type")
-                .unwrap_or_default()
-                .starts_with(EVENTSTREAM)
-        );
+        assert!(read
+            .value("content-type")
+            .unwrap_or_default()
+            .starts_with(EVENTSTREAM));
         assert_binary_exception_tail(&read);
         assert_eq!(read.end().fault, Some(Fault::Transient("mid-stream")));
     }
@@ -2399,18 +2392,15 @@ mod rehomed_answers {
         let far = chat_stream_events();
         let read = answer(&ctx, 200, SSE_HEAD, &[&far], false);
         assert_eq!(read.status, 200);
-        assert!(
-            read.value("content-type")
-                .unwrap_or_default()
-                .starts_with("text/event-stream")
-        );
+        assert!(read
+            .value("content-type")
+            .unwrap_or_default()
+            .starts_with("text/event-stream"));
         let payloads = sse_payloads(&read.text());
         assert!(!payloads.is_empty());
-        assert!(
-            payloads
-                .iter()
-                .any(|frame| frame.get("candidates").is_some())
-        );
+        assert!(payloads
+            .iter()
+            .any(|frame| frame.get("candidates").is_some()));
         assert!(payloads.iter().all(|frame| frame.get("choices").is_none()));
     }
 
@@ -2426,11 +2416,10 @@ mod rehomed_answers {
         let far = b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n";
         let read = answer(&ctx, 200, SSE_HEAD, &[far], true);
         assert_eq!(read.status, 200);
-        assert!(
-            read.value("content-type")
-                .unwrap_or_default()
-                .starts_with("text/event-stream")
-        );
+        assert!(read
+            .value("content-type")
+            .unwrap_or_default()
+            .starts_with("text/event-stream"));
         let text = read.text();
         assert!(!text.contains("event:"), "{text}");
         assert!(!text.contains("chat.completion.chunk"), "{text}");
@@ -2452,11 +2441,10 @@ mod rehomed_answers {
         let far = b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n";
         let read = answer(&ctx, 200, SSE_HEAD, &[far], true);
         assert_eq!(read.status, 200);
-        assert!(
-            read.value("content-type")
-                .unwrap_or_default()
-                .starts_with("application/json")
-        );
+        assert!(read
+            .value("content-type")
+            .unwrap_or_default()
+            .starts_with("application/json"));
         let text = read.text();
         assert!(
             !text.contains("event:") && !text.contains("data:"),
@@ -2556,11 +2544,10 @@ mod rehomed_answers {
         ]);
         let read = answer(&ctx, 200, SSE_HEAD, &[&far], false);
         assert_eq!(read.status, 200);
-        assert!(
-            read.value("content-type")
-                .unwrap_or_default()
-                .starts_with("text/event-stream")
-        );
+        assert!(read
+            .value("content-type")
+            .unwrap_or_default()
+            .starts_with("text/event-stream"));
         let text = read.text();
         assert!(!text.contains("event:"), "{text}");
         assert!(text.contains("[DONE]"), "{text}");
@@ -2587,11 +2574,10 @@ mod rehomed_answers {
         let far = chat_stream_events();
         let read = answer(&ctx, 200, SSE_HEAD, &[&far], false);
         assert_eq!(read.status, 200);
-        assert!(
-            read.value("content-type")
-                .unwrap_or_default()
-                .starts_with("text/event-stream")
-        );
+        assert!(read
+            .value("content-type")
+            .unwrap_or_default()
+            .starts_with("text/event-stream"));
         let text = read.text();
         assert!(!text.contains("chat.completion.chunk"), "{text}");
         let types: Vec<String> = sse_payloads(&text)
@@ -2622,11 +2608,10 @@ mod rehomed_answers {
         let far = chat_stream_events();
         let read = answer(&ctx, 200, SSE_HEAD, &[&far], false);
         assert_eq!(read.status, 200);
-        assert!(
-            read.value("content-type")
-                .unwrap_or_default()
-                .starts_with("text/event-stream")
-        );
+        assert!(read
+            .value("content-type")
+            .unwrap_or_default()
+            .starts_with("text/event-stream"));
         let text = read.text();
         assert!(!text.contains("chat.completion.chunk"), "{text}");
         let events: Vec<String> = sse_frames(&text)
@@ -5264,11 +5249,9 @@ fn malformed_anthropic_answer_keeps_reported_usage_at_the_reply_boundary() {
         no_report.usage, None,
         "nested metadata is not provider usage"
     );
-    assert!(
-        chat_handler("anthropic")
-            .extract_usage(HOST, "anthropic", nested)
-            .is_err()
-    );
+    assert!(chat_handler("anthropic")
+        .extract_usage(HOST, "anthropic", nested)
+        .is_err());
     let decoy = br#"{"role":"assistant","content":"malformed","usage":{"input_tokens":17,"output_tokens":9},"metadata":{"usage":{"input_tokens":999,"output_tokens":888}}}"#;
     let reported = whole::translate(HOST, &ctx("openai", "anthropic", false, false), 200, decoy);
     let token = busbar_plane_llm::exchange::reply::wire::token_usage_of(&reported.usage).unwrap();
@@ -5320,7 +5303,7 @@ fn empty_speech_output_is_a_failed_delivery_with_original_flat_billing() {
 #[test]
 fn malformed_rerank_retains_full_billing_variants_and_units() {
     use busbar_contract::billing::Billing;
-    use busbar_plane_llm::exchange::reply::{Units, wire};
+    use busbar_plane_llm::exchange::reply::{wire, Units};
     for value in [
         Some(serde_json::json!(7)),
         Some(serde_json::json!(0)),
