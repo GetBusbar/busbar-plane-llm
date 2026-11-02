@@ -563,7 +563,10 @@ fn the_translate_cap_the_settings_carry_is_the_one_the_door_enforces() {
         }
     }
     let refused = busbar_plane_llm::exchange::reply::whole::over_cap(&NoHost, "openai").answer;
-    let d = Dispatcher::new(DispatchConfig::default());
+    let entropy = Arc::new(translation_entropy::TranslationEntropy {
+        fills: std::sync::atomic::AtomicU64::new(0),
+    });
+    let d = Dispatcher::with_services(DispatchConfig::default(), entropy.clone());
     for p in [linked(&d), dropped(&d)] {
         let mut i: PlaneOpenIn = z();
         i.open.head = in_head();
@@ -571,10 +574,16 @@ fn the_translate_cap_the_settings_carry_is_the_one_the_door_enforces() {
         let mut o: PlaneOpenOut = z();
         o.open.head = out_head();
         assert_eq!(p.open(&mut Frame::new(i, o)).0.outcome, Outcome::Ready);
+        let entropy_before = entropy.fills.load(std::sync::atomic::Ordering::SeqCst);
         let open = translated(&p, 21);
         assert!(
             open.contains(" status=200 ") && open.contains("chat.completion"),
             "opened with the default cap, the answer translates: {open}"
+        );
+
+        assert!(
+            entropy.fills.load(std::sync::atomic::Ordering::SeqCst) > entropy_before,
+            "the actual door must draw the host entropy its cross-dialect translation requires"
         );
 
         let mut f: Frame<RefreshIn, PlaneRefreshOut> = Frame::new(z(), z());
@@ -1576,3 +1585,6 @@ fn plugin_cdylib() -> std::path::PathBuf {
     );
     path
 }
+
+#[path = "support/translation_entropy.rs"]
+mod translation_entropy;

@@ -797,7 +797,7 @@ fn responses_input_file_degrades_with_warn_not_silent_drop() {
         }]
     });
 
-    let (cap, cap_subscriber) = warnings();
+    let (_cap, cap_subscriber) = warnings();
     let subscriber = cap_subscriber.clone();
     let ir = tracing::dispatcher::with_default(&subscriber, || {
         ResponsesReader.read_request(&body).expect("read_request")
@@ -6242,7 +6242,7 @@ fn reasoning_input_item_round_trips_through_request() {
     });
 
     let ir = {
-        let (cap, cap_subscriber) = warnings();
+        let (_cap, cap_subscriber) = warnings();
         let subscriber = cap_subscriber.clone();
         tracing::dispatcher::with_default(&subscriber, || {
             let reader = ResponsesReader;

@@ -122,3 +122,20 @@ Validation: cargo fmt --all -- --check and git diff --check pass. No build ran w
 resource coordinator's lane approval. Native compilation/live execution, final SDK compatibility,
 root composition transfer, GitHub host-safety native execution and reusable CI artifact production remain explicit
 qualification work.
+
+## Native qualification follow-up
+
+The native c5dfa854 candidate built its actual library. Logic compilation found one mechanical
+snapshot typo: baseline_cap.messages() had become baseline_diagnostic_texts(&cap). It now reads
+`diagnostic_texts(&baseline_cap)`, preserving the original baseline-empty assertion. Two captures
+with no original diagnostic assertions keep their scoped Dispatch but name the unobserved handles
+`_cap`; no assertion is removed.
+
+The existing both_ways translation-cap test used Dispatcher::new with no HostServices. The actual
+DoorHost refuses entropy in that setup; cross-dialect OpenAI response synthesis uses CheckedEntropy
+and answers an internal 500 while still reporting the far end's 7/3 usage. That fixture now supplies
+only a direct host entropy/clock implementation for this test's dispatcher, obtaining bytes from
+OS getrandom. Other host services refuse. Both actual deliveries retain the original default-cap
+200/chat.completion and refreshed-64-byte-cap refusal assertions; an additional per-door counter
+asserts the actual translation draws host entropy. No product logic, expected answer or cap changes.
+Source causality and the corrected candidate's native result require the lane executor's rerun.

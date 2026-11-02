@@ -198,7 +198,7 @@ fn drop_index_full_request_keeps_each_warning_and_audit_without_payload_values()
     let (_, baseline, baseline_cap) =
         super::tests::translate("openai", "anthropic", &request_with_unknown_keys(0));
     assert!(baseline.is_empty());
-    assert!(baseline_diagnostic_texts(&cap).is_empty());
+    assert!(diagnostic_texts(&baseline_cap).is_empty());
 }
 
 #[test]
