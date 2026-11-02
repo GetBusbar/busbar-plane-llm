@@ -635,3 +635,7 @@ fn path_model_arrival(
         path_model: Some(facts),
     })
 }
+
+#[cfg(test)]
+#[path = "arrive/tests/linked_resolvers.rs"]
+mod linked_resolvers;
