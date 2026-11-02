@@ -30,13 +30,15 @@ fn served_generation() -> busbar_plane_llm::exchange::shaping::Shaping {
     .expect("a well-formed generation reads")
 }
 
-/// The host the gated forward is handed: no entropy and no clock (a passthrough forward mints no
-/// id and stamps no time), so the gate counts the plane's allocations and nothing of a host's.
+/// The host the gated forward is handed: deterministic stack-only entropy and no clock. A native
+/// relay mints no id, while the buffered-to-stream arm must mint one successfully; the gate counts
+/// the plane's allocations and nothing of a host's entropy implementation.
 struct GateHost;
 
 impl busbar_contract::codec::CodecHost for GateHost {
-    fn fill_entropy(&self, _out: &mut [u8]) -> bool {
-        false
+    fn fill_entropy(&self, out: &mut [u8]) -> bool {
+        out.fill(7);
+        true
     }
 
     fn wall_clock_now(&self) -> Option<u64> {
