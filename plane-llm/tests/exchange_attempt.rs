@@ -1658,6 +1658,59 @@ fn a_same_dialect_cohere_over_cap_stop_list_goes_out_whole() {
     assert_eq!(String::from_utf8_lossy(&r.body), body);
 }
 
+#[test]
+fn cohere_bounds_combined_foreign_controls_are_clamped_and_audited_once() {
+    let h = head(&[("content-type", "application/json")]);
+    let s = one_lane("cohere", "command-r-plus", None, &[]);
+    let body = r#"{"model":"command-r-plus","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"top_p":1.0,"frequency_penalty":1.5,"presence_penalty":-0.5}"#;
+    let a = arrived("/v1/chat/completions", &h, body);
+    let cap = busbar_test_kit::warn_capture::WarnCapture::default();
+    let r = tracing::subscriber::with_default(cap.clone(), || {
+        build(HOST, &a, &h, &s, "p", "command-r-plus").expect("translated")
+    });
+    let wire = far_json(&r);
+    assert_eq!(
+        wire,
+        json!({"model":"command-r-plus", "max_tokens":16,
+        "messages":[{"role":"user", "content":"hi"}],
+        "p":0.99, "frequency_penalty":1.0, "presence_penalty":0.0})
+    );
+    assert!(wire.get("top_p").is_none());
+    assert_eq!(
+        r.dropped_controls,
+        ["top_p", "frequency_penalty", "presence_penalty"]
+    );
+    let warnings = cap.messages();
+    assert_eq!(warnings.len(), 3, "{warnings:?}");
+    for parameter in ["top_p", "frequency_penalty", "presence_penalty"] {
+        let path = format!("path={parameter}");
+        assert_eq!(
+            warnings
+                .iter()
+                .filter(|message| message.split_whitespace().any(|field| field == path))
+                .count(),
+            1,
+            "{warnings:?}"
+        );
+    }
+}
+
+#[test]
+fn cohere_bounds_native_attempt_preserves_bytes_without_clamping_or_diagnostics() {
+    let h = head(&[("content-type", "application/json")]);
+    let s = one_lane("cohere", "command-r-plus", None, &[]);
+    let body = r#"{ "model" : "command-r-plus", "messages" : [{ "role" : "user", "content" : "hi" }], "p" : 1.0, "frequency_penalty" : 1.5, "presence_penalty" : -0.5 }"#;
+    let a = arrived("/v2/chat", &h, body);
+    let cap = busbar_test_kit::warn_capture::WarnCapture::default();
+    let r = tracing::subscriber::with_default(cap.clone(), || {
+        build(HOST, &a, &h, &s, "p", "command-r-plus").expect("relayed")
+    });
+    assert_eq!(r.body, body.as_bytes());
+    assert!(r.pristine);
+    assert!(r.dropped_controls.is_empty(), "{:?}", r.dropped_controls);
+    assert!(cap.messages().is_empty(), "{:?}", cap.messages());
+}
+
 /// Rehomes `crates/busbar-llm/src/engine/tests/translate_offload_tests.rs::huge_body_translates_via_offload_and_forwards`.
 /// 1.5.5 behaviour pinned: a body well over 128 KiB (a 300 KiB user turn) is written for the far
 /// end exactly as a small one is: the legacy openai lane, and an anthropic lane where it is

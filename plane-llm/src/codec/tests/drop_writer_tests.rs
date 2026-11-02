@@ -741,7 +741,10 @@ fn cohere_bounds_cross_dialect_frequency_penalty_is_warned_and_audited() {
 
 #[test]
 fn cohere_bounds_cross_dialect_presence_penalty_is_warned_and_audited() {
-    cohere_bounds_cross_dialect("presence_penalty", &[(-0.5, 0.0), (1.5, 1.0)]);
+    cohere_bounds_cross_dialect(
+        "presence_penalty",
+        &[(-0.5, 0.0), (1.0001, 1.0), (1.5, 1.0)],
+    );
 }
 
 #[test]
@@ -833,6 +836,80 @@ fn cohere_bounds_temperature_diagnostic_keeps_its_compatibility_fields() {
         assert!(
             warnings[0].contains(field),
             "missing {field}: {}",
+            warnings[0]
+        );
+    }
+}
+
+#[test]
+fn cohere_bounds_other_temperature_rows_keep_legacy_diagnostic_fields() {
+    let body = cohere_bounds_body("temperature", 1.8);
+    let ir = protocol_for("openai")
+        .unwrap()
+        .reader()
+        .read_request(&body)
+        .unwrap();
+    for dialect in ["anthropic", "bedrock"] {
+        let cap = WarnCapture::default();
+        let wire = tracing::subscriber::with_default(cap.clone(), || {
+            protocol_for(dialect)
+                .unwrap()
+                .writer()
+                .write_request(crate::codec::test_host::HOST, &ir)
+        });
+        let temperature = if dialect == "bedrock" {
+            &wire["inferenceConfig"]["temperature"]
+        } else {
+            &wire["temperature"]
+        };
+        assert_eq!(temperature, &json!(1.0), "{dialect}: {wire}");
+        let warnings = cap.messages();
+        assert_eq!(warnings.len(), 1, "{dialect}: {warnings:?}");
+        for field in ["requested_temperature=1.8", "clamped_temperature=1"] {
+            assert!(
+                warnings[0].contains(field),
+                "{dialect}: missing {field}: {}",
+                warnings[0]
+            );
+        }
+        if dialect == "anthropic" {
+            assert!(
+                warnings[0].contains("parameter=temperature"),
+                "{}",
+                warnings[0]
+            );
+        } else {
+            assert!(!warnings[0].contains("parameter="), "{}", warnings[0]);
+        }
+    }
+}
+
+#[test]
+fn cohere_bounds_gemini_top_p_is_audited_by_the_callers_wire_path() {
+    let body = json!({"contents":[{"role":"user", "parts":[{"text":"hi"}]}],
+        "generationConfig":{"topP":1.0, "maxOutputTokens":16}});
+    let (wire, audited, cap) = translate_body("gemini", "cohere", &body);
+    assert_eq!(wire, cohere_bounds_wire("top_p", 0.99));
+    assert_eq!(audited, ["generationConfig.topP"]);
+    on_the_drop_path(
+        &audited,
+        &cap,
+        "generationConfig.topP",
+        "BUSBAR-7085",
+        "Cohere",
+    );
+    let warnings = cap.messages();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    for text in [
+        "[0.01, 0.99]",
+        "parameter=top_p",
+        "requested_value=1",
+        "clamped_value=0.99",
+        "forwarded",
+    ] {
+        assert!(
+            warnings[0].contains(text),
+            "missing {text}: {}",
             warnings[0]
         );
     }
