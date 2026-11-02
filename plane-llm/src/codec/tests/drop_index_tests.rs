@@ -60,6 +60,18 @@ fn drop_index_extra_aliases_keep_first_encounter_order() {
 }
 
 #[test]
+fn drop_index_seeded_scope_without_notes_keeps_the_vector_verbatim() {
+    let mut seen = vec!["zeta".to_string(), "alpha".to_string(), "zeta".to_string()];
+    let cap = WarnCapture::default();
+    let answer =
+        tracing::subscriber::with_default(cap.clone(), || scope_more(SEAM, &mut seen, || 17));
+    assert_eq!(answer, 17);
+    assert_eq!(seen, ["zeta", "alpha", "zeta"]);
+    assert!(cap.messages().is_empty());
+    assert!(!is_open());
+}
+
+#[test]
 fn drop_index_seeded_paths_restore_after_nested_unwind() {
     let mut seen = vec!["seed".to_string(), "seed".to_string()];
     let cap = WarnCapture::default();
