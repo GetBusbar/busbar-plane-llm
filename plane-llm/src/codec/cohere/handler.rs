@@ -191,21 +191,37 @@ pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
     // Emit every encoding the IR carries under its own Cohere key (`float`, `base64`, `int8`, ...)
     // so e.g. an int8 response from a cross-protocol backend is not dropped: the write twin of the
     // six-encoding read. `embeddings_by_type` holds multiple per-item arrays in candidate order.
-    let mut by_enc: std::collections::BTreeMap<EncFmt, Vec<Value>> =
+    let mut by_enc: std::collections::BTreeMap<EncFmt, Vec<(usize, Value)>> =
         std::collections::BTreeMap::new();
     for item in &r.embeddings {
+        if item.vectors.is_empty() {
+            return WireBody::json(SlabBytes::default());
+        }
         for (enc, vd) in &item.vectors {
             let cell = match vd {
                 VectorData::Float(v) => json!(v),
                 VectorData::Base64(s) => json!(s),
                 VectorData::Int(v) => json!(v),
             };
-            by_enc.entry(*enc).or_default().push(cell);
+            by_enc.entry(*enc).or_default().push((item.index, cell));
         }
     }
     let mut emb = serde_json::Map::new();
-    for (enc, vals) in &by_enc {
-        emb.insert(cohere_embedding_type(enc).to_string(), json!(vals));
+    let count = by_enc.values().next().map_or(0, Vec::len);
+    for (enc, vals) in &mut by_enc {
+        // Cohere identifies inputs by array position. Sort only received vectors, then require
+        // dense, unique indices and the same coverage in every encoding; never pad or renumber.
+        vals.sort_unstable_by_key(|(index, _)| *index);
+        if vals.len() != count
+            || vals
+                .iter()
+                .enumerate()
+                .any(|(position, (index, _))| *index != position)
+        {
+            return WireBody::json(SlabBytes::default());
+        }
+        let vectors: Vec<&Value> = vals.iter().map(|(_, vector)| vector).collect();
+        emb.insert(cohere_embedding_type(enc).to_string(), json!(vectors));
     }
     // An empty `float` key when the IR carried no vectors, for response-shape stability.
     if emb.is_empty() {
