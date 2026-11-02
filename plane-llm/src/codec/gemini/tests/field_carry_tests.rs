@@ -608,7 +608,7 @@ fn gemini_response_citations_survive() {
         "citationMetadata must be re-emitted same-protocol: {out}"
     );
 
-    // groundingMetadata → IR citation → reaches a foreign (Anthropic) client.
+    // groundingMetadata → IR citation → reaches a foreign Cohere client.
     let grounded = json!({
         "candidates": [{
             "content": {"role": "model", "parts": [{"text": "Paris is the capital."}]},
@@ -642,14 +642,13 @@ fn gemini_response_citations_survive() {
         "groundingMetadata source must reach the IR"
     );
     assert_eq!(citations[0].url.as_deref(), Some("https://atlas"));
-    let anthropic = Protocol::anthropic()
+    let cohere = Protocol::cohere()
         .writer()
         .write_response(crate::codec::test_host::HOST, &ir);
-    assert!(
-        anthropic["content"][0]["citations"]
-            .as_array()
-            .is_some_and(|a| !a.is_empty()),
-        "the grounding source must reach an Anthropic client: {anthropic}"
+    assert_eq!(
+        cohere["message"]["citations"][0]["sources"][0]["document"]["url"],
+        json!("https://atlas"),
+        "{cohere}"
     );
 }
 

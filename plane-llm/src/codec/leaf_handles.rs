@@ -55,6 +55,7 @@ macro_rules! leaf_handles {
             }
             leaf_handles!(@stream $stream);
             leaf_handles!(@billing $req_billing);
+            leaf_handles!(@representable $req);
             fn facts(&self) -> Box<dyn IrFacts + Send + Sync> {
                 Box::new(self.0.clone())
             }
@@ -67,6 +68,7 @@ macro_rules! leaf_handles {
                 egress_proto: &str,
                 model: &str,
             ) -> EgressWire {
+                leaf_handles!(@format $req, self.0, egress_proto);
                 let bytes = super::leaf_codec::$write_req(egress_proto, &self.0);
                 leaf_handles!(@refuse $refuse bytes egress_proto);
                 match serde_json::from_slice::<Value>(&bytes) {
@@ -78,6 +80,7 @@ macro_rules! leaf_handles {
                 }
             }
             fn write_egress_request_bytes(&mut self, egress_proto: &str, model: &str) -> SlabBytes {
+                leaf_handles!(@format_bytes $req, self.0, egress_proto);
                 self.0.model = model.to_string();
                 slab(super::leaf_codec::$write_req(egress_proto, &self.0))
             }
@@ -88,6 +91,7 @@ macro_rules! leaf_handles {
                 OpVerb::$verb
             }
             leaf_handles!(@billing $resp_billing);
+            leaf_handles!(@response_echo $resp);
             fn write_ingress_response(
                 &self,
                 _host: &dyn busbar_contract::codec::CodecHost,
@@ -99,6 +103,9 @@ macro_rules! leaf_handles {
                 }
                 let wb = super::leaf_codec::$write_resp(ingress_proto, &self.0);
                 leaf_handles!(@refuse_response $resp_refuse wb);
+                if wb.content_type.as_bytes() != busbar_contract::protocol::APPLICATION_JSON.as_bytes() {
+                    return TranslatedResponse::Typed(wb);
+                }
                 match serde_json::from_slice::<Value>(&wb.bytes) {
                     Ok(v) => TranslatedResponse::Json(v),
                     Err(_) => TranslatedResponse::Typed(wb),
@@ -124,6 +131,32 @@ macro_rules! leaf_handles {
             false
         }
     };
+    (@response_echo TranscriptionRespHandle) => {
+        fn apply_request_echo(&mut self, request: &Value) {
+            if let Some(format) = request.get("response_format").and_then(Value::as_str) {
+                self.0.response_format = Some(format.to_string());
+            }
+        }
+    };
+    (@response_echo $other:ident) => {};
+    (@representable TranscriptionReqHandle) => {
+        fn egress_representable(&self, target: &str) -> Result<(), String> {
+            transcription_format_refusal(&self.0, target).map_or(Ok(()), Err)
+        }
+    };
+    (@representable $other:ident) => {};
+    (@format TranscriptionReqHandle, $ir:expr, $proto:ident) => {
+        if let Some(reason) = transcription_format_refusal(&$ir, $proto) {
+            return EgressWire::Unrepresentable { reason };
+        }
+    };
+    (@format $other:ident, $ir:expr, $proto:ident) => {};
+    (@format_bytes TranscriptionReqHandle, $ir:expr, $proto:ident) => {
+        if transcription_format_refusal(&$ir, $proto).is_some() {
+            return SlabBytes::default();
+        }
+    };
+    (@format_bytes $other:ident, $ir:expr, $proto:ident) => {};
     (@stream field) => {
         fn wants_stream(&self) -> bool {
             self.0.stream
@@ -154,6 +187,14 @@ macro_rules! leaf_handles {
             };
         }
     };
+}
+
+/// A plain foreign transcript has no timing information from which an SRT/VTT document can be
+/// reconstructed. Refuse that cross-target request before work is sent; native relay is unchanged.
+fn transcription_format_refusal(request: &TranscriptionReq, target: &str) -> Option<String> {
+    let format = request.response_format.as_deref()?;
+    (target != crate::codec::proto_codec::PROTO_OPENAI && matches!(format, "srt" | "vtt"))
+        .then(|| format!("transcription response_format '{format}' cannot be represented by {target}: timestamped output is unavailable"))
 }
 
 leaf_handles!(EmbeddingsReqHandle(EmbeddingsReq), EmbeddingsRespHandle(EmbeddingsResp), EMBEDDINGS,

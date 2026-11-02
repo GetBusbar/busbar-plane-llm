@@ -102,6 +102,8 @@ pub trait TranslateCodec: OperationHandler {
                 ir.prepare_for_egress(prep);
                 // The opaque caller resolves and 404-checks `egress`, so it is always `Some`; the guard avoids a panic.
                 let egress_proto = egress_proto.ok_or(TranslateReqReject::EgressUnsupported)?;
+                ir.egress_representable(egress_proto)
+                    .map_err(TranslateReqReject::Unrepresentable)?;
                 // The handle writes itself onto the egress dialect (by protocol string) after `set_model`.
                 let bytes = ir.write_egress_request_bytes(egress_proto, model);
                 // A write that produced nothing is a refusal, never an empty body forwarded upstream

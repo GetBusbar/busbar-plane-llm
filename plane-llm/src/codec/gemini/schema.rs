@@ -91,6 +91,64 @@ pub(super) const GEMINI_SCHEMA_REJECTED_KEYS: &[&str] = &[
 /// so never reach the descent.)
 pub(super) const GEMINI_SCHEMA_NAME_KEYED_MAPS: &[&str] = &[keys::PROPERTIES, "dependentSchemas"];
 
+#[derive(Clone, Copy)]
+enum SchemaChildren {
+    Names,
+    Many,
+    One,
+    Literal,
+}
+
+fn schema_children(key: &str) -> SchemaChildren {
+    match key {
+        keys::PROPERTIES
+        | "dependentSchemas"
+        | "$defs"
+        | keys::DEFINITIONS
+        | "patternProperties" => SchemaChildren::Names,
+        "items" | "anyOf" | "oneOf" | "allOf" | "prefixItems" => SchemaChildren::Many,
+        keys::ADDITIONAL_PROPERTIES
+        | "additionalItems"
+        | "unevaluatedProperties"
+        | "unevaluatedItems"
+        | "contains"
+        | "propertyNames"
+        | "not"
+        | "if"
+        | "then"
+        | "else"
+        | "contentSchema" => SchemaChildren::One,
+        _ => SchemaChildren::Literal,
+    }
+}
+
+/// Descend only schema positions. Defaults, enum values and examples remain opaque caller data.
+fn map_schema_child(
+    key: &str,
+    value: &serde_json::Value,
+    mut walk: impl FnMut(&serde_json::Value) -> serde_json::Value,
+) -> serde_json::Value {
+    match schema_children(key) {
+        SchemaChildren::Names => match value.as_object() {
+            Some(names) => serde_json::Value::Object(
+                names
+                    .iter()
+                    .map(|(name, child)| (name.clone(), walk(child)))
+                    .collect(),
+            ),
+            None => value.clone(),
+        },
+        SchemaChildren::Many => match value {
+            serde_json::Value::Array(children) => {
+                serde_json::Value::Array(children.iter().map(walk).collect())
+            }
+            _ => walk(value),
+        },
+        SchemaChildren::One => walk(value),
+        SchemaChildren::Literal => value.clone(),
+    }
+}
+
 /// Recursively strip the keywords Gemini rejects (`GEMINI_SCHEMA_REJECTED_KEYS`) from a schema so a
 /// cross-protocol tool / `responseSchema` does not 400. Returns a cleaned clone; the source IR value
 /// is intact (only the egress wire copy is sanitized).
@@ -140,23 +198,24 @@ fn write_gemini_nullable_types(schema: &mut serde_json::Value) {
     }
     // Only schema positions contain types. Defaults, enums and examples are caller data.
     for (key, value) in map {
-        match key.as_str() {
-            keys::PROPERTIES | "dependentSchemas" | "$defs" | keys::DEFINITIONS => {
+        match schema_children(key) {
+            SchemaChildren::Names => {
                 if let Some(names) = value.as_object_mut() {
                     for child in names.values_mut() {
                         write_gemini_nullable_types(child);
                     }
                 }
             }
-            "items" | keys::ADDITIONAL_PROPERTIES => write_gemini_nullable_types(value),
-            "anyOf" | "oneOf" | "allOf" | "prefixItems" => {
-                if let Some(schemas) = value.as_array_mut() {
-                    for child in schemas {
+            SchemaChildren::Many => match value.as_array_mut() {
+                Some(children) => {
+                    for child in children {
                         write_gemini_nullable_types(child);
                     }
                 }
-            }
-            _ => {}
+                None => write_gemini_nullable_types(value),
+            },
+            SchemaChildren::One => write_gemini_nullable_types(value),
+            SchemaChildren::Literal => {}
         }
     }
 }
@@ -180,14 +239,11 @@ fn sanitize_gemini_schema_keywords(schema: &serde_json::Value) -> serde_json::Va
                 let sanitized = if GEMINI_SCHEMA_NAME_KEYED_MAPS.contains(&k.as_str()) {
                     sanitize_gemini_schema_names(v)
                 } else {
-                    sanitize_gemini_schema_keywords(v)
+                    map_schema_child(k, v, sanitize_gemini_schema_keywords)
                 };
                 cleaned.insert(k.clone(), sanitized);
             }
             serde_json::Value::Object(cleaned)
-        }
-        serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(sanitize_gemini_schema_keywords).collect())
         }
         other => other.clone(),
     }
@@ -209,44 +265,46 @@ pub(super) fn sanitize_gemini_schema_names(value: &serde_json::Value) -> serde_j
 
 /// Collect every `$defs`/`definitions` map in a schema, keyed by definition name, for
 /// [`inline_gemini_schema_refs`]. Positional like [`sanitize_gemini_schema`]: it does not descend
-/// [`GEMINI_SCHEMA_NAME_KEYED_MAPS`] (`properties`, `dependentSchemas`), whose keys are caller field
-/// names (a property named `definitions` must not be taken for a definitions map). An
+/// into instance data; it descends schema values of name maps without interpreting their keys
+/// (a property named `definitions` must not be taken for a definitions map). An
 /// earlier-collected name wins on collision, close enough to nearest-scope-wins for the generated
 /// schemas this handles.
 pub(super) fn collect_gemini_schema_defs(
     schema: &serde_json::Value,
     out: &mut serde_json::Map<String, serde_json::Value>,
 ) {
-    match schema {
-        serde_json::Value::Object(map) => {
-            for defs_key in ["$defs", keys::DEFINITIONS] {
-                if let Some(serde_json::Value::Object(defs)) = map.get(defs_key) {
-                    for (k, v) in defs {
-                        out.entry(k.clone()).or_insert_with(|| v.clone());
-                    }
+    if let serde_json::Value::Object(map) = schema {
+        for defs_key in ["$defs", keys::DEFINITIONS] {
+            if let Some(serde_json::Value::Object(defs)) = map.get(defs_key) {
+                for (k, v) in defs {
+                    out.entry(k.clone()).or_insert_with(|| v.clone());
                 }
             }
-            for (k, v) in map {
-                if k == "$defs" || k == keys::DEFINITIONS {
-                    continue;
-                }
-                if GEMINI_SCHEMA_NAME_KEYED_MAPS.contains(&k.as_str()) {
-                    if let serde_json::Value::Object(names) = v {
-                        for nv in names.values() {
-                            collect_gemini_schema_defs(nv, out);
+        }
+        for (key, value) in map {
+            if key == "$defs" || key == keys::DEFINITIONS {
+                continue;
+            }
+            match schema_children(key) {
+                SchemaChildren::Names => {
+                    if let Some(names) = value.as_object() {
+                        for child in names.values() {
+                            collect_gemini_schema_defs(child, out);
                         }
                     }
-                } else {
-                    collect_gemini_schema_defs(v, out);
                 }
+                SchemaChildren::Many => match value.as_array() {
+                    Some(children) => {
+                        for child in children {
+                            collect_gemini_schema_defs(child, out);
+                        }
+                    }
+                    None => collect_gemini_schema_defs(value, out),
+                },
+                SchemaChildren::One => collect_gemini_schema_defs(value, out),
+                SchemaChildren::Literal => {}
             }
         }
-        serde_json::Value::Array(arr) => {
-            for v in arr {
-                collect_gemini_schema_defs(v, out);
-            }
-        }
-        _ => {}
     }
 }
 
@@ -297,6 +355,51 @@ pub(super) fn inline_gemini_schema_refs(
     out
 }
 
+/// Copy instance data without interpreting any member as a schema keyword. Each node still
+/// spends the expansion allowance: repeated references must not clone a large literal for free.
+fn inline_gemini_literal(
+    value: &serde_json::Value,
+    budget: &mut GeminiInlineBudget,
+) -> serde_json::Value {
+    if budget.remaining_nodes == 0 || budget.depth >= GEMINI_SCHEMA_INLINE_MAX_DEPTH {
+        return serde_json::json!({});
+    }
+    budget.remaining_nodes -= 1;
+    budget.depth += 1;
+    let out = match value {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.iter()
+                .map(|(key, child)| (key.clone(), inline_gemini_literal(child, budget)))
+                .collect(),
+        ),
+        serde_json::Value::Array(children) => serde_json::Value::Array(
+            children
+                .iter()
+                .map(|child| inline_gemini_literal(child, budget))
+                .collect(),
+        ),
+        other => other.clone(),
+    };
+    budget.depth -= 1;
+    out
+}
+
+fn inline_gemini_child(
+    key: &str,
+    value: &serde_json::Value,
+    defs: &serde_json::Map<String, serde_json::Value>,
+    active: &mut Vec<String>,
+    budget: &mut GeminiInlineBudget,
+) -> serde_json::Value {
+    match schema_children(key) {
+        SchemaChildren::Literal => inline_gemini_literal(value, budget),
+        SchemaChildren::Names if !value.is_object() => inline_gemini_literal(value, budget),
+        _ => map_schema_child(key, value, |child| {
+            inline_gemini_schema_refs(child, defs, active, budget)
+        }),
+    }
+}
+
 /// The inlining walk proper, reached only through [`inline_gemini_schema_refs`], which charges the
 /// node/depth budget for this node first.
 pub(super) fn inline_gemini_schema_refs_within_budget(
@@ -326,7 +429,7 @@ pub(super) fn inline_gemini_schema_refs_within_budget(
                                     if k != "$ref" {
                                         inlined_map.insert(
                                             k.clone(),
-                                            inline_gemini_schema_refs(v, defs, active, budget),
+                                            inline_gemini_child(k, v, defs, active, budget),
                                         );
                                     }
                                 }
@@ -341,34 +444,12 @@ pub(super) fn inline_gemini_schema_refs_within_budget(
                 .iter()
                 .filter(|(k, _)| k.as_str() != "$defs" && k.as_str() != keys::DEFINITIONS)
                 .map(|(k, v)| {
-                    let resolved = if GEMINI_SCHEMA_NAME_KEYED_MAPS.contains(&k.as_str()) {
-                        match v {
-                            serde_json::Value::Object(names) => serde_json::Value::Object(
-                                names
-                                    .iter()
-                                    .map(|(nk, nv)| {
-                                        (
-                                            nk.clone(),
-                                            inline_gemini_schema_refs(nv, defs, active, budget),
-                                        )
-                                    })
-                                    .collect(),
-                            ),
-                            other => inline_gemini_schema_refs(other, defs, active, budget),
-                        }
-                    } else {
-                        inline_gemini_schema_refs(v, defs, active, budget)
-                    };
+                    let resolved = inline_gemini_child(k, v, defs, active, budget);
                     (k.clone(), resolved)
                 })
                 .collect();
             serde_json::Value::Object(cleaned)
         }
-        serde_json::Value::Array(arr) => serde_json::Value::Array(
-            arr.iter()
-                .map(|v| inline_gemini_schema_refs(v, defs, active, budget))
-                .collect(),
-        ),
         other => other.clone(),
     }
 }

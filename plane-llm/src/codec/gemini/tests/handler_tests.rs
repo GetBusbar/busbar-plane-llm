@@ -906,3 +906,38 @@ fn image_response_writer_omits_usage_when_absent() {
         "a usage-less image response must not fabricate usageMetadata: {v}"
     );
 }
+
+#[test]
+fn embeddings_refuse_every_malformed_coordinate_and_recover_usage_independently() {
+    for embedding in [
+        json!(null),
+        json!({}),
+        json!({"values":{}}),
+        json!({"values":[0.1,null,0.3]}),
+        json!({"values":[0.1,"0.2",0.3]}),
+        json!({"values":[0.1,1e100,0.3]}),
+    ] {
+        let body = serde_json::to_vec(
+            &json!({"embedding":embedding,"usageMetadata":{"promptTokenCount":5}}),
+        )
+        .unwrap();
+        assert!(EMB
+            .read_response(crate::codec::test_host::HOST, &body)
+            .is_err());
+        let usage = EMB
+            .extract_usage(crate::codec::test_host::HOST, "gemini", &body)
+            .unwrap()
+            .unwrap();
+        assert_eq!(usage.input, 5);
+        assert_eq!(
+            EMB.recover_response_billing(crate::codec::test_host::HOST, &body),
+            Some(busbar_contract::billing::Billing::Tokens(usage))
+        );
+    }
+    // No arbitrary minimum dimension is imposed: a represented empty vector remains empty.
+    let response = read_embeddings_response(br#"{"embedding":{"values":[]}}"#).unwrap();
+    assert_eq!(
+        response.embeddings[0].vectors.get(&EncFmt::Float),
+        Some(&VectorData::Float(vec![]))
+    );
+}

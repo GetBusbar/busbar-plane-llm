@@ -400,6 +400,13 @@ impl ProtocolWriter for BedrockWriter {
         resp: &crate::codec::ir::IrResponse,
     ) -> serde_json::Value {
         let mut content_arr: Vec<serde_json::Value> = Vec::new();
+        if resp.audio.is_some() {
+            crate::codec::drops::writer_drop!(
+                crate::codec::drops::wire("choices[].message.audio"),
+                &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                [], "dropping native Chat audio on Bedrock response egress: no native output-audio member"
+            );
+        }
 
         for (block_index, block) in resp.content.iter().enumerate() {
             let _block_origin =
@@ -442,7 +449,13 @@ impl ProtocolWriter for BedrockWriter {
                 }
 
                 // A model does not emit an attachment on the Converse response surface.
-                crate::codec::ir::IrBlock::Media { .. } => {}
+                block @ crate::codec::ir::IrBlock::Media { .. } => {
+                    crate::codec::drops::writer_drop!(
+                        crate::codec::drops::block(block.kind_name()),
+                        &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                        [], "dropping generated media on Bedrock response egress: no native attachment member"
+                    );
+                }
 
                 crate::codec::ir::IrBlock::ToolUse {
                     id, name, input, ..
@@ -463,9 +476,14 @@ impl ProtocolWriter for BedrockWriter {
                         content_arr.push(serde_json::json!({ (keys::IMAGE): image_block }));
                     }
                 }
-                crate::codec::ir::IrBlock::Json(_)
-                | crate::codec::ir::IrBlock::HostedToolRecord { .. } => {
+                block @ (crate::codec::ir::IrBlock::Json(_)
+                | crate::codec::ir::IrBlock::HostedToolRecord { .. }) => {
                     // Structured JSON is only a tool-result member; omitted from an assistant turn.
+                    crate::codec::drops::writer_drop!(
+                        crate::codec::drops::block(block.kind_name()),
+                        &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                        [], "dropping an answer block on Bedrock response egress: no native assistant member"
+                    );
                 }
 
                 crate::codec::ir::IrBlock::Thinking {

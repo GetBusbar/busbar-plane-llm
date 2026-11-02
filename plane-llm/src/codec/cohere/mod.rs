@@ -202,20 +202,28 @@ pub fn read_cohere_citations(citations: &serde_json::Value) -> Vec<crate::codec:
 /// `raw`; re-emitting it is byte-exact and beats a field-by-field rebuild that would lose
 /// Cohere-specific members. Only a citation with no `raw` (synthesized cross-protocol) is built from
 /// the neutral fields.
-fn write_cohere_citation(c: &crate::codec::ir::IrCitation) -> serde_json::Value {
+fn write_cohere_citation(
+    c: &crate::codec::ir::IrCitation,
+    span: Option<(i64, i64)>,
+) -> Option<serde_json::Value> {
     if let Some(raw) = &c.raw {
         // Re-emit `raw` only when it is a Cohere citation: a foreign raw (an Anthropic
         // `web_search_result_location`) would put a foreign shape on the Cohere wire.
         if raw.get(keys::START).is_some() || raw.get(SOURCES).is_some() {
-            return raw.clone();
+            return Some(raw.clone());
         }
     }
     let mut obj = serde_json::Map::new();
-    if let Some(s) = c.start_index {
-        obj.insert(keys::START.to_string(), serde_json::json!(s));
-    }
-    if let Some(e) = c.end_index {
-        obj.insert(keys::END.to_string(), serde_json::json!(e));
+    if let Some((start, end)) = span {
+        obj.insert(keys::START.to_string(), serde_json::json!(start));
+        obj.insert(keys::END.to_string(), serde_json::json!(end));
+    } else if c.start_index.is_some() || c.end_index.is_some() {
+        crate::codec::drops::writer_drop!(
+            crate::codec::drops::member("citations"),
+            &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+            [],
+            "dropping unanchored citation coordinates on Cohere egress"
+        );
     }
     if let Some(t) = &c.cited_text {
         obj.insert(keys::TEXT.to_string(), serde_json::json!(t));
@@ -233,7 +241,38 @@ fn write_cohere_citation(c: &crate::codec::ir::IrCitation) -> serde_json::Value 
             serde_json::json!([{ (keys::TYPE): keys::DOCUMENT, (keys::DOCUMENT): serde_json::Value::Object(source) }]),
         );
     }
-    serde_json::Value::Object(obj)
+    if obj.is_empty() {
+        crate::codec::drops::writer_drop!(
+            crate::codec::drops::member("citations"),
+            &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+            [],
+            "dropping citation with no Cohere representation"
+        );
+        None
+    } else {
+        Some(serde_json::Value::Object(obj))
+    }
+}
+
+/// Cohere citations address the concatenated answer, while IR offsets are local to a text block.
+fn write_cohere_citations(blocks: &[crate::codec::ir::IrBlock]) -> Vec<serde_json::Value> {
+    let mut base = 0usize;
+    let mut out = Vec::new();
+    for block in blocks {
+        if let crate::codec::ir::IrBlock::Text {
+            text, citations, ..
+        } = block
+        {
+            out.extend(citations.iter().filter_map(|citation| {
+                write_cohere_citation(
+                    citation,
+                    crate::codec::url_citation_wire::citation_span(text, base, citation),
+                )
+            }));
+            base = base.saturating_add(text.chars().count());
+        }
+    }
+    out
 }
 
 /// A projected citation must carry some meaning in the target wire; never substitute `{}` for
@@ -244,8 +283,13 @@ fn citation_representable(citation: &crate::codec::ir::IrCitation) -> bool {
         .raw
         .as_ref()
         .is_some_and(|raw| raw.get(keys::START).is_some() || raw.get(SOURCES).is_some())
-        || citation.start_index.is_some()
-        || citation.end_index.is_some()
+        || (matches!(
+            citation.kind.as_deref(),
+            None | Some("web_search_result_location")
+        ) && citation
+            .start_index
+            .zip(citation.end_index)
+            .is_some_and(|(s, e)| s >= 0 && e >= s))
         || [&citation.cited_text, &citation.url, &citation.title]
             .iter()
             .any(|value| value.as_ref().is_some_and(|value| !value.is_empty()))
@@ -1086,6 +1130,21 @@ struct CohereStream {
     /// message announced itself twice under two different identities. A native Cohere stream's id
     /// is fixed for the message, so the first one wins.
     stream_id: Option<String>,
+    /// Bounded answer anchors for streamed block-local citation offsets.
+    citation_blocks: Vec<CohereCitationBlock>,
+    answer_chars: usize,
+    citation_bytes: usize,
+    citation_truncated: bool,
+    translate_cap: usize,
+}
+
+#[derive(Clone)]
+struct CohereCitationBlock {
+    index: usize,
+    base: usize,
+    end: usize,
+    text: String,
+    contiguous: bool,
 }
 
 /// Value-namespace constructor for [`CohereWriter`]. A `const` and a struct may share a name (they
@@ -1108,6 +1167,11 @@ pub const CohereWriter: CohereWriter = CohereWriter {
         open_tool_indices: std::collections::BTreeSet::new(),
         open_text_indices: std::collections::BTreeSet::new(),
         stream_id: None,
+        citation_blocks: Vec::new(),
+        answer_chars: 0,
+        citation_bytes: 0,
+        citation_truncated: false,
+        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     }),
 };
 
@@ -1118,6 +1182,10 @@ impl CohereWriter {
             stream.open_tool_indices.clear();
             stream.open_text_indices.clear();
             stream.stream_id = None;
+            stream.citation_blocks.clear();
+            stream.answer_chars = 0;
+            stream.citation_bytes = 0;
+            stream.citation_truncated = false;
         }
     }
 
@@ -1136,11 +1204,15 @@ impl CohereWriter {
         &self,
         mint: impl FnOnce() -> Result<String, IrError>,
     ) -> Result<String, IrError> {
+        if let Some(id) = self.stream.lock().stream_id.clone() {
+            return Ok(id);
+        }
+        let minted = mint();
         let mut stream = self.stream.lock();
         if let Some(id) = &stream.stream_id {
             return Ok(id.clone());
         }
-        let id = mint()?;
+        let id = minted?;
         stream.stream_id = Some(id.clone());
         Ok(id)
     }
@@ -1170,6 +1242,81 @@ impl CohereWriter {
         let mut stream = self.stream.lock();
         stream.open_text_indices.insert(index);
         stream.block_indices.open(index)
+    }
+
+    fn record_citation_text(&self, index: usize, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let chars = text.chars().count();
+        let mut stream = self.stream.lock();
+        let base = stream.answer_chars;
+        let end = base.saturating_add(chars);
+        stream.answer_chars = end;
+        let position = stream
+            .citation_blocks
+            .iter()
+            .position(|block| block.index == index);
+        if let Some(position) = position {
+            let block = &mut stream.citation_blocks[position];
+            block.contiguous &= block.end == base;
+            block.end = end;
+        }
+        if stream.citation_truncated
+            || stream.citation_bytes.saturating_add(text.len()) > stream.translate_cap
+        {
+            stream.citation_truncated = true;
+            return;
+        }
+        stream.citation_bytes += text.len();
+        if let Some(position) = position {
+            stream.citation_blocks[position].text.push_str(text);
+        } else {
+            stream.citation_blocks.push(CohereCitationBlock {
+                index,
+                base,
+                end,
+                text: text.to_string(),
+                contiguous: true,
+            });
+        }
+    }
+
+    fn citation_span(
+        &self,
+        index: usize,
+        citation: &crate::codec::ir::IrCitation,
+    ) -> Option<(i64, i64)> {
+        let stream = self.stream.lock();
+        let block = stream
+            .citation_blocks
+            .iter()
+            .find(|block| block.index == index)?;
+        if !block.contiguous {
+            return None;
+        }
+        let text = if stream.citation_truncated {
+            ""
+        } else {
+            block.text.as_str()
+        };
+        crate::codec::url_citation_wire::citation_span(text, block.base, citation)
+    }
+
+    fn stream_citation_representable(
+        &self,
+        index: usize,
+        citation: &crate::codec::ir::IrCitation,
+    ) -> bool {
+        citation_representable(citation)
+            && (citation
+                .raw
+                .as_ref()
+                .is_some_and(|raw| raw.get(keys::START).is_some() || raw.get(SOURCES).is_some())
+                || [&citation.cited_text, &citation.url, &citation.title]
+                    .iter()
+                    .any(|value| value.as_ref().is_some_and(|value| !value.is_empty()))
+                || self.citation_span(index, citation).is_some())
     }
 
     /// Return true and forget `index` if a `content-start` was emitted for that text block; false if

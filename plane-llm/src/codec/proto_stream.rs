@@ -1170,6 +1170,13 @@ fn response_to_ir_events_with_origins(
     use crate::codec::ir::{IrBlock, IrBlockMeta, IrDelta, IrStreamEvent};
     let mut events: Vec<IrStreamEvent> = Vec::new();
     let mut origins = std::collections::BTreeMap::new();
+    if ir.audio.is_some() {
+        crate::codec::drops::writer_drop!(
+            crate::codec::drops::wire("choices[].message.audio"),
+            &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+            [], "dropping native Chat audio during stream synthesis: no streamed IR audio-output carrier"
+        );
+    }
     events.push(IrStreamEvent::MessageStart {
         role: ir.role,
         // Usage rides the terminal delta.
@@ -1285,7 +1292,18 @@ fn response_to_ir_events_with_origins(
             IrBlock::Image { .. } | IrBlock::Media { .. } => {}
             // No streamed analog: skipped without spending an index. Listed explicitly so a new block
             // kind fails to compile.
-            IrBlock::ToolResult { .. } | IrBlock::Json(_) | IrBlock::HostedToolRecord { .. } => {}
+            block @ (IrBlock::ToolResult { .. }
+            | IrBlock::Json(_)
+            | IrBlock::HostedToolRecord { .. }) => {
+                let _origin =
+                    crate::codec::drops::block_scope(ir.block_origins.response.get(source_index));
+                crate::codec::drops::writer_drop!(
+                    crate::codec::drops::block(block.kind_name()),
+                    &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                    [],
+                    "dropping an answer block during stream synthesis: no streamed IR analogue"
+                );
+            }
         }
     }
     // IR-21: a generated image / audio part (a Bedrock `image`, a Gemini `inlineData`) streams whole

@@ -654,6 +654,18 @@ fn whole_piece<'a>(
     far_head: HeadFields<'_>,
     at: At,
 ) -> (Piece<'a>, bool) {
+    let multipart_echo = (ctx.arrived.operation
+        == busbar_contract::operation::OpVerb::TRANSCRIPTION)
+        .then(|| {
+            super::multipart::multipart_field(
+                &ctx.arrived.content_type,
+                &ctx.arrived.body,
+                "response_format",
+            )
+        })
+        .flatten()
+        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+        .map(|format| serde_json::json!({"response_format":format.trim()}));
     let mut w = whole::translate(
         host,
         &whole::WholeCtx {
@@ -663,7 +675,7 @@ fn whole_piece<'a>(
             model: &ctx.lane.model,
             wants_stream: ctx.intent.wants_stream,
             json_array: json_array(ctx),
-            request: ctx.arrived.parsed.as_ref(),
+            request: ctx.arrived.parsed.as_ref().or(multipart_echo.as_ref()),
             now_s: at.now_s,
             elapsed_ms: at.elapsed_ms,
             translate_cap: ctx.translate_cap,

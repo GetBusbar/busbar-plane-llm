@@ -104,11 +104,6 @@ pub(crate) fn multipart_field_name(headers: &str) -> Option<Cow<'_, str>> {
     None
 }
 
-fn part_is_model(headers: &[u8]) -> Option<bool> {
-    let headers = std::str::from_utf8(headers).ok()?;
-    Some(multipart_field_name(headers)? == "model")
-}
-
 /// Borrowed multipart segments, excluding delimiter lines but retaining the CRLF before each
 /// delimiter. The complete upload is already available at arrival; walking it requires no audio
 /// copy or per-part allocation. Admission and transcription decoding use the same framing.
@@ -195,12 +190,80 @@ pub(crate) fn multipart_segments<'a>(
 /// Public so every reader of the arrival calls this rung rather than carrying a second copy: two
 /// readings of one wire are two answers waiting to disagree.
 pub fn multipart_model(content_type: &str, body: &[u8]) -> Option<String> {
+    multipart_field_value(content_type, body, "model", true)
+        .map(|value| String::from_utf8_lossy(value).trim().to_string())
+        .filter(|m| !m.is_empty())
+}
+
+/// The last form field, as the transcription reader resolves repeated format fields, borrowed
+/// from the same complete framing admission uses. This is
+/// also how reply formatting retains a transcription's small `response_format` without parsing
+/// or copying its uploaded audio.
+pub(crate) fn multipart_field<'a>(
+    content_type: &str,
+    body: &'a [u8],
+    name: &str,
+) -> Option<&'a [u8]> {
+    transcription_fields(content_type, body)
+        .into_iter()
+        .filter(|field| field.name == name)
+        .last()
+        .map(|field| field.value)
+}
+
+/// The bounded named fields used by transcription decoding and its response-format echo.
+pub(crate) struct TranscriptionField<'a> {
+    pub name: String,
+    pub content_type: Option<String>,
+    pub value: &'a [u8],
+}
+
+pub(crate) fn transcription_fields<'a>(
+    content_type: &str,
+    body: &'a [u8],
+) -> Vec<TranscriptionField<'a>> {
+    let Some(parts) = multipart_segments(content_type, body) else {
+        return Vec::new();
+    };
+    // Preserve the transcription reader's existing bound and last-field resolution policy.
+    const MAX_MULTIPART_PARTS: usize = 64;
+    parts
+        .filter_map(|segment| {
+            let segment = segment.strip_prefix(b"\r\n").unwrap_or(segment);
+            let hpos = find_sub(segment, b"\r\n\r\n")?;
+            let headers = String::from_utf8_lossy(&segment[..hpos]);
+            let name = multipart_field_name(&headers)?.into_owned();
+            let value = &segment[hpos + 4..];
+            let value = value.strip_suffix(b"\r\n").unwrap_or(value);
+            let content_type = headers.lines().find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.trim()
+                    .eq_ignore_ascii_case("content-type")
+                    .then(|| value.trim().to_string())
+            });
+            Some(TranscriptionField {
+                name,
+                content_type,
+                value,
+            })
+        })
+        .take(MAX_MULTIPART_PARTS)
+        .collect()
+}
+
+fn multipart_field_value<'a>(
+    content_type: &str,
+    body: &'a [u8],
+    name: &str,
+    unique: bool,
+) -> Option<&'a [u8]> {
     let mut parts = multipart_segments(content_type, body)?;
     let mut found: Option<&[u8]> = None;
     for part in parts.by_ref() {
         let hdr_len = find_sub(part, b"\r\n\r\n")?;
-        if part_is_model(&part[..hdr_len])? {
-            if found.is_some() {
+        let headers = std::str::from_utf8(&part[..hdr_len]).ok()?;
+        if multipart_field_name(headers)? == name {
+            if unique && found.is_some() {
                 // Two `model` parts: no model, rather than a guess at which one is billed.
                 return None;
             }
@@ -212,6 +275,4 @@ pub fn multipart_model(content_type: &str, body: &[u8]) -> Option<String> {
         return None;
     }
     found
-        .map(|value| String::from_utf8_lossy(value).trim().to_string())
-        .filter(|m| !m.is_empty())
 }

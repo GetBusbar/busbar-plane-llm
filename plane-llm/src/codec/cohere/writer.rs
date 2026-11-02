@@ -1,6 +1,10 @@
 use super::*;
 
 impl ProtocolWriter for CohereWriter {
+    fn set_translate_cap(&self, cap: usize) {
+        self.stream.lock().translate_cap = cap;
+    }
+
     fn upstream_path(&self) -> &str {
         PATH_UPSTREAM
     }
@@ -413,16 +417,7 @@ impl ProtocolWriter for CohereWriter {
             // citation this protocol itself read re-emits verbatim via its `raw`; a cross-protocol
             // one is synthesized from the neutral fields. Emitted only when non-empty so an
             // ungrounded message does not gain a spurious `citations: []`.
-            let msg_citations: Vec<serde_json::Value> = msg
-                .content
-                .iter()
-                .filter_map(|b| match b {
-                    crate::codec::ir::IrBlock::Text { citations, .. } => Some(citations),
-                    _ => None,
-                })
-                .flatten()
-                .map(write_cohere_citation)
-                .collect();
+            let msg_citations = write_cohere_citations(&msg.content);
             if !msg_citations.is_empty() {
                 msg_obj.insert(
                     keys::CITATIONS.to_string(),
@@ -767,7 +762,11 @@ impl ProtocolWriter for CohereWriter {
             },
 
             IrStreamEvent::BlockDelta { index, delta } => {
-                let index = self.wire_index(*index);
+                let ir_index = *index;
+                if let crate::codec::ir::IrDelta::TextDelta(text) = delta {
+                    self.record_citation_text(ir_index, text);
+                }
+                let index = self.wire_index(ir_index);
                 match delta {
                     crate::codec::ir::IrDelta::TextDelta(text) => Some((
                         "".to_string(),
@@ -848,6 +847,13 @@ impl ProtocolWriter for CohereWriter {
                     // (if partial) frame rather than an off-spec array. An empty batch emits nothing.
                     crate::codec::ir::IrDelta::CitationsDelta(cits) if !cits.is_empty() => {
                         let c = cits.first()?;
+                        let span = self.citation_span(ir_index, c);
+                        let Some(citation) = write_cohere_citation(c, span) else {
+                            return self.write_response_event(
+                                host,
+                                &IrStreamEvent::Error(response_projection_error()),
+                            );
+                        };
                         Some((
                             "".to_string(),
                             serde_json::json!({
@@ -855,7 +861,7 @@ impl ProtocolWriter for CohereWriter {
                                 (keys::INDEX): index,
                                 (keys::DELTA): {
                                     (keys::MESSAGE): {
-                                        (keys::CITATIONS): write_cohere_citation(c)
+                                        (keys::CITATIONS): citation
                                     }
                                 }
                             }),
@@ -1032,6 +1038,15 @@ impl ProtocolWriter for CohereWriter {
             delta: crate::codec::ir::IrDelta::CitationsDelta(cits),
         } = ev
         {
+            if cits
+                .iter()
+                .any(|citation| !self.stream_citation_representable(*index, citation))
+            {
+                return self
+                    .write_response_event(host, &IrStreamEvent::Error(response_projection_error()))
+                    .into_iter()
+                    .collect();
+            }
             let mut frames = Vec::with_capacity(cits.len() * 2);
             // One native start/end PAIR per citation. The framing seam fans a multi-citation delta
             // out to one citation per delta (`max_citations_per_delta`) on its way here, but it is
@@ -1077,11 +1092,11 @@ impl ProtocolWriter for CohereWriter {
                 ..
             } if id.is_empty() || name.is_empty() => return Err(response_projection_error()),
             IrStreamEvent::BlockDelta {
+                index,
                 delta: crate::codec::ir::IrDelta::CitationsDelta(citations),
-                ..
             } if citations
                 .iter()
-                .any(|citation| !citation_representable(citation)) =>
+                .any(|citation| !self.stream_citation_representable(*index, citation)) =>
             {
                 return Err(response_projection_error())
             }
@@ -1250,16 +1265,7 @@ impl ProtocolWriter for CohereWriter {
         // re-emits it unchanged; a cross-protocol citation is synthesized from the neutral fields.
         // Emitted only when non-empty — an absent key is what Cohere returns for an ungrounded
         // answer, so a hardcoded `[]` would be a proxy tell in the other direction.
-        let citations_arr: Vec<serde_json::Value> = resp
-            .content
-            .iter()
-            .filter_map(|b| match b {
-                crate::codec::ir::IrBlock::Text { citations, .. } => Some(citations),
-                _ => None,
-            })
-            .flatten()
-            .map(write_cohere_citation)
-            .collect();
+        let citations_arr = write_cohere_citations(&resp.content);
         if !citations_arr.is_empty() {
             message_obj.insert(
                 keys::CITATIONS.to_string(),

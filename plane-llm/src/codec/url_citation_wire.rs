@@ -95,7 +95,11 @@ fn citation_title<'a>(c: &'a crate::codec::ir::IrCitation, url: &'a str) -> &'a 
 
 /// Resolve a citation's character span within `text`, shifted by `base`; shared by both shapes so the
 /// offset rules cannot drift. `None` when the source carries no usable span (each caller decides).
-fn citation_span(text: &str, base: usize, c: &crate::codec::ir::IrCitation) -> Option<(i64, i64)> {
+pub(crate) fn citation_span(
+    text: &str,
+    base: usize,
+    c: &crate::codec::ir::IrCitation,
+) -> Option<(i64, i64)> {
     // Carried offsets span the response text only for a url/web-search citation (OpenAI
     // `url_citation`, Gemini `citationSources[]`, both read as `web_search_result_location`) or an
     // untyped one. Anthropic's document kinds carry offsets into the cited document (`char_location`

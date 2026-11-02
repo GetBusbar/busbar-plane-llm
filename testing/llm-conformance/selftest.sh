@@ -532,6 +532,16 @@ assert n["b"] != b, "mutation changed nothing"
 open(p, "wb").write(n["b"])
 PY
 }
+# The normalized Bedrock cell retains lossless binary bytes in body.base64. Removing only its
+# optional raw body must exercise the same native frame/CRC/schema validation as the original.
+cp -R "$FIX4" "$W/x-base64-rec"
+rm "$W/x-base64-rec/$SE_BED"
+rc="$(run "$W/x-base64-rec" "$W/x-base64")"
+if [ "$rc" = 0 ] && [ "$(count "$W/x-base64" PASS)" = 9 ] && [ "$(count "$W/x-base64" FAIL)" = 0 ] && [ "$(count "$W/x-base64" SKIP)" = 0 ] && grep -q 'cell.body.base64' "$W/x-base64/ledger.tsv"; then
+  say PASS "(x-base64) normalized Bedrock body.base64 without raw/body -> judged by the native frame validator"
+else
+  say FAIL "(x-base64) normalized binary fallback rc=$rc: $(fail_rows "$W/x-base64")"
+fi
 se_mutate x2 "$SE_OAI" 'b = b + b"data: {\"choices\":[],\"created\":0,\"id\":\"chatcmpl-oracle\",\"model\":\"m-openai-chat\",\"object\":\"chat.completion.chunk\"}\n\n"'
 rc="$(run "$W/x2-rec" "$W/x2")"
 if [ "$rc" != 0 ] && [ "$(count "$W/x2" FAIL)" = 1 ] && grep -q 'sse.error' "$W/x2/ledger.tsv"; then

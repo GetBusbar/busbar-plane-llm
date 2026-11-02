@@ -107,15 +107,7 @@ use busbar_contract::billing::Billing;
 use busbar_contract::media::base64_decode;
 
 /// One decoded part of a `multipart/form-data` body (its value borrowed from the request bytes).
-struct MultipartField<'a> {
-    name: String,
-    content_type: Option<String>,
-    value: &'a [u8],
-}
-
-fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
-    hay.windows(needle.len()).position(|w| w == needle)
-}
+type MultipartField<'a> = crate::exchange::multipart::TranscriptionField<'a>;
 
 /// Sanitize a client-supplied MIME type before it enters the IR: a MIME type is `type/subtype`
 /// plus optional `; param=value`, all printable ASCII. A CR/LF or other control char here is a
@@ -154,43 +146,7 @@ fn decode_ir_b64(s: &str) -> Option<SlabBytes> {
 /// part + a binary `file` part). Boundary comes from the content-type; file bytes are preserved raw
 /// (never lossily UTF-8'd) so audio survives the ingress→IR hop.
 fn parse_multipart<'a>(body: &'a [u8], content_type: &str) -> Vec<MultipartField<'a>> {
-    let Some(parts) = crate::exchange::multipart::multipart_segments(content_type, body) else {
-        return Vec::new();
-    };
-    // Segments borrow the upload; only the handful of field headers is allocated.
-    // The OpenAI audio form carries a handful of named parts (model, file, language, prompt,
-    // response_format). Cap the field count so a crafted body of hundreds of thousands of minimal
-    // parts (short boundary) can't amplify into a large Vec of heap-allocated fields; a real request
-    // never approaches this, and extra parts we don't model are ignored anyway.
-    const MAX_MULTIPART_PARTS: usize = 64;
-    parts
-        .filter_map(parse_multipart_segment)
-        .take(MAX_MULTIPART_PARTS)
-        .collect()
-}
-
-/// Parse ONE multipart segment (the bytes between two delimiters) into a field, or `None` if it has
-/// no `\r\n\r\n` header terminator or no `name` attribute. `value` borrows from `seg` (the body).
-fn parse_multipart_segment(seg: &[u8]) -> Option<MultipartField<'_>> {
-    let seg = seg.strip_prefix(b"\r\n").unwrap_or(seg);
-    let hpos = find_sub(seg, b"\r\n\r\n")?;
-    let headers = String::from_utf8_lossy(&seg[..hpos]);
-    let mut value = &seg[hpos + 4..];
-    if value.ends_with(b"\r\n") {
-        value = &value[..value.len() - 2];
-    }
-    let name = crate::exchange::multipart::multipart_field_name(&headers)?.into_owned();
-    let content_type = headers.lines().find_map(|line| {
-        let (name, value) = line.split_once(':')?;
-        name.trim()
-            .eq_ignore_ascii_case("content-type")
-            .then(|| value.trim().to_string())
-    });
-    Some(MultipartField {
-        name,
-        content_type,
-        value,
-    })
+    crate::exchange::multipart::transcription_fields(content_type, body)
 }
 
 /// Transcription (STT): multipart audio IN → `{text}` OUT.

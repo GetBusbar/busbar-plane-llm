@@ -55,6 +55,14 @@ const FAR_OK: &[u8] = br#"{"id":"chatcmpl-gate","object":"chat.completion","crea
 /// head and body, the far-end request the attempt writes for the member, and the far end's whole
 /// answer relayed back to the caller. Answers the caller's status.
 fn one_forward(shaping: &busbar_plane_llm::exchange::shaping::Shaping, body: &[u8]) -> u16 {
+    one_forward_with_host(shaping, body, HOST)
+}
+
+fn one_forward_with_host(
+    shaping: &busbar_plane_llm::exchange::shaping::Shaping,
+    body: &[u8],
+    host: &dyn busbar_contract::codec::CodecHost,
+) -> u16 {
     use busbar_plane_llm::exchange::attempt::{build, stream_intent};
     use busbar_plane_llm::exchange::reply::{At, Reply, ReplyCtx};
     use busbar_plane_llm::exchange::{arrive::arrive, handler_of};
@@ -62,7 +70,7 @@ fn one_forward(shaping: &busbar_plane_llm::exchange::shaping::Shaping, body: &[u
     let arrived = arrive("POST", "/v1/chat/completions", caller, body, shaping)
         .expect("the caller's request arrives");
     let far =
-        build(HOST, &arrived, caller, shaping, "p", "gpt-4o").expect("the attempt is written");
+        build(host, &arrived, caller, shaping, "p", "gpt-4o").expect("the attempt is written");
     assert!(!far.body.is_empty(), "the far end is sent a body");
     let lane = shaping.lane("gpt-4o").expect("the member's lane");
     let ctx = ReplyCtx {
@@ -75,12 +83,12 @@ fn one_forward(shaping: &busbar_plane_llm::exchange::shaping::Shaping, body: &[u
         translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let head: &[(&[u8], &[u8])] = &[(b"content-type", b"application/json")];
-    let mut reply = Reply::new(HOST, &ctx, 200, head);
+    let mut reply = Reply::new(host, &ctx, 200, head);
     let at = At {
         now_s: 1_752_000_000,
         elapsed_ms: Some(1),
     };
-    let piece = reply.feed(HOST, &ctx, FAR_OK, true, at);
+    let piece = reply.feed(host, &ctx, FAR_OK, true, at);
     assert!(piece.done, "a whole answer ends on its last piece");
     piece.head.map_or(0, |h| h.status)
 }
@@ -170,6 +178,23 @@ fn alloc_gate_request_echo_body_materialized_once() {
         "THE BUFFERED DELIVERY ARM GAINED A PER-NODE ALLOCATION WAVE: a body with \
          {ECHO_SCALING_MESSAGES} messages cost {delta} allocations more than a one-message body, \
          over the committed bound {ECHO_BODY_SCALING_MAX_ALLOCS}."
+    );
+}
+
+#[test]
+fn buffered_stream_synthesis_still_refuses_failed_entropy() {
+    struct NoEntropy;
+    impl busbar_contract::codec::CodecHost for NoEntropy {
+        fn fill_entropy(&self, _: &mut [u8]) -> bool {
+            false
+        }
+        fn wall_clock_now(&self) -> Option<u64> {
+            None
+        }
+    }
+    assert_eq!(
+        one_forward_with_host(&served_generation(), &openai_stream_body(1), &NoEntropy),
+        500
     );
 }
 

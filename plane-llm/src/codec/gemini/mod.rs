@@ -688,15 +688,15 @@ const RESPONSE_ID_REJECT_THRESHOLD: u8 = crate::codec::dialect::BASE62_REJECT_TH
 /// a `{:x}-{:x}` timestamp-and-counter form was distinguishable and leaked the host clock.
 /// The whole token is filled from the host entropy source with no counter overlay (a counter leaves
 /// predictable high digits at its position); 16 base62 chars is ~95 bits, collision-free per
-/// process. Never panics: on entropy failure the buffer stays the base62 zero char.
+/// process. Failed or incomplete entropy draws return no identity.
 ///
 /// Bytes reduce to base62 by rejection sampling, not `byte % 62` (`256 % 62 != 0` biases residues
 /// `0..=7`): any byte `>= RESPONSE_ID_REJECT_THRESHOLD` is skipped and more are drawn.
-fn synth_response_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
+fn synth_response_id(host: &dyn busbar_contract::codec::CodecHost) -> Option<String> {
     let mut token = [b'0'; RESPONSE_ID_TOKEN_LEN];
     let mut filled = 0usize;
     // Bound the refill rounds so a stuck entropy source cannot spin the request path; ~4/256 of
-    // bytes are rejected, so a few rounds suffice and the `'0'`-prefilled buffer is the fallback.
+    // bytes are rejected, so a few rounds suffice; incomplete draws are never published.
     let mut rounds = 0u32;
     const MAX_ROUNDS: u32 = 8;
     while filled < RESPONSE_ID_TOKEN_LEN && rounds < MAX_ROUNDS {
@@ -704,7 +704,7 @@ fn synth_response_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
         // A generous batch so one draw usually fills the token despite the ~1.6% reject rate.
         let mut batch = [0u8; RESPONSE_ID_TOKEN_LEN * 2];
         if !host.fill_entropy(&mut batch) {
-            break;
+            return None;
         }
         for &byte in batch.iter() {
             if filled >= RESPONSE_ID_TOKEN_LEN {
@@ -719,8 +719,11 @@ fn synth_response_id(host: &dyn busbar_contract::codec::CodecHost) -> String {
         }
     }
 
-    // `token` is ASCII base62, so always valid UTF-8; the fallback keeps the path panic-free.
-    String::from_utf8(token.to_vec()).unwrap_or_else(|_| "0".repeat(RESPONSE_ID_TOKEN_LEN))
+    if filled != RESPONSE_ID_TOKEN_LEN {
+        return None;
+    }
+    // Only a complete base62 token can become a response identity.
+    String::from_utf8(token.to_vec()).ok()
 }
 
 /// Synthesize a stable, non-empty tool-call id for a Gemini `functionCall`. The wire carries none,
@@ -1479,15 +1482,25 @@ struct GeminiStream {
 }
 
 /// The streamed answer text [`GeminiWriter::stream_text`] accumulates: the concatenated `text` and
-/// one `(ir_block_index, byte_start)` per text block in order of first text, with the character
+/// one retained range per text block in order of first text, with the character
 /// count and index marks kept as it grows so a citation converts without walking the text.
 #[derive(Clone, Debug, Default)]
 struct GeminiStreamText {
     text: String,
     truncated: bool,
-    block_starts: Vec<(usize, usize)>,
+    block_starts: Vec<GeminiStreamBlock>,
+    /// Bytes emitted, including those beyond the retained prefix, for contiguity detection.
+    emitted_bytes: usize,
     chars: usize,
     marks: Vec<usize>,
+}
+
+#[derive(Clone, Debug)]
+struct GeminiStreamBlock {
+    index: usize,
+    start: usize,
+    end: usize,
+    contiguous: bool,
 }
 
 /// Value-namespace constructor for [`GeminiWriter`], so sites writing the bare `GeminiWriter`
@@ -1506,6 +1519,7 @@ pub const GeminiWriter: GeminiWriter = GeminiWriter {
             text: String::new(),
             truncated: false,
             block_starts: Vec::new(),
+            emitted_bytes: 0,
             chars: 0,
             marks: Vec::new(),
         },
@@ -1514,15 +1528,17 @@ pub const GeminiWriter: GeminiWriter = GeminiWriter {
 };
 
 impl GeminiWriter {
-    /// The stream's `responseId`: the first wins. Returns the captured id if any, else captures and
-    /// returns `mint()`, so a duplicate identity frame restates the id the client has. A poisoned
-    /// lock gives the freshly minted id.
-    fn carried_response_id(&self, mint: impl FnOnce() -> String) -> String {
-        self.stream
-            .lock()
-            .response_id
-            .get_or_insert_with(mint)
-            .clone()
+    /// Resolve entropy outside the stream lock, then publish the first successful identity.
+    fn carried_response_id(&self, mint: impl FnOnce() -> Option<String>) -> Option<String> {
+        if let Some(id) = self.stream.lock().response_id.clone() {
+            return Some(id);
+        }
+        let minted = mint();
+        let mut stream = self.stream.lock();
+        if stream.response_id.is_none() {
+            stream.response_id = minted;
+        }
+        stream.response_id.clone()
     }
 }
 

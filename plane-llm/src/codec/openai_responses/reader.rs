@@ -1041,10 +1041,10 @@ impl ProtocolReader for ResponsesReader {
                 }
             }
 
-            // Streamed citations: each `url_citation` arrives as its own
+            // Streamed URL and native file citations arrive as their own
             // `output_text.annotation.added` frame, after the text deltas and before
-            // `output_text.done`. It is read through the same `read_url_annotations` as the buffered
-            // path and carried as `IrDelta::CitationsDelta` on the open text block at this index. An
+            // `output_text.done`. The same annotation readers as the buffered path carry them as
+            // `IrDelta::CitationsDelta` on the open text block at this index. An
             // annotation for an index that is not an open text block is dropped, not orphaned.
             EVT_OUTPUT_TEXT_ANNOTATION_ADDED => {
                 let idx = data
@@ -1053,9 +1053,10 @@ impl ProtocolReader for ResponsesReader {
                     .map_or(0, |v| (v as usize).min(MAX_OUTPUT_INDEX));
                 if state.open_tools.contains(&(idx + TEXT_INDEX_KEY_OFFSET)) {
                     if let Some(annotation) = data.get("annotation") {
-                        let citations = super::super::url_citation_wire::read_url_annotations(
-                            &serde_json::Value::Array(vec![annotation.clone()]),
-                        );
+                        let annotations = serde_json::Value::Array(vec![annotation.clone()]);
+                        let mut citations =
+                            super::super::url_citation_wire::read_url_annotations(&annotations);
+                        citations.extend(super::read_file_annotations(Some(&annotations)));
                         if !citations.is_empty() {
                             out.push(IrStreamEvent::BlockDelta {
                                 index: idx,

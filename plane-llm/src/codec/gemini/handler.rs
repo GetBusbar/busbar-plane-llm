@@ -393,6 +393,24 @@ leaf_op! {
     fn taps_usage(&self) -> bool {
         true
     }
+    fn extract_usage(
+        &self,
+        _host: &dyn busbar_contract::codec::CodecHost,
+        _ingress: &str,
+        body: &[u8],
+    ) -> Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault> {
+        let value: Value = crate::codec::json::parse(body)
+            .map_err(|_| busbar_contract::codec::UsageTapFault::Decode)?;
+        Ok(read_embeddings_usage(&value))
+    }
+    fn recover_response_billing(
+        &self,
+        _host: &dyn busbar_contract::codec::CodecHost,
+        body: &[u8],
+    ) -> Option<busbar_contract::billing::Billing> {
+        let value: Value = crate::codec::json::parse(body).ok()?;
+        read_embeddings_usage(&value).map(busbar_contract::billing::Billing::Tokens)
+    }
 }
 
 /// IR to Gemini `:embedContent` request wire (the embeddings `OperationHandler::write_request`).
@@ -843,23 +861,37 @@ pub fn read_embeddings_response(
     let v: Value =
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
     let mut item = EmbeddingItem::default();
-    if let Some(f) = v
+    let malformed = || CodecError::Malformed("invalid Gemini embedding values".to_string());
+    let values = v
         .get(keys::EMBEDDING)
         .and_then(|e| e.get(FIELD_VALUES))
         .and_then(Value::as_array)
-    {
-        item.vectors.insert(
-            EncFmt::Float,
-            VectorData::Float(
-                f.iter()
-                    .filter_map(|x| x.as_f64().map(|n| n as f32))
-                    .collect(),
-            ),
-        );
-    }
+        .ok_or_else(malformed)?;
+    let coordinates = values
+        .iter()
+        .map(|value| {
+            let coordinate = value.as_f64().ok_or_else(malformed)? as f32;
+            coordinate
+                .is_finite()
+                .then_some(coordinate)
+                .ok_or_else(malformed)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    item.vectors
+        .insert(EncFmt::Float, VectorData::Float(coordinates));
+    let usage = read_embeddings_usage(&v);
+    Ok(EmbeddingsResp {
+        embeddings: vec![item],
+        usage,
+        ..Default::default()
+    })
+}
+
+/// Count usage independently of vector decoding so a refused vector still reports provider work.
+fn read_embeddings_usage(v: &Value) -> Option<busbar_contract::billing::TokenUsage> {
     // Billed count: absent or `null` is no usage; an unreadable one is refused alone
     // ([`refused_count`]) and bills nothing, while the vectors are served.
-    let usage = crate::codec::usage_count::billed_count_opt(
+    crate::codec::usage_count::billed_count_opt(
         v.get(FIELD_USAGE_METADATA),
         FIELD_PROMPT_TOKEN_COUNT,
     )
@@ -869,11 +901,6 @@ pub fn read_embeddings_response(
     })
     .map(|n| busbar_contract::billing::TokenUsage {
         input: n,
-        ..Default::default()
-    });
-    Ok(EmbeddingsResp {
-        embeddings: vec![item],
-        usage,
         ..Default::default()
     })
 }

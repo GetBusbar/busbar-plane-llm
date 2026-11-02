@@ -225,6 +225,13 @@ struct CitationAccum {
     bytes: usize,
 }
 
+/// One message item's logprobs and their carried weight. Only the incoming batch is weighed.
+#[derive(Clone, Default)]
+struct LogprobAccum {
+    items: Vec<crate::codec::ir::IrTokenLogprob>,
+    bytes: usize,
+}
+
 /// Key offset for OPEN TEXT output indices inside the shared `StreamDecodeState::open_tools` set. A
 /// stream can carry several message items, each at its own `output_index`, so a single
 /// `text_block_open` bool cannot pair BlockStart/BlockStop per index. Text indices are stored as
@@ -257,7 +264,7 @@ const EVT_OUTPUT_TEXT_DONE: &str = "response.output_text.done";
 // IR-02: a refusal streams as `refusal.delta` frames closed by `refusal.done`.
 const EVT_REFUSAL_DELTA: &str = "response.refusal.delta";
 const EVT_REFUSAL_DONE: &str = "response.refusal.done";
-// A mid-stream citation: `{output_index, content_index, annotation_index, annotation:{type:"url_citation", ...}}`.
+// A mid-stream URL or file citation, under `annotation` with output/content/annotation indices.
 const EVT_OUTPUT_TEXT_ANNOTATION_ADDED: &str = "response.output_text.annotation.added";
 const EVT_FUNCTION_CALL_ARGS_DELTA: &str = "response.function_call_arguments.delta";
 const EVT_REASONING_TEXT_DELTA: &str = "response.reasoning_text.delta";
@@ -1098,9 +1105,6 @@ const STREAM_DROPS: &[&str] = &[
     "output[].type=message.content[].type=output_text.annotations[].type=file_citation",
     "output[].type=message.content[].type=output_text.annotations[].type=file_path",
     "output[].type=web_search_call",
-    "type=response.output_text.annotation.added.annotation.type=container_file_citation",
-    "type=response.output_text.annotation.added.annotation.type=file_citation",
-    "type=response.output_text.annotation.added.annotation.type=file_path",
     "type=response.output_text.annotation.added.annotation_index",
 ];
 const STREAM_REROOT: crate::codec::drops::Reroot = crate::codec::drops::Reroot {
@@ -1422,7 +1426,7 @@ struct ResponsesStream {
     /// Token logprobs by `output_index`. The IR streams them as a separate `LogprobsDelta`, but a
     /// native stream carries them on `output_text.done` and the finalized part, so they are held
     /// until `BlockStop`.
-    logprob_accum: std::collections::BTreeMap<usize, Vec<crate::codec::ir::IrTokenLogprob>>,
+    logprob_accum: std::collections::BTreeMap<usize, LogprobAccum>,
     /// Finalized `output[]` items by `output_index`, recorded at each `BlockStop` and drained into
     /// the terminal `response.output` in index order (an empty `output` with nonzero
     /// `usage.output_tokens` is a shape real OpenAI never emits). Falls back to an empty array.
@@ -1748,12 +1752,10 @@ impl ResponsesWriter {
         let map = &mut self.stream().logprob_accum;
         match map.get_mut(&index) {
             Some(entry) => {
-                let held = entry
-                    .iter()
-                    .map(logprob_bytes)
-                    .fold(0usize, usize::saturating_add);
-                if held.saturating_add(added) <= cap {
-                    entry.extend_from_slice(lps);
+                let held = entry.bytes.saturating_add(added);
+                if held <= cap {
+                    entry.items.extend_from_slice(lps);
+                    entry.bytes = held;
                 } else {
                     return false;
                 }
@@ -1762,7 +1764,13 @@ impl ResponsesWriter {
                 if map.len() >= MAX_OPEN_TOOLS || added > cap {
                     return false;
                 }
-                map.entry(index).or_default().extend_from_slice(lps);
+                map.insert(
+                    index,
+                    LogprobAccum {
+                        items: lps.to_vec(),
+                        bytes: added,
+                    },
+                );
             }
         }
         true
@@ -1773,6 +1781,7 @@ impl ResponsesWriter {
         self.stream()
             .logprob_accum
             .remove(&index)
+            .map(|accum| accum.items)
             .unwrap_or_default()
     }
 
@@ -1920,18 +1929,24 @@ impl ResponsesWriter {
 
     /// The stream-stable opaque `item_id` for `(prefix, index)`, minted on first reference and then
     /// cached, so one item's `added`, `delta*` and `done` frames share an id the SDK correlates on
-    /// while the id itself stays opaque. A poisoned lock yields a fresh uncached id.
+    /// while the id itself stays opaque. The first insertion wins across a reentrant entropy draw.
     fn item_id_for(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
         prefix: &'static str,
         index: usize,
     ) -> Result<String, IrError> {
+        if let Some(id) = self.stream().item_ids.get(&(prefix, index)).cloned() {
+            return Ok(id);
+        }
+        // Entropy is a host callback: it may reenter this writer. Draw without the stream lock,
+        // then keep the first identity inserted by either call. A failed draw is never cached.
+        let minted = synthesize_item_id(host, prefix);
         let mut stream = self.stream();
         if let Some(id) = stream.item_ids.get(&(prefix, index)) {
             return Ok(id.clone());
         }
-        let id = synthesize_item_id(host, prefix)?;
+        let id = minted?;
         stream.item_ids.insert((prefix, index), id.clone());
         Ok(id)
     }

@@ -920,15 +920,9 @@ impl ProtocolWriter for GeminiWriter {
         event: &IrStreamEvent,
     ) -> Result<Vec<(String, serde_json::Value)>, busbar_contract::protocol::IrError> {
         if let IrStreamEvent::BlockStop { index } = event {
-            let mut stream = self.stream.lock();
-            if let Some(position) = stream
-                .open_tools
-                .iter()
-                .position(|tool| tool.index == *index && tool.overflowed)
-            {
-                stream.open_tools.remove(position);
-                return Err(tool_overflow_error());
-            }
+            return self
+                .flush_tool(*index)
+                .map(|frame| frame.into_iter().collect());
         }
         Ok(self.write_response_event(host, event).into_iter().collect())
     }
@@ -939,34 +933,20 @@ impl ProtocolWriter for GeminiWriter {
         ev: &IrStreamEvent,
     ) -> Option<(String, serde_json::Value)> {
         match ev {
-            // MessageStart → a leading identity-bearing chunk, ALWAYS emitted (this arm never returns
-            // `None`). Native Gemini SSE chunks carry top-level `responseId`/`modelVersion`; the
-            // official `google-genai` SDK reads `chunk.response_id`/`chunk.model_version` off the
-            // stream. A native Gemini stream ALWAYS carries `responseId` on its first chunk, so we
-            // always emit a leading frame that carries one: when the egress captured an `id` we pass it
-            // through (a Gemini→Gemini stream is indistinguishable on that field); when `id` is `None`
-            // (the post-strip state on a cross-protocol stream — `StreamTranslate` zeroes the foreign
-            // id) we SYNTHESIZE a native-shaped `responseId` via `synth_response_id()` rather than
-            // omitting it, matching the non-stream `write_response` synth-on-strip behavior. `model`,
-            // when present, is added as `modelVersion`; when `None` it is simply omitted, so a `(None,
-            // None)` MessageStart still emits a frame carrying a synthesized `responseId` and no
-            // `modelVersion`. `created` has no Gemini stream analogue and is never emitted.
+            // MessageStart emits identity/model metadata. Preserve a carried id, or mint one
+            // from a complete entropy draw. responseId is optional: an unavailable draw leaves
+            // it absent while the response and its accounting continue.
             IrStreamEvent::MessageStart { id, model, .. } => {
                 let mut frame = serde_json::Map::new();
-                // The FIRST identity frame decides this stream's `responseId`; a duplicate
-                // `MessageStart` replays it rather than announcing the same response under a second
-                // id. When the egress captured an `id` we pass it through; when it is `None` (the
-                // post-strip state on a cross-protocol stream — `StreamTranslate` zeroes the foreign
-                // id, though it does NOT strip `model`, which is the lane's own name and is emitted
-                // as `modelVersion` below) we SYNTHESIZE a native-shaped one rather than omitting
-                // it, because a native google-genai SDK reads `chunk.response_id` off the first
-                // chunk and an identity-less frame is a detectable fidelity gap.
-                let response_id = self
-                    .carried_response_id(|| id.clone().unwrap_or_else(|| synth_response_id(host)));
-                frame.insert(
-                    FIELD_RESPONSE_ID.to_string(),
-                    serde_json::json!(response_id),
-                );
+                // Resolve host entropy outside the stream lock, then cache first-wins.
+                let response_id =
+                    self.carried_response_id(|| id.clone().or_else(|| synth_response_id(host)));
+                if let Some(response_id) = response_id {
+                    frame.insert(
+                        FIELD_RESPONSE_ID.to_string(),
+                        serde_json::json!(response_id),
+                    );
+                }
                 // A native Gemini SSE stream ALWAYS carries `modelVersion` in the first chunk (the
                 // official google-genai SDK reads `chunk.model_version`). `StreamTranslate` now
                 // preserves the lane's `model` across the cross-protocol boundary, so this is
@@ -1042,14 +1022,30 @@ impl ProtocolWriter for GeminiWriter {
                     // The copy is bounded by this stream's `translate_cap` (the same live limit the
                     // tool-argument buffer holds): stop recording at the first oversized fragment,
                     // preserving a prefix so later citation offsets clamp to its end.
-                    {
+                    if !text.is_empty() {
                         let mut stream = self.stream.lock();
                         let cap = stream.translate_cap;
                         let st = &mut stream.stream_text;
+                        let emitted_start = st.emitted_bytes;
+                        st.emitted_bytes = emitted_start.saturating_add(text.len());
+                        let position = st
+                            .block_starts
+                            .iter()
+                            .position(|block| block.index == *index);
+                        if let Some(position) = position {
+                            let block = &mut st.block_starts[position];
+                            block.contiguous &= block.end == emitted_start;
+                            block.end = st.emitted_bytes;
+                        }
                         if !st.truncated && st.text.len().saturating_add(text.len()) <= cap {
                             let start = st.text.len();
-                            if !st.block_starts.iter().any(|(i, _)| i == index) {
-                                st.block_starts.push((*index, start));
+                            if position.is_none() {
+                                st.block_starts.push(GeminiStreamBlock {
+                                    index: *index,
+                                    start,
+                                    end: st.emitted_bytes,
+                                    contiguous: true,
+                                });
                             }
                             extend_char_marks(&mut st.marks, &mut st.chars, start, text);
                             st.text.push_str(text);
@@ -1156,42 +1152,60 @@ impl ProtocolWriter for GeminiWriter {
                         // block; Gemini's are candidate-wide BYTES. Convert against the block's text
                         // as streamed so far, shifted by where the block started — the same
                         // conversion the buffered writer makes (GEM-16). A citation whose block has
-                        // carried no text yet has no anchor and passes through unconverted, as
-                        // before; the `raw` short-circuit keeps a Gemini-sourced source byte-exact.
+                        // carried no text yet has no answer anchor and omits foreign offsets;
+                        // the `raw` short-circuit keeps a native Gemini source byte-exact.
                         // The stream's text is indexed as it grew, so each offset converts in at
                         // most one index stride of work rather than a walk of the block.
-                        let sources: Vec<serde_json::Value> = {
-                            let stream = self.stream.lock();
-                            let st = &stream.stream_text;
+                        // Resolve offsets without callbacks under the lock. Build/report the
+                        // projected sources only after releasing it, retaining the sparse index.
+                        let spans: Vec<_> =
                             {
-                                let start = st
+                                let stream = self.stream.lock();
+                                let st = &stream.stream_text;
+                                let anchor = st
                                     .block_starts
                                     .iter()
-                                    .find(|(i, _)| i == index)
-                                    .map(|(_, b)| *b)
-                                    .filter(|b| *b < st.text.len());
-                                match start {
-                                    Some(b) => {
-                                        let idx = GeminiCharIndex::from_marks(&st.text, &st.marks);
-                                        // The block's first character, candidate-wide.
-                                        let block_char =
-                                            usize::try_from(idx.char_offset(b as i64)).unwrap_or(0);
-                                        let convert = |v: i64| {
-                                            let c = block_char.saturating_add(v.max(0) as usize);
-                                            idx.byte_offset(i64::try_from(c).unwrap_or(i64::MAX))
+                                    .find(|block| block.index == *index && block.contiguous);
+                                match anchor {
+                                    Some(block) => {
+                                        let start = block.start;
+                                        let end = block.end.min(st.text.len());
+                                        let text = if st.truncated {
+                                            ""
+                                        } else {
+                                            &st.text[start..end]
                                         };
+                                        let idx = GeminiCharIndex::from_marks(&st.text, &st.marks);
+                                        let base = idx.char_offset(start as i64);
                                         citations
                                             .iter()
-                                            .map(|c| write_gemini_citation(c, Some(&convert)))
+                                            .map(|citation| {
+                                                if native_citation_source(citation).is_some() {
+                                                    return None;
+                                                }
+                                                crate::codec::url_citation_wire::citation_span(
+                                                    text, 0, citation,
+                                                )
+                                                .map(|(s, e)| {
+                                                    (
+                                                        idx.byte_offset(s.saturating_add(base)),
+                                                        idx.byte_offset(e.saturating_add(base)),
+                                                    )
+                                                })
+                                            })
                                             .collect()
                                     }
-                                    None => citations
-                                        .iter()
-                                        .map(|c| write_gemini_citation(c, None))
-                                        .collect(),
+                                    None => vec![None; citations.len()],
                                 }
-                            }
-                        };
+                            };
+                        let sources: Vec<_> = citations
+                            .iter()
+                            .zip(spans)
+                            .filter_map(|(citation, span)| write_gemini_citation(citation, span))
+                            .collect();
+                        if sources.is_empty() {
+                            return None;
+                        }
                         Some((
                             "".to_string(),
                             serde_json::json!({
@@ -1229,41 +1243,10 @@ impl ProtocolWriter for GeminiWriter {
             // (text block, or an index with no tracked tool) finds no entry and emits no frame. The
             // matched entry is REMOVED so parallel tool blocks each flush exactly once. A poisoned
             // lock degrades to no frame rather than panicking on the request path.
-            IrStreamEvent::BlockStop { index } => {
-                let flushed = {
-                    let guard = &mut self.stream.lock().open_tools;
-                    guard.iter().position(|t| t.index == *index).map(|pos| {
-                        let t = guard.remove(pos);
-                        (t.id, t.name, t.args, t.overflowed)
-                    })
-                };
-                if flushed
-                    .as_ref()
-                    .is_some_and(|(_, _, _, overflowed)| *overflowed)
-                {
-                    return self
-                        .write_response_event(host, &IrStreamEvent::Error(tool_overflow_error()));
-                }
-                flushed.map(|(id, name, args_str, _)| {
-                    // Parse the fully reassembled arg string. An empty buffer (zero-arg call) or an
-                    // unparseable accumulation degrades to `{}` rather than panicking — the args are
-                    // best-effort, but the single-part `{name, ...}` shape and the name are always
-                    // preserved.
-                    let args: serde_json::Value = if args_str.is_empty() {
-                        serde_json::json!({})
-                    } else {
-                        crate::codec::json::parse_str(&args_str)
-                            .unwrap_or_else(|_| serde_json::json!({}))
-                    };
-                    // The streamed call's id, as on the buffered path (GEM-08).
-                    model_part_frame(function_call_part(
-                        &id,
-                        &name,
-                        coerce_tool_args(&args),
-                        None,
-                    ))
-                })
-            }
+            IrStreamEvent::BlockStop { index } => match self.flush_tool(*index) {
+                Ok(frame) => frame,
+                Err(error) => self.write_response_event(host, &IrStreamEvent::Error(error)),
+            },
 
             // MessageDelta → chunk with finishReason + usageMetadata
             IrStreamEvent::MessageDelta {
@@ -1272,10 +1255,6 @@ impl ProtocolWriter for GeminiWriter {
                 stop_sequence: _,
                 stop_detail: _,
             } => {
-                let finish_reason = stop_reason
-                    .map(write_gemini_stop_reason)
-                    .unwrap_or(GEMINI_FINISH_STOP);
-
                 // Native Gemini SSE carries `usageMetadata` (incl. `totalTokenCount`) on the final
                 // chunk; a strict google-genai client computing totals reads `totalTokenCount`.
                 // Emit it (= prompt + candidates, saturating) alongside the component counts so the
@@ -1285,16 +1264,17 @@ impl ProtocolWriter for GeminiWriter {
                 // round-trip. Saturating add avoids an overflow panic on the request path for
                 // pathological/garbage counts.
                 let (usage_metadata, _) = gemini_usage_metadata(usage, true);
-                let mut candidate_obj = serde_json::Map::new();
-                candidate_obj.insert(
-                    FIELD_FINISH_REASON.to_string(),
-                    serde_json::json!(finish_reason),
-                );
                 let mut out_obj = serde_json::Map::new();
-                out_obj.insert(
-                    FIELD_CANDIDATES.to_string(),
-                    serde_json::Value::Array(vec![serde_json::Value::Object(candidate_obj)]),
-                );
+                // A usage-only delta is not a successful generation stop. In particular it may
+                // precede EOF while an incomplete tool call still awaits validation.
+                if let Some(reason) = stop_reason {
+                    out_obj.insert(
+                        FIELD_CANDIDATES.to_string(),
+                        serde_json::json!([
+                            { (FIELD_FINISH_REASON): write_gemini_stop_reason(*reason) }
+                        ]),
+                    );
+                }
                 out_obj.insert(
                     FIELD_USAGE_METADATA.to_string(),
                     serde_json::Value::Object(usage_metadata),
@@ -1369,7 +1349,7 @@ impl ProtocolWriter for GeminiWriter {
                         // One index over the block for all its citations, not a walk per offset.
                         if text.is_empty() {
                             for c in citations {
-                                citation_sources.push(write_gemini_citation(c, None));
+                                citation_sources.extend(write_gemini_citation(c, None));
                             }
                         } else {
                             // Built on the first converted offset: a Gemini-sourced citation
@@ -1381,7 +1361,13 @@ impl ProtocolWriter for GeminiWriter {
                                     + byte_prefix
                             };
                             for c in citations {
-                                citation_sources.push(write_gemini_citation(c, Some(&convert)));
+                                let span = if native_citation_source(c).is_some() {
+                                    None
+                                } else {
+                                    crate::codec::url_citation_wire::citation_span(text, 0, c)
+                                        .map(|(start, end)| (convert(start), convert(end)))
+                                };
+                                citation_sources.extend(write_gemini_citation(c, span));
                             }
                         }
                     }
@@ -1546,11 +1532,12 @@ impl ProtocolWriter for GeminiWriter {
         //     surface it verbatim — `(Some(id), _)`.
         //   * Cross-protocol with NO foreign id: `proxy engine` strips `id` to `None` on every
         //     cross-protocol response but LEAVES `created` populated as the boundary signal, so
-        //     `(None, Some(_))` — synthesize a Gemini-shaped `responseId` so a native `google-genai`
+        //     `(None, Some(_))` — try a Gemini-shaped `responseId` from complete entropy so a native `google-genai`
         //     client reading `GenerateContentResponse.response_id` always sees a value (real Gemini
         //     responses carry one). Previously this case omitted `responseId` on EVERY
         //     cross-protocol response, a distinguishability signal; the old comment wrongly claimed a
         //     value was "always present", contradicting `proxy engine` which sets `ir.id = None`.
+        //     If entropy is unavailable, omit this optional field rather than publish a partial id.
         //   * Minimal same-protocol IR with neither id nor created: a native body that legitimately
         //     omitted `responseId` yields `(None, None)` — omit it rather than fabricate, since
         //     `responseId` is `Optional` in the Gemini schema / SDK and fabricating one would make a
@@ -1561,7 +1548,9 @@ impl ProtocolWriter for GeminiWriter {
                 out[FIELD_RESPONSE_ID] = serde_json::json!(id);
             }
             (None, Some(_)) => {
-                out[FIELD_RESPONSE_ID] = serde_json::json!(synth_response_id(host));
+                if let Some(id) = synth_response_id(host) {
+                    out[FIELD_RESPONSE_ID] = serde_json::json!(id);
+                }
             }
             (None, None) => {}
         }
@@ -1698,4 +1687,36 @@ fn gemini_usage_metadata(
         );
     }
     (usage_metadata, total)
+}
+
+impl GeminiWriter {
+    fn flush_tool(&self, index: usize) -> Result<Option<(String, serde_json::Value)>, IrError> {
+        let tool = {
+            let mut stream = self.stream.lock();
+            stream
+                .open_tools
+                .iter()
+                .position(|tool| tool.index == index)
+                .map(|position| stream.open_tools.remove(position))
+        };
+        let Some(tool) = tool else { return Ok(None) };
+        if tool.overflowed {
+            return Err(tool_overflow_error());
+        }
+        let args = if tool.args.is_empty() {
+            serde_json::json!({})
+        } else {
+            crate::codec::json::parse_str::<serde_json::Value>(&tool.args).map_err(|_| IrError {
+                class: StatusClass::ServerError,
+                provider_signal: Some("malformed streamed tool arguments".to_string()),
+                retry_after: None,
+            })?
+        };
+        Ok(Some(model_part_frame(function_call_part(
+            &tool.id,
+            &tool.name,
+            coerce_tool_args(&args),
+            None,
+        ))))
+    }
 }

@@ -8720,6 +8720,7 @@ fn writer_logprob_accumulator_is_bounded_in_entries_and_bytes() {
     let held: usize = map
         .get(&0)
         .expect("the item accumulates")
+        .items
         .iter()
         .map(logprob_bytes)
         .sum();
@@ -8732,7 +8733,7 @@ fn writer_logprob_accumulator_is_bounded_in_entries_and_bytes() {
         "the test drove the buffer up to the cap, got {held}"
     );
     assert_eq!(
-        map.get(&0).map(Vec::len).unwrap_or(0) % batch.len(),
+        map.get(&0).map(|accum| accum.items.len()).unwrap_or(0) % batch.len(),
         0,
         "a batch is kept whole or dropped whole"
     );
@@ -8960,4 +8961,113 @@ fn a_top_level_error_closes_open_blocks_and_fails_the_stream() {
             "{events:?}"
         );
     }
+}
+
+#[test]
+fn logprob_weight_survives_refusal_clone_take_and_reset() {
+    let lp = crate::codec::ir::IrTokenLogprob {
+        token: "token".into(),
+        logprob: -0.1,
+        bytes: Some(vec![1, 2]),
+        bytes_null: false,
+        top: vec![crate::codec::ir::IrTopLogprob {
+            token: "alternative".into(),
+            logprob: -0.2,
+            bytes: Some(vec![3, 4, 5]),
+            bytes_null: false,
+        }],
+    };
+    let weight = logprob_bytes(&lp);
+    let writer = ResponsesWriter;
+    writer.store_translate_cap(weight * 2);
+    assert!(writer.append_logprobs(0, std::slice::from_ref(&lp)));
+    let cloned = writer.clone();
+    assert!(writer.append_logprobs(0, std::slice::from_ref(&lp)));
+    assert!(!writer.append_logprobs(0, std::slice::from_ref(&lp)));
+    {
+        let stream = writer.stream();
+        let entry = stream.logprob_accum.get(&0).unwrap();
+        assert_eq!(entry.bytes, weight * 2);
+        assert_eq!(entry.items.len(), 2);
+        assert_eq!(
+            entry.bytes,
+            entry.items.iter().map(logprob_bytes).sum::<usize>()
+        );
+    }
+    assert_eq!(cloned.take_logprob_accum(0), vec![lp.clone()]);
+    assert!(cloned.take_logprob_accum(0).is_empty());
+    assert!(cloned.append_logprobs(0, &[lp]));
+    assert_eq!(cloned.stream().logprob_accum.get(&0).unwrap().bytes, weight);
+    writer.reset_sequence_number();
+    assert!(writer.stream().logprob_accum.is_empty());
+    assert_eq!(cloned.stream().logprob_accum.get(&0).unwrap().bytes, weight);
+}
+
+#[test]
+fn item_identity_entropy_callback_can_reenter_and_first_insert_wins() {
+    use busbar_contract::codec::CodecHost;
+    struct Fixed;
+    impl CodecHost for Fixed {
+        fn fill_entropy(&self, out: &mut [u8]) -> bool {
+            out.fill(7);
+            true
+        }
+        fn wall_clock_now(&self) -> Option<u64> {
+            None
+        }
+    }
+    struct Reentrant<'a>(&'a ResponsesWriter, bool);
+    impl CodecHost for Reentrant<'_> {
+        fn fill_entropy(&self, out: &mut [u8]) -> bool {
+            // This nested call inserts the same key while the outer call is drawing entropy.
+            let nested = self.0.item_id_for(&Fixed, ITEM_ID_PREFIX_MSG, 0).unwrap();
+            assert_eq!(nested, format!("msg_{}", "7".repeat(ITEM_ID_TOKEN_LEN)));
+            out.fill(2);
+            self.1
+        }
+        fn wall_clock_now(&self) -> Option<u64> {
+            None
+        }
+    }
+    for outer_draw_succeeds in [true, false] {
+        let writer = ResponsesWriter;
+        let id = writer
+            .item_id_for(
+                &Reentrant(&writer, outer_draw_succeeds),
+                ITEM_ID_PREFIX_MSG,
+                0,
+            )
+            .unwrap();
+        assert_eq!(id, format!("msg_{}", "7".repeat(ITEM_ID_TOKEN_LEN)));
+        assert_eq!(
+            writer.item_id_for(&Fixed, ITEM_ID_PREFIX_MSG, 0).unwrap(),
+            id
+        );
+        assert_eq!(writer.stream().item_ids.len(), 1);
+    }
+}
+
+#[test]
+fn failed_item_entropy_is_not_cached_or_substituted() {
+    use busbar_contract::codec::CodecHost;
+    struct Failed;
+    impl CodecHost for Failed {
+        fn fill_entropy(&self, out: &mut [u8]) -> bool {
+            out.fill(3);
+            false
+        }
+        fn wall_clock_now(&self) -> Option<u64> {
+            None
+        }
+    }
+    let writer = ResponsesWriter;
+    assert!(writer.item_id_for(&Failed, ITEM_ID_PREFIX_MSG, 0).is_err());
+    assert!(writer.stream().item_ids.is_empty());
+    let id = writer
+        .item_id_for(crate::codec::test_host::HOST, ITEM_ID_PREFIX_MSG, 0)
+        .unwrap();
+    assert_eq!(
+        writer.item_id_for(&Failed, ITEM_ID_PREFIX_MSG, 0).unwrap(),
+        id
+    );
 }

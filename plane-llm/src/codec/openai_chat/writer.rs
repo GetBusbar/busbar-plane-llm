@@ -711,9 +711,16 @@ impl ProtocolWriter for OpenAiWriter {
                 }
                 // A Chat chunk has no generated-image member (streamed audio is not carried).
                 crate::codec::ir::IrDelta::SignatureDelta(_)
-                | crate::codec::ir::IrDelta::RedactedReasoningDelta(_)
-                | crate::codec::ir::IrDelta::MediaDelta(_) => {
+                | crate::codec::ir::IrDelta::RedactedReasoningDelta(_) => {
                     // Lossy by necessity: no signature/redacted-reasoning stream analog.
+                    None
+                }
+                crate::codec::ir::IrDelta::MediaDelta(block) => {
+                    crate::codec::drops::writer_drop!(
+                        crate::codec::drops::block(block.kind_name()),
+                        &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                        [], "dropping generated media on OpenAI Chat stream egress: no native media delta"
+                    );
                     None
                 }
                 crate::codec::ir::IrDelta::CitationsDelta(cits) => {
@@ -1004,6 +1011,27 @@ impl ProtocolWriter for OpenAiWriter {
                     }
                 }));
             }
+            if matches!(
+                block,
+                crate::codec::ir::IrBlock::Image { .. }
+                    | crate::codec::ir::IrBlock::Media { .. }
+                    | crate::codec::ir::IrBlock::Json(_)
+                    | crate::codec::ir::IrBlock::HostedToolRecord { .. }
+                    | crate::codec::ir::IrBlock::ToolResult { .. }
+            ) {
+                crate::codec::drops::writer_drop!(
+                    crate::codec::drops::block(block.kind_name()),
+                    &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                    [], "dropping an answer block on OpenAI Chat response egress: no native message member"
+                );
+            }
+        }
+        if resp.audio.is_some() {
+            crate::codec::drops::writer_drop!(
+                crate::codec::drops::wire("choices[].message.audio"),
+                &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                [], "dropping native audio output while re-encoding a Chat response: this writer has no audio projection"
+            );
         }
 
         // Thinking blocks are dropped (the response shape has no `reasoning_content` output the

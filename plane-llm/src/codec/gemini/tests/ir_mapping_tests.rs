@@ -478,19 +478,10 @@ fn gem16_streamed_citation_offsets_are_bytes_for_a_gemini_client() {
             delta: crate::codec::ir::IrDelta::TextDelta("héllo wörld".to_string()),
         },
     );
-    let citation = crate::codec::ir::IrCitation {
-        domain: None,
-        kind: Some("url_citation".to_string()),
-        cited_text: None,
-        title: None,
-        url: Some("https://c".to_string()),
-        document_index: None,
-        start_index: Some(6),
-        end_index: Some(11),
-        encrypted_index: None,
-        raw: None,
-        ..Default::default()
-    };
+    let citation = crate::codec::url_citation_wire::read_url_annotations(&json!([
+        {"type":"url_citation","url_citation":{"url":"https://c","start_index":6,"end_index":11}}
+    ]))
+    .remove(0);
     let (_, frame) = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -536,17 +527,19 @@ fn gem20_late_stream_citation_annotates_the_closed_text_block() {
             "citationMetadata": {"citationSources": [{"startIndex": 0, "endIndex": 5, "uri": "https://c"}]}}],
             "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1}}),
     ]);
-    let out = xstream("gemini", "anthropic", &raw);
+    let out = xstream("gemini", "cohere", &raw);
     let events = sse_payloads(&out);
     let text_starts: Vec<&Value> = events
         .iter()
-        .filter(|e| e["type"] == "content_block_start" && e["content_block"]["type"] == "text")
+        .filter(|e| {
+            e["type"] == "content-start" && e["delta"]["message"]["content"]["type"] == "text"
+        })
         .collect();
     assert_eq!(text_starts.len(), 1, "one text block, not two: {out}");
     let text_index = &text_starts[0]["index"];
     let citation = events
         .iter()
-        .find(|e| e["type"] == "content_block_delta" && e["delta"]["type"] == "citations_delta")
+        .find(|e| e["type"] == "citation-start")
         .expect("citation delta");
     assert_eq!(&citation["index"], text_index, "{out}");
 }

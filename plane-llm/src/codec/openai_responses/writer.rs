@@ -146,12 +146,18 @@ impl ProtocolWriter for ResponsesWriter {
                     };
 
                     let mut content_arr: Vec<serde_json::Value> = Vec::new();
-                    // `function_call` / `function_call_output` items are flat top-level `input`
-                    // entries, not nested in a message's `content`. Collected separately so the
-                    // assistant `message` comes first (only if it has content), tool items after it.
-                    let mut tool_items: Vec<serde_json::Value> = Vec::new();
-                    // Prior-turn reasoning becomes top-level `reasoning` input items before their message.
-                    let mut reasoning_items: Vec<serde_json::Value> = Vec::new();
+                    // Flat tool/reasoning items keep their encounter position. Flush only the
+                    // contiguous content before each flat item, without emitting empty messages.
+                    let flush_content =
+                        |content: &mut Vec<serde_json::Value>,
+                         input: &mut Vec<serde_json::Value>| {
+                            if !content.is_empty() {
+                                input.push(serde_json::json!({
+                                    (keys::ROLE): role_str,
+                                    (keys::CONTENT): std::mem::take(content),
+                                }));
+                            }
+                        };
                     for (block_index, block) in msg.content.iter().enumerate() {
                         let _block_origin =
                             crate::codec::drops::block_scope(_message_origins.get(block_index));
@@ -219,7 +225,8 @@ impl ProtocolWriter for ResponsesWriter {
                                 // not JSON-encoded twice, as in the Chat writer.
                                 let args_str =
                                     crate::codec::dialect::tool_arguments_to_string(input);
-                                tool_items.push(serde_json::json!({
+                                flush_content(&mut content_arr, &mut input_arr);
+                                input_arr.push(serde_json::json!({
                                     (keys::TYPE): ITEM_TYPE_FUNCTION_CALL,
                                     (CALL_ID): id,
                                     (keys::NAME): name,
@@ -235,7 +242,8 @@ impl ProtocolWriter for ResponsesWriter {
                                 // (`function_call_output_value`).
                                 let output_value = function_call_output_value(content);
 
-                                tool_items.push(serde_json::json!({
+                                flush_content(&mut content_arr, &mut input_arr);
+                                input_arr.push(serde_json::json!({
                                     (keys::TYPE): FUNCTION_CALL_OUTPUT,
                                     (CALL_ID): tool_use_id,
                                     (keys::OUTPUT): output_value
@@ -291,7 +299,8 @@ impl ProtocolWriter for ResponsesWriter {
                                             serde_json::json!(sig),
                                         );
                                     }
-                                    reasoning_items.push(serde_json::Value::Object(item));
+                                    flush_content(&mut content_arr, &mut input_arr);
+                                    input_arr.push(serde_json::Value::Object(item));
                                 }
                             }
                             // Non-Assistant Thinking (role guard above): drop with a warn, as for
@@ -313,20 +322,7 @@ impl ProtocolWriter for ResponsesWriter {
                         }
                     }
 
-                    input_arr.extend(reasoning_items);
-
-                    // Emit the `message` wrapper only with content: a pure tool-call turn must not
-                    // produce `{role, content: []}`, which the API rejects.
-                    if !content_arr.is_empty() {
-                        let mut msg_obj = serde_json::Map::new();
-                        msg_obj.insert(keys::ROLE.to_string(), serde_json::json!(role_str));
-                        msg_obj.insert(
-                            keys::CONTENT.to_string(),
-                            serde_json::Value::Array(content_arr),
-                        );
-                        input_arr.push(serde_json::Value::Object(msg_obj));
-                    }
-                    input_arr.extend(tool_items);
+                    flush_content(&mut content_arr, &mut input_arr);
                 }
 
                 crate::codec::ir::IrRole::Tool => {
@@ -933,7 +929,10 @@ impl ProtocolWriter for ResponsesWriter {
                 &crate::codec::ir::IrDelta::ThinkingDelta(_)
                 | crate::codec::ir::IrDelta::RedactedReasoningDelta(_) => Vec::new(),
                 // IR-21: no Responses stream event carries a generated media part.
-                crate::codec::ir::IrDelta::MediaDelta(_) => Vec::new(),
+                crate::codec::ir::IrDelta::MediaDelta(block) => {
+                    drop_response_block(block);
+                    Vec::new()
+                }
                 // Citations ride as `annotations` on the assembled `output_text` part, not a delta
                 // frame; nothing is emitted here, but they are buffered for `BlockStop`.
                 crate::codec::ir::IrDelta::CitationsDelta(cits) => {
@@ -1112,11 +1111,10 @@ impl ProtocolWriter for ResponsesWriter {
                     // deltas. A strict client (Codex CLI) needs the brackets to accept the text.
                     let item_id = self.item_id_for(host, ITEM_ID_PREFIX_MSG, *index)?;
                     let text = self.take_text_accum(*index);
-                    let annotations = super::super::url_citation_wire::url_annotations(
-                        &text,
-                        0,
-                        &self.take_citation_accum(*index),
-                    );
+                    let citations = self.take_citation_accum(*index);
+                    let mut annotations =
+                        super::super::url_citation_wire::url_annotations(&text, 0, &citations);
+                    annotations.extend(super::file_annotations(&citations));
                     // Buffered logprobs ride `output_text.done` and the finalized part; the spec
                     // requires the member on both, so none yields `[]`.
                     let logprobs = self.take_logprob_accum(*index);
@@ -1370,6 +1368,14 @@ impl ProtocolWriter for ResponsesWriter {
         host: &dyn busbar_contract::codec::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> Result<serde_json::Value, IrError> {
+        if resp.audio.is_some() {
+            crate::codec::drops::writer_drop!(
+                crate::codec::drops::wire("choices[].message.audio"),
+                &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                [],
+                "dropping native Chat audio on Responses egress: no native output-audio item"
+            );
+        }
         // Unknown/None stop reasons default to `completed`; a reported generation Error must
         // retain its failure status, as the streaming MessageDelta path does.
         let status = resp
@@ -1485,13 +1491,14 @@ impl ProtocolWriter for ResponsesWriter {
                     }
                     output_arr.push(serde_json::Value::Object(item));
                 }
-                // `output` carries only assistant `message`/`function_call` items, so ToolResult and
-                // Image are dropped. Listed explicitly so a new IrBlock variant fails to compile.
-                crate::codec::ir::IrBlock::ToolResult { .. } => {}
-                // A model does not emit an attachment on the response surface; nothing is lost.
+                crate::codec::ir::IrBlock::ToolResult { .. }
+                | crate::codec::ir::IrBlock::Json(_) => {
+                    drop_response_block(block);
+                }
+                // Generated attachments have no output item on this surface. Preserve omission,
+                // but account for the source block without logging its payload.
                 crate::codec::ir::IrBlock::Image { .. }
-                | crate::codec::ir::IrBlock::Media { .. }
-                | crate::codec::ir::IrBlock::Json(_) => {}
+                | crate::codec::ir::IrBlock::Media { .. } => drop_response_block(block),
                 // A provider-run web search is a `web_search_call` output item.
                 crate::codec::ir::IrBlock::HostedToolRecord {
                     call_id,
@@ -1793,4 +1800,15 @@ fn function_call_output_value(content: &[crate::codec::ir::IrBlock]) -> serde_js
         return serde_json::json!("");
     }
     serde_json::Value::Array(parts)
+}
+
+/// The response surface cannot carry a generated attachment. The scoped source origin names the
+/// loss; neither media bytes nor source URLs are included in diagnostics.
+fn drop_response_block(block: &crate::codec::ir::IrBlock) {
+    crate::codec::drops::writer_drop!(
+        crate::codec::drops::block(block.kind_name()),
+        &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+        [],
+        "dropping an answer block on Responses egress: no native output item"
+    );
 }

@@ -281,7 +281,7 @@ fn thinking_deltas(events: &[crate::codec::ir::IrStreamEvent]) -> String {
 // ── OAI-02: streamed `delta.annotations` ─────────────────────────────────────────────────────────
 
 /// OAI-02. A streamed `delta.annotations` url_citation reaches the IR as a CitationsDelta on the
-/// text block and a foreign client (Anthropic) receives it.
+/// text block and a foreign client with a URL-only carrier (Responses) receives it.
 #[test]
 fn oai02_stream_annotations_become_citations() {
     let chunks = [
@@ -310,8 +310,33 @@ fn oai02_stream_annotations_become_citations() {
     assert_eq!(cites[0].0, 0, "the citation rides the text block");
     assert_eq!(cites[0].1[0].url.as_deref(), Some("https://c.example"));
 
-    let out = xstream("openai", "anthropic", &oai_sse(&chunks));
+    let out = xstream("openai", "responses", &oai_sse(&chunks));
     assert!(out.contains("https://c.example"), "{out}");
+}
+
+#[test]
+fn a_chat_url_without_an_anthropic_opaque_index_is_an_audited_loss() {
+    let chunks = [
+        json!({"id":"c","model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"hello"},"finish_reason":null}]}),
+        json!({"choices":[{"index":0,"delta":{"annotations":[{"type":"url_citation","url_citation":{
+            "url":"https://source.invalid","title":"source","start_index":0,"end_index":5
+        }}]},"finish_reason":"stop"}]}),
+        json!({"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}),
+    ];
+    let mut stream =
+        crate::codec::proto_stream::StreamTranslate::new("anthropic", "openai").unwrap();
+    let mut out = stream.feed(crate::codec::test_host::HOST, oai_sse(&chunks).as_bytes());
+    out.extend(stream.finish(crate::codec::test_host::HOST));
+    let out = String::from_utf8(out).unwrap();
+    assert!(out.contains("hello"));
+    assert!(!out.contains("https://source.invalid"));
+    assert!(!out.contains("encrypted_index"));
+    assert!(
+        !stream.dropped().is_empty(),
+        "unrepresentable citation has a named loss"
+    );
+    let usage = stream.usage().unwrap();
+    assert_eq!((usage.input_tokens, usage.output_tokens), (7, 3));
 }
 
 // ── OAI-14: interleaved reasoning / text after tool calls ────────────────────────────────────────

@@ -163,7 +163,7 @@ fn bed01_stream_citation_delta_reaches_a_foreign_client() {
                 json!({"contentBlockIndex": 0, "delta": {"citation": {
                     "title": "Atlas",
                     "sourceContent": [{"text": "hel"}],
-                    "location": {"web": {"url": "https://atlas.example/a", "domain": "atlas.example"}}
+                    "location": {"documentChar": {"documentIndex": 0, "start": 0, "end": 3}}
                 }}}),
             ),
             ("contentBlockStop", json!({"contentBlockIndex": 0})),
@@ -175,8 +175,53 @@ fn bed01_stream_citation_delta_reaches_a_foreign_client() {
         ],
     );
     assert!(wire.contains("citations_delta"), "{wire}");
-    assert!(wire.contains("https://atlas.example/a"), "{wire}");
+    assert!(wire.contains("char_location"), "{wire}");
     assert!(wire.contains("Atlas"), "{wire}");
+}
+
+#[test]
+fn a_bedrock_url_without_an_anthropic_opaque_index_is_an_audited_loss() {
+    let frames = [
+        ("messageStart", json!({"role":"assistant"})),
+        (
+            "contentBlockDelta",
+            json!({"contentBlockIndex":0,"delta":{"text":"hello"}}),
+        ),
+        (
+            "contentBlockDelta",
+            json!({"contentBlockIndex":0,"delta":{"citation":{
+                "title":"Atlas", "sourceContent":[{"text":"hel"}],
+                "location":{"web":{"url":"https://atlas.example/a"}}
+            }}}),
+        ),
+        ("contentBlockStop", json!({"contentBlockIndex":0})),
+        ("messageStop", json!({"stopReason":"end_turn"})),
+        (
+            "metadata",
+            json!({"usage":{"inputTokens":7,"outputTokens":3,"totalTokens":10}}),
+        ),
+    ];
+    let mut bytes = Vec::new();
+    for (name, value) in frames {
+        bytes.extend(crate::codec::eventstream::encode_frame(
+            name,
+            value.to_string().as_bytes(),
+        ));
+    }
+    let mut stream =
+        crate::codec::proto_stream::StreamTranslate::new("anthropic", "bedrock").unwrap();
+    let mut out = stream.feed(crate::codec::test_host::HOST, &bytes);
+    out.extend(stream.finish(crate::codec::test_host::HOST));
+    let out = String::from_utf8(out).unwrap();
+    assert!(out.contains("hello"));
+    assert!(!out.contains("https://atlas.example/a"));
+    assert!(!out.contains("encrypted_index"));
+    assert!(
+        !stream.dropped().is_empty(),
+        "unrepresentable citation has a named loss"
+    );
+    let usage = stream.usage().unwrap();
+    assert_eq!((usage.input_tokens, usage.output_tokens), (7, 3));
 }
 
 /// BED-02: `guardContent` text was kept only in a stash the seam clears, so the guarded prompt

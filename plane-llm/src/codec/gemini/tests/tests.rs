@@ -1390,14 +1390,9 @@ fn test_extract_error_unrelated_invalid_argument_keeps_status_code() {
     );
 }
 
-/// A Gemini bad EGRESS key surfaces as an
-/// HTTP 400 `INVALID_ARGUMENT` carrying `reason: API_KEY_INVALID` (google.rpc.ErrorInfo) plus an
-/// "API key not valid" message. A bare 400 normalizes to ClientFault — records nothing, never
-/// benches/fails over the lane — so a lane wired to a dead key keeps serving guaranteed
-/// auth-rejections. `extract_error` must re-shape it so the breaker classifies it as
-/// Auth → HardDown (park + fail over). Asserted end-to-end through `normalize_raw_error` +
-/// `classify` against an EMPTY error_map (the shipped Gemini map has no auth entry), proving the
-/// fix is operator-config-independent.
+/// Explicit bad-key ErrorInfo is preserved as an authentication signal in the raw contract.
+/// This fixture tests the contract consumer's classification; production Reply uses its received
+/// HTTP status by default and consults provider codes through the configured error map.
 #[test]
 fn test_extract_error_bad_api_key_classifies_as_auth_harddown() {
     let reader = GeminiReader;
@@ -1414,7 +1409,7 @@ fn test_extract_error_bad_api_key_classifies_as_auth_harddown() {
         Some("auth"),
         "bad-key 400 must synthesize the canonical auth provider_code"
     );
-    // Normalize against an EMPTY error_map → must still land on Auth → HardDown.
+    // The shared raw-contract consumer recognizes the authentication status.
     let sig = crate::codec::test_host::classified(&raw);
     assert!(
         matches!(sig.class, StatusClass::Auth),
@@ -1447,12 +1442,9 @@ fn test_extract_error_bad_api_key_permission_denied_is_auth() {
 /// in, never from the body at large.
 ///
 /// Gemini→Gemini is a byte-verbatim relay, so a client's own request text reaches Google unchanged,
-/// and Google's proto-JSON transcoder ECHOES an offending field name back in its `INVALID_ARGUMENT`
-/// message. A caller who names a field `api_key_invalid` therefore plants the token in the error
-/// body of a request that has nothing to do with the credential. Scanning the whole body for it
-/// re-shaped that 400 into a 401, which classifies Auth → HardDown → every pool cell for the
-/// destination parked — so one caller could bench a healthy shared credential for every other tenant
-/// on demand, repeatably. The reason is an ErrorInfo field and must be read as one.
+/// and Google's proto-JSON transcoder echoes offending field names into validator prose.
+/// Such a name must not create an authentication signal in the raw contract. Production Reply
+/// coverage separately checks the default and explicitly configured auth mappings.
 #[test]
 fn test_extract_error_echoed_api_key_invalid_token_does_not_park_the_lane() {
     let reader = GeminiReader;
@@ -3415,7 +3407,7 @@ fn test_file_data_image_round_trips_via_url() {
 /// AND leaked the proxy host clock in its leading hex segment. Assert the shape never regresses.
 #[test]
 fn test_synth_response_id_is_opaque_native_shape() {
-    let id = synth_response_id(crate::codec::test_host::HOST);
+    let id = synth_response_id(crate::codec::test_host::HOST).expect("test entropy");
     assert_eq!(
         id.len(),
         RESPONSE_ID_TOKEN_LEN,
@@ -3433,7 +3425,7 @@ fn test_synth_response_id_is_opaque_native_shape() {
     // synthesized ids must NOT be confinable to that class — at least one carries an uppercase
     // letter or a digit/letter outside `[0-9a-f]`, proving the wider base62 character class.
     let saw_non_hex = (0..64)
-        .map(|_| synth_response_id(crate::codec::test_host::HOST))
+        .map(|_| synth_response_id(crate::codec::test_host::HOST).expect("test entropy"))
         .any(|s| {
             s.chars()
                 .any(|c| !c.is_ascii_hexdigit() || c.is_ascii_uppercase())
@@ -3457,7 +3449,7 @@ fn test_synth_response_id_leaks_no_timestamp() {
             .unwrap_or(0)
     );
     for _ in 0..16 {
-        let id = synth_response_id(crate::codec::test_host::HOST);
+        let id = synth_response_id(crate::codec::test_host::HOST).expect("test entropy");
         assert!(
             !id.starts_with(&now_hex),
             "synthesized responseId must not lead with the unix-second hex (clock leak): {id}"
@@ -3489,7 +3481,10 @@ fn test_synth_response_id_base62_is_unbiased() {
     let mut counts: HashMap<char, u64> = HashMap::new();
     let mut total: u64 = 0;
     for _ in 0..40_000 {
-        for c in synth_response_id(crate::codec::test_host::HOST).chars() {
+        for c in synth_response_id(crate::codec::test_host::HOST)
+            .expect("test entropy")
+            .chars()
+        {
             *counts.entry(c).or_insert(0) += 1;
             total += 1;
         }
@@ -3525,7 +3520,7 @@ fn test_synth_response_id_uniqueness_burst() {
     use std::collections::HashSet;
     let mut seen = HashSet::new();
     for _ in 0..50_000 {
-        let id = synth_response_id(crate::codec::test_host::HOST);
+        let id = synth_response_id(crate::codec::test_host::HOST).expect("test entropy");
         assert_eq!(id.len(), RESPONSE_ID_TOKEN_LEN, "non-native length: {id}");
         assert!(
             id.chars().all(|c| c.is_ascii_alphanumeric()),
@@ -5592,10 +5587,10 @@ fn test_stream_thinking_and_signature_deltas_emit_thought_parts() {
 
 /// A Gemini response carrying `candidates[].citationMetadata.citationSources[]` must read
 /// into IrCitation(s) on the answer's Text block (url/title/indices preserved), and a CROSS-
-/// protocol Anthropic egress must re-emit them as `web_search_result_location` citations carrying
+/// protocol Cohere egress must re-emit citations carrying
 /// the url/title — closing the grounding-citation gap that previously dropped them entirely.
 #[test]
-fn gemini_citation_metadata_reads_and_projects_to_anthropic() {
+fn gemini_citation_metadata_reads_and_projects_to_cohere() {
     let reader = GeminiReader;
     let body = serde_json::json!({
         "candidates": [{
@@ -5642,25 +5637,22 @@ fn gemini_citation_metadata_reads_and_projects_to_anthropic() {
     assert_eq!(citations[0].start_index, Some(0));
     assert_eq!(citations[0].end_index, Some(15));
 
-    // Cross-protocol Anthropic egress carries url + title.
-    let aw = super::super::anthropic::AnthropicWriter;
-    let wire = aw.write_response(crate::codec::test_host::HOST, &ir);
+    // Cohere can represent these sources without an opaque Anthropic encrypted_index.
+    let wire = Protocol::cohere()
+        .writer()
+        .write_response(crate::codec::test_host::HOST, &ir);
     let c = wire
-        .pointer("/content")
-        .and_then(|c| c.as_array())
-        .and_then(|blocks| blocks.iter().find_map(|b| b.pointer("/citations/0")))
-        .expect("Anthropic egress must carry the citation");
+        .pointer("/message/citations/0")
+        .expect("Cohere citation");
+    assert_eq!(c["start"], serde_json::json!(0));
+    assert_eq!(c["end"], serde_json::json!(15));
     assert_eq!(
-        c.get("type").and_then(|v| v.as_str()),
-        Some("web_search_result_location")
+        c["sources"][0]["document"]["url"],
+        serde_json::json!("https://example.com/sky")
     );
     assert_eq!(
-        c.get("url").and_then(|v| v.as_str()),
-        Some("https://example.com/sky")
-    );
-    assert_eq!(
-        c.get("title").and_then(|v| v.as_str()),
-        Some("Why the sky is blue")
+        c["sources"][0]["document"]["title"],
+        serde_json::json!("Why the sky is blue")
     );
 }
 
@@ -5859,11 +5851,10 @@ fn stream_gemini_cumulative_citation_sources_emit_only_the_new_ones() {
 
 /// STREAMING citations, cross-protocol: a Gemini stream chunk carrying candidate-level
 /// `citationMetadata.citationSources[]` must read into an `IrDelta::CitationsDelta` on the answer
-/// text block, and a cross-protocol Anthropic egress must re-emit it as a native
-/// `content_block_delta`/`citations_delta` event carrying the url/title — closing the streaming
+/// text block, and a cross-protocol Cohere egress must re-emit its url/title — closing the streaming
 /// grounding-citation gap that previously dropped the citation entirely.
 #[test]
-fn stream_gemini_citation_metadata_projects_to_anthropic_citations_delta() {
+fn stream_gemini_citation_metadata_projects_to_cohere_citation_start() {
     // Gemini delivers citations on a (late) chunk, here alongside the finishReason.
     let events = collect_stream(&[
         serde_json::json!({
@@ -5923,40 +5914,28 @@ fn stream_gemini_citation_metadata_projects_to_anthropic_citations_delta() {
         "citation block must be closed: {events:?}"
     );
 
-    // Cross-protocol Anthropic egress: the CitationsDelta becomes a native
-    // content_block_delta/citations_delta carrying the synthesized Anthropic citation.
-    let aw = super::super::anthropic::AnthropicWriter;
-    let delta_ev = events
+    let protocol = Protocol::cohere();
+    let frames: Vec<_> = events
         .iter()
-        .find_map(|e| match e {
-            IrStreamEvent::BlockDelta {
-                delta: crate::codec::ir::IrDelta::CitationsDelta(_),
-                ..
-            } => aw.write_response_event(crate::codec::test_host::HOST, e),
-            _ => None,
+        .flat_map(|event| {
+            protocol
+                .writer()
+                .write_response_events(crate::codec::test_host::HOST, event)
         })
-        .expect("Anthropic writer must emit a frame for the CitationsDelta");
-    assert_eq!(delta_ev.0, "content_block_delta");
-    // One citation → a single citations_delta body (not an array).
-    let citation = delta_ev
-        .1
-        .pointer("/delta/citation")
-        .expect("body must carry delta.citation");
+        .collect();
+    let citation = frames
+        .iter()
+        .find_map(|(_, frame)| {
+            (frame["type"] == "citation-start").then(|| &frame["delta"]["message"]["citations"])
+        })
+        .expect("native Cohere citation-start");
     assert_eq!(
-        delta_ev.1.pointer("/delta/type").and_then(|t| t.as_str()),
-        Some("citations_delta")
+        citation["sources"][0]["document"]["url"],
+        serde_json::json!("https://example.com/sky")
     );
     assert_eq!(
-        citation.get("type").and_then(|v| v.as_str()),
-        Some("web_search_result_location")
-    );
-    assert_eq!(
-        citation.get("url").and_then(|v| v.as_str()),
-        Some("https://example.com/sky")
-    );
-    assert_eq!(
-        citation.get("title").and_then(|v| v.as_str()),
-        Some("Why the sky is blue")
+        citation["sources"][0]["document"]["title"],
+        serde_json::json!("Why the sky is blue")
     );
 }
 
@@ -5971,6 +5950,13 @@ fn stream_anthropic_citation_projects_to_gemini_citation_metadata() {
     // produce this; here we model the Anthropic→Gemini direction). The Gemini writer must NOT
     // emit the Anthropic `raw` verbatim — it has no Gemini uri/index keys — and must synthesize
     // a Gemini source from the neutral fields instead.
+    writer.write_response_event(
+        crate::codec::test_host::HOST,
+        &IrStreamEvent::BlockDelta {
+            index: 0,
+            delta: crate::codec::ir::IrDelta::TextDelta("0123456789".to_string()),
+        },
+    );
     let cit = crate::codec::ir::IrCitation {
         domain: None,
         kind: Some("web_search_result_location".to_string()),

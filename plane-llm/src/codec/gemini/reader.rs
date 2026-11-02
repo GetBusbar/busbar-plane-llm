@@ -164,55 +164,38 @@ impl ProtocolReader for GeminiReader {
             }
         };
 
-        // Gemini signals a dead egress credential (revoked, wrong or expired key, or one lacking
-        // Generative Language API access) as a 400 `INVALID_ARGUMENT` or 403 `PERMISSION_DENIED` with
-        // ErrorInfo `reason: API_KEY_INVALID` and a message like "API key not valid. Please pass a
-        // valid API key." A bare 400 is a ClientFault that benches nothing, so the lane keeps getting
-        // picked and serving a guaranteed rejection. Re-shape the raw error so the breaker classifies
-        // Auth and parks the lane (HardDown, fail over). 401 is the Auth-classifying status in
-        // `breaker::normalize_raw_error`, independent of the operator error-map; overriding
-        // `http_status` is safe because the forwarder relays the ingress-native auth status to the
-        // client (`auth_failure_status_and_kind`) and this value feeds only breaker classification.
-        // `provider_code` is also set to the canonical `"auth"` (`breaker::status_class_from_str`).
-        //
-        // Precision: fires only on an explicit api-key-invalid signal (the `API_KEY_INVALID` reason in
-        // ErrorInfo `details[].reason`, or an "api key (not/in)valid / expired" message), never on a
-        // generic `INVALID_ARGUMENT` field-validation 400 (e.g. bad `contents[0].role`), which stays a
-        // lane-healthy ClientFault.
+        // An explicit bad-key ErrorInfo or whole canonical message identifies credential failure.
+        // Preserve that in the raw contract's authentication status and `auth` provider code.
+        // The production Reply normalizer uses the received HTTP status by default; a configured
+        // `auth` error-map entry can classify this code as Auth. A field-validation message can
+        // echo arbitrary caller text, so substring matches must never create this signal.
         let (http_status, provider_code) = {
-            let lower = String::from_utf8_lossy(body).to_lowercase();
-            // The documented machine-readable reason is unambiguous on its own, regardless of status
-            // name, and is read from the ErrorInfo field, not the body at large. Scanning the whole body
-            // made the override with the harshest consequence (parking the lane, HardDown for every
-            // tenant on that destination) the only ungated one: Gemini echoes request content in an
-            // `INVALID_ARGUMENT` message, so a prompt containing the token could bench a healthy shared
-            // credential for everyone with one request.
+            // Trust the reason only in a typed google.rpc.ErrorInfo detail.
             let has_api_key_invalid_reason = error_obj
                 .and_then(|e_obj| e_obj.get(FIELD_DETAILS))
                 .and_then(serde_json::Value::as_array)
                 .is_some_and(|details| {
                     details.iter().any(|d| {
-                        d.get(keys::REASON)
-                            .and_then(serde_json::Value::as_str)
-                            .is_some_and(|r| {
-                                r.eq_ignore_ascii_case(GEMINI_ERROR_REASON_API_KEY_INVALID)
-                            })
+                        d.get("@type").and_then(serde_json::Value::as_str)
+                            == Some(GEMINI_ERROR_INFO_TYPE_URL)
+                            && d.get(keys::REASON)
+                                .and_then(serde_json::Value::as_str)
+                                .is_some_and(|r| {
+                                    r.eq_ignore_ascii_case(GEMINI_ERROR_REASON_API_KEY_INVALID)
+                                })
                     })
                 });
-            // A prose bad-key message: an explicit "api key" paired with a specific bad-key phrasing
-            // ("API key not valid" / "API key … expired" / "invalid api key" / "api key is invalid").
-            // A bare "invalid" fired on any `INVALID_ARGUMENT` validation 400 whose prose named an "api
-            // key" and benched a healthy lane on a pure client error.
-            let api_key_message = lower.contains("api key not valid")
-                || lower.contains("api-key not valid")
-                || lower.contains("invalid api key")
-                || lower.contains("invalid api-key")
-                || lower.contains("api key is invalid")
-                || lower.contains("api-key is invalid")
-                || lower.contains("api key expired")
-                || lower.contains("api-key expired")
-                || lower.contains("api key has expired")
-                || lower.contains("api-key has expired");
+            // Recognize only whole canonical bad-key messages. Arbitrary validator prose may
+            // quote a caller's field name containing any of these phrases.
+            let api_key_message = error_obj
+                .and_then(|error| error.get(keys::MESSAGE))
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|message| {
+                    // Whole canonical messages only: validator prose can echo arbitrary field names.
+                    message.eq_ignore_ascii_case(GEMINI_BAD_KEY_MESSAGE)
+                        || message
+                            .eq_ignore_ascii_case("API key expired. Please renew the API key.")
+                });
             // The auth heuristic applies only under the google.rpc.Code statuses Gemini uses for
             // auth/permission failures. The documented reason is authoritative alone; the prose message
             // is trusted only under one of these.

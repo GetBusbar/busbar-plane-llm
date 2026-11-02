@@ -852,6 +852,8 @@ class Recording:
         body = cell.get("body") or {}
         if "json" in body:
             return json.dumps(body["json"], separators=(",", ":")).encode(), "cell.body.json"
+        if "base64" in body:
+            return base64.b64decode(body["base64"]), "cell.body.base64"
         text = body.get("text", "")
         if text.startswith("base64:"):
             return base64.b64decode(text[7:]), "cell.body.text(base64)"

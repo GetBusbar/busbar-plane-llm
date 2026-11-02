@@ -131,7 +131,8 @@ impl<'a> GeminiCharIndex<'a> {
 /// neutral fields (uri to url, indices to start/end, title) and the source object is stashed
 /// verbatim in `raw` so a same-protocol path re-emits the unconverted original (see
 /// `write_gemini_citation`'s raw short-circuit). The neutral `kind` is `web_search_result_location`,
-/// which a cross-protocol Anthropic egress also synthesizes. Empty when there is no citation metadata.
+/// used for answer-text spans; each foreign writer projects only the fields its wire can carry.
+/// Empty when there is no citation metadata.
 ///
 /// `anchor_text` is the text the offsets index into: the candidate's full text when buffered, the
 /// answer streamed so far (`StreamDecodeState::streamed_text`) on a stream (GEM-16). `None` leaves
@@ -757,39 +758,45 @@ pub(super) fn attach_gemini_citations_to_text_blocks(
     }
 }
 
+/// Native source objects carry their original candidate-wide byte coordinates verbatim.
+pub(super) fn native_citation_source(
+    c: &crate::codec::ir::IrCitation,
+) -> Option<&serde_json::Value> {
+    c.raw.as_ref().filter(|raw| {
+        raw.get(FIELD_URI).is_some()
+            || raw.get(FIELD_START_INDEX).is_some()
+            || raw.get(FIELD_END_INDEX).is_some()
+    })
+}
+
 /// Map a neutral [`crate::codec::ir::IrCitation`] to a Gemini `citationSources[]` entry.
 ///
 /// Same-protocol fidelity: a `raw` that is a Gemini source (has a `uri` or the index fields) is
 /// re-emitted verbatim, so Gemini to IR to Gemini is byte-exact (`raw` holds the original byte
 /// offsets, so no conversion runs). A foreign `raw` (e.g. an Anthropic citation object) or none is
-/// ignored and a source is built from the neutral fields, whose CHARACTER offsets are converted back
-/// to Gemini's BYTES (inverse of `gemini_byte_offset_to_char`) against this block's text.
+/// ignored and a source is built from neutral source metadata and the caller's resolved byte span.
 ///
-/// `convert` maps a block-relative character offset to Gemini's candidate-wide byte offset: the IR
-/// offsets are relative to this block (the contract `attach_gemini_citations_to_text_blocks`
-/// establishes on read) while the wire's are into the full concatenated text, so the caller's
-/// converter adds the byte length of the text parts before the block. `None` (no anchor text: an
-/// empty block, or a stream block with no text yet) passes the value through unconverted, since
-/// converting against an empty string would collapse every offset to 0.
+/// `span` is an answer-text span already resolved against its block and converted to candidate-
+/// wide bytes. Document/page/block offsets alone never qualify. An absent span keeps source
+/// metadata without inventing answer coordinates; a wholly unrepresentable citation is audited.
 pub(super) fn write_gemini_citation(
     c: &crate::codec::ir::IrCitation,
-    convert: Option<&dyn Fn(i64) -> i64>,
-) -> serde_json::Value {
-    if let Some(raw) = &c.raw {
-        if raw.get(FIELD_URI).is_some()
-            || raw.get(FIELD_START_INDEX).is_some()
-            || raw.get(FIELD_END_INDEX).is_some()
-        {
-            return raw.clone();
-        }
+    span: Option<(i64, i64)>,
+) -> Option<serde_json::Value> {
+    if let Some(raw) = native_citation_source(c) {
+        return Some(raw.clone());
     }
-    let convert = |v: i64| convert.map_or(v, |f| f(v));
     let mut obj = serde_json::Map::new();
-    if let Some(s) = c.start_index {
-        obj.insert(FIELD_START_INDEX.to_string(), serde_json::json!(convert(s)));
-    }
-    if let Some(e) = c.end_index {
-        obj.insert(FIELD_END_INDEX.to_string(), serde_json::json!(convert(e)));
+    if let Some((start, end)) = span {
+        obj.insert(FIELD_START_INDEX.to_string(), serde_json::json!(start));
+        obj.insert(FIELD_END_INDEX.to_string(), serde_json::json!(end));
+    } else if c.start_index.is_some() || c.end_index.is_some() || c.cited_text.is_some() {
+        crate::codec::drops::writer_drop!(
+            crate::codec::drops::member("citations"),
+            &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+            [],
+            "dropping unanchored citation coordinates on Gemini egress"
+        );
     }
     if let Some(u) = &c.url {
         obj.insert(FIELD_URI.to_string(), serde_json::json!(u));
@@ -812,7 +819,17 @@ pub(super) fn write_gemini_citation(
     {
         obj.insert(keys::DOMAIN.to_string(), serde_json::json!(d));
     }
-    serde_json::Value::Object(obj)
+    if obj.is_empty() {
+        crate::codec::drops::writer_drop!(
+            crate::codec::drops::member("citations"),
+            &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+            [],
+            "dropping citation with no Gemini representation"
+        );
+        None
+    } else {
+        Some(serde_json::Value::Object(obj))
+    }
 }
 
 /// A grounded candidate's `groundingMetadata.groundingChunks[].web` as the IR's hosted web-search

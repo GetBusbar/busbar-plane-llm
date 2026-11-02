@@ -512,3 +512,500 @@ fn native_nullable_schemas_survive_the_existing_reader_writer_path() {
         );
     }
 }
+
+#[test]
+fn cohere_citations_shift_block_local_spans_in_response_and_history() {
+    let response = GeminiReader
+        .read_response(
+            crate::codec::test_host::HOST,
+            &json!({"candidates":[two_parts()]}),
+        )
+        .unwrap();
+    let writer = protocol_for("cohere").unwrap();
+    let wire = writer
+        .writer()
+        .write_response(crate::codec::test_host::HOST, &response);
+    assert_eq!(
+        wire.pointer("/message/citations/0/start"),
+        Some(&json!(5)),
+        "{wire}"
+    );
+    assert_eq!(
+        wire.pointer("/message/citations/0/end"),
+        Some(&json!(7)),
+        "{wire}"
+    );
+    let mut request = schema_request(json!({"type":"object"}));
+    request.messages = vec![crate::codec::ir::IrMessage {
+        role: crate::codec::ir::IrRole::Assistant,
+        content: response.content,
+    }];
+    let wire = writer
+        .writer()
+        .write_request(crate::codec::test_host::HOST, &request);
+    assert_eq!(
+        wire.pointer("/messages/0/citations/0/start"),
+        Some(&json!(5)),
+        "{wire}"
+    );
+    assert_eq!(
+        wire.pointer("/messages/0/citations/0/end"),
+        Some(&json!(7)),
+        "{wire}"
+    );
+}
+
+#[test]
+fn document_coordinates_are_replaced_only_by_an_unambiguous_answer_quote() {
+    for (kind, start_key, end_key) in [
+        ("char_location", "start_char_index", "end_char_index"),
+        ("page_location", "start_page_number", "end_page_number"),
+        (
+            "content_block_location",
+            "start_block_index",
+            "end_block_index",
+        ),
+    ] {
+        for (quote, answer, anchored) in [
+            ("é中", "Bé中B", true),
+            ("source-only quote", "Bé中B", false),
+            ("é中", "Bé中é中B", false),
+        ] {
+            let native = json!({"id":"msg-native","type":"message","role":"assistant","model":"m",
+                "content":[{"type":"text","text":"AAAA"},{"type":"text","text":answer,
+                    "citations":[{"type":kind,"document_index":0,"document_title":"Doc",
+                        (start_key):90,(end_key):92,"cited_text":quote}]}],
+                "stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}});
+            let response = protocol_for("anthropic")
+                .unwrap()
+                .reader()
+                .read_response(crate::codec::test_host::HOST, &native)
+                .unwrap();
+            let cohere = protocol_for("cohere")
+                .unwrap()
+                .writer()
+                .write_response(crate::codec::test_host::HOST, &response);
+            let citation = cohere.pointer("/message/citations/0").unwrap();
+            let (gemini, dropped) = crate::codec::drops::scope(
+                crate::codec::drops::Seam {
+                    direction: crate::codec::drops::Direction::Response,
+                    ingress: "gemini",
+                    egress: "anthropic",
+                },
+                || GeminiWriter.write_response(crate::codec::test_host::HOST, &response),
+            );
+            let source = gemini
+                .pointer("/candidates/0/citationMetadata/citationSources/0")
+                .unwrap();
+            if anchored {
+                assert_eq!(citation["start"], json!(5), "{kind}: {cohere}");
+                assert_eq!(citation["end"], json!(7), "{kind}: {cohere}");
+                assert_eq!(source["startIndex"], json!(5), "{kind}: {gemini}");
+                assert_eq!(source["endIndex"], json!(10), "{kind}: {gemini}");
+            } else {
+                assert!(
+                    citation.get("start").is_none() && citation.get("end").is_none(),
+                    "{cohere}"
+                );
+                assert!(
+                    source.get("startIndex").is_none() && source.get("endIndex").is_none(),
+                    "{gemini}"
+                );
+                assert!(
+                    !dropped.is_empty(),
+                    "unanchored source coordinates must be audited"
+                );
+            }
+            // The production buffered-to-stream synthesizer drives the same block bases.
+            for ingress in ["cohere", "gemini"] {
+                let mut prepared = response.clone();
+                crate::codec::chat_handle::chat_prepare_for_ingress(&mut prepared, ingress, 1);
+                let stream = crate::codec::proto_stream::StreamTranslate::synthesize_from_response(
+                    crate::codec::test_host::HOST,
+                    ingress,
+                    &prepared,
+                    4096,
+                )
+                .unwrap();
+                let stream = String::from_utf8(stream).unwrap();
+                let sources: Vec<Value> = stream
+                    .split("\n\n")
+                    .filter_map(|frame| {
+                        let (_, data) = crate::codec::dialect::parse_sse_frame(frame.as_bytes())?;
+                        let frame: Value = serde_json::from_str(&data).ok()?;
+                        if ingress == "cohere" {
+                            (frame["type"] == "citation-start")
+                                .then(|| frame["delta"]["message"]["citations"].clone())
+                        } else {
+                            frame
+                                .pointer("/candidates/0/citationMetadata/citationSources/0")
+                                .cloned()
+                        }
+                    })
+                    .collect();
+                assert_eq!(sources.len(), 1, "{ingress}/{kind}: {stream}");
+                let (start_key, end_key, end) = if ingress == "cohere" {
+                    ("start", "end", 7)
+                } else {
+                    ("startIndex", "endIndex", 10)
+                };
+                if anchored {
+                    assert_eq!(sources[0][start_key], json!(5), "{stream}");
+                    assert_eq!(sources[0][end_key], json!(end), "{stream}");
+                } else {
+                    assert!(
+                        sources[0].get(start_key).is_none() && sources[0].get(end_key).is_none(),
+                        "{stream}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn streamed_cohere_citations_use_the_preceding_answers_character_count() {
+    let chunks = [
+        json!({"candidates":[{"content":{"parts":[{"text":"AAAA"}]}}]}),
+        json!({"candidates":[{"content":{"parts":[{"functionCall":{"name":"f","args":{}}}]}}]}),
+        json!({"candidates":[{"content":{"parts":[{"text":"Bé中B"}]}}]}),
+        json!({"candidates":[{"citationMetadata":{"citationSources":[
+            {"uri":"https://second","startIndex":5,"endIndex":10}]},"finishReason":"STOP"}]}),
+    ];
+    let mut translator =
+        crate::codec::proto_stream::StreamTranslate::new("cohere", "gemini").unwrap();
+    let mut output = Vec::new();
+    for chunk in chunks {
+        output.extend(translator.feed(
+            crate::codec::test_host::HOST,
+            format!("data: {chunk}\n\n").as_bytes(),
+        ));
+    }
+    output.extend(translator.finish(crate::codec::test_host::HOST));
+    let output = String::from_utf8(output).unwrap();
+    let citations: Vec<Value> = output
+        .split("\n\n")
+        .filter_map(|frame| {
+            let (_, data) = crate::codec::dialect::parse_sse_frame(frame.as_bytes())?;
+            let frame: Value = serde_json::from_str(&data).ok()?;
+            (frame["type"] == "citation-start")
+                .then(|| frame["delta"]["message"]["citations"].clone())
+        })
+        .collect();
+    assert_eq!(citations.len(), 1, "{output}");
+    assert_eq!(citations[0]["start"], json!(5), "{output}");
+    assert_eq!(citations[0]["end"], json!(7), "{output}");
+}
+
+#[test]
+fn schema_instance_literals_are_opaque_to_every_schema_walk() {
+    let literal = json!({"const":"keep","examples":[1],"$ref":"#/$defs/Thing",
+        "$defs":{"Fake":{"type":"number"}},"definitions":{"Literal":{"const":1}},
+        "additionalProperties":{"const":true},"type":["string","null"]});
+    let schema = json!({"type":"object", "$defs":{"Thing":{"type":"string","const":"remove"}},
+        "default":literal,"enum":[literal],"example":literal,
+        "properties":{"actual":{"$ref":"#/$defs/Thing","default":literal}},
+        "anyOf":[{"type":"object","const":"remove","default":literal}]});
+    let expected = json!({"type":"object", "default":literal,"enum":[literal],"example":literal,
+        "properties":{"actual":{"type":"string","default":literal}},
+        "anyOf":[{"type":"object","default":literal}]});
+    assert_schema_egress(schema, expected);
+    // A definition nested in instance data must not become a schema reference target.
+    assert_schema_egress(
+        json!({"default":{"$defs":{"Fake":{"type":"number"}}},
+        "properties":{"value":{"$ref":"#/$defs/Fake"}}}),
+        json!({"default":{"$defs":{"Fake":{"type":"number"}}},"properties":{"value":{}}}),
+    );
+}
+
+#[test]
+fn reflected_bad_key_phrases_remain_lane_healthy_client_errors() {
+    for phrase in [
+        "api key not valid",
+        "invalid api-key",
+        "api key has expired",
+    ] {
+        let body = serde_json::to_vec(&json!({"error":{"code":400,"status":"INVALID_ARGUMENT",
+            "message":format!("Invalid JSON payload received. Unknown name \"{phrase}\" at 'contents[0]': Cannot find field.")}})).unwrap();
+        let raw = GeminiReader.extract_error(StatusCode::BAD_REQUEST, &body);
+        assert_eq!(raw.http_status, 400, "{raw:?}");
+        let signal = crate::codec::test_host::classified(&raw);
+        assert_ne!(signal.class, StatusClass::Auth, "{raw:?}");
+        assert_ne!(
+            signal.class.disposition(),
+            busbar_contract::upstream::Disposition::HardDown
+        );
+    }
+}
+
+struct EntropyHost<'a> {
+    writer: Option<&'a GeminiWriter>,
+    mode: u8,
+    draws: std::sync::atomic::AtomicUsize,
+}
+
+impl busbar_contract::codec::CodecHost for EntropyHost<'_> {
+    fn fill_entropy(&self, out: &mut [u8]) -> bool {
+        let draw = self
+            .draws
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // Re-enter the real writer during the host call; a held stream lock would deadlock.
+        if let Some(writer) = self.writer {
+            writer.set_translate_cap(4096);
+        }
+        match self.mode {
+            0 => {
+                out.fill(7);
+                false
+            }
+            1 => {
+                out.fill(255);
+                true
+            }
+            2 if draw == 0 => {
+                out.fill(255);
+                out[0] = 7;
+                true
+            }
+            2 => false,
+            _ => {
+                out.fill(7);
+                true
+            }
+        }
+    }
+    fn wall_clock_now(&self) -> Option<u64> {
+        Some(1)
+    }
+}
+
+#[test]
+fn failed_or_partial_entropy_never_publishes_a_response_identity() {
+    for mode in [0, 1, 2] {
+        let writer = GeminiWriter;
+        let host = EntropyHost {
+            writer: Some(&writer),
+            mode,
+            draws: Default::default(),
+        };
+        let response = crate::codec::ir::IrResponse {
+            created: Some(1),
+            ..Default::default()
+        };
+        let wire = writer.write_response(&host, &response);
+        assert!(wire.get("responseId").is_none(), "{wire}");
+        host.draws.store(0, std::sync::atomic::Ordering::Relaxed);
+        let (_, frame) = writer
+            .write_response_event(
+                &host,
+                &IrStreamEvent::MessageStart {
+                    role: crate::codec::ir::IrRole::Assistant,
+                    usage: None,
+                    id: None,
+                    created: None,
+                    model: Some("m".into()),
+                },
+            )
+            .unwrap();
+        assert!(frame.get("responseId").is_none(), "{frame}");
+        assert_eq!(frame["modelVersion"], json!("m"));
+    }
+    let writer = GeminiWriter;
+    let host = EntropyHost {
+        writer: Some(&writer),
+        mode: 3,
+        draws: Default::default(),
+    };
+    let event = IrStreamEvent::MessageStart {
+        role: crate::codec::ir::IrRole::Assistant,
+        usage: None,
+        id: None,
+        created: None,
+        model: None,
+    };
+    let first = writer.write_response_event(&host, &event).unwrap().1;
+    let second = writer.write_response_event(&host, &event).unwrap().1;
+    assert_eq!(first["responseId"], second["responseId"]);
+    assert_eq!(host.draws.load(std::sync::atomic::Ordering::Relaxed), 1);
+}
+
+#[test]
+fn gemini_sources_without_anthropic_opaque_state_are_dropped_and_audited() {
+    let source = json!({"candidates":[{"content":{"parts":[{"text":"answer"}]},
+        "citationMetadata":{"citationSources":[{"startIndex":0,"endIndex":6,"uri":"https://source","title":"Source"}]},
+        "finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":9}});
+    let mut translator =
+        crate::codec::proto_stream::StreamTranslate::new("anthropic", "gemini").unwrap();
+    let mut output = translator.feed(
+        crate::codec::test_host::HOST,
+        format!("data: {source}\n\n").as_bytes(),
+    );
+    output.extend(translator.finish(crate::codec::test_host::HOST));
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("answer"), "{output}");
+    assert!(
+        !output.contains("citations_delta") && !output.contains("encrypted_index"),
+        "{output}"
+    );
+    assert!(
+        !translator.dropped().is_empty(),
+        "citation loss must be audited"
+    );
+    let usage = translator.usage().unwrap();
+    assert_eq!((usage.input_tokens, usage.output_tokens), (7, 9));
+
+    let response = GeminiReader
+        .read_response(crate::codec::test_host::HOST, &source)
+        .unwrap();
+    let (wire, dropped) = crate::codec::drops::scope(
+        crate::codec::drops::Seam {
+            direction: crate::codec::drops::Direction::Response,
+            ingress: "anthropic",
+            egress: "gemini",
+        },
+        || {
+            protocol_for("anthropic")
+                .unwrap()
+                .writer()
+                .write_response(crate::codec::test_host::HOST, &response)
+        },
+    );
+    assert!(!wire.to_string().contains("encrypted_index"), "{wire}");
+    assert!(!dropped.is_empty(), "buffered loss must be audited");
+}
+
+#[test]
+fn direct_gemini_writer_refuses_malformed_json_without_changing_valid_argument_policy() {
+    for malformed in ["{\"recipient\":", "{bad}"] {
+        let writer = GeminiWriter;
+        writer.write_response_event(crate::codec::test_host::HOST, &tool_start(0, "send"));
+        argument(&writer, 0, malformed);
+        let (_, frame) = writer
+            .write_response_event(
+                crate::codec::test_host::HOST,
+                &IrStreamEvent::BlockStop { index: 0 },
+            )
+            .unwrap();
+        assert_eq!(
+            frame.pointer("/error/status"),
+            Some(&json!("INTERNAL")),
+            "{frame}"
+        );
+        assert!(frame.pointer("/candidates").is_none(), "{frame}");
+        // Consuming a rejected tool cannot contaminate a later independent block.
+        writer.write_response_event(crate::codec::test_host::HOST, &tool_start(1, "next"));
+        argument(&writer, 1, "{\"x\":1}");
+        let (_, frame) = writer
+            .write_response_event(
+                crate::codec::test_host::HOST,
+                &IrStreamEvent::BlockStop { index: 1 },
+            )
+            .unwrap();
+        assert_eq!(
+            frame.pointer("/candidates/0/content/parts/0/functionCall/args"),
+            Some(&json!({"x":1}))
+        );
+    }
+}
+
+#[test]
+fn actual_interleaved_responses_blocks_drop_unresolvable_coordinates_without_changing_other_blocks()
+{
+    let chunks = [
+        (
+            "response.created",
+            json!({"type":"response.created","response":{"id":"resp-native","model":"m"}}),
+        ),
+        (
+            "response.output_text.delta",
+            json!({"type":"response.output_text.delta","output_index":0,"delta":"foo"}),
+        ),
+        (
+            "response.output_text.delta",
+            json!({"type":"response.output_text.delta","output_index":1,"delta":"bar"}),
+        ),
+        (
+            "response.output_text.delta",
+            json!({"type":"response.output_text.delta","output_index":0,"delta":"baz"}),
+        ),
+        (
+            "response.output_text.annotation.added",
+            json!({"type":"response.output_text.annotation.added","output_index":0,
+            "annotation":{"type":"url_citation","url":"https://interleaved","title":"Source","start_index":3,"end_index":6}}),
+        ),
+        (
+            "response.output_text.annotation.added",
+            json!({"type":"response.output_text.annotation.added","output_index":1,
+            "annotation":{"type":"url_citation","url":"https://contiguous","title":"Source","start_index":0,"end_index":3}}),
+        ),
+    ];
+    for ingress in ["cohere", "gemini"] {
+        let mut translator =
+            crate::codec::proto_stream::StreamTranslate::new(ingress, "responses").unwrap();
+        let mut output = Vec::new();
+        for (event, chunk) in &chunks {
+            output.extend(translator.feed(
+                crate::codec::test_host::HOST,
+                format!("event: {event}\ndata: {chunk}\n\n").as_bytes(),
+            ));
+        }
+        output.extend(translator.finish(crate::codec::test_host::HOST));
+        let output = String::from_utf8(output).unwrap();
+        let sources: Vec<Value> = output
+            .split("\n\n")
+            .filter_map(|frame| {
+                let (_, data) = crate::codec::dialect::parse_sse_frame(frame.as_bytes())?;
+                let frame: Value = serde_json::from_str(&data).ok()?;
+                if ingress == "cohere" {
+                    (frame["type"] == "citation-start")
+                        .then(|| frame["delta"]["message"]["citations"].clone())
+                } else {
+                    frame
+                        .pointer("/candidates/0/citationMetadata/citationSources/0")
+                        .cloned()
+                }
+            })
+            .collect();
+        assert_eq!(sources.len(), 2, "{ingress}: {output}");
+        let (start, end, url) = if ingress == "cohere" {
+            ("start", "end", "/sources/0/document/url")
+        } else {
+            ("startIndex", "endIndex", "/uri")
+        };
+        assert_eq!(
+            sources[0].pointer(url),
+            Some(&json!("https://interleaved")),
+            "{output}"
+        );
+        assert!(
+            sources[0].get(start).is_none() && sources[0].get(end).is_none(),
+            "{output}"
+        );
+        assert_eq!(
+            sources[1].pointer(url),
+            Some(&json!("https://contiguous")),
+            "{output}"
+        );
+        assert_eq!(sources[1][start], json!(3), "{output}");
+        assert_eq!(sources[1][end], json!(6), "{output}");
+        assert!(
+            !translator.dropped().is_empty(),
+            "{ingress}: coordinate loss is audited"
+        );
+    }
+}
+
+#[test]
+fn empty_gemini_writer_text_deltas_do_not_allocate_citation_anchors() {
+    let writer = GeminiWriter;
+    for index in 0..1024 {
+        writer.write_response_event(
+            crate::codec::test_host::HOST,
+            &IrStreamEvent::BlockDelta {
+                index,
+                delta: IrDelta::TextDelta(String::new()),
+            },
+        );
+    }
+    assert!(writer.stream.lock().stream_text.block_starts.is_empty());
+}

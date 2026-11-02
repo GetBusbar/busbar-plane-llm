@@ -2037,6 +2037,14 @@ pub fn bedrock_response_to_eventstream(
     elapsed_ms: Option<u64>,
 ) -> Vec<u8> {
     use crate::codec::ir::{IrBlock, IrBlockMeta, IrDelta, IrStreamEvent, IrUsage};
+    if ir.audio.is_some() {
+        crate::codec::drops::writer_drop!(
+            crate::codec::drops::wire("choices[].message.audio"),
+            &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+            [],
+            "dropping native Chat audio on Bedrock stream synthesis: no native output-audio member"
+        );
+    }
     let writer = protocol();
     let writer = writer.writer();
     let mut out: Vec<u8> = Vec::new();
@@ -2190,11 +2198,18 @@ pub fn bedrock_response_to_eventstream(
             }
             // ToolResult/Image/Json have no ConverseStream delta frame here; skipped without
             // advancing `index`. Listed explicitly so a new `IrBlock` variant fails to compile.
-            IrBlock::ToolResult { .. }
+            block @ (IrBlock::ToolResult { .. }
             | IrBlock::Image { .. }
             | IrBlock::Media { .. }
             | IrBlock::Json(_)
-            | IrBlock::HostedToolRecord { .. } => {}
+            | IrBlock::HostedToolRecord { .. }) => {
+                crate::codec::drops::writer_drop!(
+                    crate::codec::drops::block(block.kind_name()),
+                    &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                    [],
+                    "dropping an answer block on Bedrock stream synthesis: no native delta member"
+                );
+            }
         }
     }
 

@@ -2191,6 +2191,13 @@ fn test_stream_citation_after_content_end_is_dropped() {
 #[test]
 fn test_write_response_event_citation_start_is_single_object() {
     let writer = CohereWriter;
+    writer.write_response_event(
+        crate::codec::test_host::HOST,
+        &IrStreamEvent::BlockDelta {
+            index: 0,
+            delta: crate::codec::ir::IrDelta::TextDelta("quoted".into()),
+        },
+    );
     let ev = IrStreamEvent::BlockDelta {
         index: 0,
         delta: crate::codec::ir::IrDelta::CitationsDelta(vec![crate::codec::ir::IrCitation {
@@ -5358,4 +5365,19 @@ fn raw_stop_reason_ignores_the_key_inside_delivered_text() {
         crate::codec::test_host::raw_stop_reason(&CohereReader, body.to_string().as_bytes()),
         Some(crate::codec::ir::IrStopReason::EndTurn)
     );
+}
+
+#[test]
+fn empty_writer_text_deltas_do_not_allocate_citation_anchors() {
+    let writer = CohereWriter;
+    for index in 0..1024 {
+        writer.write_response_event(
+            crate::codec::test_host::HOST,
+            &IrStreamEvent::BlockDelta {
+                index,
+                delta: crate::codec::ir::IrDelta::TextDelta(String::new()),
+            },
+        );
+    }
+    assert!(writer.stream.lock().citation_blocks.is_empty());
 }

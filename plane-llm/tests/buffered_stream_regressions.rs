@@ -40,6 +40,10 @@ fn reply_from<'a>(
 ) -> Piece<'a> {
     let include_usage =
         request.pointer("/stream_options/include_usage") == Some(&Value::Bool(true));
+    let wants_stream = request
+        .get("stream")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let arrived = Arrived {
         dialect: ingress,
         operation: OpVerb::CHAT,
@@ -72,7 +76,7 @@ fn reply_from<'a>(
         arrived: &arrived,
         lane: &lane,
         intent: StreamIntent {
-            wants_stream: true,
+            wants_stream,
             client_include_usage: include_usage,
         },
         passthrough: false,
@@ -397,4 +401,96 @@ fn invoke_header_only_errors_keep_the_native_error_message() {
     assert_eq!(decoded.len(), 1);
     assert_eq!(decoded[0]["error"]["type"], "rate_limit_error");
     assert_eq!(decoded[0]["error"]["message"], "slow down");
+}
+
+#[test]
+fn generated_media_loss_is_named_on_buffered_and_synthesized_target_replies() {
+    let far = serde_json::to_vec(&json!({"candidates":[{"content":{"role":"model","parts":[
+        {"text":"hello"}, {"inlineData":{"mimeType":"audio/wav","data":"YQ=="}}
+    ]},"finishReason":"STOP"}], "usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":3}}))
+    .unwrap();
+    for ingress in ["openai", "bedrock"] {
+        for stream in [false, true] {
+            let piece = reply_from(
+                ingress,
+                "gemini",
+                json!({"stream":stream}),
+                &[(b"content-type", b"application/json")],
+                &far,
+            );
+            assert_eq!(
+                piece.head.as_ref().unwrap().status,
+                200,
+                "{ingress}/{stream}"
+            );
+            assert!(
+                piece.bytes.windows(5).any(|bytes| bytes == b"hello"),
+                "{ingress}/{stream}"
+            );
+            assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (9, 3));
+            assert!(
+                piece
+                    .dropped
+                    .iter()
+                    .any(|path| path == "candidates[].content.parts[]"),
+                "{ingress}/{stream}: {:?}",
+                piece.dropped
+            );
+        }
+    }
+}
+
+#[test]
+fn generated_media_loss_is_named_on_live_target_replies() {
+    let event = json!({"candidates":[{"content":{"role":"model","parts":[
+        {"text":"hello"}, {"inlineData":{"mimeType":"audio/wav","data":"YQ=="}}
+    ]},"finishReason":"STOP"}], "usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":3}});
+    let far = format!("data: {event}\n\n");
+    for ingress in ["openai", "bedrock"] {
+        let piece = reply_from(
+            ingress,
+            "gemini",
+            json!({"stream":true}),
+            &[(b"content-type", b"text/event-stream")],
+            far.as_bytes(),
+        );
+        assert_eq!(piece.head.as_ref().unwrap().status, 200, "{ingress}");
+        assert!(
+            piece.bytes.windows(5).any(|bytes| bytes == b"hello"),
+            "{ingress}"
+        );
+        assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (9, 3));
+        assert!(
+            piece
+                .dropped
+                .iter()
+                .any(|path| path == "candidates[].content.parts[]"),
+            "{ingress}: {:?}",
+            piece.dropped
+        );
+    }
+}
+
+#[test]
+fn top_level_native_audio_loss_is_named_on_foreign_target_replies() {
+    let far = br#"{"id":"native","object":"chat.completion","model":"model","choices":[{"index":0,"message":{"role":"assistant","content":"hello","audio":{"id":"audio","data":"YQ==","expires_at":1,"transcript":"hello"}},"finish_reason":"stop"}],"usage":{"prompt_tokens":9,"completion_tokens":3,"total_tokens":12}}"#;
+    for ingress in ["responses", "bedrock"] {
+        for stream in [false, true] {
+            let piece = reply_from(
+                ingress,
+                "openai",
+                json!({"stream":stream}),
+                &[(b"content-type", b"application/json")],
+                far,
+            );
+            assert_eq!(piece.head.as_ref().unwrap().status, 200);
+            assert!(piece.bytes.windows(5).any(|bytes| bytes == b"hello"));
+            assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (9, 3));
+            assert!(
+                piece.dropped.iter().any(|path| path.contains("audio")),
+                "{ingress}/{stream}: {:?}",
+                piece.dropped
+            );
+        }
+    }
 }

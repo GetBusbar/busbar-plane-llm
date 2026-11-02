@@ -183,28 +183,21 @@ fn streamed_responses_annotations_equal_buffered_citations() {
     }
 }
 
-/// Cross-protocol: the streamed Responses citation reaches an Anthropic client as a native
-/// `citations_delta`, carrying the url and title.
+/// Chat can represent URL-only annotations without an opaque Anthropic search index.
 #[test]
-fn streamed_responses_annotation_reaches_anthropic_egress() {
-    let aw = super::super::anthropic::AnthropicWriter;
+fn streamed_responses_annotation_reaches_chat_egress() {
+    let chat = super::super::openai_chat::openai_writer();
     let urls: Vec<String> = stream_events()
         .iter()
-        .filter(|e| {
-            matches!(
-                e,
-                crate::codec::ir::IrStreamEvent::BlockDelta {
-                    delta: crate::codec::ir::IrDelta::CitationsDelta(_),
-                    ..
-                }
-            )
+        .filter_map(|e| chat.write_response_event(crate::codec::test_host::HOST, e))
+        .flat_map(|(_, body)| {
+            body.pointer("/choices/0/delta/annotations")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default()
         })
-        .filter_map(|e| aw.write_response_event(crate::codec::test_host::HOST, e))
-        .filter(|(_, body)| {
-            body.pointer("/delta/type").and_then(|t| t.as_str()) == Some("citations_delta")
-        })
-        .filter_map(|(_, body)| {
-            body.pointer("/delta/citation/url")
+        .filter_map(|a| {
+            a.pointer("/url_citation/url")
                 .and_then(|u| u.as_str())
                 .map(String::from)
         })
@@ -224,4 +217,95 @@ fn annotation_without_open_text_block_emits_nothing() {
         &mut state,
     );
     assert!(out.is_empty(), "{out:?}");
+}
+
+#[test]
+fn native_stream_file_annotation_frames_reach_all_finalized_responses_surfaces() {
+    let annotations = serde_json::json!([
+        {"type":"file_citation", "file_id":"file_1", "filename":"a.pdf", "index":4},
+        {"type":"container_file_citation", "container_id":"container_1", "file_id":"file_2", "filename":"b.csv", "start_index":0, "end_index":8},
+        {"type":"file_path", "file_id":"file_3", "index":9}
+    ]);
+    let mut completed = completed_response();
+    completed["output"][0]["content"][0]["annotations"] = annotations.clone();
+    let buffered = ResponsesReader
+        .read_response(crate::codec::test_host::HOST, &completed)
+        .unwrap();
+    let crate::codec::ir::IrBlock::Text {
+        citations: expected,
+        ..
+    } = &buffered.content[0]
+    else {
+        panic!("text fixture")
+    };
+    let mut native = vec![
+        (
+            "response.created",
+            serde_json::json!({"response":{"id":"resp_ann", "created_at":1720000000, "model":"gpt-4o"}}),
+        ),
+        (
+            "response.output_item.added",
+            serde_json::json!({"output_index":0, "item":{"type":"message", "role":"assistant", "content":[]}}),
+        ),
+        (
+            "response.output_text.delta",
+            serde_json::json!({"output_index":0, "delta":TEXT}),
+        ),
+    ];
+    for (index, annotation) in annotations.as_array().unwrap().iter().enumerate() {
+        native.push(("response.output_text.annotation.added", serde_json::json!({
+            "output_index":0, "content_index":0, "annotation_index":index, "annotation":annotation
+        })));
+    }
+    native.extend([
+        (
+            "response.content_part.done",
+            serde_json::json!({"output_index":0, "part":completed["output"][0]["content"][0]}),
+        ),
+        (
+            "response.output_item.done",
+            serde_json::json!({"output_index":0, "item":completed["output"][0]}),
+        ),
+        (
+            "response.completed",
+            serde_json::json!({"response":completed}),
+        ),
+    ]);
+    let writer = ResponsesWriter;
+    let mut state = crate::codec::ir::StreamDecodeState::default();
+    let mut frames = Vec::new();
+    let mut citations = Vec::new();
+    for (event, body) in native {
+        for ir in ResponsesReader.read_response_events(
+            crate::codec::test_host::HOST,
+            event,
+            &body,
+            &mut state,
+        ) {
+            if let crate::codec::ir::IrStreamEvent::BlockDelta {
+                delta: crate::codec::ir::IrDelta::CitationsDelta(items),
+                ..
+            } = &ir
+            {
+                citations.extend_from_slice(items);
+            }
+            frames.extend(
+                writer
+                    .try_write_response_events(crate::codec::test_host::HOST, &ir)
+                    .unwrap(),
+            );
+        }
+    }
+    assert_eq!(&citations, expected);
+    for (kind, pointer) in [
+        ("response.content_part.done", "/part/annotations"),
+        ("response.output_item.done", "/item/content/0/annotations"),
+        (
+            "response.completed",
+            "/response/output/0/content/0/annotations",
+        ),
+    ] {
+        let (_, body) = frames.iter().find(|(event, _)| event == kind).expect(kind);
+        assert_eq!(body.pointer(pointer), Some(&annotations), "{kind}: {body}");
+    }
 }
