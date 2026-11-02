@@ -244,6 +244,7 @@ impl StreamTranslate {
             data,
             &mut self.decode,
         );
+        self.recover_unread_stream_usage(event_type, data, &events);
         let failed_before_frame = self.upstream_error;
         for ev in events {
             // Keep the reader's same-frame failure close, without allowing a later upstream
@@ -592,6 +593,38 @@ impl StreamTranslate {
         merge_trailing_usage(acc, reported);
     }
 
+    /// Recover accounting only when the content reader could not carry a report. A normal
+    /// usage-bearing IR event keeps its existing read, warning, backfill and writer path.
+    fn recover_unread_stream_usage(
+        &mut self,
+        event_type: &str,
+        data: &serde_json::Value,
+        events: &[crate::codec::ir::IrStreamEvent],
+    ) {
+        if events.iter().any(|event| {
+            matches!(
+                event,
+                crate::codec::ir::IrStreamEvent::MessageStart { usage: Some(_), .. }
+                    | crate::codec::ir::IrStreamEvent::MessageDelta { .. }
+            )
+        }) {
+            return;
+        }
+        match self.egress.reader().recover_stream_usage(event_type, data) {
+            Some(super::proto_codec::ReportedStreamUsage::Start(usage)) => {
+                self.start_usage = Some(usage.clone());
+                self.fold_reported_usage(&usage);
+            }
+            Some(super::proto_codec::ReportedStreamUsage::Trailing(mut usage)) => {
+                if let Some(start) = &self.start_usage {
+                    backfill_from_start_usage(&mut usage, start);
+                }
+                self.fold_reported_usage(&usage);
+            }
+            None => {}
+        }
+    }
+
     /// Same-protocol usage side-channel (Change B step 2): runs only the egress reader and the
     /// start-usage/backfill/`last_usage` accumulation of `translate_event`, with no remap, identity
     /// strip, writer or reframe, since the original bytes re-emit verbatim. That keeps the
@@ -603,11 +636,12 @@ impl StreamTranslate {
         event_type: &str,
         data: &serde_json::Value,
     ) {
-        for ev in
+        let events =
             self.egress
                 .reader()
-                .read_response_events(host, event_type, data, &mut self.decode)
-        {
+                .read_response_events(host, event_type, data, &mut self.decode);
+        self.recover_unread_stream_usage(event_type, data, &events);
+        for ev in events {
             if let crate::codec::ir::IrStreamEvent::MessageStart { usage: Some(u), .. } = &ev {
                 self.start_usage = Some(u.clone());
                 self.fold_reported_usage(u);

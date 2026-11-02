@@ -1,6 +1,7 @@
 use super::*;
 use crate::codec::dialect::ir_parse_error;
 use crate::codec::keys;
+use crate::codec::proto_codec::ReportedStreamUsage;
 
 /// What a translate attempt cannot carry from this dialect (`codec::drops`).
 static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
@@ -367,6 +368,27 @@ impl ProtocolReader for AnthropicReader {
     ) -> Option<busbar_contract::billing::TokenUsage> {
         let usage = body.get(keys::USAGE)?;
         Some(read_anthropic_usage(Some(usage)).ok()?.to_token_usage())
+    }
+
+    fn recover_stream_usage(
+        &self,
+        event_type: &str,
+        data: &serde_json::Value,
+    ) -> Option<ReportedStreamUsage> {
+        let (usage, at_start) = match event_type {
+            EVT_MESSAGE_START => (data.get(keys::MESSAGE)?.get(keys::USAGE)?, true),
+            EVT_MESSAGE_DELTA => (data.get(keys::USAGE)?, false),
+            _ => return None,
+        };
+        if !usage.is_object() {
+            return None;
+        }
+        let usage = read_anthropic_usage(Some(usage)).ok()?;
+        Some(if at_start {
+            ReportedStreamUsage::Start(usage)
+        } else {
+            ReportedStreamUsage::Trailing(usage)
+        })
     }
 
     fn read_response_event(
