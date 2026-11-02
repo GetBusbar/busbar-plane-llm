@@ -163,7 +163,9 @@ pub(super) fn read_bedrock_citation(c: &serde_json::Value) -> crate::codec::ir::
                 int(Some(m), keys::START),
                 int(Some(m), keys::END),
                 if *kind == keys::SEARCH_RESULT_LOCATION {
-                    c.get(keys::SOURCE).and_then(|source| source.as_str()).map(String::from)
+                    c.get(keys::SOURCE)
+                        .and_then(|source| source.as_str())
+                        .map(String::from)
                 } else {
                     None
                 },

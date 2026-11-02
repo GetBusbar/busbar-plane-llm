@@ -157,8 +157,13 @@ static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
 /// Smithy restJson1 error identity: suffix before namespace, preserving token case.
 fn normalize_error_identity(value: &str) -> Option<String> {
     let value = value.trim();
-    let value = value.split_once(':').map_or(value, |(identity, _)| identity);
-    let value = value.split_once('#').map_or(value, |(_, identity)| identity).trim();
+    let value = value
+        .split_once(':')
+        .map_or(value, |(identity, _)| identity);
+    let value = value
+        .split_once('#')
+        .map_or(value, |(_, identity)| identity)
+        .trim();
     (!value.is_empty()).then(|| value.to_string())
 }
 
@@ -195,19 +200,27 @@ impl ProtocolReader for BedrockReader {
         body: &[u8],
     ) -> busbar_contract::upstream::RawUpstreamError {
         let json = crate::codec::json::parse::<serde_json::Value>(body).ok();
-        let provider_code = json.as_ref()
+        let provider_code = json
+            .as_ref()
             .and_then(|json| json.get(keys::MESSAGE))
             .and_then(|message| message.as_str())
             .map(String::from);
-        let body_identity = |name: &str| json.as_ref()
-            .and_then(|json| json.get(name))
-            .and_then(|value| value.as_str())
-            .and_then(normalize_error_identity);
+        let body_identity = |name: &str| {
+            json.as_ref()
+                .and_then(|json| json.get(name))
+                .and_then(|value| value.as_str())
+                .and_then(normalize_error_identity)
+        };
         // Local deterministic precedence: first usable header in physical order, then code,
         // then __type. An unknown but usable identity still wins over later carriers.
-        let structured_type = head.iter()
+        let structured_type = head
+            .iter()
             .filter(|(name, _)| name.eq_ignore_ascii_case(b"x-amzn-errortype"))
-            .find_map(|(_, value)| std::str::from_utf8(value).ok().and_then(normalize_error_identity))
+            .find_map(|(_, value)| {
+                std::str::from_utf8(value)
+                    .ok()
+                    .and_then(normalize_error_identity)
+            })
             .or_else(|| body_identity(keys::CODE))
             .or_else(|| body_identity(super::DUNDER_TYPE));
 
