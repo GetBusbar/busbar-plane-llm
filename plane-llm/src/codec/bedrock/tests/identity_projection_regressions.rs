@@ -47,3 +47,53 @@ fn direct_image_writer_warns_truthful_path_without_url_value() {
     assert!(cap.contains("native image source metadata is unavailable"));
     assert!(!cap.contains("SECRET"));
 }
+
+#[test]
+fn streamed_citations_use_the_same_source_projection() {
+    use crate::codec::ir::{IrDelta, IrStreamEvent, StreamDecodeState};
+    let citation = json!({"source":"opaque:source#7","title":"Policy","sourceContent":[{"text":"quoted"}],"location":{"searchResultLocation":{"searchResultIndex":7,"start":3,"end":9}}});
+    let mut state = StreamDecodeState::default();
+    let host = crate::codec::test_host::HOST;
+    BedrockReader.read_response_events(
+        host,
+        "messageStart",
+        &json!({"role":"assistant"}),
+        &mut state,
+    );
+    let events = BedrockReader.read_response_events(
+        host,
+        "contentBlockDelta",
+        &json!({"contentBlockIndex":2,"delta":{"citation":citation}}),
+        &mut state,
+    );
+    let event = events
+        .iter()
+        .find(|e| {
+            matches!(
+                e,
+                IrStreamEvent::BlockDelta {
+                    delta: IrDelta::CitationsDelta(_),
+                    ..
+                }
+            )
+        })
+        .unwrap();
+    let IrStreamEvent::BlockDelta {
+        delta: IrDelta::CitationsDelta(citations),
+        ..
+    } = event
+    else {
+        unreachable!()
+    };
+    assert_eq!(citations[0].url.as_deref(), Some("opaque:source#7"));
+    let writer = BedrockWriter;
+    // Writer tracks open text blocks; start it before the citation delta.
+    for event in &events {
+        if let Some((_, out)) = writer.write_response_event(host, event) {
+            let out: serde_json::Value = serde_json::from_str(&out).unwrap();
+            if out.get("delta").is_some() {
+                assert_eq!(out["delta"]["citation"], citation);
+            }
+        }
+    }
+}

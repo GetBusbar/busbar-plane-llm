@@ -272,7 +272,7 @@ fn translate(ingress: &str, egress: &str, op: OpVerb, body: &[u8]) -> (whole::Wh
 #[test]
 fn lost_url_images_warn_once_audit_and_preserve_paid_work() {
     let secret = "https://private.invalid/SECRET-IMAGE?token=DO-NOT-LOG";
-    for (data, want, count, drop) in [
+    for (data, mut want, count, drop) in [
         (json!([{"url":secret}]), json!({"images":[]}), 1, true),
         (
             json!([{"url":secret},{"url":secret}]),
@@ -302,6 +302,7 @@ fn lost_url_images_warn_once_audit_and_preserve_paid_work() {
     ] {
         let body = serde_json::to_vec(&json!({"data":data})).unwrap();
         let (whole, cap) = translate("bedrock", "openai", OpVerb::IMAGE, &body);
+        want["metrics"] = json!({"latencyMs":0});
         assert_eq!(whole.answer.body, serde_json::to_vec(&want).unwrap());
         assert!(matches!(whole.usage,Some(Billing::Images {count:n,..}) if n==count));
         assert_eq!(
@@ -429,4 +430,22 @@ fn native_images_and_citation_responses_retain_literal_bytes() {
         assert!(piece.dropped.is_empty());
         assert!(!cap.contains("ir.images[].url"));
     }
+}
+
+#[test]
+fn dropped_image_urls_keep_recorded_token_usage_and_no_image_charge() {
+    let body=serde_json::to_vec(&json!({"data":[{"url":"https://private.invalid/SECRET"}],"usage":{"input_tokens":17,"output_tokens":19}})).unwrap();
+    let (whole, cap) = translate("bedrock", "openai", OpVerb::IMAGE, &body);
+    assert_eq!(
+        whole.answer.body,
+        br#"{"images":[],"metrics":{"latencyMs":0}}"#
+    );
+    let Some(Billing::Tokens(usage)) = whole.usage else {
+        panic!("reported image tokens must remain recorded")
+    };
+    assert_eq!((usage.input, usage.output), (0, 0));
+    assert_eq!(usage.residual_units.get("image.input_tokens"), Some(&17));
+    assert_eq!(usage.residual_units.get("image.output_tokens"), Some(&19));
+    assert_eq!(whole.dropped, ["ir.images[].url"]);
+    assert!(!cap.contains("SECRET"));
 }
