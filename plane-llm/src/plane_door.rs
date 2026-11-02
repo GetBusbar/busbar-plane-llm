@@ -337,9 +337,16 @@ pub const NEEDS: &[Need] = &[
 /// The resource a grant names on this plane: a pool (a key's `allowed_pools`), so the kernel judges a route as named against the caller's grant.
 const SCOPE_KINDS: &[AbiStr] = &[abi_str("pool")];
 
+/// Response media types delivered piece by piece through the memory ABI.
+const STREAMING_CONTENT_TYPES: &[AbiStr] = &[
+    abi_str(busbar_contract::protocol::TEXT_EVENT_STREAM),
+    abi_str(crate::exchange::invoke::EVENTSTREAM),
+];
+
 /// The Statement tail: the plane's static facts.
 const TAIL_ROW: PlaneTail = {
     let mut t = PlaneTail::EMPTY
+        .with_streaming_content_types(STREAMING_CONTENT_TYPES)
         .with_dialects(DIALECT_NAMES)
         .with_dialect_auth(DIALECT_AUTH)
         .with_scope_kinds(SCOPE_KINDS)
