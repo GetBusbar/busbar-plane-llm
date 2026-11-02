@@ -1303,7 +1303,7 @@ fn stream_gemini_multi_citation_without_anthropic_state_is_audited() {
     // and emits Anthropic SSE.
     let mut st = StreamTranslate::new("anthropic", "gemini").expect("translator");
     // One Gemini chunk: a text part + candidate-level citationMetadata with 3 sources.
-    let chunk = br#"data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"answer text"}]},"citationMetadata":{"citationSources":[{"startIndex":0,"endIndex":3,"uri":"https://example.com/a","title":"A"},{"startIndex":3,"endIndex":6,"uri":"https://example.com/b","title":"B"},{"startIndex":6,"endIndex":9,"uri":"https://example.com/c","title":"C"}]}}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":9,"totalTokenCount":16}}
+    let chunk = br#"data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"answer text"}]},"finishReason":"STOP","citationMetadata":{"citationSources":[{"startIndex":0,"endIndex":3,"uri":"https://example.com/a","title":"A"},{"startIndex":3,"endIndex":6,"uri":"https://example.com/b","title":"B"},{"startIndex":6,"endIndex":9,"uri":"https://example.com/c","title":"C"}]}}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":9,"totalTokenCount":16}}
 
 "#;
     let mut out = st.feed(crate::codec::test_host::HOST, chunk);

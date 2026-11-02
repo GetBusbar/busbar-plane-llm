@@ -1328,7 +1328,7 @@ fn bedrock_unrepresentable_document_names_use_the_existing_neutral_label() {
     let document = &written["messages"][0]["content"][0]["document"];
     assert_eq!(document["name"], "attachment", "{written}");
     assert_eq!(document["source"]["bytes"], "JVBERi0=", "{written}");
-    assert_eq!(dropped, ["messages[].content[].type=file"]);
+    assert_eq!(dropped, ["messages[].content[]"]);
     assert!(capture.contains("neutral attachment label"));
 }
 
