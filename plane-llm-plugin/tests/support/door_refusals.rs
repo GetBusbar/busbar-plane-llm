@@ -197,3 +197,37 @@ fn answer_layout_refusal(original: DoorParts, d: &Dispatcher) {
         Some(error)
     );
 }
+
+#[test]
+fn llm_serving_requires_all_six_actual_http_needs_in_both_deliveries() {
+    let row = LinkedRow::of(busbar_plane_llm::plane_door::door).unwrap();
+    let statement = rendering::read(&row.statement).unwrap();
+    assert_eq!(
+        statement.needs.len(),
+        6,
+        "the actual LLM egress styles remain declared"
+    );
+    assert!(statement.needs.iter().all(|need| need.transport == "http"));
+    let expected = LoadError::NoConnectionTable {
+        plugin: statement.name.clone(),
+        needs: 6,
+    };
+    let d = Arc::new(Dispatcher::new(DispatchConfig::default()));
+    let serving = || Bind {
+        conns: ConnTable::NoNeeds,
+        ..bind(&d)
+    };
+    let linked = load_linked::<Plane>(&row, serving())
+        .err()
+        .expect("actual networked plane needs a table");
+    assert_eq!(linked, expected);
+    assert!(linked
+        .to_string()
+        .contains(&format!("plugin '{}'", statement.name)));
+    assert_eq!(
+        load_dropped::<Plane>(&plugin_cdylib(), &row.statement, serving()).err(),
+        Some(expected)
+    );
+    load_linked::<Plane>(&row, bind(&d))
+        .expect("a metadata Probe is admitted without serving connections");
+}

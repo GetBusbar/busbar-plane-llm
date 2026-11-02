@@ -73,7 +73,7 @@ engine and runtime expectation interpreter are absent. The retained helpers only
 lend and inspect the plane ABI frames and buffers exercised by these tests.
 
 Direct malformed metadata tests retain ABI +1/-1, layout xor1/zero, three Statement-mismatch
-branches, all six wrong-kind loads linked/dropped, and plane answer-layout refusal. Failed READY
+branches, all six wrong-kind loads linked/dropped, plane answer-layout refusal, and actual six-need no-table/Probe behavior. Failed READY
 retains its exact plugin text and one invocation. Declared-needs/profile checks remain.
 
 The allocation gates use a binary-local System allocator counter for alloc/alloc_zeroed/realloc.
@@ -88,14 +88,16 @@ No payload inspection, allocator framework or new fake product is introduced.
 - Canary with no configured credentials did no work for these LLM inputs.
 - Transport frame-piece, outbound wrong-field/no-field/second-token and newer-store-schema checks
   were no-ops for this kind/input. No product behavior is retired with them.
-- The three generic connection negatives formerly injected a new outbound need into this
-  need-free LLM door. Their source transfer is ACKed once on the real declared-needs GitHub
+- The undeclared-need and foreign-connection generic arms formerly replaced the LLM's real
+  needs with a synthetic singleton. Their source transfer is ACKed once on the real GitHub
   product: candidate abd7663be59b670c8cceabaf30475334e771c566, tree
   86a49682b4f52fbe99edd6247e73b207e4398285. `support/remaining.rs::custody::github_connections_refuse_undeclared_needs_and_other_instances`
   preserves actual-need open/close, next+u32::MAX exact UndeclaredNeed refusal, foreign READ/WRITE/CLOSE
   exact NotOwner refusal, and owner-write/close after refusals, through linked/dropped origins.
-  `conformance.rs::github_serving_requires_its_connection_table_through_both_doors` preserves exact
-  named NoConnectionTable and allowed Probe behavior using the actual two declared GitHub needs.
+  The shared ACK also names GitHub's NoConnectionTable/Probe test, but that does not replace
+  this product's declaration check: `llm_serving_requires_all_six_actual_http_needs_in_both_deliveries`
+  separately retains exact linked/dropped named NoConnectionTable{needs:6}, all-six actual HTTP
+  declarations and allowed Probe behavior over the actual LLM door.
   Authority: A/diet-loader-d306/transfer-packets/generic-connection-negative-transfer-ack.json,
   status SOURCE_EQUIVALENCE_ACK_FOR_THREE_ARMS_NATIVE_PENDING (doc_macro_bindings).
   This source ACK is limited to these three shared loader arms; GitHub native execution is pending,
