@@ -2,9 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR mapping: a field the Gemini dialect carries that the IR and the other
-//! dialect CAN carry must map, never drop. One probe per defect id of the IR mapping audit
-//! (`GEM-nn`), driven through the production seam: reader → `chat_prepare_for_egress` /
-//! `chat_prepare_for_ingress` → writer, and `StreamTranslate` for streams.
 
 use super::*;
 use serde_json::{json, Value};
@@ -156,7 +153,7 @@ fn signature_only_thought_chunk_survives_the_stream_reader() {
 }
 
 /// GEM-08 (reader): a native `functionCall.id` / `functionResponse.id` carries the pair to a
-/// foreign backend verbatim, instead of a synthesized id on the call and the NAME on the result.
+
 #[test]
 fn gem08_native_call_ids_pair_on_a_foreign_backend() {
     let body = json!({"contents": [
@@ -177,7 +174,6 @@ fn gem08_native_call_ids_pair_on_a_foreign_backend() {
     assert_eq!(call_id, "fc1", "{out}");
     assert_eq!(result_id, "fc1", "{out}");
 
-    // Buffered response: the model's `functionCall.id` is the IR tool-use id.
     let resp = json!({"candidates": [{"content": {"role": "model", "parts": [
         {"functionCall": {"id": "fc9", "name": "f", "args": {}}}]}, "finishReason": "STOP"}],
         "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1}});
@@ -190,7 +186,6 @@ fn gem08_native_call_ids_pair_on_a_foreign_backend() {
         ir.content
     );
 
-    // Stream: the same id on the tool block start.
     let raw = gemini_sse(&[
         json!({"candidates": [{"content": {"role": "model", "parts": [
         {"functionCall": {"id": "fc7", "name": "f", "args": {}}}]}, "finishReason": "STOP"}],
@@ -205,7 +200,7 @@ fn gem08_native_call_ids_pair_on_a_foreign_backend() {
                 .map(str::to_string)
         })
         .expect("streamed tool call id");
-    // The OpenAI client sees the id in its native shape, which decodes back to the model's own.
+
     assert_eq!(
         crate::codec::proto_codec::decode_native_tool_id("openai", &streamed_id).as_deref(),
         Some("fc7"),
@@ -214,7 +209,7 @@ fn gem08_native_call_ids_pair_on_a_foreign_backend() {
 }
 
 /// GEM-02: a Bedrock `{"json": …}` tool result reaches Gemini as the `response` object, not an
-/// empty `{"output":""}`.
+
 #[test]
 fn gem02_bedrock_json_tool_result_reaches_gemini() {
     let body = json!({"messages": [
@@ -234,7 +229,7 @@ fn gem02_bedrock_json_tool_result_reaches_gemini() {
 }
 
 /// GEM-03: `parametersJsonSchema` is the tool's schema (it used to be ignored: Anthropic got
-/// `input_schema: null`).
+
 #[test]
 fn gem03_parameters_json_schema_is_the_tool_schema() {
     let schema = json!({"type": "object", "properties": {"x": {"type": "string"}}});
@@ -245,7 +240,7 @@ fn gem03_parameters_json_schema_is_the_tool_schema() {
 }
 
 /// GEM-04: `responseJsonSchema` is the JSON-mode schema (it used to be dropped, leaving a bare
-/// `json_object`).
+
 #[test]
 fn gem04_response_json_schema_carries_to_openai() {
     let schema = json!({"type": "object", "properties": {"n": {"type": "integer"}}});
@@ -259,7 +254,7 @@ fn gem04_response_json_schema_carries_to_openai() {
 }
 
 /// GEM-05: a failed tool call crosses as Gemini's documented `response.error`, and a Gemini
-/// `response.error` crosses as a failed tool result.
+
 #[test]
 fn gem05_tool_error_maps_both_ways() {
     let body = json!({"model": "m", "max_tokens": 100, "messages": [
@@ -348,8 +343,7 @@ fn gem09_thinking_level_is_the_effort_ask() {
 }
 
 /// GEM-10: a hosted tool (`googleSearch`) is not silently lost in the reader: it is read into the
-/// typed hosted-tool slot (IR-11; the full wiring is in `ir_slot_wiring_tests`), never projected as
-/// a malformed function tool onto a foreign backend.
+
 #[test]
 fn gem10_hosted_tool_is_read_as_hosted() {
     let body = json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}],
@@ -366,13 +360,13 @@ fn gem10_hosted_tool_is_read_as_hosted() {
         "{:?}",
         ir.tools
     );
-    // The function tool beside it still reaches a foreign backend as the one function tool.
+
     let out = xreq("gemini", "openai", &body);
     assert_eq!(out["tools"].as_array().map(Vec::len), Some(1), "{out}");
 }
 
 /// GEM-11: an OpenAPI-subset schema (`OBJECT`, `nullable`) reaches a JSON-Schema target as JSON
-/// Schema.
+
 #[test]
 fn gem11_openapi_schema_normalizes_to_json_schema() {
     let body = json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}],
@@ -393,7 +387,7 @@ fn gem11_openapi_schema_normalizes_to_json_schema() {
 }
 
 /// GEM-12: the AUDIO slices of `promptTokensDetails` / `candidatesTokensDetails` reach OpenAI's
-/// `audio_tokens`.
+
 #[test]
 fn gem12_audio_token_details_reach_openai() {
     let body = json!({"candidates": [{"content": {"role": "model", "parts": [{"text": "hi"}]}, "finishReason": "STOP"}],
@@ -411,14 +405,13 @@ fn gem12_audio_token_details_reach_openai() {
         json!(5),
         "{out}"
     );
-    // Attribution only: the billed totals are unchanged.
+
     assert_eq!(out["usage"]["prompt_tokens"], json!(30), "{out}");
     assert_eq!(out["usage"]["completion_tokens"], json!(8), "{out}");
 }
 
 /// A refusal reaches a Gemini client as the native unenumerated `OTHER`, as in 1.5.5 (v1.5.5
-/// `crates/busbar/src/proto/gemini/mod.rs:771`): Gemini has no refusal stop, and `SAFETY` names a
-/// safety filter. RED while the writer wrote `SAFETY`.
+
 #[test]
 fn a_refusal_is_other_for_a_gemini_client() {
     let body = json!({"id": "msg_1", "type": "message", "role": "assistant", "model": "m",
@@ -433,7 +426,7 @@ fn a_refusal_is_other_for_a_gemini_client() {
 }
 
 /// GEM-15: the image content-policy stops are policy stops, and an unexpected tool call is a failed
-/// generation, not an unenumerated `OTHER`.
+
 #[test]
 fn gem15_image_policy_and_unexpected_tool_call_stops() {
     use crate::codec::ir::IrStopReason as S;
@@ -458,11 +451,11 @@ fn gem15_image_policy_and_unexpected_tool_call_stops() {
 }
 
 /// GEM-16 (writer): a streamed foreign citation's CHARACTER offsets become Gemini's candidate-wide
-/// BYTE offsets, as they do on the buffered path.
+
 #[test]
 fn gem16_streamed_citation_offsets_are_bytes_for_a_gemini_client() {
     let writer = GeminiWriter;
-    // "héllo " is 6 characters and 7 bytes; "wörld" is 5 characters and 6 bytes.
+
     let _ = writer.write_response_event(
         crate::codec::test_host::HOST,
         &IrStreamEvent::BlockStart {
@@ -504,7 +497,7 @@ fn gem18_create_time_is_created() {
         "createTime": "2025-06-01T12:34:56.789012Z"});
     let out = xresp("gemini", "openai", &body);
     assert_eq!(out["created"], json!(1_748_781_296u64), "{out}");
-    // An offset spelling of the same instant; a malformed value leaves the seam's stamp.
+
     for (create_time, want) in [
         ("2025-06-01T14:34:56+02:00", 1_748_781_296u64),
         ("not a time", 1_752_000_000u64),
@@ -517,7 +510,7 @@ fn gem18_create_time_is_created() {
 }
 
 /// GEM-20: a citation Gemini sends after a functionCall closed the text block annotates THAT text
-/// block — no new, empty text block is opened beside the still-open tool.
+
 #[test]
 fn gem20_late_stream_citation_annotates_the_closed_text_block() {
     let raw = gemini_sse(&[
@@ -545,8 +538,7 @@ fn gem20_late_stream_citation_annotates_the_closed_text_block() {
 }
 
 /// GEM-01: with no native ids, every tool result pairs with the call it answers — positionally,
-/// same-name parallel calls included — so Anthropic / OpenAI see no orphan `tool_result` (they used
-/// to get a synthesized id on the call and the function NAME on the result).
+
 #[test]
 fn gem01_tool_results_pair_with_their_calls_without_ids() {
     let body = json!({"contents": [
@@ -586,7 +578,6 @@ fn gem01_tool_results_pair_with_their_calls_without_ids() {
         "each result pairs with its own call: {out}"
     );
 
-    // The same pairing reaches OpenAI's `tool_call_id`.
     let out = xreq("gemini", "openai", &body);
     let msgs = out["messages"].as_array().expect("messages");
     let calls: Vec<String> = msgs
@@ -612,8 +603,7 @@ fn gem01_tool_results_pair_with_their_calls_without_ids() {
 }
 
 /// GEM-08 (writer): an IR call id reaches Gemini as `functionCall.id` — on a request (with the
-/// matching `functionResponse.id`), a buffered response and a stream — so the pair survives a
-/// round-trip through a Gemini client or backend.
+
 #[test]
 fn gem08_call_ids_reach_gemini() {
     let body = json!({"model": "m", "max_tokens": 100, "messages": [
@@ -671,9 +661,7 @@ fn gem08_call_ids_reach_gemini() {
 }
 
 /// A Gemini client of a reasoning lane reads the `candidatesTokenCount` 1.5.5 wrote: the whole
-/// output, reasoning included, with no `thoughtsTokenCount` (v1.5.5
-/// `crates/busbar/src/proto/gemini/writer.rs:962-964`) — buffered and streamed; the total is
-/// unchanged. RED while the writer split the reasoning out (candidates 10 + thoughts 20).
+
 #[test]
 fn reasoning_tokens_stay_inside_candidates_for_a_gemini_client() {
     let resp = json!({"id": "chatcmpl-1", "object": "chat.completion", "created": 1, "model": "o3",
@@ -714,7 +702,7 @@ fn reasoning_tokens_stay_inside_candidates_for_a_gemini_client() {
 }
 
 /// GEM-17: an image the model GENERATED reaches a target that carries a response attachment
-/// (Bedrock's response `image`) instead of vanishing.
+
 #[test]
 fn gem17_generated_image_reaches_bedrock() {
     let body = json!({"candidates": [{"content": {"role": "model", "parts": [

@@ -2,8 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR-slot wiring: the Gemini reader FILLS and the Gemini writer
-//! EMITS the typed slots its defects need. One test per defect / slot id; each drives the production
-//! reader and writer (and the cross-protocol seam, `chat_prepare_for_egress`, where the seam matters).
 
 use super::*;
 use crate::codec::ir::{
@@ -14,7 +12,7 @@ use crate::codec::ir::{
 use serde_json::{json, Value};
 
 /// A Gemini request read, then put through the cross-protocol seam so `extra` is cleared
-/// and only typed slots reach the writer.
+
 fn read_then_seam(body: &Value) -> IrRequest {
     read_then_seam_from("gemini", body)
 }
@@ -67,8 +65,7 @@ fn function_tool(name: &str) -> IrTool {
 }
 
 /// GEM-10 / IR-11 (reader): `googleSearch` / `codeExecution` / `urlContext` are read into the typed
-/// hosted-tool slot — which crosses the seam — instead of a raw hosted tool the seam drops. A kind
-/// with no neutral form (`fileSearch`) stays raw.
+
 #[test]
 fn gem10_gemini_hosted_tools_read_into_the_typed_slot() {
     let body = json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}],
@@ -92,8 +89,6 @@ fn gem10_gemini_hosted_tools_read_into_the_typed_slot() {
         vec![json!({"fileSearch": {"fileSearchStoreNames": ["s"]}})]
     );
 
-    // Through the seam the three typed tools survive (the raw one is dropped) and a Gemini backend
-    // gets them back in its own spelling beside the function.
     let out = gw().write_request(crate::codec::test_host::HOST, &read_then_seam(&body));
     assert_eq!(
         out["tools"],
@@ -106,7 +101,7 @@ fn gem10_gemini_hosted_tools_read_into_the_typed_slot() {
 }
 
 /// GEM-10 / IR-11 (writer): a foreign hosted tool reaches a Gemini backend as its Gemini kind, with
-/// the parameters Gemini lacks dropped and the tool kept — including when it is the only tool.
+
 #[test]
 fn ir11_foreign_hosted_tools_write_as_gemini_tools() {
     let mut ir = bare_ir();
@@ -131,7 +126,7 @@ fn ir11_foreign_hosted_tools_write_as_gemini_tools() {
 }
 
 /// GEM-19 / IR-18 (writer): a reasoning signature minted by another family is NOT sent to Gemini as
-/// `thoughtSignature`; a Gemini-minted one, and one of unknown origin, still are.
+
 #[test]
 fn gem19_foreign_signature_is_not_sent_as_thought_signature() {
     let thinking = |sig: &str, origin: Option<IrSignatureOrigin>| IrBlock::Thinking {
@@ -158,14 +153,13 @@ fn gem19_foreign_signature_is_not_sent_as_thought_signature() {
     assert_eq!(parts[1].get("thoughtSignature"), None, "{out}");
     assert_eq!(parts[2]["thoughtSignature"], "gemini-sig", "{out}");
     assert_eq!(parts[3]["thoughtSignature"], "unknown-sig", "{out}");
-    // The reasoning text itself is still carried.
+
     assert_eq!(parts[0]["text"], "reasoning");
     assert_eq!(parts[0]["thought"], true);
 }
 
 /// IR-17 / IR-18 (reader): a Gemini thought part is a reasoning SUMMARY. A Gemini BACKEND's
-/// signature is Gemini-minted; a request history turn's signature is whatever the client echoes (a
-/// Gemini client of a foreign backend echoes that backend's blob), so its origin stays unknown.
+
 #[test]
 fn ir17_ir18_gemini_thought_parts_are_summary_with_gemini_origin() {
     let thinking = |block: &IrBlock| match block {
@@ -204,11 +198,11 @@ fn ir17_ir18_gemini_thought_parts_are_summary_with_gemini_origin() {
 }
 
 /// GEM-16 (reader half): a streamed citation's UTF-8 BYTE offsets become the IR's CHARACTER offsets,
-/// converted against the answer text streamed so far.
+
 #[test]
 fn gem16_stream_citation_byte_offsets_read_as_characters() {
     let mut state = StreamDecodeState::default();
-    // "héllo wörld": `é` and `ö` are two bytes each. "wörld" is chars 6..11, bytes 7..13.
+
     let chunks = [
         json!({"candidates": [{"content": {"role": "model", "parts": [{"text": "héllo "}]}}]}),
         json!({"candidates": [{"content": {"role": "model", "parts": [{"text": "wörld"}]},
@@ -242,7 +236,7 @@ fn gem16_stream_citation_byte_offsets_read_as_characters() {
 }
 
 /// IR-03: Gemini `labels` read into the caller-metadata map; the map written back as `labels`, with
-/// only the entries that break Gemini's label syntax dropped.
+
 #[test]
 fn ir03_labels_carry_as_metadata() {
     let body = json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}],
@@ -275,8 +269,7 @@ fn ir03_labels_carry_as_metadata() {
 }
 
 /// IR-10: `allowedFunctionNames` with more than one name is carried as the IR tool subset (not
-/// relaxed to "any tool"); a "must call" subset is written back natively, a "may call" subset by
-/// declaring only the listed functions.
+
 #[test]
 fn ir10_allowed_function_names_carry_as_the_tool_subset() {
     let tools = json!([{"functionDeclarations": [
@@ -305,7 +298,6 @@ fn ir10_allowed_function_names_carry_as_the_tool_subset() {
         Some(3)
     );
 
-    // "May call one of these": only the listed functions are declared.
     let mut ir = bare_ir();
     ir.tools = vec![function_tool("a"), function_tool("b"), function_tool("c")];
     ir.tool_choice = Some(IrToolChoice::Auto);
@@ -344,10 +336,7 @@ fn ir19_response_modalities_carry() {
 }
 
 /// `thinkingBudget: 0` carries no ask across the seam, as 1.5.5 read it (v1.5.5
-/// `crates/busbar/src/proto/gemini/reader.rs:554-558`): a foreign reasoning-by-default lane is not
-/// switched off, so the request bills the thinking tokens 1.5.5 billed. RED while it read as `Off`.
-/// The Gemini WRITER's own Off form (budget 0 on a flash model, omitted elsewhere) still serves an
-/// Off that another dialect states.
+
 #[test]
 fn ir09_thinking_budget_zero_carries_no_ask() {
     let body = json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}],
@@ -387,8 +376,7 @@ fn ir09_thinking_budget_zero_carries_no_ask() {
 }
 
 /// IR-09 across the seam: an Anthropic `thinking:{type:"disabled"}` (read as Off) reaches a Gemini
-/// flash backend as budget 0 — never as the smallest ENABLE budget — and a Gemini pro backend
-/// with no thinkingConfig at all.
+
 #[test]
 fn ir09_anthropic_thinking_disabled_reaches_gemini_as_off() {
     let body = json!({"model": "claude", "max_tokens": 64, "thinking": {"type": "disabled"},
@@ -419,7 +407,7 @@ fn ir09_anthropic_thinking_disabled_reaches_gemini_as_off() {
 }
 
 /// GEM-10 / IR-11 across the seam: an Anthropic hosted web search / code execution reaches a
-/// Gemini backend as `googleSearch` / `codeExecution`.
+
 #[test]
 fn ir11_anthropic_hosted_tools_reach_gemini() {
     let body = json!({"model": "claude", "max_tokens": 64,
@@ -443,8 +431,7 @@ fn ir11_anthropic_hosted_tools_reach_gemini() {
 }
 
 /// IR-04..07: the slots Gemini has no form for are not written and are reported to the seam. The
-/// service tier and the logging switch are NOT among them: Gemini spells them `serviceTier` and
-/// `store` (dialects/gemini.toml `[rows.tier]`, DF-MAP), so they are written, not dropped.
+
 #[test]
 fn ir04_to_07_unsupported_slots_are_dropped_and_reported() {
     let mut ir = bare_ir();
@@ -460,9 +447,7 @@ fn ir04_to_07_unsupported_slots_are_dropped_and_reported() {
     let out = gw().write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(out.get("serviceTier"), Some(&json!("priority")), "{out}");
     assert_eq!(out.get("store"), Some(&json!(true)), "{out}");
-    // `store` is carried (asserted just above), and its wire key is spelled the same as the IR
-    // slot, so it cannot also be on this never-written list; `service_tier` stays here as the
-    // snake_case spelling Gemini must never put on the wire.
+
     for k in [
         "service_tier",
         "safety_identifier",

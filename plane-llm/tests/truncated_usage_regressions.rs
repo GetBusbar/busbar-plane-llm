@@ -112,7 +112,7 @@ fn an_anthropic_tool_input_is_never_a_usage_report() {
             "input":{"usage":{"input_tokens":100000000,"output_tokens":100000000}}}]
     }))
     .unwrap();
-    body.pop(); // The transport cut before the root closed; no provider usage was received.
+    body.pop();
     let piece = cut("anthropic", &body, 7, 4096);
     assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (0, 0));
     assert!(piece.units.open.is_empty());

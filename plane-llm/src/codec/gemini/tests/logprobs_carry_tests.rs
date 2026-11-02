@@ -1,5 +1,5 @@
 //! Cross-protocol logprobs (OpenAI<->Gemini): the ask (request) and the data (response,
-//! buffered AND streaming) must cross the seam in both directions via the neutral IR.
+
 use super::super::proto_codec::{Protocol, ProtocolReader};
 
 fn gemini_body_with_logprobs() -> serde_json::Value {
@@ -29,11 +29,9 @@ fn gemini_body_with_logprobs() -> serde_json::Value {
 }
 
 /// Gemini backend -> OpenAI caller (buffered): `logprobsResult` becomes
-/// `choices[0].logprobs.content[]`, chosen+top zipped, bytes synthesized from UTF-8.
+
 #[test]
 fn openai_logprobs_codec_round_trips_bytes_and_top() {
-    // Direct read/write of the OpenAI logprobs codec: bytes and top_logprobs survive, and a
-    // missing `bytes` is synthesized from the token's UTF-8 on write.
     use crate::codec::logprob_wire::{
         read_token_logprobs as read_openai_logprobs, write_token_logprobs as write_openai_logprobs,
     };
@@ -52,7 +50,6 @@ fn openai_logprobs_codec_round_trips_bytes_and_top() {
     assert_eq!(back["content"][0]["bytes"], serde_json::json!([72, 105]));
     assert_eq!(back["content"][0]["top_logprobs"][1]["token"], "Yo");
 
-    // bytes synthesized from UTF-8 when the source (e.g. Gemini) carried none.
     let no_bytes = vec![crate::codec::ir::IrTokenLogprob {
         token: "Hi".into(),
         logprob: -0.1,
@@ -80,7 +77,7 @@ fn gemini_logprobs_reach_openai_caller() {
     let content = &out["choices"][0]["logprobs"]["content"];
     assert_eq!(content[0]["token"], "Hi");
     assert_eq!(content[0]["logprob"], -0.031);
-    assert_eq!(content[0]["bytes"], serde_json::json!([72, 105])); // "Hi" UTF-8
+    assert_eq!(content[0]["bytes"], serde_json::json!([72, 105]));
     assert_eq!(content[0]["top_logprobs"][1]["token"], "Hello");
     assert_eq!(
         content[0]["top_logprobs"][1]["bytes"],
@@ -90,11 +87,9 @@ fn gemini_logprobs_reach_openai_caller() {
 }
 
 /// OpenAI backend -> Gemini caller (buffered): `choices[0].logprobs.content[]` becomes
-/// `candidates[0].logprobsResult` with parallel chosen/top arrays.
+
 #[test]
 fn tts_instructions_prefix_the_prompt_not_language_code() {
-    // OpenAI TTS `instructions` (free-text style) must steer via the prompt, not corrupt
-    // Gemini's speechConfig.languageCode (a BCP-47 field).
     let ir = crate::codec::ir::audio::SpeechReq {
         model: "gemini-2.5-flash-preview-tts".into(),
         input: "hello there".into(),
@@ -118,8 +113,6 @@ fn tts_instructions_prefix_the_prompt_not_language_code() {
 
 #[test]
 fn top_logprobs_clamped_to_gemini_max_on_egress() {
-    // A cross-protocol logprobs ask with OpenAI's max (20) must be clamped to Gemini's 5, not
-    // forwarded to a 400 on older models.
     let body = serde_json::json!({
         "model": "m",
         "messages": [{"role": "user", "content": "hi"}],
@@ -137,8 +130,6 @@ fn top_logprobs_clamped_to_gemini_max_on_egress() {
 
 #[test]
 fn top_logprobs_zero_omits_gemini_logprobs_count_but_forces_response_logprobs() {
-    // OpenAI `top_logprobs: 0` ("chosen token, no alternatives") must NOT emit `logprobs: 0`
-    // (Gemini 400s on it) but must still force `responseLogprobs: true`.
     let body = serde_json::json!({
         "model": "m",
         "messages": [{"role": "user", "content": "hi"}],
@@ -156,7 +147,6 @@ fn top_logprobs_zero_omits_gemini_logprobs_count_but_forces_response_logprobs() 
         "logprobs:0 must be omitted, not sent (Gemini 400s): {out}"
     );
 
-    // A non-zero count is emitted normally.
     let body3 = serde_json::json!({
         "model": "m",
         "messages": [{"role": "user", "content": "hi"}],
@@ -204,8 +194,7 @@ fn openai_logprobs_reach_gemini_caller() {
 }
 
 /// A response WITHOUT logprobs gains nothing on translation in either direction. On the OpenAI
-/// side the choice's `logprobs` member is required by the published schema, so "nothing" is the
-/// spec's JSON null rather than an absent key.
+
 #[test]
 fn absence_gains_nothing() {
     let mut body = gemini_body_with_logprobs();
@@ -229,7 +218,7 @@ fn absence_gains_nothing() {
 }
 
 /// STREAMING, Gemini backend -> OpenAI caller: a chunk's `logprobsResult` becomes an OpenAI
-/// chunk carrying `choices[0].logprobs.content[]` (alongside the text delta's own chunk).
+
 #[test]
 fn gemini_stream_logprobs_reach_openai_caller() {
     let chunk = serde_json::json!({
@@ -270,8 +259,7 @@ fn gemini_stream_logprobs_reach_openai_caller() {
 }
 
 /// A Gemini stream carrying BOTH a `thought:true` part AND a `logprobsResult` in the same
-/// chunk must not collide the logprobs' text block on index 0 with the thinking block. The
-/// thinking block owns 0; the text block (opened by the logprobs arm) must land at index 1.
+
 #[test]
 fn stream_thinking_plus_logprobs_do_not_collide_on_index_zero() {
     let chunk = serde_json::json!({
@@ -290,7 +278,7 @@ fn stream_thinking_plus_logprobs_do_not_collide_on_index_zero() {
         &mut state,
     );
     use crate::codec::ir::{IrBlockMeta, IrDelta, IrStreamEvent};
-    // Thinking block opened at 0.
+
     assert!(events.iter().any(|e| matches!(
         e,
         IrStreamEvent::BlockStart {
@@ -299,7 +287,7 @@ fn stream_thinking_plus_logprobs_do_not_collide_on_index_zero() {
             refusal: _,
         }
     )));
-    // The logprobs text block must open at 1, never 0.
+
     let lp_start = events.iter().find_map(|e| match e {
         IrStreamEvent::BlockStart {
             index,
@@ -323,7 +311,7 @@ fn stream_thinking_plus_logprobs_do_not_collide_on_index_zero() {
 }
 
 /// STREAMING, OpenAI backend -> Gemini caller: a chunk's `choices[0].logprobs` becomes a
-/// Gemini chunk candidate carrying `logprobsResult`.
+
 #[test]
 fn openai_stream_logprobs_reach_gemini_caller() {
     let chunk = serde_json::json!({

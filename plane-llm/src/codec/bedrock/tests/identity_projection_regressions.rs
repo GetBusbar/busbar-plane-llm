@@ -87,7 +87,7 @@ fn streamed_citations_use_the_same_source_projection() {
     };
     assert_eq!(citations[0].url.as_deref(), Some("opaque:source#7"));
     let writer = BedrockWriter;
-    // Writer tracks open text blocks; start it before the citation delta.
+
     let mut emitted = false;
     for event in &events {
         if let Some((_, out)) = writer.write_response_event(host, event) {

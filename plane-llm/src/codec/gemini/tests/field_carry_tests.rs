@@ -2,41 +2,12 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! FIELD-COVERAGE CARRY TESTS for the Gemini (generateContent) dialect.
-//!
-//! Each test here watches fields of `dialects/gemini.toml`:
-//! it FAILS if the field it names stops surviving. Two carriage mechanisms, matching the owner's
-//! classification:
-//!
-//! * CROSS-PROTOCOL-MEANINGFUL fields (sampling knobs, systemInstruction, tools, citations, usage
-//!   buckets, …): a read → IR → write round trip that asserts the value reaches the IR's typed
-//!   carrier AND is re-emitted by the writer. A future edit that drops the promotion, or the
-//!   re-emit, turns the assertion red.
-//! * PROVIDER-SPECIFIC fields with no cross-protocol home (safetySettings, labels, safetyRatings,
-//!   code-execution parts, …): REQUEST-side provider fields ride the reader's `extra` passthrough
-//!   and are re-emitted verbatim by the writer, so a same-protocol read → write proves losslessness
-//!   AND a cleared-`extra` write proves the cross-protocol drop. RESPONSE-side provider fields have
-//!   no IR carrier at all: same-protocol Gemini→Gemini relay is byte-verbatim (never rebuilt from
-//!   the IR — generically pinned by `gemini_sse_round_trip_byte_exact`), so these are carried as a
-//!   DOCUMENTED DROP — the test pins that the reader neither corrupts them into content nor leaks
-//!   them onto a foreign egress, which is the owner-sanctioned carriage for a no-home field.
-//!
-//! Paths use `super::super::proto_codec` (portable across both `#[path]`-compile shapes) rather than
-//! the concrete `StreamTranslate`, which is netted under a different name in each crate.
 
-// `super::super` (not `crate`): this file is `#[path]`-compiled into BOTH busbar-llm (where the
-// dialect's parent is the crate root) AND busbar-core's witness test build (where the parent is
-// `crate::codec::proto`). `proto_codec` is netted under the same name in both parents, so `super::super`
-// resolves in both — the same portability the sibling `logprobs_carry_tests.rs` relies on.
 use super::super::proto_codec::Protocol;
 use serde_json::json;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// REQUEST — generationConfig sampling knobs (cross-protocol; promoted into typed IR)
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// The `generationConfig` sampling knobs are each promoted into a typed IR field on read and
-/// re-emitted on write. Carries: temperature, topP, topK, candidateCount, maxOutputTokens,
-/// stopSequences, seed, presencePenalty, frequencyPenalty.
+
 #[test]
 fn gemini_request_sampling_knobs_survive() {
     let body = json!({
@@ -57,11 +28,11 @@ fn gemini_request_sampling_knobs_survive() {
         .reader()
         .read_request(&body)
         .expect("read");
-    // Each field reaches its typed IR carrier.
+
     assert_eq!(ir.temperature, Some(0.35));
     assert_eq!(ir.top_p, Some(0.8));
     assert_eq!(ir.top_k, Some(40));
-    assert_eq!(ir.n, Some(2)); // candidateCount → n
+    assert_eq!(ir.n, Some(2));
     assert_eq!(ir.max_tokens, Some(256));
     assert_eq!(ir.stop, vec!["END".to_string(), "STOP".to_string()]);
     assert_eq!(ir.seed, Some(12345));
@@ -94,8 +65,8 @@ fn gemini_request_logprobs_ask_survives() {
         .reader()
         .read_request(&body)
         .expect("read");
-    assert_eq!(ir.logprobs, Some(true)); // responseLogprobs
-    assert_eq!(ir.top_logprobs, Some(3)); // logprobs (top-count)
+    assert_eq!(ir.logprobs, Some(true));
+    assert_eq!(ir.top_logprobs, Some(3));
 
     let out = Protocol::gemini()
         .writer()
@@ -105,7 +76,7 @@ fn gemini_request_logprobs_ask_survives() {
 }
 
 /// Structured output: `responseMimeType` + `responseSchema` normalize into the IR response_format
-/// and re-emit.
+
 #[test]
 fn gemini_request_response_format_survives() {
     let schema = json!({"type": "object", "properties": {"x": {"type": "string"}}});
@@ -141,7 +112,7 @@ fn gemini_request_response_format_survives() {
 }
 
 /// The thinking ask `generationConfig.thinkingConfig.thinkingBudget` reaches the IR reasoning
-/// carrier and re-emits in Gemini's native spelling.
+
 #[test]
 fn gemini_request_thinking_budget_survives() {
     let body = json!({
@@ -160,16 +131,12 @@ fn gemini_request_thinking_budget_survives() {
     let out = Protocol::gemini()
         .writer()
         .write_request(crate::codec::test_host::HOST, &ir);
-    // Same-protocol keeps the caller's native thinkingConfig (seeded from extra) verbatim.
+
     assert_eq!(
         out["generationConfig"]["thinkingConfig"]["thinkingBudget"],
         2048
     );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// REQUEST — top-level structural (cross-protocol)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// `systemInstruction` → IR system blocks → re-emitted `systemInstruction.parts[].text`.
 #[test]
@@ -223,7 +190,7 @@ fn gemini_request_tools_survive() {
 }
 
 /// `toolConfig.functionCallingConfig` → IR tool_choice → re-emitted (the raw toolConfig also rides
-/// `extra` for same-protocol byte-identity, overlaid by the typed choice).
+
 #[test]
 fn gemini_request_tool_config_survives() {
     let body = json!({
@@ -242,7 +209,7 @@ fn gemini_request_tool_config_survives() {
     let out = Protocol::gemini()
         .writer()
         .write_request(crate::codec::test_host::HOST, &ir);
-    // The functionCallingConfig survives (mode re-emitted from the typed choice).
+
     assert!(
         out["toolConfig"]["functionCallingConfig"].is_object(),
         "toolConfig.functionCallingConfig must be re-emitted: {out}"
@@ -250,16 +217,8 @@ fn gemini_request_tool_config_survives() {
     assert_eq!(out["toolConfig"]["functionCallingConfig"]["mode"], "ANY");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// REQUEST — provider-specific (no cross-protocol home): lossless same-protocol via `extra`,
-// dropped (not leaked) cross-protocol.
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// `safetySettings`, `labels`, and the unmodeled `generationConfig` sub-fields
-/// (`responseModalities`, `mediaResolution`, `speechConfig`, `thinkingConfig.includeThoughts`) have
-/// no cross-protocol analog. They survive a same-protocol read → write BYTE-for-byte via the
-/// reader's `extra` passthrough (top-level keys) / the `generationConfig` overlay, and are DROPPED
-/// (never leaked to a foreign backend) once the cross-protocol seam clears `extra`.
+
 #[test]
 fn gemini_request_provider_specific_fields_survive_same_proto() {
     let safety = json!([{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"}]);
@@ -281,7 +240,6 @@ fn gemini_request_provider_specific_fields_survive_same_proto() {
         .read_request(&body)
         .expect("read");
 
-    // SAME-PROTOCOL: every provider field is re-emitted verbatim.
     let out = Protocol::gemini()
         .writer()
         .write_request(crate::codec::test_host::HOST, &ir);
@@ -305,11 +263,6 @@ fn gemini_request_provider_specific_fields_survive_same_proto() {
         "thinkingConfig.includeThoughts must survive"
     );
 
-    // CROSS-PROTOCOL: the seam clears `extra`, so none of these Gemini-only fields leak onto a
-    // foreign backend. (Simulate the seam by clearing extra, then re-emit to Gemini's own writer:
-    // with no typed carrier, each provider field is gone.) `labels` and `responseModalities` DO
-    // have typed carriers now — the IR metadata map (IR-03) and output modalities (IR-19) — so
-    // they are rebuilt from those, not from the raw copy.
     ir.extra.clear();
     let dropped = Protocol::gemini()
         .writer()
@@ -336,13 +289,8 @@ fn gemini_request_provider_specific_fields_survive_same_proto() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// REQUEST — content parts (cross-protocol)
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Every representable `parts[]` construct survives read → write: text, a `thought` reasoning part
-/// with its `thoughtSignature`, a `functionCall{name,args}`, a `functionResponse{name,response}`,
-/// and a `fileData{fileUri,mimeType}` reference.
+
 #[test]
 fn gemini_request_content_parts_survive() {
     let body = json!({
@@ -364,14 +312,14 @@ fn gemini_request_content_parts_survive() {
         .expect("read");
 
     let model_turn = &ir.messages[0].content;
-    // parts[].text
+
     assert!(
         model_turn.iter().any(|b| matches!(
             b, crate::codec::ir::IrBlock::Text { text, .. } if text == "visible answer"
         )),
         "parts[].text must reach the IR"
     );
-    // parts[].thought + parts[].thoughtSignature
+
     assert!(
         model_turn.iter().any(|b| matches!(
             b, crate::codec::ir::IrBlock::Thinking { text, signature, .. }
@@ -379,7 +327,7 @@ fn gemini_request_content_parts_survive() {
         )),
         "parts[].thought + thoughtSignature must reach the IR Thinking carrier: {model_turn:?}"
     );
-    // parts[].functionCall.name / .args
+
     assert!(
         model_turn.iter().any(|b| matches!(
             b, crate::codec::ir::IrBlock::ToolUse { name, input, .. }
@@ -387,8 +335,7 @@ fn gemini_request_content_parts_survive() {
         )),
         "parts[].functionCall name+args must reach the IR ToolUse carrier"
     );
-    // parts[].functionResponse.name / .response — the result carries the id of the call it
-    // answers (IR audit GEM-01), not the bare function name.
+
     let call_id = model_turn
         .iter()
         .find_map(|b| match b {
@@ -405,7 +352,7 @@ fn gemini_request_content_parts_survive() {
         )),
         "parts[].functionResponse name+response must reach the IR ToolResult carrier: {user_turn:?}"
     );
-    // parts[].fileData.fileUri / .mimeType
+
     assert!(
         user_turn.iter().any(|b| matches!(
             b, crate::codec::ir::IrBlock::Media {
@@ -416,7 +363,6 @@ fn gemini_request_content_parts_survive() {
         "parts[].fileData (pdf) must reach the IR as a Document URL Media block: {user_turn:?}"
     );
 
-    // Re-emit and assert each construct is back in its native part shape.
     let out = Protocol::gemini()
         .writer()
         .write_request(crate::codec::test_host::HOST, &ir);
@@ -455,22 +401,10 @@ fn gemini_request_content_parts_survive() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// REQUEST/RESPONSE — code-execution parts (provider-specific, no cross-protocol home)
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// `parts[].executableCode` and `parts[].codeExecutionResult` are the code-interpreter tool's
-/// model-authored artifacts. They have no cross-protocol analog, so they are carried as a DOCUMENTED
-/// DROP: same-protocol Gemini→Gemini relay is byte-verbatim (never rebuilt from the IR, generically
-/// pinned by `gemini_sse_round_trip_byte_exact`), and CROSS-protocol the reader drops them with a
-/// `warn!` rather than corrupting them into a text block. This test pins the drop AND the
-/// no-corruption guarantee on BOTH the request-replay and the response path — a future edit that
-/// promoted either part into a `Text` block (leaking model-authored code as visible answer text) or
-/// leaked it onto a foreign egress turns it red.
+
 #[test]
 fn gemini_code_execution_parts_drop_cross_proto_without_corruption() {
-    // CROSS-PROTOCOL: the reader drops both (they never become a corrupt text block) — asserted on
-    // both the request replay path and the response path.
     let req = json!({
         "contents": [{"role": "model", "parts": [
             {"executableCode": {"language": "PYTHON", "code": "print(1)"}},
@@ -506,7 +440,7 @@ fn gemini_code_execution_parts_drop_cross_proto_without_corruption() {
         "executableCode/codeExecutionResult response parts must be dropped, not corrupted: {:?}",
         ir.content
     );
-    // ...and the cross-protocol egress (OpenAI) carries no synthetic text for them.
+
     let openai = Protocol::openai()
         .writer()
         .write_response(crate::codec::test_host::HOST, &ir);
@@ -519,12 +453,8 @@ fn gemini_code_execution_parts_drop_cross_proto_without_corruption() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RESPONSE — core fields (cross-protocol)
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// `candidates[].content`, `candidates[].finishReason`, top-level `modelVersion` and `responseId`
-/// survive read → write.
+
 #[test]
 fn gemini_response_core_fields_survive() {
     let body = json!({
@@ -540,19 +470,19 @@ fn gemini_response_core_fields_survive() {
         .reader()
         .read_response(crate::codec::test_host::HOST, &body)
         .expect("read");
-    // candidates[].content
+
     assert!(
         ir.content.iter().any(|b| matches!(
             b, crate::codec::ir::IrBlock::Text { text, .. } if text == "the answer"
         )),
         "candidates[].content must reach the IR"
     );
-    // candidates[].finishReason
+
     assert_eq!(
         ir.stop_reason,
         Some(crate::codec::ir::IrStopReason::MaxTokens)
     );
-    // modelVersion / responseId
+
     assert_eq!(ir.model.as_deref(), Some("gemini-2.5-flash-001"));
     assert_eq!(ir.id.as_deref(), Some("PXmFaPzVMIabcdef"));
 
@@ -569,10 +499,9 @@ fn gemini_response_core_fields_survive() {
 }
 
 /// `candidates[].citationMetadata` re-emits same-protocol, and `candidates[].groundingMetadata`
-/// reaches the IR citation carrier (and thus a foreign client).
+
 #[test]
 fn gemini_response_citations_survive() {
-    // citationMetadata → IR citation → re-emitted as citationMetadata.
     let cited = json!({
         "candidates": [{
             "content": {"role": "model", "parts": [{"text": "Paris is the capital."}]},
@@ -587,8 +516,7 @@ fn gemini_response_citations_survive() {
         .reader()
         .read_response(crate::codec::test_host::HOST, &cited)
         .expect("read");
-    // A grounded answer leads with its hosted web-search record (DF-MAP item 2); the spans
-    // ride the text block's citations.
+
     let Some(crate::codec::ir::IrBlock::Text { citations, .. }) = ir
         .content
         .iter()
@@ -608,7 +536,6 @@ fn gemini_response_citations_survive() {
         "citationMetadata must be re-emitted same-protocol: {out}"
     );
 
-    // groundingMetadata → IR citation → reaches a foreign Cohere client.
     let grounded = json!({
         "candidates": [{
             "content": {"role": "model", "parts": [{"text": "Paris is the capital."}]},
@@ -627,8 +554,7 @@ fn gemini_response_citations_survive() {
         .reader()
         .read_response(crate::codec::test_host::HOST, &grounded)
         .expect("read");
-    // A grounded answer leads with its hosted web-search record (DF-MAP item 2); the spans
-    // ride the text block's citations.
+
     let Some(crate::codec::ir::IrBlock::Text { citations, .. }) = ir
         .content
         .iter()
@@ -687,7 +613,7 @@ fn gemini_response_logprobs_result_survives() {
 }
 
 /// `usageMetadata.cachedContentTokenCount` (→ cache_read) and `usageMetadata.toolUsePromptTokenCount`
-/// (→ the tool-use prompt sub-bucket) survive read → write.
+
 #[test]
 fn gemini_response_usage_buckets_survive() {
     let body = json!({
@@ -704,16 +630,15 @@ fn gemini_response_usage_buckets_survive() {
         .reader()
         .read_response(crate::codec::test_host::HOST, &body)
         .expect("read");
-    // cachedContentTokenCount → cache_read (input normalized to uncached: 100 - 30 = 70).
+
     assert_eq!(
         ir.usage.cache_read_input_tokens,
         Some(30),
         "cachedContentTokenCount must reach the IR"
     );
-    // …plus the ADDITIVE tool-use prompt term, which `promptTokenCount` does not include:
-    // 100 - 30 cached + 12 tool-use = 82 (busbar 1.6.0 money change).
+
     assert_eq!(ir.usage.input_tokens, 82);
-    // toolUsePromptTokenCount → the tool-use prompt attribution bucket.
+
     assert_eq!(
         ir.usage.detail.tool_use_prompt_tokens,
         Some(12),
@@ -727,8 +652,7 @@ fn gemini_response_usage_buckets_survive() {
         out["usageMetadata"]["cachedContentTokenCount"], 30,
         "cachedContentTokenCount must be re-emitted: {out}"
     );
-    // The wire shape is reconstructed, not the IR one: the tool-use term goes BESIDE the prompt
-    // count, so `promptTokenCount` is the original 100 and not 82 + 30.
+
     assert_eq!(
         out["usageMetadata"]["promptTokenCount"], 100,
         "the tool-use term must not be double-counted into promptTokenCount: {out}"
@@ -740,7 +664,7 @@ fn gemini_response_usage_buckets_survive() {
 }
 
 /// `promptFeedback.blockReason` (a prompt-level content block, no candidates) reaches the IR as a
-/// safety stop reason rather than a spurious parse error.
+
 #[test]
 fn gemini_response_prompt_feedback_block_reason_survives() {
     let body = json!({
@@ -762,19 +686,8 @@ fn gemini_response_prompt_feedback_block_reason_survives() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RESPONSE — provider-specific (no cross-protocol home): documented cross-protocol DROP.
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// The provider-specific response fields have no cross-protocol home, so they are carried as a
-/// DOCUMENTED DROP: same-protocol Gemini→Gemini relay is byte-verbatim (never rebuilt from the IR,
-/// generically pinned by `gemini_sse_round_trip_byte_exact`), and CROSS-protocol the reader does not
-/// model them — so they neither corrupt the IR nor leak onto a foreign egress. This test pins that
-/// on read: a body carrying every one of them yields exactly the visible answer text (no spurious
-/// blocks synthesized from a safety rating / token count), and a foreign (OpenAI) egress carries
-/// none of the Gemini-only field names. Carries: candidates[].index, candidates[].safetyRatings,
-/// candidates[].avgLogprobs, candidates[].tokenCount, promptFeedback.safetyRatings,
-/// usageMetadata.promptTokensDetails.
+
 #[test]
 fn gemini_response_provider_specific_fields_drop_cross_proto_without_corruption() {
     let body = json!({
@@ -800,9 +713,7 @@ fn gemini_response_provider_specific_fields_drop_cross_proto_without_corruption(
         .reader()
         .read_response(crate::codec::test_host::HOST, &body)
         .expect("read");
-    // NO CORRUPTION: the only content is the visible answer — candidates[].index / safetyRatings /
-    // avgLogprobs / tokenCount / promptFeedback.safetyRatings / promptTokensDetails were each read
-    // WITHOUT being turned into a spurious IR block.
+
     assert_eq!(
         ir.content.len(),
         1,
@@ -815,9 +726,6 @@ fn gemini_response_provider_specific_fields_drop_cross_proto_without_corruption(
         ir.content[0]
     );
 
-    // DOCUMENTED CROSS-PROTOCOL DROP: a foreign (OpenAI) egress carries none of the Gemini-only
-    // field names — they are not leaked onto a backend that has no slot for them. A future edit that
-    // began modelling any of these would turn this red (allow-list discipline), never pass silently.
     let openai = Protocol::openai()
         .writer()
         .write_response(crate::codec::test_host::HOST, &ir)
@@ -836,14 +744,8 @@ fn gemini_response_provider_specific_fields_drop_cross_proto_without_corruption(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RESPONSE — the three Vertex-only fields carried in the IR
-// rather than declares as gaps:
-// `usageMetadata.trafficType`, top-level `createTime`, `groundingChunks[].web.domain`.
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// `usageMetadata.trafficType` (ON_DEMAND vs PROVISIONED) reaches the IR's usage-detail attribution
-/// bucket and is re-emitted on write. INFORMATIONAL only — it must never move a billed total.
+
 #[test]
 fn gemini_vertex_traffic_type_survives() {
     let body = json!({
@@ -867,7 +769,7 @@ fn gemini_vertex_traffic_type_survives() {
         Some("ON_DEMAND"),
         "usageMetadata.trafficType must reach the IR usage-detail carrier"
     );
-    // INFORMATIONAL, not a count: billable_tokens must not move because of it.
+
     assert_eq!(
         ir.usage.input_tokens, 18,
         "trafficType must not perturb the billed input total"
@@ -887,8 +789,7 @@ fn gemini_vertex_traffic_type_survives() {
 }
 
 /// The top-level `createTime` (RFC3339) reaches the IR's usage-detail carrier (see
-/// `IrUsageDetail::create_time`'s doc comment for why it rides there rather than `IrResponse`) and
-/// is re-emitted verbatim — not folded into `created` (Unix epoch), which has no Gemini analogue.
+
 #[test]
 fn gemini_vertex_create_time_survives() {
     let body = json!({
@@ -920,9 +821,7 @@ fn gemini_vertex_create_time_survives() {
 }
 
 /// `groundingMetadata.groundingChunks[].web.domain` reaches the IR (stashed in `IrCitation::raw` —
-/// there is no dedicated typed field; see `read_gemini_grounding_citations`'s `chunk_source` doc
-/// comment for why) and survives a write back out — a plain `citationSources[]` entry (no grounding
-/// origin) carries no `domain` at all, so an ordinary citation stays untouched.
+
 #[test]
 fn gemini_vertex_grounding_chunk_domain_survives() {
     let body = json!({
@@ -945,8 +844,7 @@ fn gemini_vertex_grounding_chunk_domain_survives() {
         .reader()
         .read_response(crate::codec::test_host::HOST, &body)
         .expect("read");
-    // A grounded answer leads with its hosted web-search record (DF-MAP item 2); the spans
-    // ride the text block's citations.
+
     let Some(crate::codec::ir::IrBlock::Text { citations, .. }) = ir
         .content
         .iter()
@@ -980,7 +878,6 @@ fn gemini_vertex_grounding_chunk_domain_survives() {
         "domain must survive the write: {out}"
     );
 
-    // An ordinary (non-grounding) citationSources entry carries no domain — must stay untouched.
     let cited = json!({
         "candidates": [{
             "content": {"role": "model", "parts": [{"text": "Paris is the capital."}]},

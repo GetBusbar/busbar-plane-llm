@@ -2,11 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! LLM-owned preparation and writer capabilities. These values never cross the memory ABI.
-//! The exchange resolves a registered static ingress name and lends this context synchronously
-//! to its own request handle. The borrowed `Any` context is only valid within one compatible
-//! Rust build: the caller and handle must use this exact concrete type, including its crate
-//! identity. Linked and dropped planes each perform this operation inside their own implementation;
-//! this Rust helper alone proves neither cross-library type identity nor ABI conformance.
 
 /// Plane-local resolved values for request preparation, never a core lane/config handle.
 pub struct EgressPrep {
@@ -15,35 +10,16 @@ pub struct EgressPrep {
     pub lane_default_max_tokens: Option<u32>,
     pub global_default_max_tokens: u32,
     /// The per-lane reasoning capability gate: the effective `reasoning` flag for THIS attempt's
-    /// lane (pool-member override wins over the model-level flag). When false and the request
-    /// carries a reasoning ask, the ask is CLEARED here with a warn — the one place the gate
-    /// lives, so no writer can ever send a thinking param to a lane that did not claim it.
     pub reasoning_allowed: bool,
     /// The resolved effort-word → budget table (limits.reasoning_effort_budgets), stamped onto the
-    /// IR for writers to project words ↔ numbers with the operator's numbers.
     pub reasoning_budgets: [u32; 4],
     /// The prompt-cache gate: `lane.prompt_caching || !writer.cache_markers_model_gated()`,
-    /// resolved by the caller. When false and the request carries `cache_control` breakpoints,
-    /// they are CLEARED here with a warn — the one place the gate lives, so no writer can emit a
-    /// model-gated cache marker to a lane that did not claim it.
     pub prompt_caching_allowed: bool,
     /// The egress writer's `max_cache_control_breakpoints()` (`Some(n)` for a dialect that publishes
-    /// a cap, `None` elsewhere — see that method's doc). A capped dialect refuses a request
-    /// past this count; the IR carries breakpoints unbounded, so a cross-protocol request can
-    /// exceed it. `None` means "no cap to enforce here" — the cap walk below is a no-op.
     pub cache_control_cap: Option<usize>,
     /// True only for an egress lane whose dialect documents a thought-signature sentinel AND whose
-    /// host is confirmed to honor it. When true, every tool-use block with no thought signature gets
-    /// the dialect's documented sentinel injected, so a cross-protocol tool call (whose history never
-    /// had a real signature to echo) is not refused by the backend. A host of the same dialect that
-    /// is NOT confirmed to honor the sentinel (a `path_base`-overridden, URL-model lane) is excluded:
-    /// a safety requirement, not a nicety. The caller resolves this from lane config before
-    /// constructing `EgressPrep`, matching how `reasoning_allowed`/`prompt_caching_allowed` are resolved.
     pub thought_signature_fill: bool,
     /// The egress LANE's declared request-shape capabilities (see [`LaneCaps`]), resolved by the
-    /// caller from the lane's provider entry and model patterns exactly as `reasoning_allowed` /
-    /// `prompt_caching_allowed` are. The request handle keeps them for the egress write, whose
-    /// dialect writer is the only party that knows what each one changes.
     pub lane_caps: LaneCaps,
 }
 
@@ -87,7 +63,7 @@ pub struct LaneCaps {
 
 impl LaneCaps {
     /// The capabilities of a lane that declares none — every pre-capability form. The same value as
-    /// `LaneCaps::default()`, usable in a `const` (a static upstream table).
+
     pub const NONE: LaneCaps = LaneCaps {
         max_output_key: MaxOutputKey::MaxTokens,
         anthropic_adaptive_thinking: false,

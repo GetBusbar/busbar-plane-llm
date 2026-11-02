@@ -2,16 +2,10 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The (op, protocol) READ dispatch, test-only. Symmetric to the write dispatchers in
-//! `leaf_codec`.
+
 #![allow(dead_code)]
 
 use super::*;
-
-// Symmetric to the write dispatchers above. Production reads flow through the dialect vtable and the
-// `Box<dyn IrHandle>` seam; these expose the SAME concrete parse the trait `read_*` delegates to
-// (each dialect's `read_<op>_<dir>` free fn, as its `LeafCodecs` row declares it), so a leaf-op
-// fidelity TEST can recover the concrete IR keyed by `(op, protocol)` without a downcast (the handle
-// stays sealed). Not compiled in production.
 
 /// The request read for `(op, proto)`; a protocol with no reader for the op is a `BadRequest`.
 fn read_request<Q, A>(

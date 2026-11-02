@@ -2,9 +2,9 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! WHAT THE ROOT'S RIG SPEAKS TO THIS PLANE: the settings a case's pools become (one far end per
-//! dialect, every member a model), each far end's answer, and the one plain request the rig's `fire`
-//! posts (an Anthropic Messages request). The rig itself names no plane and no dialect; these are
-//! this plane's words, so they live here.
+
+
+
 
 use serde_json::{json, Value};
 

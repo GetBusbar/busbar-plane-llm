@@ -1,5 +1,5 @@
 //! DF-MAP audit (and the served tier, a real miss with
-//! an existing IR home): what the Gemini reader and writer now map.
+
 use super::super::proto_codec::protocol_for;
 use crate::codec::ir::IrBlock;
 use serde_json::json;

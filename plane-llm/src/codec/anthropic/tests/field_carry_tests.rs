@@ -1,26 +1,10 @@
 //! FIELD-COVERAGE CARRY tests for the anthropic dialect (`dialects/anthropic.toml`).
-//!
-//! Each `#[test]` here is the named INSTRUMENT for one or more `anthropic/*` field ids: it drives the
-//! real reader→IR→writer path (or the same-protocol byte short-circuit, for a keepalive) and asserts,
-//! per field, that the field SURVIVES. A mutation that stops carrying a field breaks the matching
-//! assertion — which is the whole contract of these tests. Provider-specific fields with
-//! no cross-protocol slot are carried 100% lossless SAME-protocol (read→write) and, where they are
-//! dropped on a foreign egress, that drop is asserted too.
+
 use super::super::proto_codec::{ProtocolReader, ProtocolWriter};
 use super::{anthropic_writer, AnthropicReader, AnthropicWriter};
 
-// ---------------------------------------------------------------------------------------------
-// Request-level provider-specific fields — carried verbatim through `extra` (same-protocol lossless).
-// ---------------------------------------------------------------------------------------------
-
 /// `metadata`, `service_tier`, `container`, `betas`: Anthropic-specific request knobs with no
-/// cross-protocol analog. They ride `extra` and must re-emit byte-exact on a same-protocol
-/// (Anthropic→Anthropic) hop. Each has its OWN assertion so dropping any one fails this test.
-///
-/// THE GENERAL RULE (DIALECT-FIDELITY F4): a top-level request member busbar has NEVER heard of
-/// survives the same-dialect hop byte-identical. Same-dialect relay carries every path by
-/// construction, with no list of carried fields, so the proof uses a member no table, row or reader
-/// names: [`UNKNOWN_MEMBER`], holding a nested object.
+
 #[test]
 fn anthropic_request_provider_specific_fields_carry() {
     let body = serde_json::json!({
@@ -36,8 +20,6 @@ fn anthropic_request_provider_specific_fields_carry() {
     let ir = AnthropicReader.read_request(&body).expect("parses");
     let out = anthropic_writer().write_request(crate::codec::test_host::HOST, &ir);
 
-    // metadata: the WHOLE object survives (user_id is also promoted to `user`, but the verbatim
-    // extra overlay wins so custom keys are not lost).
     assert_eq!(out["metadata"], body["metadata"], "metadata must survive");
     assert_eq!(out["metadata"]["custom"], "keep-me");
     assert_eq!(out["service_tier"], "priority", "service_tier must survive");
@@ -47,11 +29,11 @@ fn anthropic_request_provider_specific_fields_carry() {
 }
 
 /// A top-level request member no dialect table, row or reader names (DIALECT-FIDELITY F4's synthetic
-/// key). If it survives, every member busbar has never heard of does.
+
 const UNKNOWN_MEMBER: &str = "x_busbar_unknown_member";
 
 /// The unknown member's value: nested, mixed-type, and key-ordered unusually, so a writer that
-/// reserializes, sorts, coerces or flattens it is caught, not only one that drops it.
+
 fn unknown_member_value() -> serde_json::Value {
     serde_json::json!({"z": [1, {"y": null, "a": "keep"}], "b": 2.5, "a": {"nested": true}})
 }
@@ -80,7 +62,7 @@ fn the_unknown_member_check_fails_on_a_drop() {
 }
 
 /// RED arm of the F4 assertion: a writer that REBUILDS the member (here, one nested value coerced)
-/// fails it, even though the key is still present.
+
 #[test]
 #[should_panic(expected = "must survive the same-dialect hop byte-identical")]
 fn the_unknown_member_check_fails_on_a_reserialize() {
@@ -154,7 +136,7 @@ fn anthropic_request_tool_choice_carry() {
 }
 
 /// `thinking` (the request ASK): `{type:"enabled",budget_tokens}` promotes to the IR reasoning ask
-/// and re-emits as Anthropic's `thinking` param.
+
 #[test]
 fn anthropic_request_thinking_carry() {
     let body = serde_json::json!({
@@ -179,13 +161,8 @@ fn anthropic_request_thinking_carry() {
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// Content-block sub-fields — read→write same-protocol.
-// ---------------------------------------------------------------------------------------------
-
 /// text.cache_control / text.citations / image.source.url / image.cache_control /
-/// tool_use.cache_control / tool_result.is_error / tool_result.cache_control — each with its OWN
-/// assertion so a mutation dropping any single one fails.
+
 #[test]
 fn anthropic_content_block_field_carry() {
     let body = serde_json::json!({
@@ -256,7 +233,7 @@ fn anthropic_content_block_field_carry() {
 }
 
 /// thinking.thinking / thinking.signature — an assistant `thinking` block (with the mandatory
-/// signature so the request writer does not drop it) round-trips both fields.
+
 #[test]
 fn anthropic_thinking_content_block_carry() {
     let body = serde_json::json!({
@@ -277,10 +254,7 @@ fn anthropic_thinking_content_block_carry() {
 }
 
 /// document.source.url / document.context / document.citations / document.cache_control.
-///
-/// SAME-protocol: a document carrying `context`/`citations` is spliced back byte-exact (all four
-/// survive). CROSS-protocol (extra cleared at the seam): the `IrBlock::Media` projection keeps
-/// source.url, cache_control, context and citations in the neutral Media slots.
+
 #[test]
 fn anthropic_document_block_carry() {
     let body = serde_json::json!({
@@ -296,7 +270,6 @@ fn anthropic_document_block_carry() {
     });
     let ir = AnthropicReader.read_request(&body).expect("parses");
 
-    // SAME-protocol: everything survives verbatim.
     let out = anthropic_writer().write_request(crate::codec::test_host::HOST, &ir);
     let doc = &out["messages"][0]["content"][0];
     assert_eq!(doc["type"], "document");
@@ -318,8 +291,6 @@ fn anthropic_document_block_carry() {
         "document.cache_control survives same-protocol"
     );
 
-    // CROSS-protocol seam clears extra → Media projection; url + cache_control survive, and so do
-    // context and citations, which ride the IR-12 Media slots.
     let mut crossed = ir.clone();
     crossed.extra.clear();
     let cout = anthropic_writer().write_request(crate::codec::test_host::HOST, &crossed);
@@ -342,7 +313,7 @@ fn anthropic_document_block_carry() {
 }
 
 /// search_result.source / search_result.title / search_result.content — a `search_result` block is
-/// stashed and spliced back byte-exact on the same-protocol hop, so all three survive.
+
 #[test]
 fn anthropic_search_result_block_carry() {
     let body = serde_json::json!({
@@ -371,12 +342,8 @@ fn anthropic_search_result_block_carry() {
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// Response usage attribution — read_response → write_response.
-// ---------------------------------------------------------------------------------------------
-
 /// usage.server_tool_use.web_search_requests / usage.service_tier — Anthropic usage attribution now
-/// modelled on `IrUsageDetail`, so both survive a buffered response round-trip.
+
 #[test]
 fn anthropic_response_usage_extras_carry() {
     let body = serde_json::json!({
@@ -413,17 +380,10 @@ fn anthropic_response_usage_extras_carry() {
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// Streaming events — read_response_event → write_response_event.
-// ---------------------------------------------------------------------------------------------
-
 /// stream:message_start / content_block_start / content_block_stop / message_delta / message_stop —
-/// each event type read into an `IrStreamEvent` and re-emitted, with a per-event assertion.
+
 #[test]
 fn anthropic_stream_event_roundtrip_carry() {
-    // ONE writer across the whole sequence: it tracks which block indices it opened so a
-    // `content_block_stop` closes only a block whose start it projected, and a per-call
-    // `AnthropicWriter` (the const inlines an independent empty set at every use) would lose that.
     let writer = AnthropicWriter;
     let rw = |et: &str, data: serde_json::Value| -> (String, serde_json::Value) {
         let ev = AnthropicReader
@@ -434,7 +394,6 @@ fn anthropic_stream_event_roundtrip_carry() {
             .unwrap_or_else(|| panic!("write event {et}"))
     };
 
-    // message_start
     let (et, out) = rw(
         "message_start",
         serde_json::json!({
@@ -449,7 +408,6 @@ fn anthropic_stream_event_roundtrip_carry() {
     assert_eq!(out["message"]["model"], "claude-x");
     assert_eq!(out["message"]["usage"]["input_tokens"], 11);
 
-    // content_block_start
     let (et, out) = rw(
         "content_block_start",
         serde_json::json!({
@@ -464,7 +422,6 @@ fn anthropic_stream_event_roundtrip_carry() {
         "content_block_start block type survives"
     );
 
-    // content_block_stop
     let (et, out) = rw(
         "content_block_stop",
         serde_json::json!({"type": "content_block_stop", "index": 0}),
@@ -472,7 +429,6 @@ fn anthropic_stream_event_roundtrip_carry() {
     assert_eq!(et, "content_block_stop");
     assert_eq!(out["index"], 0, "content_block_stop index survives");
 
-    // message_delta
     let (et, out) = rw(
         "message_delta",
         serde_json::json!({
@@ -491,14 +447,13 @@ fn anthropic_stream_event_roundtrip_carry() {
         "message_delta usage survives"
     );
 
-    // message_stop
     let (et, out) = rw("message_stop", serde_json::json!({"type": "message_stop"}));
     assert_eq!(et, "message_stop", "message_stop survives");
     assert_eq!(out["type"], "message_stop");
 }
 
 /// stream:content_block_delta.{text_delta,input_json_delta,thinking_delta,signature_delta,
-/// citations_delta} — each delta kind read and re-emitted, with a per-kind assertion.
+
 #[test]
 fn anthropic_stream_delta_roundtrip_carry() {
     let rw = |delta: serde_json::Value| -> serde_json::Value {
@@ -571,7 +526,7 @@ fn anthropic_stream_ping_same_proto_carry() {
             .is_none(),
         "a ping keepalive must produce no cross-protocol event (no payload to reconstruct)"
     );
-    // A ping must not leak into the multi-event reader path either (no spurious BlockStart/Delta).
+
     let mut state = crate::codec::ir::StreamDecodeState::default();
     let events = AnthropicReader.read_response_events(
         crate::codec::test_host::HOST,
@@ -585,9 +540,6 @@ fn anthropic_stream_ping_same_proto_carry() {
     );
 }
 
-// Chat#4: Anthropic's Messages API models none of `frequency_penalty`/`presence_penalty`/`seed`/`n`.
-// A cross-protocol source carrying them must have each dropped OBSERVABLY — a per-control `warn!` and
-// a `dropped_egress_controls` entry — not silently as before (the writer never referenced them).
 #[test]
 fn anthropic_drops_penalties_seed_n_observably() {
     use busbar_test_kit::warn_capture::WarnCapture;
@@ -606,7 +558,6 @@ fn anthropic_drops_penalties_seed_n_observably() {
         anthropic_writer().write_request(crate::codec::test_host::HOST, &ir)
     });
 
-    // None of the four leaks onto the Anthropic wire.
     for field in ["frequency_penalty", "presence_penalty", "seed", "n"] {
         assert!(
             out.get(field).is_none(),
@@ -620,7 +571,7 @@ fn anthropic_drops_penalties_seed_n_observably() {
             cap.messages()
         );
     }
-    // …and each is reported to the cross-protocol seam for audit.
+
     let dropped = anthropic_writer().dropped_egress_controls(&ir);
     for field in ["frequency_penalty", "presence_penalty", "seed", "n"] {
         assert!(
@@ -630,18 +581,10 @@ fn anthropic_drops_penalties_seed_n_observably() {
     }
 }
 
-// Chat#5: a streamed REDACTED (encrypted) reasoning block must be PRESERVED on Anthropic egress, not
-// dropped. The IR carries `BlockStart{RedactedThinking}` + `RedactedReasoningDelta(bytes)` + BlockStop;
-// the writer re-emits the native redacted shape — a `redacted_thinking` content_block_start carrying
-// the opaque `data` INLINE (native Anthropic streams redacted bytes on the start, not a delta), with
-// NO plaintext `thinking` seed, closed by content_block_stop. This is the encrypted reasoning-reuse
-// blob a later turn must replay for extended-thinking continuity.
 #[test]
 fn streamed_redacted_reasoning_preserves_bytes_on_anthropic_egress() {
     let w = AnthropicWriter;
 
-    // 1. The redacted BlockStart emits NO wire event (the plaintext thinking seed is suppressed; the
-    //    native start is emitted from the delta below).
     let start = w.write_response_event(
         crate::codec::test_host::HOST,
         &crate::codec::ir::IrStreamEvent::BlockStart {
@@ -655,7 +598,6 @@ fn streamed_redacted_reasoning_preserves_bytes_on_anthropic_egress() {
         "a RedactedThinking BlockStart must emit no plaintext thinking seed: {start:?}"
     );
 
-    // 2. The delta emits the native redacted_thinking content_block_start carrying the opaque bytes.
     let (evt, body) = w
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -681,13 +623,12 @@ fn streamed_redacted_reasoning_preserves_bytes_on_anthropic_egress() {
         Some("ENCRYPTED_BLOB"),
         "the opaque encrypted bytes must ride under `data` intact: {body}"
     );
-    // The bytes must NOT leak as visible plaintext thinking anywhere in the frame.
+
     assert!(
         !body.to_string().contains("\"thinking\""),
         "a redacted block must never emit a plaintext `thinking` field: {body}"
     );
 
-    // 3. The BlockStop closes the block with content_block_stop.
     let (stop_evt, _) = w
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -697,16 +638,8 @@ fn streamed_redacted_reasoning_preserves_bytes_on_anthropic_egress() {
     assert_eq!(stop_evt, "content_block_stop");
 }
 
-// ---------------------------------------------------------------------------------------------
-// Spec-required response members — every member Anthropic's published Messages OpenAPI document
-// marks REQUIRED is present on the wire, in the spec's nullable/default shape when busbar has no
-// value and unchanged when the source reported one.
-// ---------------------------------------------------------------------------------------------
-
 /// Buffered `Message`: `stop_details`, `container` (null), `content[].citations` (null on a text
-/// block with none), `content[].caller` on tool_use, and the full `usage` object with every
-/// required member (`cache_creation` zero tiers, zero cache counters, `inference_geo` null,
-/// `output_tokens_details` null, `server_tool_use` null, `service_tier: "standard"`).
+
 #[test]
 fn anthropic_response_carries_every_spec_required_member_with_default_shapes() {
     let resp = crate::codec::ir::IrResponse {
@@ -779,9 +712,7 @@ fn anthropic_response_carries_every_spec_required_member_with_default_shapes() {
 }
 
 /// The same members, where the source DID report values, pass through unchanged: reported tiers,
-/// counters, `service_tier`, `server_tool_use` (with the spec-required `web_fetch_requests`
-/// sibling) and `output_tokens_details.thinking_tokens`; a citation-bearing text block keeps its
-/// citations rather than being nulled.
+
 #[test]
 fn anthropic_response_spec_required_members_pass_reported_values_through() {
     let body = serde_json::json!({
@@ -827,8 +758,7 @@ fn anthropic_response_spec_required_members_pass_reported_values_through() {
 }
 
 /// A cache write whose tier split is unknown (a foreign backend that reports only the total) must
-/// not be given an invented split that does not sum to the total: `cache_creation` is the spec's
-/// nullable form in that one case.
+
 #[test]
 fn anthropic_response_cache_creation_is_null_when_total_known_but_tiers_are_not() {
     let resp = crate::codec::ir::IrResponse {
@@ -859,9 +789,7 @@ fn anthropic_response_cache_creation_is_null_when_total_known_but_tiers_are_not(
 }
 
 /// Streaming: `message_start.message` is the same full `Message` shape (`stop_details`,
-/// `container`, full `usage`); `content_block_start` seeds carry `citations: null` (text) and
-/// `caller` (tool_use); `message_delta.delta` carries `container`/`stop_details` and its `usage`
-/// every `MessageDeltaUsage` member.
+
 #[test]
 fn anthropic_stream_events_carry_every_spec_required_member() {
     use crate::codec::ir::{IrBlockMeta, IrStreamEvent};

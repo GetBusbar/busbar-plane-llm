@@ -2,10 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR MAPPING tests for the OpenAI Chat Completions dialect (a field the source
-//! dialect carries that the IR and the target can carry must map). One test (or group) per defect id
-//! of the 1.6.0 IR mapping audit, `OAI-xx`. Each drives the PRODUCTION step list on a real body:
-//! reader → `chat_prepare_for_egress` / `chat_prepare_for_ingress` → writer, and streams through
-//! `StreamTranslate` — the same seam a cross-protocol request takes.
 
 use serde_json::{json, Value};
 
@@ -98,12 +94,8 @@ fn anthropic_req(extra: Value) -> Value {
     body
 }
 
-// ── OAI-01: the output cap crossing into an OpenAI lane ─────────────────────────────────────────
-
 /// OAI-01. The codec writer does NOT pick the spelling blind: a
-/// cross-protocol cap is written as `max_tokens` (the key every OpenAI-compatible host accepts), and
-/// the lane's provider entry decides at the egress seam whether it becomes `max_completion_tokens`.
-/// An OpenAI-origin IR keeps the caller's own spelling, and the sentinel never leaks.
+
 #[test]
 fn oai01_codec_writes_source_spelling_or_max_tokens() {
     use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
@@ -132,10 +124,8 @@ fn oai01_codec_writes_source_spelling_or_max_tokens() {
     }
 }
 
-// ── OAI-04: a structured-json tool result reaches the OpenAI tool message ───────────────────────
-
 /// OAI-04. A Bedrock `toolResult` whose content is `{"json":…}` is written as the serialized JSON
-/// string in the OpenAI `tool` message, after any text in the same result.
+
 #[test]
 fn oai04_json_tool_result_is_serialized_into_tool_content() {
     let bedrock = json!({
@@ -156,10 +146,8 @@ fn oai04_json_tool_result_is_serialized_into_tool_content() {
     assert_eq!(tool["content"], json!("bad:{\"x\":1}"), "{out}");
 }
 
-// ── OAI-10: `reasoning_effort: "xhigh"` ─────────────────────────────────────────────────────────
-
 /// OAI-10. `xhigh` reaches the IR as the highest effort the IR has (`High`) instead of no ask, and
-/// an OpenAI-origin re-serialize still writes `xhigh` verbatim.
+
 #[test]
 fn oai10_xhigh_effort_maps_to_high() {
     use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
@@ -169,7 +157,7 @@ fn oai10_xhigh_effort_maps_to_high() {
         "reasoning_effort": "xhigh"
     });
     let ir = super::OpenAiReader.read_request(&body).expect("reads");
-    // IR-09 landed: `xhigh` is the IR's own word now (its budget projection is still High's).
+
     assert_eq!(
         ir.reasoning,
         Some(crate::codec::ir::IrReasoningAsk::Effort(
@@ -179,7 +167,6 @@ fn oai10_xhigh_effort_maps_to_high() {
     let same = super::openai_writer().write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(same["reasoning_effort"], json!("xhigh"), "{same}");
 
-    // Cross-protocol: the ask reaches a Gemini lane as a thinking budget (the High table entry).
     let out = xreq("openai", "gemini", &body);
     assert_eq!(
         out.pointer("/generationConfig/thinkingConfig/thinkingBudget"),
@@ -188,10 +175,8 @@ fn oai10_xhigh_effort_maps_to_high() {
     );
 }
 
-// ── OAI-11: an assistant turn with no Chat-expressible content ──────────────────────────────────
-
 /// OAI-11. An Anthropic assistant turn carrying only `thinking` is written with `content: ""`,
-/// never `content: null` without `tool_calls` (an OpenAI 400).
+
 #[test]
 fn oai11_thinking_only_assistant_turn_is_not_null_content() {
     let body = anthropic_req(json!({
@@ -217,10 +202,8 @@ fn oai11_thinking_only_assistant_turn_is_not_null_content() {
     assert_eq!(asst["content"], json!(""), "{out}");
 }
 
-// ── stream helpers ───────────────────────────────────────────────────────────────────────────────
-
 /// Assert the IR stream is strictly balanced: every index opens at most once, every delta lands on
-/// an OPEN index, every open index closes exactly once.
+
 fn assert_balanced(events: &[crate::codec::ir::IrStreamEvent]) {
     use crate::codec::ir::IrStreamEvent as E;
     let mut opened = std::collections::BTreeSet::new();
@@ -278,10 +261,8 @@ fn thinking_deltas(events: &[crate::codec::ir::IrStreamEvent]) -> String {
         .collect()
 }
 
-// ── OAI-02: streamed `delta.annotations` ─────────────────────────────────────────────────────────
-
 /// OAI-02. A streamed `delta.annotations` url_citation reaches the IR as a CitationsDelta on the
-/// text block and a foreign client with a URL-only carrier (Responses) receives it.
+
 #[test]
 fn oai02_stream_annotations_become_citations() {
     let chunks = [
@@ -339,10 +320,8 @@ fn a_chat_url_without_an_anthropic_opaque_index_is_an_audited_loss() {
     assert_eq!((usage.input_tokens, usage.output_tokens), (7, 3));
 }
 
-// ── OAI-14: interleaved reasoning / text after tool calls ────────────────────────────────────────
-
 /// OAI-14 (text). Preamble text → tool call → MORE text: the resumed text is carried in a NEW text
-/// block at a fresh index (not dropped, not reopened at the closed index).
+
 #[test]
 fn oai14_text_after_tool_calls_is_carried() {
     let chunks = [
@@ -362,7 +341,7 @@ fn oai14_text_after_tool_calls_is_carried() {
 }
 
 /// OAI-14 (reasoning). Text → reasoning → text: the late reasoning is carried as a Thinking block at
-/// a fresh index, and no already-opened index shifts.
+
 #[test]
 fn oai14_reasoning_after_text_is_carried() {
     let chunks = [
@@ -379,7 +358,7 @@ fn oai14_reasoning_after_text_is_carried() {
     assert_balanced(&events);
     assert_eq!(text_deltas(&events), "ab", "{events:?}");
     assert_eq!(thinking_deltas(&events), "thinkmore", "{events:?}");
-    // The first text block keeps index 0.
+
     assert!(matches!(
         events
             .iter()
@@ -391,8 +370,6 @@ fn oai14_reasoning_after_text_is_carried() {
         })
     ));
 }
-
-// ── OAI-03: service_tier ─────────────────────────────────────────────────────────────────────────
 
 fn oai_resp(extra: Value) -> Value {
     let mut body = json!({
@@ -409,10 +386,9 @@ fn oai_resp(extra: Value) -> Value {
 }
 
 /// OAI-03. OpenAI `service_tier` is read into the IR tier (`default` ↔ `standard`, `priority` ↔
-/// `priority`) and written back as OpenAI's top-level member, buffered and streamed.
+
 #[test]
 fn oai03_service_tier_maps_both_ways() {
-    // OpenAI backend → Anthropic client.
     let out = xresp(
         "openai",
         "anthropic",
@@ -424,7 +400,6 @@ fn oai03_service_tier_maps_both_ways() {
         "{out}"
     );
 
-    // Anthropic backend → OpenAI client.
     let anthropic = json!({
         "id": "msg_1", "type": "message", "role": "assistant", "model": "claude-x",
         "content": [{"type": "text", "text": "hi"}],
@@ -434,7 +409,6 @@ fn oai03_service_tier_maps_both_ways() {
     let out = xresp("anthropic", "openai", &anthropic);
     assert_eq!(out["service_tier"], json!("default"), "{out}");
 
-    // Stream: the tier on the finish / usage chunk reaches the IR usage detail.
     let events = oai_stream_events(&[
         json!({"id": "c", "created": 1, "model": "m", "service_tier": "priority",
                "choices": [{"index": 0, "delta": {"role": "assistant", "content": "hi"}, "finish_reason": null}]}),
@@ -449,7 +423,6 @@ fn oai03_service_tier_maps_both_ways() {
     });
     assert_eq!(tier.as_deref(), Some("priority"), "{events:?}");
 
-    // …and the OpenAI stream writer puts it on the terminal chunk.
     use crate::codec::proto_codec::ProtocolWriter;
     let w = super::openai_writer();
     let (_, chunk) = w
@@ -475,11 +448,8 @@ fn oai03_service_tier_maps_both_ways() {
     assert_eq!(chunk["service_tier"], json!("default"), "{chunk}");
 }
 
-// ── OAI-12: a refused turn in `message.refusal` ──────────────────────────────────────────────────
-
 /// OAI-12. An Anthropic `stop_reason: "refusal"` response reaches an OpenAI client as a native
-/// refusal — the text in `message.refusal`, `content: null` — and an OpenAI refusal survives the
-/// IR round trip in the same slot.
+
 #[test]
 fn oai12_refusal_text_is_written_to_message_refusal() {
     let anthropic = json!({
@@ -493,7 +463,6 @@ fn oai12_refusal_text_is_written_to_message_refusal() {
     assert_eq!(msg["refusal"], json!("I can't help with that."), "{out}");
     assert!(msg["content"].is_null(), "{out}");
 
-    // A non-refused turn keeps its text in `content`.
     let out = xresp(
         "anthropic",
         "openai",
@@ -511,7 +480,6 @@ fn oai12_refusal_text_is_written_to_message_refusal() {
     );
     assert!(out["choices"][0]["message"]["refusal"].is_null(), "{out}");
 
-    // OpenAI refusal → IR → OpenAI writer: the refusal stays a refusal.
     use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
     let body = json!({
         "id": "chatcmpl-1", "object": "chat.completion", "created": 1, "model": "gpt-4o",
@@ -531,10 +499,8 @@ fn oai12_refusal_text_is_written_to_message_refusal() {
     assert!(out["choices"][0]["message"]["content"].is_null(), "{out}");
 }
 
-// ── OAI-08: legacy `function_call` responses ─────────────────────────────────────────────────────
-
 /// OAI-08. A legacy `message.function_call` response becomes a tool call for a foreign client
-/// (buffered and streamed), not a `tool_use` stop with no block.
+
 #[test]
 fn oai08_legacy_function_call_response_is_a_tool_use() {
     let body = json!({
@@ -581,11 +547,8 @@ fn oai08_legacy_function_call_response_is_a_tool_use() {
     assert_eq!(args, "{\"city\":\"Paris\"}");
 }
 
-// ── OAI-09: `tools[type:"custom"]` ───────────────────────────────────────────────────────────────
-
 /// OAI-09. A Chat `custom` tool is not turned into an empty-name function tool: cross-protocol it is
-/// dropped (no foreign dialect has a free-text tool), the function tools beside it survive, and an
-/// OpenAI-origin IR re-emits it verbatim.
+
 #[test]
 fn oai09_custom_tool_is_not_an_empty_name_function() {
     use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
@@ -606,18 +569,15 @@ fn oai09_custom_tool_is_not_an_empty_name_function() {
 
     let ir = super::OpenAiReader.read_request(&body).expect("reads");
     let same = super::openai_writer().write_request(crate::codec::test_host::HOST, &ir);
-    // The custom tool rides the typed hosted-tool slot and is written after
-    // the function tools (same members, same object).
+
     assert!(
         same["tools"].as_array().unwrap().contains(&custom),
         "{same}"
     );
 }
 
-// ── OAI-06: bare-base64 `file.file_data` ─────────────────────────────────────────────────────────
-
 /// OAI-06. A `file.file_data` sent as BARE base64 (no `data:` prefix) is the file's content, typed
-/// by its filename — it reaches a foreign lane as a base64 document, not as a URL every writer drops.
+
 #[test]
 fn oai06_bare_base64_file_data_is_base64() {
     let body = json!({
@@ -648,8 +608,6 @@ fn oai06_bare_base64_file_data_is_base64() {
     );
 }
 
-// ── OAI-07: legacy function-calling requests ─────────────────────────────────────────────────────
-
 fn legacy_request() -> Value {
     json!({
         "model": "gpt-3.5-turbo",
@@ -666,8 +624,7 @@ fn legacy_request() -> Value {
 }
 
 /// OAI-07. Legacy `functions` / `function_call` / `role:"function"` map onto the modern IR (tools,
-/// tool choice, a paired ToolUse / ToolResult) and reach a foreign lane; an OpenAI-origin
-/// re-serialize writes the legacy shape back unchanged.
+
 #[test]
 fn oai07_legacy_function_calling_request_maps() {
     use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
@@ -697,7 +654,6 @@ fn oai07_legacy_function_calling_request_maps() {
         "result pairs with its call: {out}"
     );
 
-    // OpenAI-origin re-serialize: the legacy shape, not a mixed legacy/modern body.
     let ir = super::OpenAiReader
         .read_request(&legacy_request())
         .expect("reads");
@@ -726,8 +682,7 @@ fn oai07_legacy_function_calling_request_maps() {
 }
 
 /// OAI-01. A lane that declares `max_output_key:
-/// max_completion_tokens` receives a cross-protocol cap — the caller's, and the one the seam injects
-/// — as `max_completion_tokens`; a lane that declares nothing receives `max_tokens`.
+
 #[test]
 fn oai01_lane_max_output_key_decides_the_cross_protocol_spelling() {
     use crate::codec::egress_prep::{LaneCaps, MaxOutputKey};
@@ -760,7 +715,6 @@ fn oai01_lane_max_output_key_decides_the_cross_protocol_spelling() {
     assert_eq!(off["max_tokens"], json!(100), "{off}");
     assert!(off.get("max_completion_tokens").is_none(), "{off}");
 
-    // A caller's own `max_completion_tokens` is never downgraded, whatever the lane declares.
     let origin = super::OpenAiReader
         .read_request(
             &json!({"model": "m", "messages": [{"role": "user", "content": "hi"}],

@@ -59,8 +59,6 @@ fn speech_carries_binary_out_and_char_or_token_billing() {
     ));
 }
 
-// ── IrFacts projection (close-non-chat-gate-blindness) ───────────────────────────────────────────
-
 use busbar_contract::ir::facts::{ContentItem, IrFacts, OPAQUE_CONTENT_MARKER};
 use busbar_contract::operation::OpVerb;
 
@@ -82,8 +80,7 @@ fn transcription_projects_prompt_as_text_and_audio_as_opaque() {
     assert_eq!(IrFacts::verb(&req), OpVerb::TRANSCRIPTION);
     assert!(IrFacts::wants_stream(&req));
     let items = req.content();
-    // The audio blob is opaque (present-but-unscreenable); the caller `prompt` is screenable text —
-    // reachable only through the byte-aware hook seam, and it must not read as empty.
+
     assert!(matches!(items[0], ContentItem::Opaque { .. }));
     assert_eq!(items[0].screenable_text(), OPAQUE_CONTENT_MARKER);
     assert!(screened(&items)
@@ -104,18 +101,16 @@ fn speech_projects_input_instructions_and_speaker_names() {
     };
     assert_eq!(IrFacts::verb(&req), OpVerb::SPEECH);
     let screened = screened(&req.content());
-    // `instructions` is caller free-text forwarded verbatim; it must be screenable.
+
     assert!(screened.iter().any(|t| t == "hello world"));
     assert!(screened.iter().any(|t| t == "speak cheerfully"));
     assert!(screened.iter().any(|t| t == "Dr. Smith"));
-    // The voice id is a provider knob, not caller free-text, and stays out of the gate view.
+
     assert!(!screened.iter().any(|t| t == "verse"));
 }
 
 #[test]
 fn speech_instructions_alone_are_screened() {
-    // Forcing-function witness for this: a request whose ONLY extra field is `instructions`
-    // surfaces it — a projection that dropped the field would fail here.
     let req = SpeechReq {
         input: "x".into(),
         instructions: Some("SECRET-INSTRUCTIONS".into()),
@@ -126,14 +121,10 @@ fn speech_instructions_alone_are_screened() {
         .any(|t| t == "SECRET-INSTRUCTIONS"));
 }
 
-// L2: TTS is metered by the size of the input, a quantity that exists ONLY on the request (the audio
-// response is opaque). `SpeechReq::billing()` resolves the exact character count at the request seam,
-// where the response-only reader's `Billing::Flat` marker never could. Fails pre-fix: there was no
-// request-seam meter — the unit was always `Flat`.
 #[test]
 fn speech_request_meters_by_character_count() {
     let req = SpeechReq {
-        input: "hello world".into(), // 11 chars
+        input: "hello world".into(),
         model: "tts-1".into(),
         timbre: "alloy".into(),
         ..Default::default()
@@ -147,9 +138,8 @@ fn speech_request_meters_by_character_count() {
 
 #[test]
 fn speech_request_character_count_is_unicode_scalar_not_bytes() {
-    // A multi-byte grapheme counts as its scalar length, not its UTF-8 byte length.
     let req = SpeechReq {
-        input: "café €".into(), // 6 scalars ('c','a','f','é',' ','€'), 9 UTF-8 bytes
+        input: "café €".into(),
         ..Default::default()
     };
     assert_eq!(

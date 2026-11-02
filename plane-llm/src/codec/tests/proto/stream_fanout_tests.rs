@@ -2,8 +2,6 @@ use super::*;
 use crate::codec::ir::{IrBlockMeta, IrDelta, IrRole, IrStreamEvent, IrUsage, StreamDecodeState};
 use serde_json::json;
 
-// OpenAI flat stream → Anthropic-shaped IR events. Exact-sequence decode asserts
-// (ungameable: the expected Vec is derived from the state-machine spec, not from output).
 #[test]
 fn test_openai_read_fanout_text() {
     let reader = OpenAiReader;
@@ -121,9 +119,7 @@ fn test_openai_read_fanout_tool_call() {
 }
 
 /// INV-C: a backend that streams `tool_calls[{index:1}]` with NO index 0 (observed from vLLM /
-/// Azure / OpenRouter re-indexing) must not let the text block, which derives its slot from
-/// `open_tools.len()`, collide with the tool's own upstream-index-derived slot. Both blocks must
-/// claim DISTINCT IR indices, each opened exactly once and closed exactly once.
+
 #[test]
 fn openai_sparse_tool_index_does_not_collide_text_onto_tool_block() {
     let reader = OpenAiReader;
@@ -157,17 +153,14 @@ fn openai_sparse_tool_index_does_not_collide_text_onto_tool_block() {
         } => Some(*index),
         _ => None,
     });
-    // Require BOTH blocks to EXIST before comparing. As two `Option`s, `assert_ne!` was satisfied by
-    // either being `None`: if the reader stopped emitting the text BlockStart (text's slot is
-    // derived from `open_tools.len()`, so this is a live regression shape), `assert_ne!(Some(0),
-    // None)` holds and the "must claim DISTINCT indices" claim is proven against a phantom.
+
     let tool_index = tool_index.expect("the tool block must open a BlockStart");
     let text_index = text_index.expect("the text block must open a BlockStart");
     assert_ne!(
         tool_index, text_index,
         "tool and text must not share an IR index: tool={tool_index:?} text={text_index:?}, events={events:?}"
     );
-    // Each opened index must have exactly one BlockStart and one matching BlockStop.
+
     let mut start_indices: Vec<usize> = events
         .iter()
         .filter_map(|e| match e {
@@ -176,8 +169,7 @@ fn openai_sparse_tool_index_does_not_collide_text_onto_tool_block() {
         })
         .collect();
     let n = start_indices.len();
-    // Both blocks opened, so the sweep must have seen at least those two starts; a dedup check over
-    // an empty (or single-element) vector is trivially satisfied.
+
     assert_eq!(
         n, 2,
         "exactly two BlockStart frames (one tool, one text) are expected; got {events:?}"
@@ -192,9 +184,7 @@ fn openai_sparse_tool_index_does_not_collide_text_onto_tool_block() {
 }
 
 /// INV-C: `tool_calls[{index:1}]`, then a text chunk, then `tool_calls[{index:0}]` (the OTHER
-/// half of the same collision — a second tool arriving with a LOWER upstream index than the first
-/// must not walk backward into an index text or the first tool already claimed). All three blocks
-/// must land on three DISTINCT, densely-packed IR indices.
+
 #[test]
 fn openai_tool_index_zero_after_text_does_not_collide() {
     let reader = OpenAiReader;
@@ -229,9 +219,7 @@ fn openai_tool_index_zero_after_text_does_not_collide() {
 }
 
 /// INV-C, the GAP case: a lone `tool_calls[{index:5}]` (no other blocks) must claim IR index 0,
-/// not the raw upstream index 5. `v1`'s fix (`tool_ir_index.values().max() + 1`) would have shipped
-/// this exact gap — index 0 never opened, breaking an Anthropic SDK accumulator that appends on
-/// `content_block_start` and indexes `snapshot.content[index]` on the following delta.
+
 #[test]
 fn openai_sparse_tool_indices_are_dense_from_zero() {
     let reader = OpenAiReader;
@@ -257,12 +245,7 @@ fn openai_sparse_tool_indices_are_dense_from_zero() {
 }
 
 /// REGRESSION PROOF. The current recomputed-base arithmetic happens to land on 2 here, a slot
-/// neither tool0 nor text ever claimed, so this passes today — but it FAILS against the withdrawn
-/// dense formula (`offset + text_index.is_some() + tool_ir_index.len()`), which computes 1 = text's own
-/// slot on this exact path, because the terminal branch's `mem::take` clears the tool maps but not
-/// `text_index`. This test exists to stop that formula from ever being reintroduced: a tool_calls
-/// chunk arriving AFTER a finish chunk must claim a FRESH index that collides with neither the
-/// pre-finish tool NOR the text block.
+
 #[test]
 fn openai_tool_after_finish_chunk_claims_a_fresh_index() {
     let reader = OpenAiReader;
@@ -272,9 +255,6 @@ fn openai_tool_after_finish_chunk_claims_a_fresh_index() {
         json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":""}}]}}]}),
         json!({"choices":[{"delta":{"content":"hi"}}]}),
         json!({"choices":[{"delta":{},"finish_reason":"tool_calls"}]}),
-        // Arrives AFTER the finish chunk — an already-degraded path at HEAD (stream.rs only drops
-        // trailing MessageDeltas post-stop, not BlockStart/Delta/Stop), but the index arithmetic
-        // must still not collide.
         json!({"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_2","type":"function","function":{"name":"get_time","arguments":""}}]}}]}),
     ] {
         events.extend(reader.read_response_events(
@@ -285,7 +265,6 @@ fn openai_tool_after_finish_chunk_claims_a_fresh_index() {
         ));
     }
 
-    // Index claimed by the pre-finish tool (tool0) and by the text block.
     let pre_finish_tool_index = events.iter().find_map(|e| match e {
         IrStreamEvent::BlockStart {
             index,
@@ -302,7 +281,7 @@ fn openai_tool_after_finish_chunk_claims_a_fresh_index() {
         } => Some(*index),
         _ => None,
     });
-    // The post-finish tool's BlockStart is the LAST BlockStart in the sequence.
+
     let post_finish_tool_index = events.iter().rev().find_map(|e| match e {
         IrStreamEvent::BlockStart {
             index,
@@ -312,9 +291,6 @@ fn openai_tool_after_finish_chunk_claims_a_fresh_index() {
         _ => None,
     });
 
-    // Require all THREE blocks to exist before comparing. As `Option`s, both `assert_ne!`s below
-    // were satisfied by the other operand being `None`: a reader that dropped the text block or the
-    // pre-finish `get_weather` BlockStart proved the "must not collide" claim against a phantom.
     let post_finish_tool_index =
         post_finish_tool_index.expect("the post-finish tool_calls chunk must still open a block");
     let text_index = text_index.expect("the text chunk must open a text block");
@@ -362,11 +338,10 @@ fn test_openai_read_fanout_cached_tokens() {
         usage.cache_creation_input_tokens, None,
         "OpenAI has no cache-creation split"
     );
-    // Normalization: input_tokens is UNCACHED (prompt_tokens 100 - cached 7 = 93).
+
     assert_eq!(usage.input_tokens, 93);
     assert_eq!(usage.output_tokens, 50);
-    // Billing is unchanged for OpenAI-family: billable = uncached(93) + cache_read(7) + out(50)
-    // = 150 = the prior prompt_total(100) + output(50). No double-count, no regression.
+
     assert_eq!(usage.billable_tokens(), 150);
 }
 
@@ -390,7 +365,7 @@ fn test_anthropic_read_events_wraps_singular() {
         "Anthropic plural wraps singular 1:1"
     );
     assert_eq!(plural.len(), 1);
-    // ping → empty
+
     assert_eq!(
         reader.read_response_events(crate::codec::test_host::HOST, "ping", &json!({}), &mut st),
         Vec::<IrStreamEvent>::new()

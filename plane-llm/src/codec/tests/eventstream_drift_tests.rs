@@ -2,12 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE EVENT-STREAM DRIFT GUARD: the plane's copy of the framing codec encodes every
-//! frame in the shared fixture `testing/plane-copies/eventstream-frames.json` byte for byte —
-//! prelude, headers, payload and both CRC-32s — and decodes the same frames back from their
-//! concatenation, including a trailing partial frame at every split and a malformed prelude. The
-//! fixture is the output of the host encoder this copy was taken from (deleted in SD-8, when no host
-//! code framed event streams any more), so the serving copy writes exactly the bytes the host did.
-//! Matching real frames also pins the plane's own CRC-32 against the host's.
 
 use super::*;
 
@@ -63,7 +57,7 @@ fn decoding_the_shared_frames_recovers_them() {
     for f in doc["frames"].as_array().expect("frames") {
         let frame = bytes(&f["frame_hex"]);
         if frame.is_empty() {
-            continue; // an event type too long for its header is dropped by the encoder
+            continue;
         }
         stream.extend_from_slice(&frame);
         expected.push((
@@ -79,7 +73,7 @@ fn decoding_the_shared_frames_recovers_them() {
     assert_eq!(consumed, whole);
     assert_eq!(sink, stream);
     assert!(buf.is_empty());
-    // A partial frame at every early split is left buffered, never decoded.
+
     for split in (0..stream.len().min(400)).step_by(7) {
         let mut part = stream[..split].to_vec();
         let (frames, status, consumed) = drain_frames_checked(&mut part, None);
@@ -87,7 +81,7 @@ fn decoding_the_shared_frames_recovers_them() {
         assert_eq!(part.len(), split - consumed, "split {split}");
         assert!(expected.starts_with(&frames), "split {split}");
     }
-    // A malformed prelude (a total length past the frame cap) abandons the stream.
+
     let mut bad = vec![0xFFu8, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3];
     let (_, status, _) = drain_frames_checked(&mut bad, None);
     assert_eq!(status, DrainStatus::MalformedPrelude);

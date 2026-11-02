@@ -2,34 +2,11 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! FIELD-COVERAGE CARRY instruments for the AWS Bedrock Converse dialect (`bedrock/` field ids).
-//!
-//! Each test here watches fields of `dialects/bedrock.toml`, and each genuinely FAILS if its field
-//! stops surviving. The tests are grouped by wire construct, but EVERY named
-//! field carries its own field-level assertion.
-//!
-//! Two carry disciplines, matching the two field classes:
-//!
-//! * CROSS-PROTOCOL-MEANINGFUL (messages, content blocks, sampling knobs, toolConfig, usage,
-//!   stopReason, stream events): the field must reach the NEUTRAL IR (the cross-protocol carrier —
-//!   `extra` is cleared at the seam, so anything left there dies on a cross-protocol hop). The tests
-//!   assert on the typed IR directly AND on the Bedrock writer's re-emission, so a regression in
-//!   either the reader (stops populating the IR) or the writer (stops emitting) is caught.
-//!
-//! * PROVIDER-SPECIFIC, no cross-protocol equivalent (`additionalModelRequestFields`,
-//!   `promptVariables`, `guardContent`, `cachePoint`, s3 sources, response `trace`/`performanceConfig`
-//!   …): lossless SAME-protocol via the reader's verbatim `extra`/positional-stash capture (asserted
-//!   as a Bedrock->Bedrock read->write survival), and — where there is genuinely no target slot — a
-//!   DOCUMENTED cross-protocol drop the test pins (never a waiver).
 
 use super::*;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// REQUEST — cross-protocol-meaningful fields (must reach the neutral IR)
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// `bedrock/request/inferenceConfig.stopSequences` — Bedrock nests stop sequences under
-/// `inferenceConfig`; they must land in the universal `IrRequest.stop` (the cross-protocol carrier)
-/// and re-emit in Bedrock's nested slot.
+
 #[test]
 fn bedrock_carry_request_stop_sequences() {
     let reader = BedrockReader;
@@ -39,7 +16,7 @@ fn bedrock_carry_request_stop_sequences() {
         "inferenceConfig": {"maxTokens": 50, "stopSequences": ["STOP", "END"]}
     });
     let ir = reader.read_request(&body).expect("read");
-    // Cross-protocol carrier: the typed IR, not `extra`.
+
     assert_eq!(
         ir.stop,
         vec!["STOP".to_string(), "END".to_string()],
@@ -54,9 +31,7 @@ fn bedrock_carry_request_stop_sequences() {
 }
 
 /// `bedrock/request/toolConfig.tools` and `bedrock/request/toolConfig.toolChoice` — the tool
-/// definitions must reach `IrRequest.tools` and the force-tool-use directive must reach
-/// `IrRequest.tool_choice` (Bedrock `{any:{}}` == the neutral `Required`), so both survive the
-/// cross-protocol seam instead of degrading to `auto`.
+
 #[test]
 fn bedrock_carry_request_tool_config() {
     let reader = BedrockReader;
@@ -74,14 +49,13 @@ fn bedrock_carry_request_tool_config() {
     });
     let ir = reader.read_request(&body).expect("read");
 
-    // toolConfig.tools
     assert_eq!(
         ir.tools.len(),
         1,
         "toolConfig.tools must reach IrRequest.tools"
     );
     assert_eq!(ir.tools[0].name, "get_weather");
-    // toolConfig.toolChoice — Bedrock `{any:{}}` is the neutral `Required`.
+
     assert_eq!(
         ir.tool_choice,
         Some(crate::codec::ir::IrToolChoice::Required),
@@ -100,8 +74,6 @@ fn bedrock_carry_request_tool_config() {
         "toolConfig.toolChoice must re-emit as {{any:{{}}}}; got {out}"
     );
 
-    // Cross-protocol proof: the force-tool-use directive projects into OpenAI's `required`, not
-    // degrading to `auto` — the exact loss `IrToolChoice` exists to prevent.
     if let Some(openai) = super::super::proto_codec::protocol_for("openai") {
         let oai = openai
             .writer()
@@ -115,7 +87,7 @@ fn bedrock_carry_request_tool_config() {
 }
 
 /// `bedrock/request/content[].toolUse.{toolUseId,name,input}` — an assistant turn's tool call must
-/// reach `IrBlock::ToolUse` field-for-field and re-emit natively.
+
 #[test]
 fn bedrock_carry_request_tool_use() {
     let reader = BedrockReader;
@@ -167,7 +139,7 @@ fn bedrock_carry_request_tool_use() {
 }
 
 /// `bedrock/request/content[].toolResult.{toolUseId,content,status}` — a tool result must reach
-/// `IrBlock::ToolResult` (id + nested content + the error status) and re-emit natively.
+
 #[test]
 fn bedrock_carry_request_tool_result() {
     let reader = BedrockReader;
@@ -226,10 +198,7 @@ fn bedrock_carry_request_tool_result() {
 }
 
 /// `bedrock/request/content[].reasoningContent.reasoningText.{text,signature}` and
-/// `bedrock/request/content[].reasoningContent.redactedContent` — an assistant turn's extended
-/// thinking (plaintext + signature) and its redacted variant must reach `IrBlock::Thinking` and
-/// re-emit. Bedrock REQUIRES the signed reasoning echoed back on a follow-up turn, so this is
-/// load-bearing, not cosmetic.
+
 #[test]
 fn bedrock_carry_request_reasoning_content() {
     let reader = BedrockReader;
@@ -295,13 +264,8 @@ fn bedrock_carry_request_reasoning_content() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// REQUEST — provider-specific fields (lossless SAME-protocol via verbatim capture)
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// `bedrock/request/additionalModelRequestFields` — the model-specific escape hatch. Captured
-/// verbatim and re-emitted on a Bedrock->Bedrock hop (the reader also overlays the typed `top_k`
-/// here, so this proves the caller's OWN keys survive alongside).
+
 #[test]
 fn bedrock_carry_request_additional_model_request_fields() {
     let reader = BedrockReader;
@@ -327,11 +291,7 @@ fn bedrock_carry_request_additional_model_request_fields() {
 }
 
 /// Bedrock-specific request members with no cross-protocol analog, each captured into `extra` and
-/// re-emitted verbatim on a Bedrock->Bedrock hop:
-/// - `bedrock/request/additionalModelResponseFieldPaths` — the response paths the caller wants echoed.
-/// - `bedrock/request/promptVariables` — prompt-management template variables.
-/// - `bedrock/request/requestMetadata` — the caller's key/value request tags.
-/// - `bedrock/request/performanceConfig` — the latency/cost optimization selector.
+
 #[test]
 fn bedrock_carry_request_verbatim_extras() {
     let reader = BedrockReader;
@@ -369,8 +329,7 @@ fn bedrock_carry_request_verbatim_extras() {
 }
 
 /// `bedrock/request/content[].image.source.s3Location` — an S3-referenced image (no inline bytes).
-/// Carried on the typed `IrImageSource::Vendor` escape so `source.s3Location` (uri + bucketOwner)
-/// re-emits on a same-protocol hop rather than being dropped as `data = ""`.
+
 #[test]
 fn bedrock_carry_request_image_s3_location() {
     let reader = BedrockReader;
@@ -397,9 +356,7 @@ fn bedrock_carry_request_image_s3_location() {
 }
 
 /// `bedrock/request/content[].document.source.s3Location`, `.document.citations`, `.document.context`
-/// — a Converse `document` block carries an S3 source plus citation-enable and context members that
-/// have no neutral-IR home. They ride the positional verbatim stash so a same-protocol hop re-emits
-/// the whole block intact (the modelled `Media` block is suppressed to avoid a double emit).
+
 #[test]
 fn bedrock_carry_request_document_provider_fields() {
     let reader = BedrockReader;
@@ -437,7 +394,7 @@ fn bedrock_carry_request_document_provider_fields() {
         Some("a quarterly memo"),
         "document.context must round-trip; got {out}"
     );
-    // The block must be emitted EXACTLY once (verbatim stash XOR modelled projection).
+
     let docs = out
         .pointer("/messages/0/content")
         .and_then(|c| c.as_array())
@@ -450,7 +407,7 @@ fn bedrock_carry_request_document_provider_fields() {
 }
 
 /// `bedrock/request/content[].video.source.s3Location` — a Converse `video` block with an S3 source.
-/// Rides the same positional verbatim stash as `document`, re-emitting `source.s3Location` intact.
+
 #[test]
 fn bedrock_carry_request_video_s3_location() {
     let reader = BedrockReader;
@@ -472,8 +429,7 @@ fn bedrock_carry_request_video_s3_location() {
 }
 
 /// `bedrock/request/content[].cachePoint.type` — an inline prompt-cache breakpoint. The native
-/// marker (with its `type`) is captured at its original array position and re-spliced on a
-/// same-protocol hop.
+
 #[test]
 fn bedrock_carry_request_cache_point() {
     let reader = BedrockReader;
@@ -501,8 +457,7 @@ fn bedrock_carry_request_cache_point() {
 }
 
 /// `bedrock/request/content[].guardContent` — an inline Guardrails span. Bedrock-specific; captured
-/// at its original array position and re-spliced on a same-protocol hop (disabling it silently would
-/// turn a customer's guardrail off while the request still looked accepted).
+
 #[test]
 fn bedrock_carry_request_guard_content() {
     let reader = BedrockReader;
@@ -530,13 +485,8 @@ fn bedrock_carry_request_guard_content() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RESPONSE — cross-protocol-meaningful fields
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// `bedrock/response/output.message.role`, `bedrock/response/output.message.content` and
-/// `bedrock/response/stopReason` — the response envelope must reach the neutral `IrResponse` (role,
-/// content blocks, typed stop reason) and re-emit natively (`tool_use` reverses byte-exact).
+
 #[test]
 fn bedrock_carry_response_output_and_stop_reason() {
     let reader = BedrockReader;
@@ -552,13 +502,13 @@ fn bedrock_carry_response_output_and_stop_reason() {
     let resp = reader
         .read_response(crate::codec::test_host::HOST, &body)
         .expect("read");
-    // output.message.role
+
     assert_eq!(
         resp.role,
         crate::codec::ir::IrRole::Assistant,
         "output.message.role must reach IrResponse.role"
     );
-    // output.message.content
+
     assert_eq!(
         resp.content.len(),
         2,
@@ -568,7 +518,7 @@ fn bedrock_carry_response_output_and_stop_reason() {
         matches!(&resp.content[0], crate::codec::ir::IrBlock::Text { text, .. } if text == "on it"),
         "output.message.content[0] must reach IrResponse.content"
     );
-    // stopReason
+
     assert_eq!(
         resp.stop_reason,
         Some(crate::codec::ir::IrStopReason::ToolUse),
@@ -595,11 +545,7 @@ fn bedrock_carry_response_output_and_stop_reason() {
 }
 
 /// `bedrock/response/usage.{inputTokens,outputTokens,totalTokens,cacheReadInputTokens,
-/// cacheWriteInputTokens}` — the whole token-usage vector, including Bedrock's ADDITIVE cache
-/// buckets, must reach `IrUsage` (billing-reconcilable) and re-emit natively. `totalTokens` is
-/// re-derived by the writer as AWS defines it: input + output + both cache buckets (AWS's own
-/// caching example totals 16 + 4 + 695 as 715), so the fixture's wire total is that same sum and
-/// the re-emission is a faithful carry rather than a smaller derived number.
+
 #[test]
 fn bedrock_carry_response_usage() {
     let reader = BedrockReader;
@@ -648,7 +594,7 @@ fn bedrock_carry_response_usage() {
         Some(25),
         "usage.outputTokens must re-emit; got {out}"
     );
-    // totalTokens is re-derived by the writer (input + output + cacheRead + cacheWrite).
+
     assert_eq!(
         out.pointer("/usage/totalTokens").and_then(|v| v.as_u64()),
         Some(175),
@@ -668,14 +614,8 @@ fn bedrock_carry_response_usage() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RESPONSE — provider-specific fields
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// `bedrock/response/metrics.latencyMs` — a native Converse response always carries the request
-/// latency. The writer omits it in `write_response` (timing is unknown there) and INJECTS the proxy's
-/// own measured wall-clock via `inject_response_metrics`, so the field survives to the client (as
-/// busbar's real latency, not a fabricated `0`).
+
 #[test]
 fn bedrock_carry_response_metrics_latency_ms() {
     let writer = BedrockWriter;
@@ -690,8 +630,7 @@ fn bedrock_carry_response_metrics_latency_ms() {
         Some(137),
         "metrics.latencyMs must be emitted from the measured elapsed time; got {value}"
     );
-    // `metrics` is a REQUIRED member of the Converse response: with no timing at all it is still
-    // emitted (as 0) rather than dropped, since a missing required member is the larger deviation.
+
     let mut value2 = serde_json::json!({"output": {}});
     writer.inject_response_metrics(&mut value2, None);
     assert_eq!(
@@ -701,7 +640,7 @@ fn bedrock_carry_response_metrics_latency_ms() {
         Some(0),
         "metrics.latencyMs must still be present when timing is unavailable; got {value2}"
     );
-    // An upstream-supplied `metrics` is passed through, never overwritten by busbar's clock.
+
     let mut value3 = serde_json::json!({"output": {}, "metrics": {"latencyMs": 42}});
     writer.inject_response_metrics(&mut value3, Some(137));
     assert_eq!(
@@ -714,9 +653,7 @@ fn bedrock_carry_response_metrics_latency_ms() {
 }
 
 /// `bedrock/response/trace.guardrail` and `bedrock/response/trace.promptRouter` — Bedrock-only
-/// diagnostic members with NO neutral-IR carrier and no equivalent in any other protocol. DOCUMENTED
-/// cross-protocol drop (never waived): a Bedrock backend response feeding a non-Bedrock client loses
-/// them. The reader warns; this pins the drop in both the Bedrock re-emit and a foreign egress.
+
 #[test]
 fn bedrock_carry_response_trace_documented_drop() {
     let reader = BedrockReader;
@@ -738,7 +675,7 @@ fn bedrock_carry_response_trace_documented_drop() {
         out.pointer("/trace").is_none(),
         "trace (guardrail + promptRouter) has no cross-protocol carrier and must drop; got {out}"
     );
-    // Cross-protocol egress likewise carries neither.
+
     if let Some(anthropic) = super::super::proto_codec::protocol_for("anthropic") {
         let a = anthropic
             .writer()
@@ -752,9 +689,7 @@ fn bedrock_carry_response_trace_documented_drop() {
 }
 
 /// Bedrock response members with no neutral-IR carrier. DOCUMENTED cross-protocol drop; the
-/// reader warns:
-/// - `bedrock/response/additionalModelResponseFields` — model-specific echoed fields.
-/// - `bedrock/response/performanceConfig` — the echoed latency/cost selector.
+
 #[test]
 fn bedrock_carry_response_documented_drops() {
     let reader = BedrockReader;
@@ -786,14 +721,8 @@ fn bedrock_carry_response_documented_drops() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RESPONSE STREAM — the binary eventstream frame types (read + write)
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// `bedrock/response/stream:{messageStart,contentBlockStart,contentBlockDelta,contentBlockStop,
-/// messageStop,metadata}` — every frame type of Bedrock's ConverseStream must decode into the
-/// neutral `IrStreamEvent` sequence (so a cross-protocol ingress sees native stream events) AND
-/// re-encode from the IR into its native frame type. Each frame carries its own read+write assertion.
+
 #[test]
 fn bedrock_carry_stream_frame_types() {
     use crate::codec::ir::{IrDelta, IrStreamEvent};
@@ -801,8 +730,6 @@ fn bedrock_carry_stream_frame_types() {
     let writer = BedrockWriter;
     let mut state = crate::codec::ir::StreamDecodeState::default();
 
-    // ---- READ: each native frame → the expected IR event -----------------------------------
-    // messageStart
     let ev = reader.read_response_events(
         crate::codec::test_host::HOST,
         "",
@@ -814,7 +741,6 @@ fn bedrock_carry_stream_frame_types() {
         "stream:messageStart must decode to IrStreamEvent::MessageStart; got {ev:?}"
     );
 
-    // contentBlockStart (toolUse — the only native ContentBlockStart$start member)
     let ev = reader.read_response_events(
         crate::codec::test_host::HOST,
         "",
@@ -833,7 +759,6 @@ fn bedrock_carry_stream_frame_types() {
         "stream:contentBlockStart must decode to a ToolUse BlockStart; got {ev:?}"
     );
 
-    // contentBlockDelta (tool input json delta)
     let ev = reader.read_response_events(
         crate::codec::test_host::HOST,
         "",
@@ -849,7 +774,6 @@ fn bedrock_carry_stream_frame_types() {
         "stream:contentBlockDelta must decode to a BlockDelta; got {ev:?}"
     );
 
-    // contentBlockStop
     let ev = reader.read_response_events(
         crate::codec::test_host::HOST,
         "",
@@ -861,7 +785,6 @@ fn bedrock_carry_stream_frame_types() {
         "stream:contentBlockStop must decode to a BlockStop; got {ev:?}"
     );
 
-    // messageStop — its stopReason is BUFFERED and paired with the following metadata usage.
     let ev = reader.read_response_events(
         crate::codec::test_host::HOST,
         "",
@@ -873,7 +796,6 @@ fn bedrock_carry_stream_frame_types() {
         "stream:messageStop buffers its stopReason for the metadata frame; got {ev:?}"
     );
 
-    // metadata — emits the combined MessageDelta (buffered stopReason + usage) then MessageStop.
     let ev = reader.read_response_events(
         crate::codec::test_host::HOST,
         "",
@@ -893,7 +815,6 @@ fn bedrock_carry_stream_frame_types() {
         "stream:metadata must also emit the terminal MessageStop; got {ev:?}"
     );
 
-    // ---- WRITE: each IR event → its native frame type --------------------------------------
     assert_eq!(
         writer
             .write_response_event(
@@ -950,8 +871,7 @@ fn bedrock_carry_stream_frame_types() {
         Some("contentBlockStop".to_string()),
         "a BlockStop must write a contentBlockStop frame"
     );
-    // A stop-only MessageDelta writes messageStop; a usage-only one writes metadata (the two native
-    // frames the IR's single combined delta fans out to on a Bedrock ingress).
+
     assert_eq!(
         writer
             .write_response_event(

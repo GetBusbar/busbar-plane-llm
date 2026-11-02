@@ -2,10 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The hook view of a body the operation's reader refuses, read off the raw body. The projection
-//! never fails: a turn whose role no reader knows (`role: "wizard"`) is screened under its own
-//! role and the request goes on. A same-dialect request is then relayed verbatim, and only a
-//! translation to another dialect reads the body and refuses it. A body the reader accepts is still
-//! projected by the reader ([`super::project`]); this view is for the rest.
 
 use std::borrow::Cow;
 
@@ -55,7 +51,7 @@ impl BlockText<'_> {
 }
 
 /// The body's conversation-turn array: `contents` (gemini), a list `input` (responses), else
-/// `messages`.
+
 fn conversation_turns<'a>(v: &'a Value, dialect: &str) -> Option<&'a Vec<Value>> {
     let key = match dialect {
         PROTO_GEMINI => "contents",
@@ -240,7 +236,6 @@ fn turn(m: &Value, dialect: &str) -> (String, String) {
         gemini_parts(m)
     } else if dialect == PROTO_RESPONSES && (is_reasoning_item(m) || m.get(keys::CONTENT).is_none())
     {
-        // A reasoning item, or an item with no `content`, reads through its block's text.
         block_text(m, PROTO_RESPONSES)
             .text()
             .map(Cow::into_owned)

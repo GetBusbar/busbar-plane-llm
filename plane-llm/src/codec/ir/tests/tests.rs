@@ -8,7 +8,7 @@ fn reasoning_effort_parse_round_trips_and_rejects_unknown() {
     }
     assert!(IrReasoningEffort::parse("verylow").is_none());
     assert!(IrReasoningEffort::parse("").is_none());
-    // OpenAI-safe projection folds the o-series-invalid `minimal` to `low`.
+
     assert_eq!(IrReasoningEffort::Minimal.as_three_word_str(), "low");
     assert_eq!(IrReasoningEffort::High.as_three_word_str(), "high");
 }
@@ -18,29 +18,27 @@ fn reasoning_ask_to_budget_and_to_effort_use_the_table() {
     let table = [1000u32, 4000, 8000, 16000];
     use IrReasoningAsk::*;
     use IrReasoningEffort::*;
-    // effort word -> budget
+
     assert_eq!(Effort(Minimal).to_budget(table), Some(1000));
     assert_eq!(Effort(High).to_budget(table), Some(16000));
-    // "The model decides" has no table entry: it is never projected onto one (design F3).
+
     assert_eq!(Dynamic.to_budget(table), None);
-    // numeric budget passes through
+
     assert_eq!(Budget(1234).to_budget(table), Some(1234));
-    // budget -> effort bucketizes at the table thresholds (largest reached wins)
+
     assert_eq!(Budget(500).to_effort(table), Some(Minimal));
     assert_eq!(Budget(4000).to_effort(table), Some(Low));
     assert_eq!(Budget(8001).to_effort(table), Some(Medium));
     assert_eq!(Budget(99999).to_effort(table), Some(High));
-    // "The model decides" has no word; an effort word -> itself
+
     assert_eq!(Dynamic.to_effort(table), None);
     assert_eq!(Effort(High).to_effort(table), Some(High));
 }
 
 /// `billable_tokens` sums all four token fields with `saturating_add` (the operands are
-/// upstream-controlled). Assert at the definition site: the basic sum, the all-zero/None case,
-/// and that an overflow across the addends SATURATES rather than panicking (debug) / wrapping.
+
 #[test]
 fn test_billable_tokens_sum_and_saturation() {
-    // Basic provider-agnostic sum: uncached input + cache_read + cache_creation + output.
     let u = IrUsage {
         input_tokens: 10,
         output_tokens: 5,
@@ -50,11 +48,9 @@ fn test_billable_tokens_sum_and_saturation() {
     };
     assert_eq!(u.billable_tokens(), 20);
 
-    // All-zero / None → 0 (the common no-cache OpenAI-family case is input+output only).
     let z = IrUsage::default();
     assert_eq!(z.billable_tokens(), 0);
 
-    // Overflow across the cache addends must SATURATE at u64::MAX, never panic/wrap.
     let big = IrUsage {
         input_tokens: u64::MAX,
         output_tokens: 1,
@@ -67,8 +63,6 @@ fn test_billable_tokens_sum_and_saturation() {
 
 #[test]
 fn test_stream_decode_state_default() {
-    // The OpenAI flat-stream synthesizer relies on these initial values: nothing started, no
-    // blocks open, no tool indices, no reasoning yet.
     let st = StreamDecodeState::default();
     assert!(!st.started);
     assert!(!st.text_block_open);
@@ -82,9 +76,6 @@ fn test_stream_decode_state_default() {
 
 #[test]
 fn test_read_stop_sequences_drops_empty_strings() {
-    // "Empty Vec == omitted" contract: a degenerate input that carries only empty stop
-    // sequences must collapse to an empty Vec, not a one-element vec holding "", so it never
-    // emits a spurious `stop: [""]` on cross-protocol translation.
     let bare_empty = Value::String(String::new());
     assert!(
         read_stop_sequences(Some(&bare_empty)).is_empty(),
@@ -97,7 +88,6 @@ fn test_read_stop_sequences_drops_empty_strings() {
         "[\"\"] should collapse to empty Vec (== omitted)"
     );
 
-    // Empty elements are dropped from a mixed array while real stops survive in order.
     let mixed = Value::Array(vec![
         Value::String("STOP".into()),
         Value::String(String::new()),
@@ -110,29 +100,13 @@ fn test_read_stop_sequences_drops_empty_strings() {
         "empty/non-string elements dropped; real stops kept in order"
     );
 
-    // Non-empty inputs are unaffected.
     let bare = Value::String("HALT".into());
     assert_eq!(read_stop_sequences(Some(&bare)), vec!["HALT".to_string()]);
     assert!(read_stop_sequences(None).is_empty());
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-// OPACITY — the IR must tell the truth about reasoning content busbar cannot read.
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-
 /// THE THREE OPAQUE SHAPES, read through the REAL readers, asserted from the IR ALONE.
-///
-/// Three wire shapes carry assistant reasoning that busbar cannot decrypt and must never disclose:
-/// Anthropic `redacted_thinking`, Bedrock `reasoningContent.redactedContent`, and a Responses
-/// `reasoning` input item admitted on its `encrypted_content` blob alone. All three are opaque for
-/// exactly the same reason, so all three must READ as opaque from the IR — otherwise a consumer
-/// that keys a redaction decision off the IR is correct on two protocols and silently wrong on the
-/// third, which is the dialect-conditional bug class the IR exists to make impossible.
-///
-/// The assertion is deliberately made through `read_request` rather than by hand-building blocks:
-/// a hand-built `IrBlock` proves the predicate, not the reader that has to produce it.
-///
-/// This is the U2 red. It fails on the Responses row today.
+
 #[test]
 fn all_three_opaque_reasoning_shapes_read_as_opaque_from_the_ir() {
     let cases: [(&str, crate::codec::proto_codec::Protocol, Value); 3] = [
@@ -188,10 +162,7 @@ fn all_three_opaque_reasoning_shapes_read_as_opaque_from_the_ir() {
 }
 
 /// The negative half, so `is_opaque` cannot pass the test above by answering `true` to everything.
-/// Plain text, a plaintext thinking block, and a plaintext thinking block that ALSO carries a
-/// round-trip signature (Gemini's `thoughtSignature`, Responses' `encrypted_content` alongside real
-/// reasoning text) are all readable by busbar and must NOT be marked opaque — marking them opaque
-/// would replace real content with a marker and blind a screening consumer to text it can see.
+
 #[test]
 fn readable_blocks_are_not_opaque() {
     let cases = [
@@ -212,9 +183,6 @@ fn readable_blocks_are_not_opaque() {
             kind: None,
             signature_origin: None,
         },
-        // A wholly-EMPTY thinking block carries nothing at all — there is no hidden content to
-        // warn a consumer about, so it is not opaque either. (Every writer already emits no item
-        // for it.) Pinned so the "empty plaintext" arm cannot be widened into "empty means opaque".
         IrBlock::Thinking {
             text: String::new(),
             signature: None,
@@ -233,11 +201,7 @@ fn readable_blocks_are_not_opaque() {
 }
 
 /// COHERE `billed_units` (1.6.0 M1, `BUSBAR-1.6.0.md` THE DESIGN, §7): when Cohere reports a separately-metered billed bucket,
-/// `to_token_usage` must ledger the BILLED input/output, NOT the raw `tokens` totals — the reserved
-/// tiers (via `engine::usage::tier_tokens`) follow. This is the deliberate per-dialect ledgered-count
-/// change; every dialect that leaves `billed_*` as `None` still projects the raw totals unchanged.
-/// COHERE BILLS ITS RAW `tokens` COUNTS, as 1.5.5 billed them (row 159, plane-llm HIGH): a
-/// `billed_units` bucket that differs is attribution, never the ledgered figure.
+
 #[test]
 fn cohere_bills_its_raw_tokens_whatever_billed_units_says() {
     let raw_wins_when_absent = IrUsage {
@@ -255,8 +219,8 @@ fn cohere_bills_its_raw_tokens_whatever_billed_units_says() {
     );
 
     let billed = IrUsage {
-        input_tokens: 100, // raw
-        output_tokens: 40, // raw
+        input_tokens: 100,
+        output_tokens: 40,
         cache_creation_input_tokens: None,
         cache_read_input_tokens: None,
         detail: crate::codec::ir::IrUsageDetail {
@@ -271,7 +235,7 @@ fn cohere_bills_its_raw_tokens_whatever_billed_units_says() {
         (100, 40),
         "billed_units present → the ledger still bills the RAW tokens bucket, as 1.5.5 did"
     );
-    // The reserved-tier projection the ledger actually accrues follows the raw counts.
+
     let tier = crate::codec::usage_census::tier_usage(&tu);
     let u = |k: &str| tier.usage_units.get(k).copied().unwrap_or(0);
     assert_eq!(
@@ -283,8 +247,6 @@ fn cohere_bills_its_raw_tokens_whatever_billed_units_says() {
     );
 }
 
-// ── Q57 IR-slot vocabulary: every neutral word round-trips, and an unknown word is refused rather
-// than coerced onto a neighbouring value (a coerced tier/detail/verbosity is a silent mis-map).
 #[test]
 fn q57_slot_vocabulary_round_trips_and_refuses_unknown_words() {
     for t in [
@@ -305,7 +267,7 @@ fn q57_slot_vocabulary_round_trips_and_refuses_unknown_words() {
         assert_eq!(IrImageDetail::parse(d.as_str()), Some(d));
     }
     assert_eq!(IrImageDetail::parse("original"), None);
-    // Gemini upper-cases modalities; OpenAI lower-cases them. Both are the same concept.
+
     assert_eq!(IrModality::parse("AUDIO"), Some(IrModality::Audio));
     assert_eq!(IrModality::parse("text"), Some(IrModality::Text));
     assert_eq!(IrModality::parse("video"), None);
@@ -316,8 +278,6 @@ fn q57_slot_vocabulary_round_trips_and_refuses_unknown_words() {
     );
 }
 
-// The `Default` impls exist so construction sites can spread `..Default::default()` and survive a
-// slot addition. They must describe an ABSENT value: nothing set, nothing a writer would emit.
 #[test]
 fn q57_defaults_are_absent_values() {
     let r = IrResponse::default();
@@ -332,9 +292,6 @@ fn q57_defaults_are_absent_values() {
     assert_eq!(IrCitation::default().raw, None);
 }
 
-// IR-09: the words above High and the OFF ask. `parse` stays the four historical words (no reader
-// changes bytes before it opts in); `parse_extended` adds the two; projections never turn OFF into
-// an enable ask and never emit an OpenAI word an older model 400s on.
 #[test]
 fn ir09_reasoning_off_and_effort_above_high() {
     use IrReasoningAsk::*;
@@ -352,13 +309,12 @@ fn ir09_reasoning_off_and_effort_above_high() {
     assert_eq!(Effort(Max).to_budget(table), Some(16000));
     assert_eq!(Off.to_budget(table), None);
     assert_eq!(Off.to_effort(table), None);
-    // A budget never bucketizes above High: the table has no row there.
+
     assert_eq!(Budget(u32::MAX).to_effort(table), Some(High));
 }
 
 /// MONEY LAW (ARCHITECT ruling 2026-10-02, DF-MAP item 4): the by-modality split is presentation
-/// only. What the plane reports for billing (`to_token_usage`) and the normalization total are
-/// byte-equal with and without it populated.
+
 #[test]
 fn usage_by_modality_never_moves_a_billed_figure() {
     let plain = IrUsage {

@@ -1,9 +1,4 @@
 //! A refusal wears the dialect's own shape.
-//!
-//! A client that gets a refusal in a shape its own library does not parse learns nothing from it,
-//! so the envelope has to be the dialect's. It is not built here: the dialect's own error writer
-//! builds it, and this file asserts that the writer is the one that built it and that the status
-//! and kind the plane chose are the ones the existing forward path chooses for the same reason.
 
 mod common;
 
@@ -20,12 +15,7 @@ const DIALECTS: &[&str] = &[
 ];
 
 /// Drop the minted identifier from an envelope, so two envelopes can be compared on everything else.
-///
-/// Used ONLY where the two sides mint from different inputs: the codec's own writer draws its
-/// identifier, and the plane builds one from entropy it was handed. Both are the same document
-/// otherwise, and the identifier itself is pinned by its own shape and determinism tests above — so
-/// removing it here compares what this test is actually about, which is that the plane picked the
-/// status and the kind and the codec wrote every other byte.
+
 fn without_minted_id(bytes: &[u8]) -> String {
     let Ok(mut value) = sonic_rs::from_slice::<serde_json::Value>(bytes) else {
         return String::from_utf8_lossy(bytes).into_owned();
@@ -35,8 +25,6 @@ fn without_minted_id(bytes: &[u8]) -> String {
     }
     sonic_rs::to_string(&value).unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned())
 }
-
-// ── the rendered refusal's status and head ─────────────────────────
 
 /// The dialect codec of the dialect named `name`.
 fn dialect_codec(name: &str) -> &'static dyn busbar_contract::protocol::DialectCodec {
@@ -59,12 +47,7 @@ fn head_value<'a>(fields: &'a [(String, Vec<u8>)], name: &str) -> Option<&'a [u8
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_ingress_error_request_id_header_matches_body`
-/// 1.5.5: an anthropic-dialect refusal carries a `request-id` head field
-/// in Anthropic's `req_` shape, EQUAL to the body's `request_id`; no other dialect's refusal
-/// carries a `request-id` field.
-///
-/// RED: the header and the body mint two different ids, the header goes missing, or another
-/// dialect's refusal starts carrying Anthropic's field.
+
 #[test]
 fn test_anthropic_ingress_error_request_id_header_matches_body() {
     use busbar_contract::protocol::KIND_INVALID_REQUEST;
@@ -105,17 +88,7 @@ fn test_anthropic_ingress_error_request_id_header_matches_body() {
 }
 
 /// LEGACY `crates/busbar-llm/src/unit/tests/audit.rs::every_refusal_class_renders_byte_identically_on_both_paths`
-/// 1.5.5: every refusal class (exactly eight: unauth 401, wrong-scope
-/// 403, over-budget 429 `insufficient_quota`, rate-limit 429 with `Retry-After: 30`, unpriced 400,
-/// no-pool 404, oversize-body 413, context-overflow 400 carrying the breaker's
-/// `context_length_exceeded` code) renders in each of the six dialects with its own status, its
-/// dialect's native head fields over the very envelope it sends, the dialect writer's own envelope
-/// bytes, and a non-empty body.
-///
-/// RED: a class renders another status, drops or invents `retry-after`, wears head fields that do
-/// not belong to its own envelope, leaves the writer's vocabulary (over-budget not
-/// `insufficient_quota`, the context-length code reaching an openai caller as a raw `type`), renders
-/// an empty body, or a class leaves the table.
+
 #[test]
 fn every_refusal_class_renders_byte_identically_on_both_paths() {
     use busbar_contract::protocol::{
@@ -124,7 +97,7 @@ fn every_refusal_class_renders_byte_identically_on_both_paths() {
     };
     use busbar_plane_llm::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH;
     use busbar_plane_llm::exchange::refuse::render;
-    // (class, status, kind, message, retry-after seconds)
+
     let classes: [(&str, u16, &str, &str, u32); 8] = [
         (
             "unauth",
@@ -199,7 +172,7 @@ fn every_refusal_class_renders_byte_identically_on_both_paths() {
                 !rendered.body.is_empty(),
                 "{name}/{dialect} renders an envelope, not an empty body"
             );
-            // The body is the dialect writer's own envelope for the class's (status, kind, message).
+
             let own = sonic_rs::to_vec(&codec.write_error(SEVENS, status, kind, message))
                 .expect("the envelope serializes");
             assert_eq!(
@@ -207,8 +180,7 @@ fn every_refusal_class_renders_byte_identically_on_both_paths() {
                 without_minted_id(&own),
                 "{name} on the {dialect} wire is not the dialect's own envelope"
             );
-            // The head: the JSON content type, the dialect's native error fields over the very
-            // envelope sent (so a minted id in the head is the body's), then the class's own wait.
+
             let sent: serde_json::Value =
                 sonic_rs::from_slice(&rendered.body).expect("a refusal is a document");
             let mut head = vec![("content-type".to_string(), b"application/json".to_vec())];
@@ -227,8 +199,7 @@ fn every_refusal_class_renders_byte_identically_on_both_paths() {
             );
         }
     }
-    // The openai wire, read as its SDK reads it: the over-budget class is the native quota type and
-    // code, and the breaker's context-length token is projected into the writer's own vocabulary.
+
     let over = render(SEVENS, "openai", 429, KIND_INSUFFICIENT_QUOTA, "quota", 0);
     let over: serde_json::Value = sonic_rs::from_slice(&over.body).expect("a document");
     assert_eq!(over["error"]["type"], "insufficient_quota");

@@ -2,14 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Image-generation IR, cross-protocol across OpenAI, Gemini, Bedrock. One operation with an `op`
-//! discriminant (Generate/Edit/Variation); an unsupported `(op, model)` pair is a sub-op 404.
-//!
-//! Losslessness: the three geometry conventions (explicit W×H, `aspect_ratio` string, size `tier`)
-//! are parallel optionals, never collapsed. Response images are additive [`ImageOutput`] (b64 and
-//! url may coexist). Common fields are typed; provider-unique knobs (Titan `controlMode`, SDXL
-//! `sampler`/`clip_guidance_preset`, per-prompt weights) ride source-scoped `extra`. Token counts a
-//! gpt-image-1 or Gemini answer reports are recorded, never billed (see [`ImageResp::billing`]);
-//! otherwise `Billing::Images` (per-image, no usage body).
 
 use crate::codec::framework::ImageOutput;
 use busbar_contract::billing::{Billing, TokenUsage};
@@ -40,34 +32,34 @@ pub enum ImageSize {
 pub struct ImageReq {
     pub op: ImageOp,
     pub model: String,
-    pub prompt: Option<String>, // Option: dall-e-2 variations carry no prompt
+    pub prompt: Option<String>,
     pub negative_prompt: Option<String>,
     pub n: Option<u32>,
-    // --- geometry: three mutually exclusive provider conventions, kept parallel (lossless) ---
-    pub size: Option<ImageSize>,         // OpenAI/Titan/SDXL
-    pub aspect_ratio: Option<String>,    // Google, Stable Image ("16:9")
-    pub image_size_tier: Option<String>, // Imagen ("1K"/"2K")
-    // --- quality / style / output ---
-    pub quality: Option<String>, // standard|hd|low|medium|high|premium|auto
-    pub style: Option<String>,   // dall-e-3 vivid/natural; SDXL style_preset
-    pub response_format: Option<String>, // url|b64_json (only dall-e honors; else b64)
-    pub output_format: Option<String>, // png|jpeg|webp
+
+    pub size: Option<ImageSize>,
+    pub aspect_ratio: Option<String>,
+    pub image_size_tier: Option<String>,
+
+    pub quality: Option<String>,
+    pub style: Option<String>,
+    pub response_format: Option<String>,
+    pub output_format: Option<String>,
     pub output_compression: Option<u8>,
-    // --- sampling / determinism ---
+
     pub seed: Option<u64>,
-    pub guidance_scale: Option<f32>, // guidanceScale / cfg_scale / cfgScale
-    pub steps: Option<u32>,          // SDXL
-    pub background: Option<String>,  // transparent|opaque|auto (gpt-image-1)
-    // --- edit / img2img inputs ---
-    pub input_images: Vec<String>, // b64 / data-URI (edits up to 16; variation 1)
-    pub mask: Option<String>,      // b64 mask (dall-e-2 edits; Titan)
-    pub mask_prompt: Option<String>, // Titan text mask
-    pub strength: Option<f32>,     // img2img / similarityStrength
-    // --- safety / provenance / misc ---
+    pub guidance_scale: Option<f32>,
+    pub steps: Option<u32>,
+    pub background: Option<String>,
+
+    pub input_images: Vec<String>,
+    pub mask: Option<String>,
+    pub mask_prompt: Option<String>,
+    pub strength: Option<f32>,
+
     pub person_generation: Option<String>,
     pub moderation: Option<String>,
     pub add_watermark: Option<bool>,
-    pub output_uri: Option<String>, // Google storageUri (gs://)
+    pub output_uri: Option<String>,
     pub user: Option<String>,
     /// SDXL weighted prompts; if non-empty, overrides `prompt`.
     pub weighted_prompts: Vec<(String, f32)>,
@@ -75,13 +67,7 @@ pub struct ImageReq {
 }
 
 /// The image family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. A struct has
-/// no field exhaustiveness check, so every caller-text field is enumerated by hand and the
-/// `image_projection_covers_every_text_field` test fails if a new `String` field lacks a projection
-/// decision. Screenable text is [`busbar_contract::ir::facts::ContentItem::Text`]: `prompt`,
-/// `negative_prompt`, `mask_prompt` and each `weighted_prompts` string (SDXL, overriding `prompt`).
-/// Binary edit inputs are [`busbar_contract::ir::facts::ContentItem::Opaque`] (present but
-/// unscreenable, like chat's image opacity): each `input_images` entry and the `mask`. Geometry,
-/// quality, sampling and provenance knobs are enum/numeric roles, not caller free text.
+
 impl busbar_contract::ir::facts::IrFacts for ImageReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::IMAGE
@@ -164,10 +150,10 @@ pub struct CostBasis {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ImageResp {
     pub created: Option<u64>,
-    pub images: Vec<ImageOutput>, // additive per image (b64 AND url may coexist)
-    pub usage: Option<ImageTokens>, // gpt-image-1, Gemini: reported tokens (recorded, not billed)
-    pub cost_basis: Option<CostBasis>, // per-image providers (dall-e/Imagen/Titan/SDXL)
-    pub warnings: Vec<String>,    // raiFilteredReason, finish_reasons, moderation notes
+    pub images: Vec<ImageOutput>,
+    pub usage: Option<ImageTokens>,
+    pub cost_basis: Option<CostBasis>,
+    pub warnings: Vec<String>,
     pub extra: SourceScopedExtra,
 }
 
@@ -188,11 +174,7 @@ pub const IMAGE_OUTPUT_TOKENS_RESIDUAL: &str = "image.output_tokens";
 
 impl ImageResp {
     /// Billing projection. An answer reporting token usage (gpt-image-1, a Gemini image model) bills
-    /// no token: its counts are recorded on [`TokenUsage::residual_units`] (the settle's one
-    /// `usage.residual` audit row), never on the four billed tiers. No image token is billed on any
-    /// path (the OpenAI, Gemini and Bedrock readers set neither `usage` nor `cost_basis`, and no
-    /// image handler taps a same-dialect body); billing them would charge a key and its `tokens:` caps
-    /// where nothing is charged today. A per-image answer with no usage body bills its `images` count.
+
     pub fn billing(&self) -> Option<Billing> {
         if let Some(u) = &self.usage {
             let mut residual_units = std::collections::BTreeMap::new();
@@ -200,7 +182,6 @@ impl ImageResp {
                 (IMAGE_INPUT_TOKENS_RESIDUAL, u.input),
                 (IMAGE_OUTPUT_TOKENS_RESIDUAL, u.output),
             ] {
-                // An unknown count (`None`) is left out, as a zero is: neither is a reported unit.
                 if let Some(n) = n.filter(|n| *n != 0) {
                     residual_units.insert(class.to_string(), n);
                 }

@@ -2,9 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE DROP-NAMES CENSUS: how many (dialect, IR name) drops are named by the IR name because the
-//! dialect's map file has no row for the member (design F3 "Drops"; never silent, driven to 0).
-
-// ───────────────────────────── the census ─────────────────────────────
 
 /// The IR members a seam gate or a writer drops by name, with the rows each is looked up by.
 const NAMED: &[(&str, &[&str])] = &[
@@ -30,7 +27,7 @@ const NAMED: &[(&str, &[&str])] = &[
 ];
 
 /// The six request dialects, by the name the drop path knows each by, and the file stem of its wire
-/// lock (testing/llm-conformance/wire/<stem>.wire.json).
+
 const DIALECTS: &[(&str, &str)] = &[
     ("anthropic", "anthropic"),
     ("bedrock", "bedrock"),
@@ -41,8 +38,7 @@ const DIALECTS: &[(&str, &str)] = &[
 ];
 
 /// The IR request members each dialect's reader never sets: the dialect has no wire form for them
-/// (or keeps its own spelling of the concept for a same-dialect hop only), so a caller of that
-/// dialect never has one dropped and no drop is ever named for it.
+
 fn unread(dialect: &str) -> &'static [&'static str] {
     use crate::codec::drops::name::*;
     match dialect {
@@ -72,9 +68,7 @@ fn unread(dialect: &str) -> &'static [&'static str] {
 }
 
 /// Every (dialect, IR name) pair a drop could be named for is named by the caller's wire path: a
-/// map-file row, or the path the dialect's reader carries the member from by code. A member the
-/// dialect's reader never sets (`unread`) is never dropped from that dialect's caller. Measured 41
-/// at DF-NAMES; DF-SITES drove it to 0, and it stays there.
+
 #[test]
 fn every_drop_is_named_by_the_callers_wire_path() {
     let mut unresolved = Vec::new();
@@ -110,7 +104,7 @@ fn an_unread_member_has_no_wire_path() {
 }
 
 /// A request code name's wire path is in the dialect's wire lock (a union arm's selector may be
-/// left out; below an opaque document member, the member itself is what the lock lists).
+
 #[test]
 fn every_request_code_name_is_in_the_wire_lock() {
     let root =

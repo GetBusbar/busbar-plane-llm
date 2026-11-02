@@ -2,19 +2,13 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! PURE-DIALECT unit tests RELOCATED here from `busbar-core`.
-//!
-//! Each of these named a witnessed dialect codec fn directly (`bedrock::synth_amzn_request_id`,
-//! `openai_responses::read_reasoning_*`) inside a core test, which a neutral crate's tests must not.
-//! They exercise nothing but the dialect codec, so they belong beside it in the LLM plugin. Every
-//! assertion is BYTE-IDENTICAL to the pre-relocation core suite.
 
 use super::*;
-// `IrRequest::shape()` is a method of the `IrFacts` trait — bring it into scope for the
-// exhaustiveness guard (the core suite imported it as `crate::codec::ir::facts::IrFacts`).
+
 use busbar_contract::ir::facts::IrFacts;
 
 /// UUID-v4 shape checker — a private copy of the core auth suite's helper (which stays in core for
-/// its other callers), so the relocated `synth_amzn_request_id` shape test carries its own oracle.
+
 fn assert_uuid_v4_shaped(id: &str) {
     let segs: Vec<&str> = id.split('-').collect();
     assert_eq!(
@@ -27,13 +21,13 @@ fn assert_uuid_v4_shaped(id: &str) {
             .all(|c| c == '-' || c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
         "UUID must be lowercase hex with dashes only, got '{id}'"
     );
-    // Version nibble: first char of the third group.
+
     assert_eq!(
         segs[2].chars().next(),
         Some('4'),
         "UUID version nibble must be 4, got '{id}'"
     );
-    // Variant nibble: first char of the fourth group must be one of 8,9,a,b.
+
     assert!(
         matches!(segs[3].chars().next(), Some('8' | '9' | 'a' | 'b')),
         "UUID variant nibble must be 8/9/a/b, got '{id}'"
@@ -42,12 +36,6 @@ fn assert_uuid_v4_shaped(id: &str) {
 
 #[test]
 fn test_synth_amzn_request_id_is_uuid_v4() {
-    // Regression for the flat-32-hex-no-dashes format: a Bedrock x-amzn-RequestId must be a
-    // CSPRNG UUID-v4, matching real AWS. The auth path mints this id through the CANONICAL
-    // `bedrock::synth_amzn_request_id` (via `proxy::ingress_error` → `attach_bedrock_error_headers`),
-    // not a private copy — assert the canonical fn's shape so the bedrock auth-failure header
-    // contract stays covered. Two consecutive ids must differ (entropy-sourced, not a predictable
-    // timestamp||counter).
     let a = bedrock::synth_amzn_request_id(crate::codec::test_host::HOST)
         .expect("entropy must be available under test");
     let b = bedrock::synth_amzn_request_id(crate::codec::test_host::HOST)
@@ -58,8 +46,7 @@ fn test_synth_amzn_request_id_is_uuid_v4() {
 }
 
 /// The reader's own accept/skip rules for a `reasoning` item's `encrypted_content`: an empty string
-/// or a non-string yields no usable blob. That filter is the READER's —
-/// `read_reasoning_encrypted_content` — and this points at it directly, where it lives.
+
 #[test]
 fn responses_reasoning_reader_rejects_malformed_encrypted_content() {
     let empty_string: serde_json::Value =
@@ -72,7 +59,7 @@ fn responses_reasoning_reader_rejects_malformed_encrypted_content() {
 }
 
 /// A single text-bearing reasoning part (in EITHER `content[]` or `summary[]` alone) must come
-/// through the reader's own walk still BORROWED.
+
 #[test]
 fn responses_single_part_reasoning_text_borrows() {
     let content_only = serde_json::json!({
@@ -95,7 +82,7 @@ fn responses_single_part_reasoning_text_borrows() {
 }
 
 /// Two `content[]` parts + one `summary[]` part must still allocate — and concatenate
-/// content-array-then-summary-array, with NO separator (the deliberate separator-less concat).
+
 #[test]
 fn responses_multi_part_reasoning_text_concatenates() {
     let item = serde_json::json!({
@@ -112,10 +99,7 @@ fn responses_multi_part_reasoning_text_concatenates() {
 }
 
 /// The bedrock forward-kind → `x-amzn-errortype`/`__type` mapping, for the kinds the ingress error
-/// path emits. RELOCATED from core's `ingress` and `proxy` suites,
-/// which asserted the same mapping directly via `bedrock::error_kind_to_bedrock_type`; the CORE
-/// tests keep their neutral `hdr == expected` header-correctness check (driven through the neutral
-/// `ingress_error` seam), while the dialect mapping's identity is proven here beside the codec.
+
 #[test]
 fn error_kind_to_bedrock_type_covers_ingress_emitted_kinds() {
     use busbar_contract::protocol::{
@@ -133,7 +117,7 @@ fn error_kind_to_bedrock_type_covers_ingress_emitted_kinds() {
         bedrock::error_kind_to_bedrock_type(KIND_PERMISSION),
         "AccessDeniedException"
     );
-    // A spent budget is not retryable: 1.5.5's `ServiceQuotaExceededException` (OWNER 2026-10-27).
+
     assert_eq!(
         bedrock::error_kind_to_bedrock_type(KIND_INSUFFICIENT_QUOTA),
         "ServiceQuotaExceededException"
@@ -141,12 +125,7 @@ fn error_kind_to_bedrock_type_covers_ingress_emitted_kinds() {
 }
 
 /// Every kind the bedrock writer can be handed answers an exception that Converse AND
-/// ConverseStream DECLARE: the `errors` of both operations in the pinned botocore model
-/// (`testing/llm-conformance/spec-digests.tsv` row `bedrock`, bedrock-runtime 2023-09-30 at
-/// e5c8122617a2), with ONE owner-chosen exception: an exhausted quota or budget answers 1.5.5's
-/// `ServiceQuotaExceededException` (InvokeModel's), because every AWS SDK retries the declared
-/// `ThrottlingException` and a spent budget does not come back by retrying (OWNER 2026-10-27,
-/// overriding the rule-22 reading of 2026-10-14).
+
 #[test]
 fn every_bedrock_error_kind_is_a_converse_declared_exception() {
     const CONVERSE_DECLARED: [&str; 9] = [
@@ -202,14 +181,9 @@ fn every_bedrock_error_kind_is_a_converse_declared_exception() {
 }
 
 /// THE EXHAUSTIVENESS GUARD: every registered protocol has a reader that produces a readable IR, so
-/// a seventh protocol is covered by REGISTERING rather than by an arm added anywhere. Names the
-/// witnessed codec (`protocol_for(...).reader()`) and the concrete IR (`ir.shape()` / `ir::project`),
-/// so it lives beside them in the plugin (RELOCATED from core).
+
 #[test]
 fn every_known_protocol_has_a_declared_reasoning_wire_shape() {
-    // Pin the sweep's WIDTH. Run alone, this "exhaustiveness guard" once reported green over ZERO
-    // iterations, so a reader that invented a turn for an empty conversation — or a name in the
-    // list with no registered codec — was invisible.
     let protos = known_protocols();
     assert_eq!(
         protos.len(),
@@ -219,8 +193,7 @@ fn every_known_protocol_has_a_declared_reasoning_wire_shape() {
     for &proto in protos {
         let p = protocol_for(proto)
             .unwrap_or_else(|| panic!("'{proto}' is in KNOWN_PROTOCOLS but is not registered"));
-        // A minimal, universally-legal body for the dialect's conversation container: whichever key
-        // this protocol reads, an absent one is legal and yields an empty conversation.
+
         let empty: serde_json::Value =
             serde_json::json!({"messages": [], "contents": [], "input": []});
         let ir = p

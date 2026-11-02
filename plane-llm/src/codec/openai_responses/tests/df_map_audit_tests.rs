@@ -47,7 +47,7 @@ fn a_web_search_call_reads_as_a_hosted_record_and_writes_back() {
 }
 
 /// The cross-dialect GAIN: an Anthropic web search reaches a Responses client as its
-/// `web_search_call` item (it was dropped before: neither side had an IR form).
+
 #[test]
 fn an_anthropic_web_search_reaches_a_responses_client() {
     let anthropic = json!({"id": "msg_1", "type": "message", "role": "assistant", "model": "m",

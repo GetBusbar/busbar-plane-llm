@@ -2,11 +2,11 @@ use super::*;
 use busbar_contract::http::StatusCode;
 
 /// The cached streaming-CT set aggregated from the writer vtable must be exactly the SSE +
-/// AWS-event-stream pair the per-request sweep produced — the `OnceLock` only memoizes it.
+
 #[test]
 fn test_streaming_content_types_cached_set() {
     let got = streaming_content_types();
-    let mut want = ["text/event-stream", "application/vnd.amazon.eventstream"]; // golden wire-contract literal (kept bare on purpose)
+    let mut want = ["text/event-stream", "application/vnd.amazon.eventstream"];
     want.sort_unstable();
     assert_eq!(
         got, want,
@@ -15,7 +15,7 @@ fn test_streaming_content_types_cached_set() {
 }
 
 /// The cached array-stream shim-key set must be exactly Gemini's `GEMINI_JSON_ARRAY_SHIM_KEY`
-/// (the only writer that overrides `array_stream_shim_key`).
+
 #[test]
 fn test_array_stream_shim_keys_cached_set() {
     assert_eq!(
@@ -26,18 +26,12 @@ fn test_array_stream_shim_keys_cached_set() {
 }
 
 /// Regression for the conformance bug where `find_frame_terminator` reported `term_len = 3`
-/// for the spec-legal CRLF blank-line terminator (`\r\n\r\n`, 4 bytes), contradicting its own
-/// documented contract (`offset` = index of the FIRST terminator byte, `len` = terminator
-/// length). The slice `end = offset + len` happened to land correctly only because the old
-/// off-by-one offset compensated the short length; this pins the documented `(offset, len)`
-/// directly so the contract is honored, not just the derived `end`.
+
 #[test]
 fn test_find_frame_terminator_crlf_reports_four_bytes() {
-    // A frame ending in CRLF followed by a CRLF blank line: `data: x\r\n\r\n`.
     let buf = b"data: x\r\n\r\n";
     let (offset, len) = find_frame_terminator(buf).expect("CRLF terminator must be found");
-    // First terminator byte is the trailing `\r` of the data line's CRLF (index 7), and the
-    // full `\r\n\r\n` terminator is 4 bytes long.
+
     assert_eq!(
         offset, 7,
         "offset must index the first terminator byte (\\r)"
@@ -47,7 +41,7 @@ fn test_find_frame_terminator_crlf_reports_four_bytes() {
         "CRLF terminator length must be 4 (\\r\\n\\r\\n), not 3"
     );
     assert_eq!(&buf[offset..], b"\r\n\r\n");
-    // The derived frame boundary must still cover the whole input.
+
     assert_eq!(offset + len, buf.len());
 }
 
@@ -63,7 +57,7 @@ fn test_find_frame_terminator_lf_reports_two_bytes() {
 }
 
 /// Two adjacent CRLF frames must split at exactly the documented boundary, so the second
-/// frame begins cleanly (no stray leading `\r` and no missing byte).
+
 #[test]
 fn test_find_frame_terminator_crlf_frame_split_is_clean() {
     let buf = b"data: x\r\n\r\ndata: y\r\n\r\n";
@@ -82,12 +76,9 @@ fn test_find_frame_terminator_crlf_frame_split_is_clean() {
 }
 
 /// The default `ProtocolWriter::write_error` (the only impl — no per-protocol
-/// overrides yet) must produce valid JSON carrying the message and the `kind` as `error.type`,
-/// so error bodies stay decodable before per-protocol envelopes land. (Content-type is a
-/// caller concern; the doc contract says `application/json` for all protocols.)
+
 #[test]
 fn test_write_error_default_envelope_is_valid_json() {
-    // Any writer exercises the default impl since none override it yet.
     let writer: Box<dyn ProtocolWriter> = Box::new(OpenAiWriter);
     let v = writer.write_error(
         crate::codec::test_host::HOST,
@@ -95,7 +86,7 @@ fn test_write_error_default_envelope_is_valid_json() {
         "not_found",
         "model 'x' not found",
     );
-    // Round-trips as JSON (no panic) and has the generic envelope shape.
+
     let serialized = serde_json::to_string(&v).expect("write_error output must serialize");
     let reparsed: serde_json::Value =
         serde_json::from_str(&serialized).expect("write_error output must be valid JSON");
@@ -106,14 +97,8 @@ fn test_write_error_default_envelope_is_valid_json() {
     assert_eq!(reparsed["error"]["type"], serde_json::json!("not_found"));
 }
 
-// The `residual_dialect_for_path` conformance tests (the `/v1/models/{id}` colon disambiguation and
-// the "names no dialect → None" cases) RELOCATED to `busbar-llm` (`tests/detect_tests.rs`): they name
-// dialects, and they now exercise the generic residual fold through the plugin's own
-// `residual_claims` predicates.
-
 /// Conformance (`synth_anthropic_request_id`): the synthesized `request-id` header value must
-/// carry the native Anthropic shape (`req_01` prefix + non-empty token) so the official SDK reads
-/// a well-formed `Message._request_id` / `APIError.request_id`.
+
 #[test]
 fn test_synth_anthropic_request_id_is_well_formed() {
     let id = synth_anthropic_request_id(crate::codec::test_host::HOST)
@@ -122,16 +107,14 @@ fn test_synth_anthropic_request_id_is_well_formed() {
         id.starts_with("req_01"),
         "anthropic request-id must carry the native req_01 prefix; got {id}"
     );
-    // Native Anthropic `request-id` is EXACTLY 30 chars (`req_01` + 24-char token). A short value
-    // (the old 22-char form) is a length-based fingerprint tell and must not regress. Match the
-    // body `request_id` produced by `synth_id_with_prefix("req_")`.
+
     assert_eq!(
         id.len(),
         30,
         "anthropic request-id must be exactly 30 chars to match native; got {} ({id})",
         id.len()
     );
-    // ASCII base62 token (no padding/special chars that a native id never carries).
+
     let token = &id["req_01".len()..];
     assert_eq!(
         token.len(),
@@ -142,25 +125,18 @@ fn test_synth_anthropic_request_id_is_well_formed() {
         token.bytes().all(|b| b.is_ascii_alphanumeric()),
         "the token must be base62 (alphanumeric); got {token}"
     );
-    // Distinct across calls (CSPRNG-backed) — no fixed/predictable id.
+
     let id2 = synth_anthropic_request_id(crate::codec::test_host::HOST)
         .expect("entropy available in test");
     assert_ne!(id, id2, "successive ids must differ");
 }
 
 /// Correctness (`synth_anthropic_request_id`): the two 9-byte (72-bit) draws folded to 12
-/// base62 digits via repeated `% 62` / `/= 62` are NOT uniform — `62^12 ≈ 3.226e21 < 2^72 ≈
-/// 4.722e21`, so the map cannot be injective. The bias concentrates in the MOST-SIGNIFICANT digit
-/// of each half (`token[0]` and `token[12]`, since the fill loop writes `.rev()`): after eleven
-/// divisions the residual is `floor(n / 62^11) in [0, 90]`, so alphabet indices 0..28 get TWO
-/// preimages each and 29..61 get ONE, giving `P(token[msd] in alphabet[0..29]) = 58/91 ≈ 63.7%`
-/// against a uniform `29/62 ≈ 46.8%`. This test asserts positions 0 AND 12 SPECIFICALLY — a test
-/// over all 24 positions would dilute the signal to 2/24 of the bias and could plausibly pass on
-/// the broken code; do not "simplify" it to scan every position.
+
 #[test]
 fn synth_anthropic_request_id_msd_is_uniform() {
     const N: usize = 4000;
-    let mut low = 0usize; // token[msd] in alphabet[0..29]
+    let mut low = 0usize;
     let mut total = 0usize;
     for _ in 0..N {
         let id = synth_anthropic_request_id(crate::codec::test_host::HOST)
@@ -175,9 +151,7 @@ fn synth_anthropic_request_id_msd_is_uniform() {
         }
     }
     let frac = low as f64 / total as f64;
-    // Uniform expectation is 29/62 ≈ 0.468; the pre-fix bias measures ≈0.637, about 30 standard
-    // errors outside a ±4% band at n=8000 (σ ≈ 0.56%) — wide enough to never be flaky, narrow
-    // enough that the ~17-point defect cannot slip through.
+
     assert!(
         (0.468 - 0.04..=0.468 + 0.04).contains(&frac),
         "token[0]/token[12] must be uniform over the alphabet's first 29 chars \
@@ -187,13 +161,11 @@ fn synth_anthropic_request_id_msd_is_uniform() {
 }
 
 /// Conformance (`GeminiJsonArrayFramer::finish_with_error`): the truncation error element must
-/// carry NO busbar-internal vocabulary ("upstream"). A real Gemini API never emits that word, so it
-/// is a fingerprintable tell. The message must read like Gemini's own canonical 500 body.
+
 #[test]
 fn test_gemini_truncation_error_carries_no_internal_vocabulary() {
     let mut f = GeminiJsonArrayFramer::new();
-    // Force the truncation/abort path: a frame with NO terminator that overruns MAX_BUF, mirroring
-    // `test_gemini_json_array_framer_finish_signals_abort`.
+
     let huge = vec![b'x'; GeminiJsonArrayFramer::MAX_BUF + 16];
     let mut pre = Vec::from(&b"data: {\"k\":\""[..]);
     pre.extend_from_slice(&huge);
@@ -211,8 +183,7 @@ fn test_gemini_truncation_error_carries_no_internal_vocabulary() {
 }
 
 /// Every protocol's writer must produce a non-empty, valid-JSON probe body that carries the
-/// requested model (or, for path-model protocols like Gemini/Bedrock, at least valid JSON) —
-/// this is what the active health prober sends.
+
 #[test]
 fn test_probe_body_valid_for_all_protocols() {
     for name in [
@@ -235,9 +206,7 @@ fn test_probe_body_valid_for_all_protocols() {
 }
 
 /// `requires_max_tokens()` must be true exactly for the protocols whose APIs hard-reject a
-/// request lacking `max_tokens` (Anthropic Messages) and false for the rest — including Bedrock,
-/// which defaults maxTokens when omitted. This flag gates the translation-seam injection in
-/// `forward`; a false positive would silently cap a backend's output.
+
 #[test]
 fn test_requires_max_tokens_per_protocol() {
     for (name, want) in [
@@ -257,7 +226,7 @@ fn test_requires_max_tokens_per_protocol() {
 }
 
 /// OpenAI-compatible reasoning models put the chain-of-thought in `reasoning_content`; it must
-/// map to a Thinking block (ahead of the answer) so it survives translation to Anthropic.
+
 #[test]
 fn test_openai_reasoning_content_maps_to_thinking() {
     let body = serde_json::json!({
@@ -284,7 +253,7 @@ fn test_openai_reasoning_content_maps_to_thinking() {
         ),
         "the answer text should follow"
     );
-    // And it should render as an Anthropic thinking block on write.
+
     let wire = anthropic_writer().write_response(crate::codec::test_host::HOST, &ir);
     let blocks = wire.get("content").and_then(|c| c.as_array()).unwrap();
     assert!(
@@ -296,7 +265,7 @@ fn test_openai_reasoning_content_maps_to_thinking() {
 }
 
 /// Streaming reasoning: `delta.reasoning_content` must open a Thinking block at index 0 and
-/// close it before the text block (which shifts to index 1).
+
 #[test]
 fn test_openai_streaming_reasoning_blocks() {
     use crate::codec::ir::{IrBlockMeta, IrDelta, IrStreamEvent};
@@ -355,9 +324,7 @@ fn test_openai_streaming_reasoning_blocks() {
         text_start.is_some() && text_delta,
         "text opens at index 1 after reasoning"
     );
-    // Compare POSITIONS, not `Option`s: `None < Some(_)` is true under the derived `Ord`, so
-    // `think_stop < text_start` was satisfied by the thinking block never closing AT ALL — the exact
-    // defect the message below names. Require the stop to exist first.
+
     let think_stop = think_stop.expect(
         "the thinking block must emit a BlockStop at index 0; without it an ingress accumulator \
          leaves the thinking block open across the text block",
@@ -395,7 +362,6 @@ fn test_openai_streaming_no_reasoning_text_index_zero() {
 }
 
 fn rich_fixture() -> serde_json::Value {
-    // temperature is a natural 0.7 — IrRequest.temperature is f64 so it round-trips exactly.
     serde_json::json!({
         "system": [{"type": "text", "text": "You are a helpful assistant.", "cache_control": {"type": "ephemeral"}}],
         "messages": [
@@ -413,9 +379,6 @@ fn rich_fixture() -> serde_json::Value {
 
 #[test]
 fn test_openai_tool_schema_translates_to_anthropic() {
-    // Regression: OpenAI nests name/description/parameters under `function`. The reader must
-    // descend into it so the JSON schema reaches Anthropic's `input_schema` — otherwise the
-    // translated tool has `input_schema: null` and the Anthropic backend 422s.
     let openai_body = serde_json::json!({
         "model": "x",
         "max_tokens": 200,
@@ -502,10 +465,7 @@ fn test_signature_verbatim() {
     }
     assert!(found_thinking);
     let roundtrip = writer.write_request(crate::codec::test_host::HOST, &ir);
-    // The write side needs the same found-flag the read side above uses. Without it, a writer that
-    // dropped assistant `thinking` blocks (or emitted them as `"type":"reasoning"`) reached ZERO
-    // iterations of the assert and this test — whose whole subject is signature survival ON WRITE —
-    // passed green. A lost thinking signature is a hard Anthropic 400 on the next turn.
+
     let mut wrote_thinking = false;
     if let Some(msgs) = roundtrip.get("messages").and_then(|v| v.as_array()) {
         for msg_val in msgs {
@@ -542,11 +502,7 @@ fn test_cache_control_preserved() {
         .read_request(&j)
         .expect("read_request should succeed");
     assert!(!ir.system.is_empty());
-    // `else { panic }` both halves. As guards, a reader returning the system prompt as some other
-    // block variant skipped the read-side check, and — worse — a writer that stopped emitting
-    // `system`, or emitted it as a bare string instead of an array (a legal Anthropic shape),
-    // skipped the write-side check entirely. The test then passed while every prompt-cache
-    // breakpoint was silently dropped on the wire: the system prompt is re-billed in full each turn.
+
     let crate::codec::ir::IrBlock::Text {
         text: _,
         cache_control,
@@ -583,10 +539,7 @@ fn test_cache_control_preserved() {
 }
 
 /// An Anthropic `cache_control`
-/// breakpoint translated to a Bedrock `cachePoint` marker, which Amazon Nova hard-rejects
-/// (400 "extraneous key [cachePoint] is not permitted"). Bedrock's marker is MODEL-gated, so
-/// the seam must clear the cache ask unless the lane asserts `prompt_caching` — mirroring the
-/// `reasoning` gate. With the flag, the marker flows (Claude-on-Bedrock keeps its caching).
+
 #[test]
 fn cache_breakpoints_gated_by_lane_capability_on_bedrock() {
     let anthropic = crate::codec::proto_codec::protocol_for("anthropic").unwrap();
@@ -619,7 +572,6 @@ fn cache_breakpoints_gated_by_lane_capability_on_bedrock() {
     let contains_cache_point =
         |wire: &serde_json::Value| serde_json::to_string(wire).unwrap().contains("cachePoint");
 
-    // Lane WITHOUT the capability: every breakpoint cleared, no cachePoint on the wire.
     let ir = anthropic.reader().read_request(&body).unwrap();
     let mut req = ir;
     crate::codec::chat_handle::chat_prepare_for_egress(&mut req, &prep(false));
@@ -632,7 +584,6 @@ fn cache_breakpoints_gated_by_lane_capability_on_bedrock() {
         "an unasserted lane must never receive a cachePoint (Nova 400s on it): {wire}"
     );
 
-    // Lane WITH `prompt_caching: true`: the breakpoints project (Claude on Bedrock).
     let ir = anthropic.reader().read_request(&body).unwrap();
     let mut req = ir;
     crate::codec::chat_handle::chat_prepare_for_egress(&mut req, &prep(true));
@@ -656,21 +607,12 @@ fn test_extra_passthrough() {
     let ir = reader
         .read_request(&j)
         .expect("read_request should succeed");
-    // top_p is now a first-class IR sampling control (promoted out of `extra` so it survives the
-    // cross-protocol seam); it must NOT linger in `extra` but MUST still round-trip via the typed
-    // field into the written body.
+
     assert!(!ir.extra.contains_key("top_p"));
     assert!(ir.top_p.is_some());
     let roundtrip = writer.write_request(crate::codec::test_host::HOST, &ir);
     assert!(roundtrip.as_object().unwrap().contains_key("top_p"));
 }
-
-// Native control fields must not drop on cross-protocol hops. The universally-modeled
-// sampling controls (top_p, top_k, stop) are now first-class IR fields, so they survive the
-// cross-protocol seam (which CLEARS `ir.extra` to stop source-only key leakage). Each test reads
-// a native request, CLEARS `extra` to simulate the seam (proxy engine `ir.extra.clear()`), then
-// writes through a DIFFERENT protocol and asserts the control reappears in that protocol's native
-// shape. Were these still extra-only, the clear would drop them.
 
 #[test]
 fn test_cross_protocol_openai_top_p_to_anthropic() {
@@ -681,7 +623,7 @@ fn test_cross_protocol_openai_top_p_to_anthropic() {
     });
     let mut ir = OpenAiReader.read_request(&body).expect("openai parses");
     assert_eq!(ir.top_p, Some(0.81));
-    ir.extra.clear(); // simulate the cross-protocol seam
+    ir.extra.clear();
     let out = anthropic_writer().write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(
         out.get("top_p").and_then(|v| v.as_f64()),
@@ -699,7 +641,7 @@ fn test_cross_protocol_gemini_stop_sequences_to_openai_stop() {
     });
     let mut ir = GeminiReader.read_request(&body).expect("gemini parses");
     assert_eq!(ir.stop, vec!["STOP".to_string(), "END".to_string()]);
-    ir.extra.clear(); // simulate the cross-protocol seam
+    ir.extra.clear();
     let out = openai_writer().write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(
         out.get("stop"),
@@ -720,7 +662,7 @@ fn test_cross_protocol_anthropic_top_k_to_gemini() {
         .read_request(&body)
         .expect("anthropic parses");
     assert_eq!(ir.top_k, Some(40));
-    ir.extra.clear(); // simulate the cross-protocol seam
+    ir.extra.clear();
     let writer = GeminiWriter;
     let out = writer.write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(
@@ -731,7 +673,6 @@ fn test_cross_protocol_anthropic_top_k_to_gemini() {
     );
 }
 
-// top_k has NO OpenAI target: the OpenAI writer must NOT invent one (lossy-by-target, not a leak).
 #[test]
 fn test_cross_protocol_top_k_dropped_for_openai_target() {
     let body = serde_json::json!({
@@ -753,13 +694,11 @@ fn test_cross_protocol_top_k_dropped_for_openai_target() {
 
 #[test]
 fn test_registry_resolves_anthropic() {
-    // Anthropic should be present
     let protocol =
         crate::codec::proto_codec::protocol_for("anthropic").expect("anthropic should exist");
     assert_eq!(protocol.name_static(), "anthropic");
     assert_eq!(protocol.writer().upstream_path(), "/v1/messages");
 
-    // Non-existent should return None
     assert!(crate::codec::proto_codec::protocol_for("nonexistent").is_none());
 }
 
@@ -769,30 +708,24 @@ fn test_reader_classify_behavior() {
         crate::codec::proto_codec::protocol_for("anthropic").expect("anthropic should exist");
     let reader = protocol.reader();
 
-    // Test 429 → RateLimit
     let signal = reader.classify(StatusCode::TOO_MANY_REQUESTS, b"{}");
     assert_eq!(signal.class, StatusClass::RateLimit);
 
-    // Test 401 → Auth
     let signal = reader.classify(StatusCode::UNAUTHORIZED, b"{}");
     assert_eq!(signal.class, StatusClass::Auth);
 
-    // Test 503 → ServerError
     let signal = reader.classify(StatusCode::SERVICE_UNAVAILABLE, b"{}");
     assert_eq!(signal.class, StatusClass::ServerError);
 }
 
 #[test]
 fn test_irerror_bridge() {
-    // `IrError` is a type alias for the breaker's `CanonicalSignal`; verify the bridge by routing
-    // it through the classifier rather than re-asserting the field we just set.
     let ir_error: IrError = IrError {
         class: StatusClass::Billing,
         provider_signal: Some("test".to_string()),
         retry_after: None,
     };
 
-    // Billing is a hard, non-retryable failure for the breaker.
     assert_eq!(
         ir_error.class.disposition(),
         busbar_contract::upstream::Disposition::HardDown
@@ -804,12 +737,6 @@ fn test_stream_roundtrip_identity() {
     let reader = AnthropicReader;
     let writer = AnthropicWriter;
 
-    // message_start with usage. `write_response_event` runs ONLY on the cross-protocol
-    // StreamTranslate path (same-protocol streams pass raw bytes through), so the writer ALWAYS
-    // emits the full native skeleton — `id` (synthesized when absent), `type`, `content[]`,
-    // `stop_reason`, `stop_sequence` — that every native Anthropic message_start carries. Assert
-    // those structural fields (the synthesized `id` is non-deterministic) plus the round-tripped
-    // usage, rather than byte-identity to the bare input.
     let data = serde_json::json!({
         "message": {
             "role": "assistant",
@@ -850,15 +777,6 @@ fn test_stream_roundtrip_identity() {
         );
     }
 
-    // content_block_start for tool_use. Fixtures carry the top-level `type` field that native
-    // Anthropic SSE data bodies include and that `AnthropicWriter::write_response_event` now emits
-    // (the reader dispatches on the SSE `event:` header, not `data.type`, so the field is dropped
-    // on read and re-synthesized by the writer — exact-equality holds with `type` present in the
-    // fixture).
-    // Native Anthropic seeds `input:{}` on a tool_use `content_block_start` so an SDK accumulator
-    // initializes the partial-json buffer before the first `input_json_delta`; the writer emits that
-    // seed, so the fixture must carry it for exact-equality round-trip. Likewise the spec-required
-    // `caller` (`{"type":"direct"}`), which the writer emits on every tool_use block start.
     let data = serde_json::json!({
         "type": "content_block_start",
         "index": 0,
@@ -880,7 +798,6 @@ fn test_stream_roundtrip_identity() {
         );
     }
 
-    // content_block_delta - text_delta
     let data = serde_json::json!({
         "type": "content_block_delta",
         "index": 0,
@@ -899,7 +816,6 @@ fn test_stream_roundtrip_identity() {
         );
     }
 
-    // content_block_delta - thinking_delta
     let data = serde_json::json!({
         "type": "content_block_delta",
         "index": 1,
@@ -918,7 +834,6 @@ fn test_stream_roundtrip_identity() {
         );
     }
 
-    // content_block_delta - input_json_delta
     let data = serde_json::json!({
         "type": "content_block_delta",
         "index": 2,
@@ -937,7 +852,6 @@ fn test_stream_roundtrip_identity() {
         );
     }
 
-    // content_block_delta - signature_delta
     let data = serde_json::json!({
         "type": "content_block_delta",
         "index": 1,
@@ -956,7 +870,6 @@ fn test_stream_roundtrip_identity() {
         );
     }
 
-    // content_block_stop
     let data = serde_json::json!({ "type": "content_block_stop", "index": 0 });
     let ev = reader.read_response_event(crate::codec::test_host::HOST, "content_block_stop", &data);
     assert!(ev.is_some());
@@ -967,10 +880,6 @@ fn test_stream_roundtrip_identity() {
         );
     }
 
-    // message_delta with usage. Native Anthropic ALWAYS carries `delta.stop_sequence` (explicit
-    // `null` when no stop sequence fired), so the round-tripped frame includes it — along with the
-    // other members the published `MessageDelta` / `MessageDeltaUsage` schemas require
-    // (`container`, `stop_details`, `output_tokens_details`, `server_tool_use`), `null` here.
     let data = serde_json::json!({
         "type": "message_delta",
         "delta": {
@@ -997,7 +906,6 @@ fn test_stream_roundtrip_identity() {
         );
     }
 
-    // message_stop
     let data = serde_json::json!({ "type": "message_stop" });
     let ev = reader.read_response_event(crate::codec::test_host::HOST, "message_stop", &data);
     assert!(ev.is_some());
@@ -1014,7 +922,6 @@ fn test_split_usage_never_collapses() {
     let reader = AnthropicReader;
     let writer = AnthropicWriter;
 
-    // message_delta with all four usage fields distinct
     let data = serde_json::json!({
         "delta": { "stop_reason": "end_turn" },
         "usage": {
@@ -1038,8 +945,6 @@ fn test_split_usage_never_collapses() {
         assert_eq!(usage.output_tokens, 50);
         assert_eq!(usage.cache_creation_input_tokens, Some(30));
         assert_eq!(usage.cache_read_input_tokens, Some(200));
-        // input_tokens (100) is carried verbatim, NOT collapsed into the cache totals (30+200=230) —
-        // the `input_tokens == 100` assertion above already proves it (230 would fail there).
     } else {
         panic!("expected MessageDelta");
     }
@@ -1096,7 +1001,6 @@ fn test_signature_delta_verbatim() {
     let reader = AnthropicReader;
     let writer = AnthropicWriter;
 
-    // Signature delta with byte-identical string
     let sig = "sig_abc123xyz_signature_for_thinking";
     let data = serde_json::json!({
         "index": 0,
@@ -1143,7 +1047,6 @@ fn test_ping_returns_none() {
     let result = reader.read_response_event(crate::codec::test_host::HOST, "ping", &data);
     assert!(result.is_none());
 
-    // Unknown event type also returns None
     let result =
         reader.read_response_event(crate::codec::test_host::HOST, "unknown_event_type", &data);
     assert!(result.is_none());
@@ -1155,7 +1058,6 @@ fn test_openai_request_roundtrip_identity() {
     let reader = protocol.reader();
     let writer = protocol.writer();
 
-    // Canonical OpenAI request with system message, user+image, assistant tool_call, tool_result, tools array, max_tokens, temperature:0.7, stream:true, top_p→extra
     let j = serde_json::json!({
         "model": "gpt-4",
         "messages": [
@@ -1176,7 +1078,6 @@ fn test_openai_request_roundtrip_identity() {
         .expect("read_request should succeed");
     let roundtrip = writer.write_request(crate::codec::test_host::HOST, &ir);
 
-    // Compare structurally rather than byte-identical since IR doesn't preserve model field and tool_call ids are regenerated
     assert_eq!(
         roundtrip
             .as_object()
@@ -1205,8 +1106,6 @@ fn test_openai_request_roundtrip_identity() {
         j.as_object().unwrap().get("top_p")
     );
 
-    // Correctness-critical: the tool_call id must round-trip VERBATIM (not be regenerated),
-    // so the assistant tool_call still correlates with the tool-result `tool_call_id`.
     let msgs = roundtrip
         .get("messages")
         .and_then(|v| v.as_array())
@@ -1222,7 +1121,7 @@ fn test_openai_request_roundtrip_identity() {
         Some("call_123"),
         "tool_call id must round-trip verbatim, not be regenerated"
     );
-    // And the tool-result must still reference that same id (correlation preserved).
+
     let result_ref = msgs
         .iter()
         .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("tool"))
@@ -1280,7 +1179,6 @@ fn test_openai_tool_call_arguments_string_to_value() {
     let reader = protocol.reader();
     let writer = protocol.writer();
 
-    // Test with arguments that parse to a JSON object
     let j = serde_json::json!({
         "model": "gpt-4",
         "messages": [
@@ -1292,7 +1190,6 @@ fn test_openai_tool_call_arguments_string_to_value() {
         .read_request(&j)
         .expect("read_request should succeed");
 
-    // Find the ToolUse block and verify arguments parsed to Value
     let mut found_tool_use = false;
     for msg in &ir.messages {
         if msg.role == crate::codec::ir::IrRole::Assistant {
@@ -1304,7 +1201,7 @@ fn test_openai_tool_call_arguments_string_to_value() {
                     found_tool_use = true;
                     assert_eq!(id, "call_123");
                     assert_eq!(name, "get_weather");
-                    // Verify arguments parsed to an object Value
+
                     match input {
                         serde_json::Value::Object(_) => {}
                         _ => panic!("arguments should parse to Object"),
@@ -1325,7 +1222,6 @@ fn test_openai_tool_call_arguments_string_to_value() {
 
 #[test]
 fn test_registry_has_both_protocols() {
-    // Both should exist
     assert!(
         crate::codec::proto_codec::protocol_for("anthropic").is_some(),
         "anthropic should exist"
@@ -1335,11 +1231,9 @@ fn test_registry_has_both_protocols() {
         "openai should exist"
     );
 
-    // Verify openai writer path
     let openai = crate::codec::proto_codec::protocol_for("openai").expect("openai should exist");
     assert_eq!(openai.writer().upstream_path(), "/v1/chat/completions");
 
-    // Verify anthropic writer path
     let anthropic =
         crate::codec::proto_codec::protocol_for("anthropic").expect("anthropic should exist");
     assert_eq!(anthropic.writer().upstream_path(), "/v1/messages");
@@ -1347,25 +1241,21 @@ fn test_registry_has_both_protocols() {
 
 #[test]
 fn test_protocol_clone_works() {
-    // Test OpenAI protocol clone doesn't panic
     let openai_proto = Protocol::openai();
     let cloned_openai = openai_proto.clone();
 
-    // Clone must PRESERVE the protocol identity (golden values), not merely equal itself.
     assert_eq!(cloned_openai.name_static(), "openai");
     assert_eq!(
         cloned_openai.writer().upstream_path(),
         "/v1/chat/completions"
     );
 
-    // Test Anthropic protocol clone doesn't panic
     let anthropic_proto = Protocol::anthropic();
     let cloned_anthropic = anthropic_proto.clone();
 
     assert_eq!(cloned_anthropic.name_static(), "anthropic");
     assert_eq!(cloned_anthropic.writer().upstream_path(), "/v1/messages");
 
-    // Verify clone_box works for trait objects (just check it doesn't panic and returns same type)
     let openai_reader: Box<dyn ProtocolReader> = Box::new(OpenAiReader);
     let _cloned_reader = openai_reader.clone();
 
@@ -1374,12 +1264,7 @@ fn test_protocol_clone_works() {
 }
 
 /// Cohere v2 carries the assistant's INTERNAL pre-tool plan in `message.tool_plan`. It must reach
-/// the IR — unread, it vanishes on any Cohere→X hop — but as REASONING, not as visible text.
-///
-/// Reading it as a leading `Text` (the previous behaviour this test asserted) was CONTENT
-/// INJECTION rather than loss: every cross-protocol client then rendered the model's internal plan
-/// as the answer's first paragraph, text the model never intended to show, and no writer could tell
-/// it apart from a genuine leading assistant message to put it back in its native slot.
+
 #[test]
 fn cohere_read_response_surfaces_tool_plan_as_reasoning_not_visible_text() {
     let body = serde_json::json!({
@@ -1413,7 +1298,7 @@ fn cohere_read_response_surfaces_tool_plan_as_reasoning_not_visible_text() {
 }
 
 /// Responses retains partial string arguments verbatim. Cohere refuses malformed JSON, while
-/// retaining a represented JSON string's original spacing instead of encoding it a second time.
+
 #[test]
 fn string_args_writers_emit_raw_tool_args_verbatim() {
     let raw = "not valid json {";
@@ -1446,8 +1331,6 @@ fn string_args_writers_emit_raw_tool_args_verbatim() {
         ..Default::default()
     };
 
-    // Responses: output[].arguments (bind the const to a local before borrowing — the writer holds
-    // interior-mutable stream state, so a direct `Const.method()` trips clippy::borrow_interior_mutable_const).
     let resp_w = ResponsesWriter;
     let resp = resp_w.write_response(crate::codec::test_host::HOST, &ir);
     let resp_args = resp
@@ -1464,7 +1347,6 @@ fn string_args_writers_emit_raw_tool_args_verbatim() {
         "Responses must emit raw string args verbatim"
     );
 
-    // Cohere: message.tool_calls[].function.arguments (bind to a local, as above).
     let coh_w = CohereWriter;
     assert!(coh_w
         .try_write_response(crate::codec::test_host::HOST, &ir)
@@ -1495,36 +1377,25 @@ fn string_args_writers_emit_raw_tool_args_verbatim() {
 }
 
 /// Regression: Cohere is a free-form-tool-id
-/// ingress with NO canonical prefix, so `crate::codec::proto_codec::native_tool_id_prefix("cohere")` must be `None` (like
-/// Gemini). An empty prefix would make the bare `bb1` marker the only distinguishing signal and
-/// silently hex-decode a legitimate client-authored id of shape `bb1<even-len-hex-UTF8>`,
-/// corrupting tool_use/tool_result correlation on a Cohere-ingress cross-protocol hop.
+
 #[test]
 fn cohere_tool_ids_pass_through_verbatim_no_decode() {
-    // No prefix for Cohere — the encode never reshapes a Cohere-ingress tool id.
     assert_eq!(
         crate::codec::proto_codec::native_tool_id_prefix("cohere"),
         None
     );
 
-    // A client-authored Cohere id that matches the colliding `bb1<even-hex-UTF8>` shape
-    // (`bb161626364` → `bb1` + hex("abcd")) must NOT be decoded — it passes through unchanged.
     assert_eq!(decode_native_tool_id("cohere", "bb161626364"), None);
-    // Any other free-form Cohere id is likewise a no-op on decode.
+
     assert_eq!(decode_native_tool_id("cohere", "my-tool-call-7"), None);
 
-    // The forward (encode) path is also a verbatim no-op for a Cohere ingress: the egress id is
-    // emitted as-is, so there is nothing to mis-decode on the client's echo.
     let mut remap = ToolIdRemap::default();
     assert_eq!(remap.native_for("cohere", "call_xyz"), "call_xyz");
     assert_eq!(remap.native_for("cohere", "bb161626364"), "bb161626364");
 }
 
 /// CHARACTERIZATION: this passes before and after `write_sse_frame` by construction, since it
-/// pins byte-for-byte output rather than a behavior change. The
-/// real guard for the `reframe_sse` → `write_sse_frame` refactor (String-per-frame allocation →
-/// append-in-place) is the byte-parity golden wall
-/// (`proto/tests/translate_parity_golden_tests.rs`), which must stay green across this change.
+
 #[test]
 fn write_sse_frame_pins_both_framings_byte_for_byte() {
     let data = serde_json::json!({"a": 1});
@@ -1541,10 +1412,6 @@ fn write_sse_frame_pins_both_framings_byte_for_byte() {
 #[cfg(test)]
 mod ir_property_tests {
     use super::*;
-
-    // ============================================================================
-    // A. Anthropic REQUEST property tests (decode assertions + round-trip)
-    // ============================================================================
 
     /// Rich canonical Anthropic fixture with natural values only (0.7, "hello", 10, "call_123").
     fn anthropic_rich_fixture() -> serde_json::Value {
@@ -1619,8 +1486,6 @@ mod ir_property_tests {
 
     #[test]
     fn test_anthropic_request_decode_assertions() {
-        // DECODE assertions on rich canonical fixture - exact field values that a doctored
-        // fixture cannot fake
         let protocol =
             crate::codec::proto_codec::protocol_for("anthropic").expect("anthropic should exist");
         let reader = protocol.reader();
@@ -1630,7 +1495,6 @@ mod ir_property_tests {
             .read_request(&j)
             .expect("read_request should succeed");
 
-        // Assert system[0] has cache_control Some(Ephemeral) & text
         assert!(!ir.system.is_empty());
         if let crate::codec::ir::IrBlock::Text {
             ref text,
@@ -1649,7 +1513,6 @@ mod ir_property_tests {
             panic!("system[0] should be Text block");
         }
 
-        // Assert the Thinking signature String == "sig_thinking_abc123"
         let mut found_assistant = false;
         for msg in &ir.messages {
             if msg.role == crate::codec::ir::IrRole::Assistant {
@@ -1671,7 +1534,6 @@ mod ir_property_tests {
         }
         assert!(found_assistant);
 
-        // Assert ToolUse id/name/input
         let mut found_tool_use = false;
         for msg in &ir.messages {
             if msg.role == crate::codec::ir::IrRole::Assistant {
@@ -1698,7 +1560,6 @@ mod ir_property_tests {
         }
         assert!(found_tool_use);
 
-        // Assert Image media_type+data in user message
         let mut found_image = false;
         for msg in &ir.messages {
             if msg.role == crate::codec::ir::IrRole::User {
@@ -1717,7 +1578,6 @@ mod ir_property_tests {
         }
         assert!(found_image);
 
-        // Assert tool_result tool_use_id == "call_123" (correlation)
         let mut found_tool_result = false;
         for msg in &ir.messages {
             if msg.role == crate::codec::ir::IrRole::User {
@@ -1739,21 +1599,14 @@ mod ir_property_tests {
         }
         assert!(found_tool_result);
 
-        // Assert temperature == Some(0.7) (f64, exact - natural value not 0.699999988)
         assert_eq!(ir.temperature, Some(0.7_f64));
 
-        // top_p is now promoted to a first-class IR field (so it survives the cross-protocol
-        // seam): it must be carried in `ir.top_p`, NOT left in `extra`.
         assert!(!ir.extra.contains_key("top_p"));
         assert_eq!(ir.top_p, Some(0.95_f64));
     }
 
     #[test]
     fn test_anthropic_request_roundtrip_identity() {
-        // Round-trip identity: semantic equivalence via decoded IR (NOT byte-identical) because
-        // serializer adds is_error:false for tool_result blocks that had no is_error field in input.
-        // This is documented semantic equivalence per anti-fab spec - assert on DECODED IR directly
-        // which is the ground truth that a doctored fixture cannot fake.
         let protocol =
             crate::codec::proto_codec::protocol_for("anthropic").expect("anthropic should exist");
         let reader = protocol.reader();
@@ -1764,19 +1617,16 @@ mod ir_property_tests {
             .read_request(&j)
             .expect("read_request should succeed");
 
-        // Round-trip the JSON through write + read and verify DECODED IR is identical
         let roundtrip_json = writer.write_request(crate::codec::test_host::HOST, &ir);
         let rt_ir = reader
             .read_request(&roundtrip_json)
             .expect("read round-trip should succeed");
 
-        // Assert decoded IR is byte-identical (ground truth for anti-fab)
         assert_eq!(ir, rt_ir, "decoded IR must be identical after round-trip");
     }
 
     #[test]
     fn test_anthropic_request_empty_minimal() {
-        // Empty/minimal: a bare {"messages":[{"role":"user","content":"hi"}]} round-trips and decodes
         let j = serde_json::json!({
             "messages": [{"role": "user", "content": "hi"}]
         });
@@ -1789,7 +1639,6 @@ mod ir_property_tests {
             .read_request(&j)
             .expect("read_request should succeed");
 
-        // Assert empty/minimal properties
         assert!(ir.system.is_empty());
         assert_eq!(ir.messages.len(), 1);
         assert_eq!(ir.messages[0].role, crate::codec::ir::IrRole::User);
@@ -1803,20 +1652,13 @@ mod ir_property_tests {
         assert_eq!(ir.temperature, None);
         assert!(!ir.stream);
 
-        // Round-trip: semantic equivalence (NOT byte-identical) because serializer always outputs
-        // content as array even for single text block - this is a known serialization difference
         let roundtrip = writer.write_request(crate::codec::test_host::HOST, &ir);
 
-        // Verify semantic equivalence via decoded IR
         let rt_ir = reader
             .read_request(&roundtrip)
             .expect("read round-trip should succeed");
         assert_eq!(ir, rt_ir);
     }
-
-    // ============================================================================
-    // B. OpenAI REQUEST property tests (decode assertions + correlation)
-    // ============================================================================
 
     /// Canonical OpenAI fixture with natural values only.
     fn openai_rich_fixture() -> serde_json::Value {
@@ -1867,8 +1709,6 @@ mod ir_property_tests {
 
     #[test]
     fn test_openai_request_decode_assertions() {
-        // DECODE assertions on canonical OpenAI fixture - exact field values that a doctored
-        // fixture cannot fake
         let protocol =
             crate::codec::proto_codec::protocol_for("openai").expect("openai should exist");
         let reader = protocol.reader();
@@ -1878,7 +1718,6 @@ mod ir_property_tests {
             .read_request(&j)
             .expect("read_request should succeed");
 
-        // Assert system decoded from messages[0] (OpenAI convention)
         assert!(!ir.system.is_empty());
         if let crate::codec::ir::IrBlock::Text { ref text, .. } = ir.system[0] {
             assert_eq!(text, "You are a helpful assistant.");
@@ -1886,7 +1725,6 @@ mod ir_property_tests {
             panic!("system[0] should be Text block");
         }
 
-        // Assert ToolUse id == "call_123" (NOT regenerated)
         let mut found_tool_use = false;
         for msg in &ir.messages {
             if msg.role == crate::codec::ir::IrRole::Assistant {
@@ -1901,7 +1739,6 @@ mod ir_property_tests {
         }
         assert!(found_tool_use);
 
-        // Assert the tool_result tool_use_id == "call_123" (correlation)
         let mut found_tool_result = false;
         for msg in &ir.messages {
             if msg.role == crate::codec::ir::IrRole::Tool {
@@ -1921,7 +1758,6 @@ mod ir_property_tests {
         }
         assert!(found_tool_result);
 
-        // Assert image url preserved in Image.data
         let mut found_image = false;
         for msg in &ir.messages {
             if msg.role == crate::codec::ir::IrRole::User {
@@ -1939,14 +1775,11 @@ mod ir_property_tests {
         }
         assert!(found_image);
 
-        // Assert temperature Some(0.7) (f64, exact natural value)
         assert_eq!(ir.temperature, Some(0.7_f64));
     }
 
     #[test]
     fn test_openai_tool_call_id_correlation_survives_write() {
-        // tool_call id correlation survives write: after write_request, the assistant
-        // tool_calls[0].id == "call_123" AND the tool message tool_call_id == "call_123" (same id)
         let protocol =
             crate::codec::proto_codec::protocol_for("openai").expect("openai should exist");
         let reader = protocol.reader();
@@ -1958,14 +1791,9 @@ mod ir_property_tests {
             .expect("read_request should succeed");
         let roundtrip = writer.write_request(crate::codec::test_host::HOST, &ir);
 
-        // BOTH halves need a found-flag. As three nested guards with no flag, a writer that emitted
-        // the assistant call under the legacy `function_call` key (or dropped the `id`) reached no
-        // assertion; a writer that dropped the tool-result message entirely reached neither half's
-        // body. A writer that dropped BOTH sides passed a test named "correlation survives write".
         let mut saw_assistant_call = false;
         let mut saw_tool_result = false;
 
-        // Verify assistant tool_calls[0].id == "call_123"
         if let Some(msgs) = roundtrip.get("messages").and_then(|v| v.as_array()) {
             for msg_val in msgs {
                 if let Some(tc_arr) = msg_val.get("tool_calls").and_then(|v| v.as_array()) {
@@ -1979,7 +1807,6 @@ mod ir_property_tests {
             }
         }
 
-        // Verify tool message tool_call_id == "call_123" (same id)
         if let Some(msgs) = roundtrip.get("messages").and_then(|v| v.as_array()) {
             for msg_val in msgs {
                 if msg_val.get("role").and_then(|r| r.as_str()) == Some("tool") {
@@ -2011,8 +1838,6 @@ mod ir_property_tests {
 
     #[test]
     fn test_openai_arguments_string_to_value_roundtrip() {
-        // arguments string↔Value: OpenAI function `arguments` (JSON string) → ToolUse.input
-        // (Value/Object) on read, re-serialized to a string on write that re-parses equal
         let protocol =
             crate::codec::proto_codec::protocol_for("openai").expect("openai should exist");
         let reader = protocol.reader();
@@ -2041,7 +1866,6 @@ mod ir_property_tests {
             .read_request(&j)
             .expect("read_request should succeed");
 
-        // Find ToolUse and verify arguments parsed to Value/Object on read
         let mut found_tool_use = false;
         for msg in &ir.messages {
             if msg.role == crate::codec::ir::IrRole::Assistant {
@@ -2069,7 +1893,6 @@ mod ir_property_tests {
         }
         assert!(found_tool_use);
 
-        // Write and re-parse arguments from roundtrip
         let roundtrip = writer.write_request(crate::codec::test_host::HOST, &ir);
         let crate::codec::ir::IrBlock::ToolUse { input, .. } = &ir.messages[0].content[0] else {
             panic!("expected the parsed ToolUse block");
@@ -2077,19 +1900,11 @@ mod ir_property_tests {
         assert_written_openai_tool_arguments(&roundtrip, input);
     }
 
-    // ============================================================================
-    // C. Anthropic RESPONSE/STREAM per-event property tests (read_response_event/write_response_event)
-    // ============================================================================
-
     #[test]
     fn test_anthropic_stream_per_event_roundtrip() {
-        // Per-event round-trip for each event type with natural values
         let reader = AnthropicReader;
         let writer = AnthropicWriter;
 
-        // 1. message_start w/ usage incl. cache tokens. The writer (cross-protocol-only path)
-        // always emits the full native skeleton with a synthesized `id`, so assert the structural
-        // fields + round-tripped usage rather than byte-identity to the bare input.
         let data = serde_json::json!({
             "message": {
                 "role": "assistant",
@@ -2131,13 +1946,6 @@ mod ir_property_tests {
             );
         }
 
-        // 2. content_block_start tool_use. Fixtures carry the native top-level `type` field
-        // (matching the SSE `event:` header) that `AnthropicWriter` now emits; the reader drops it
-        // (it dispatches on the header, not `data.type`) and the writer re-synthesizes it, so the
-        // same-protocol round-trip stays byte-identical with `type` present in the fixture.
-        // Native Anthropic seeds `input:{}` on a tool_use `content_block_start` and carries the
-        // spec-required `caller` (`{"type":"direct"}`); the writer emits both, so the fixture
-        // carries them for the byte-identical same-protocol round-trip.
         let data = serde_json::json!({
             "type": "content_block_start",
             "index": 0,
@@ -2159,7 +1967,6 @@ mod ir_property_tests {
             );
         }
 
-        // 3. content_block_delta ×4 delta kinds (text, thinking, input_json, signature)
         let text_data = serde_json::json!({
             "type": "content_block_delta",
             "index": 0,
@@ -2232,7 +2039,6 @@ mod ir_property_tests {
             );
         }
 
-        // 4. content_block_stop
         let data = serde_json::json!({"type": "content_block_stop", "index": 0});
         let ev =
             reader.read_response_event(crate::codec::test_host::HOST, "content_block_stop", &data);
@@ -2244,13 +2050,6 @@ mod ir_property_tests {
             );
         }
 
-        // 5. message_delta w/ usage, no matched stop_sequence (the common case). The source
-        // carried no matched `stop_sequence`, so the IR's `stop_sequence` is `None`. Native
-        // Anthropic ALWAYS carries `delta.stop_sequence` (explicit `null` when none fired), so
-        // the writer emits it as `null` and the round-trip preserves that native shape.
-        // The delta and usage also carry the members the published `MessageDelta` /
-        // `MessageDeltaUsage` schemas require (`container`, `stop_details`,
-        // `output_tokens_details`, `server_tool_use`), `null` when nothing applies.
         let data = serde_json::json!({
             "type": "message_delta",
             "delta": {
@@ -2271,7 +2070,6 @@ mod ir_property_tests {
         let ev = reader.read_response_event(crate::codec::test_host::HOST, "message_delta", &data);
         assert!(ev.is_some());
         if let Some(e) = ev {
-            // The IR must carry stop_sequence = None for a delta whose wire had none.
             if let crate::codec::ir::IrStreamEvent::MessageDelta { stop_sequence, .. } = &e {
                 assert_eq!(*stop_sequence, None);
             } else {
@@ -2283,9 +2081,6 @@ mod ir_property_tests {
             );
         }
 
-        // 5b. message_delta WHERE a stop_sequence matched (`stop_reason: "stop_sequence"` carries
-        // the matched string). The reader now captures `stop_sequence` and the writer re-emits it,
-        // so this same-protocol round-trip is byte-faithful — previously the field was dropped.
         let data = serde_json::json!({
             "type": "message_delta",
             "delta": {
@@ -2317,7 +2112,6 @@ mod ir_property_tests {
             );
         }
 
-        // 6. message_stop
         let data = serde_json::json!({"type": "message_stop"});
         let ev = reader.read_response_event(crate::codec::test_host::HOST, "message_stop", &data);
         assert!(ev.is_some());
@@ -2328,7 +2122,6 @@ mod ir_property_tests {
             );
         }
 
-        // 7. error event
         let data = serde_json::json!({
             "error": {"type": "invalid_request_error"}
         });
@@ -2338,8 +2131,6 @@ mod ir_property_tests {
 
     #[test]
     fn test_split_usage_decode_all_fields_distinct() {
-        // Split usage decode: a message_delta usage {input 100, output 50, cache_creation 30,
-        // cache_read 200} decodes to IrUsage with all four DISTINCT (assert each ==, and input != sum)
         let reader = AnthropicReader;
 
         let data = serde_json::json!({
@@ -2362,15 +2153,11 @@ mod ir_property_tests {
             ..
         } = ev
         {
-            // Assert each field == exact value (natural values only)
             assert_eq!(usage.input_tokens, 100);
             assert_eq!(usage.output_tokens, 50);
             assert_eq!(usage.cache_creation_input_tokens, Some(30));
             assert_eq!(usage.cache_read_input_tokens, Some(200));
 
-            // Verify they weren't collapsed: the DECODED input must not be the sum of the decoded
-            // cache buckets. Comparing the two literals `100` and `30 + 200` instead — as this did
-            // — is an arithmetic fact about the fixture, true whatever the reader returns.
             assert_ne!(
                 usage.input_tokens,
                 usage.cache_creation_input_tokens.unwrap_or(0)
@@ -2384,7 +2171,6 @@ mod ir_property_tests {
 
     #[test]
     fn test_signature_delta_verbatim_roundtrip() {
-        // signature_delta decodes to IrDelta::SignatureDelta(s) with s == input, round-trips
         let reader = AnthropicReader;
         let writer = AnthropicWriter;
 
@@ -2397,7 +2183,6 @@ mod ir_property_tests {
             }
         });
 
-        // Decode assertion: signature decodes to SignatureDelta(s) with s == input
         let ev = reader
             .read_response_event(crate::codec::test_host::HOST, "content_block_delta", &data)
             .expect("should parse");
@@ -2412,7 +2197,6 @@ mod ir_property_tests {
             panic!("expected BlockDelta event");
         }
 
-        // Round-trip: write back and verify signature preserved verbatim
         let roundtrip = writer.write_response_event(
             crate::codec::test_host::HOST,
             &crate::codec::ir::IrStreamEvent::BlockDelta {
@@ -2489,7 +2273,6 @@ mod ir_property_tests {
     fn test_openai_write_response_event_finish_reason_mapping() {
         let writer = OpenAiWriter;
 
-        // end_turn -> stop
         let ev1 = crate::codec::ir::IrStreamEvent::MessageDelta {
             stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
             stop_sequence: None,
@@ -2505,7 +2288,6 @@ mod ir_property_tests {
             Some("stop")
         );
 
-        // max_tokens -> length
         let ev2 = crate::codec::ir::IrStreamEvent::MessageDelta {
             stop_reason: Some(crate::codec::ir::IrStopReason::MaxTokens),
             stop_sequence: None,
@@ -2521,7 +2303,6 @@ mod ir_property_tests {
             Some("length")
         );
 
-        // tool_use -> tool_calls
         let ev3 = crate::codec::ir::IrStreamEvent::MessageDelta {
             stop_reason: Some(crate::codec::ir::IrStopReason::ToolUse),
             stop_sequence: None,
@@ -2569,7 +2350,6 @@ mod ir_property_tests {
     fn test_openai_write_response_event_lossy_drops() {
         let writer = OpenAiWriter;
 
-        // ThinkingDelta -> None
         let ev1 = crate::codec::ir::IrStreamEvent::BlockDelta {
             index: 0,
             delta: crate::codec::ir::IrDelta::ThinkingDelta("thinking...".to_string()),
@@ -2578,7 +2358,6 @@ mod ir_property_tests {
             .write_response_event(crate::codec::test_host::HOST, &ev1)
             .is_none());
 
-        // SignatureDelta -> None
         let ev2 = crate::codec::ir::IrStreamEvent::BlockDelta {
             index: 0,
             delta: crate::codec::ir::IrDelta::SignatureDelta("sig...".to_string()),
@@ -2587,13 +2366,11 @@ mod ir_property_tests {
             .write_response_event(crate::codec::test_host::HOST, &ev2)
             .is_none());
 
-        // BlockStop -> None
         let ev3 = crate::codec::ir::IrStreamEvent::BlockStop { index: 0 };
         assert!(writer
             .write_response_event(crate::codec::test_host::HOST, &ev3)
             .is_none());
 
-        // MessageStop -> None
         let ev4 = crate::codec::ir::IrStreamEvent::MessageStop;
         assert!(writer
             .write_response_event(crate::codec::test_host::HOST, &ev4)
@@ -2621,13 +2398,6 @@ mod ir_property_tests {
         );
     }
 
-    // Indistinguishability fix (same-proto `usage:null` tell): the byte-level top-level `usage` member
-    // remover must delete exactly the `usage` member (with the right adjacent comma) and leave every
-    // other byte intact, AND must NEVER corrupt a frame where the literal text `"usage":null` appears
-    // inside string content. These exercise the stripper directly on representative frame shapes.
-
-    // Re-parse both sides and assert JSON equality with `usage` gone, plus assert the raw output has no
-    // top-level `usage` key. Parsing both proves the splice stayed well-formed.
     fn assert_stripped_ok(input: &str) -> String {
         let out = crate::codec::dialect::strip_top_level_usage_member(input)
             .unwrap_or_else(|| panic!("expected a byte-level strip for: {input}"));
@@ -2642,7 +2412,6 @@ mod ir_property_tests {
 
     #[test]
     fn strip_usage_last_key() {
-        // `usage` as the LAST member: the preceding comma must be removed too.
         let input = r#"{"id":"x","choices":[{"delta":{"content":"hi"}}],"usage":null}"#;
         let out = assert_stripped_ok(input);
         assert_eq!(out, r#"{"id":"x","choices":[{"delta":{"content":"hi"}}]}"#);
@@ -2650,7 +2419,6 @@ mod ir_property_tests {
 
     #[test]
     fn strip_usage_first_key() {
-        // `usage` as the FIRST member: the trailing comma must be removed instead.
         let input = r#"{"usage":null,"id":"x","choices":[]}"#;
         let out = assert_stripped_ok(input);
         assert_eq!(out, r#"{"id":"x","choices":[]}"#);
@@ -2658,7 +2426,6 @@ mod ir_property_tests {
 
     #[test]
     fn strip_usage_middle_key() {
-        // `usage` in the MIDDLE: exactly one adjacent comma removed, both neighbors intact.
         let input = r#"{"id":"x","usage":null,"choices":[{"delta":{}}]}"#;
         let out = assert_stripped_ok(input);
         assert_eq!(out, r#"{"id":"x","choices":[{"delta":{}}]}"#);
@@ -2666,7 +2433,6 @@ mod ir_property_tests {
 
     #[test]
     fn strip_usage_whitespace_variants() {
-        // Whitespace around the key, colon, and comma must be handled without leaving a dangling comma.
         let input = "{ \"id\" : \"x\" , \"usage\" : null , \"model\":\"m\" }";
         let out = assert_stripped_ok(input);
         let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
@@ -2676,7 +2442,6 @@ mod ir_property_tests {
 
     #[test]
     fn strip_usage_object_value() {
-        // A `usage` that is an OBJECT (real counts), not null - the whole nested object is removed.
         let input =
             r#"{"id":"x","choices":[{"delta":{}}],"usage":{"prompt_tokens":10,"total_tokens":25}}"#;
         let out = assert_stripped_ok(input);
@@ -2685,7 +2450,6 @@ mod ir_property_tests {
 
     #[test]
     fn strip_usage_only_member() {
-        // `usage` as the SOLE member leaves an empty object.
         let input = r#"{"usage":null}"#;
         let out = assert_stripped_ok(input);
         let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
@@ -2694,8 +2458,6 @@ mod ir_property_tests {
 
     #[test]
     fn strip_usage_never_corrupts_string_content() {
-        // The literal text `"usage":null` appears INSIDE a message-content string. The stripper must
-        // NOT touch it: there is no top-level `usage` key, so it returns None (no byte edit).
         let input =
             r#"{"id":"x","choices":[{"delta":{"content":"the json \"usage\":null tell"}}]}"#;
         assert!(
@@ -2706,8 +2468,6 @@ mod ir_property_tests {
 
     #[test]
     fn strip_usage_string_content_plus_real_key() {
-        // A frame that BOTH mentions `"usage":null` inside content AND carries a real top-level
-        // `usage` member: only the top-level member is removed; the string content is preserved verbatim.
         let input = r#"{"choices":[{"delta":{"content":"see \"usage\":null here"}}],"usage":null}"#;
         let out = assert_stripped_ok(input);
         let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
@@ -2720,8 +2480,6 @@ mod ir_property_tests {
 
     #[test]
     fn strip_usage_nested_usage_key_not_matched() {
-        // A `usage` key nested inside another object is NOT top-level - the stripper must not remove it,
-        // and with no TOP-LEVEL usage it returns None.
         let input = r#"{"id":"x","meta":{"usage":null},"choices":[]}"#;
         assert!(
             crate::codec::dialect::strip_top_level_usage_member(input).is_none(),
@@ -2731,7 +2489,6 @@ mod ir_property_tests {
 
     #[test]
     fn strip_usage_no_usage_key_returns_none() {
-        // A content chunk with no `usage` key at all - nothing to do.
         let input = r#"{"id":"x","choices":[{"delta":{"content":"hi"}}]}"#;
         assert!(crate::codec::dialect::strip_top_level_usage_member(input).is_none());
     }

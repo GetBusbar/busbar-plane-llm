@@ -155,8 +155,6 @@ fn unread_document_path(site: OriginSite) -> &'static str {
     }
 }
 
-// Called alongside the native decoder, before any reordering or system-message fold. The
-// surviving wire member, rather than the normalized IR variant, selects the source path.
 pub(super) fn read_blocks_with_origins(
     arr: &[serde_json::Value],
     site: OriginSite,
@@ -193,8 +191,7 @@ pub(super) fn read_message_with_origins(
     };
 
     let content_val = obj.get(keys::CONTENT).unwrap_or(&serde_json::Value::Null);
-    // `content` is legally a string or an array (absent/`null` is an empty turn). Any other present
-    // type is a violation the lenient fallback below would swallow into an empty Text block: 400.
+
     if !content_val.is_null() && !content_val.is_string() && !content_val.is_array() {
         return Err(ir_parse_error());
     }
@@ -240,7 +237,6 @@ fn block_origin(value: &serde_json::Value, site: OriginSite) -> BlockOrigin {
     BlockOrigin::at(source)
 }
 
-// Helper functions for IR mapping (used by read_request/write_request)
 #[cfg(test)]
 pub(super) fn read_block(
     block_val: &serde_json::Value,
@@ -264,7 +260,7 @@ pub(super) fn read_block_with_origin(
                 None => "",
             }
             .to_string();
-            // Parse cache_control - object form: {"type": "ephemeral"}
+
             let cache_control = read_cache_control(obj.get(super::CACHE_CONTROL))?;
             let citations = obj
                 .get(keys::CITATIONS)
@@ -288,9 +284,7 @@ pub(super) fn read_block_with_origin(
                 .get(keys::SIGNATURE)
                 .and_then(|v| v.as_str().map(String::from));
             let cache_control = read_cache_control(obj.get(super::CACHE_CONTROL))?;
-            // A signature off the Anthropic wire is Anthropic's, so a foreign writer never sends
-            // it as its own, unless it is busbar's provenance envelope (another family's
-            // signature handed to this client earlier), which restores the original bytes and origin.
+
             let (signature, signature_origin) = crate::codec::ir::sig_envelope::read_carried_opt(
                 signature,
                 Some(crate::codec::ir::IrSignatureOrigin::Anthropic),
@@ -305,8 +299,6 @@ pub(super) fn read_block_with_origin(
             })
         }
         STOP_TOOL_USE => {
-            // A `tool_use` block must carry a non-empty string `id`, the key a later `tool_result`
-            // pairs against; reject rather than invent one.
             let id = obj
                 .get(keys::ID)
                 .and_then(|v| v.as_str())
@@ -328,7 +320,7 @@ pub(super) fn read_block_with_origin(
                 name,
                 input,
                 cache_control,
-                // Anthropic has no wire concept of a Gemini thoughtSignature.
+
                 thought_signature: None,
             })
         }
@@ -377,16 +369,9 @@ pub(super) fn read_block_with_origin(
         }
         keys::IMAGE => {
             let source = obj.get(keys::SOURCE).ok_or_else(ir_parse_error)?;
-            // `cache_control` sits on the outer image block, a sibling of `source`.
+
             let cache_control = read_cache_control(obj.get(super::CACHE_CONTROL))?;
             if let Some(src_obj) = source.as_object() {
-                // Two native image sources: `{"type":"url","url":…}` and
-                // `{"type":"base64","media_type":…,"data":…}`. A url source has no `media_type`/
-                // `data`, so it round-trips through the `media_type:"image_url"` sentinel `write_block`
-                // recognizes, the raw url living in `data`.
-                // A Files-API `file_id` source (or any future type that is neither) is an
-                // Anthropic-hosted handle with no neutral form; it rides the opaque `Vendor` escape,
-                // which this protocol re-emits verbatim and every other writer drops with a warn.
                 let src_type = src_obj.get(keys::TYPE).and_then(|v| v.as_str());
                 if src_type.is_some_and(|t| t != keys::URL && t != keys::BASE64) {
                     return Ok((
@@ -416,7 +401,7 @@ pub(super) fn read_block_with_origin(
                         origin,
                     ));
                 }
-                // A present non-string `media_type` is the caller's error, not read as "".
+
                 let media_type = match src_obj.get(super::MEDIA_TYPE) {
                     None => String::new(),
                     Some(v) => v.as_str().ok_or_else(ir_parse_error)?.to_string(),
@@ -435,22 +420,13 @@ pub(super) fn read_block_with_origin(
                 Err(ir_parse_error())
             }
         }
-        // A native `document` block, modelled as `IrBlock::Media` so it crosses to Gemini and
-        // Bedrock (see `is_modeled_anthropic_block_type`). `document.source` has four shapes: the
-        // two with a neutral form map onto neutral IR sources, and the Anthropic-hosted ones
-        // (`file_id`, `content`) ride the opaque `Vendor` escape, so no other protocol emits a
-        // handle its backend cannot resolve.
+
         BLOCK_TYPE_DOCUMENT => {
-            // A `document` with no `source` carries no payload and must not be a 400, which would
-            // reject forward-compatible history. [`read_blocks`] never hands it to this arm; a
-            // direct call with one is malformed.
             let Some(source) = obj.get(keys::SOURCE) else {
                 return Err(ir_parse_error());
             };
             let cache_control = read_cache_control(obj.get(super::CACHE_CONTROL))?;
-            // `document.context` and `document.citations` ride `Media.context` / `Media.citations`,
-            // crossing to Bedrock (which has both). Same-protocol they stay byte-exact via
-            // `stash_unmodeled_blocks` and the splice in `write_message`.
+
             let doc_citations = obj
                 .get(keys::CITATIONS)
                 .and_then(|c| c.get(keys::ENABLED))
@@ -476,9 +452,7 @@ pub(super) fn read_block_with_origin(
                         .unwrap_or("")
                         .to_string(),
                 ),
-                // A `text` source carries raw text, but the neutral `Base64` source is base64 by
-                // contract (foreign writers emit it as such), so encode it on the way in; the
-                // Anthropic writer decodes it back into a `text` source.
+
                 keys::TEXT => crate::codec::ir::IrImageSource::Base64 {
                     media_type: source
                         .get(super::MEDIA_TYPE)
@@ -493,7 +467,7 @@ pub(super) fn read_block_with_origin(
                             .as_bytes(),
                     ),
                 },
-                // `base64` carries inline bytes (a PDF) plus a real mime type.
+
                 keys::BASE64 => crate::codec::ir::IrImageSource::Base64 {
                     media_type: source
                         .get(super::MEDIA_TYPE)
@@ -512,7 +486,6 @@ pub(super) fn read_block_with_origin(
                 },
             };
             Ok(crate::codec::ir::IrBlock::Media {
-                // A `document` is a document whatever its mime says: there is no audio/video block.
                 kind: crate::codec::ir::IrMediaKind::Document,
                 source: ir_source,
                 name,
@@ -521,20 +494,11 @@ pub(super) fn read_block_with_origin(
                 context: doc_context,
             })
         }
-        // A native `search_result` block, the RAG grounding payload a caller supplies:
-        // `{"type":"search_result","source":"<uri>","title":"…","content":[{"type":"text",…}],
-        //   "citations":{"enabled":true}}`.
-        //
-        // The payload is entirely text, so every protocol can express it as text; the provenance
-        // rides an `IrCitation` so targets that model citations still show the source.
-        //
-        // Deliberately not in `is_modeled_anthropic_block_type`: the raw block stays parked, so an
-        // Anthropic-to-Anthropic hop splices the original bytes back. This arm is what the
-        // cross-protocol egresses read, where the sentinel is cleared.
+
         BLOCK_TYPE_SEARCH_RESULT => {
             let source = obj.get(keys::SOURCE).and_then(|v| v.as_str()).unwrap_or("");
             let title = obj.get(keys::TITLE).and_then(|v| v.as_str()).unwrap_or("");
-            // Concatenate the text parts in wire order; a non-text part contributes nothing.
+
             let body: String = obj
                 .get(keys::CONTENT)
                 .and_then(|v| v.as_array())
@@ -546,10 +510,7 @@ pub(super) fn read_block_with_origin(
                         .join("\n")
                 })
                 .unwrap_or_default();
-            // Search-result slot (`IrBlock::search_result`, shared with Converse `searchResult`): a
-            // `title — source` header line, the provenance as a `search_result_location` citation
-            // with no indices, and the `citations` switch verbatim in its `raw`. The Anthropic and
-            // Bedrock writers re-emit the native block from it.
+
             let cache_control = read_cache_control(obj.get(super::CACHE_CONTROL))?;
             Ok(crate::codec::ir::IrBlock::search_result(
                 source,
@@ -559,10 +520,7 @@ pub(super) fn read_block_with_origin(
                 cache_control,
             ))
         }
-        // A `redacted_thinking` block (opaque encrypted reasoning in `data`) maps onto the carrier
-        // Bedrock's `redactedContent` uses: `Thinking { redacted: true }` with the bytes in `text`
-        // and no signature, which the writer re-emits natively. A client-supplied `thinking` block
-        // only ever reads as `redacted: false`, so it cannot forge one.
+
         BLOCK_TYPE_REDACTED_THINKING => {
             let data = block_val
                 .get(keys::DATA)
@@ -579,19 +537,16 @@ pub(super) fn read_block_with_origin(
                 signature_origin: None,
             })
         }
-        // A provider-run web search's results: the IR's hosted-tool record. A
-        // `web_search_tool_result_error` content carries its error code as the status, no results.
+
         WEB_SEARCH_TOOL_RESULT => Ok(read_web_search_tool_result(obj)),
-        // A kind the IR does not model never reaches here: [`read_blocks`] leaves it out.
+
         _ => Err(ir_parse_error()),
     }?;
     Ok((block, origin))
 }
 
 /// Whether [`read_block_with_origin`] reads `block_val` into the IR: a kind in [`BLOCK_KINDS`] that carries a
-/// payload. Another kind and a `document` with no `source` are not read, and nothing stands in for
-/// them. A same-dialect write splices the raw block back ([`ANTHROPIC_UNMODELED_BLOCKS_SENTINEL`]);
-/// a translate attempt drops it, named. A non-object is read (and refused by [`read_block_with_origin`]).
+
 pub(super) fn is_read_into_ir(block_val: &serde_json::Value) -> bool {
     let Some(obj) = block_val.as_object() else {
         return true;
@@ -601,8 +556,7 @@ pub(super) fn is_read_into_ir(block_val: &serde_json::Value) -> bool {
 }
 
 /// Read a content-block array into the IR: every block [`is_read_into_ir`] keeps, in order. A
-/// `document` with no `source` goes through the one drop path; an unmodelled kind is named by the
-/// grammar walk at the seam.
+
 #[cfg(test)]
 pub(super) fn read_blocks(
     arr: &[serde_json::Value],
@@ -626,12 +580,9 @@ pub(super) fn read_tool(tool_val: &serde_json::Value) -> Result<crate::codec::ir
         .cloned()
         .unwrap_or(serde_json::Value::Null);
     let cache_control = read_cache_control(obj.get(super::CACHE_CONTROL))?;
-    // Per-tool `strict: true` is the same contract as OpenAI's `function.strict`; a non-boolean is
-    // not a flag.
+
     let strict = obj.get(keys::STRICT).and_then(|v| v.as_bool());
-    // An Anthropic-defined tool (`web_search_*`, `bash_*`, `text_editor_*`, `code_execution_*`,
-    // `mcp_toolset`, …) is not a function tool and has no caller schema. Mark it hosted with its raw
-    // definition: the cross-protocol seam drops hosted tools, and this writer re-emits it verbatim.
+
     let hosted = obj
         .get(keys::TYPE)
         .and_then(|v| v.as_str())

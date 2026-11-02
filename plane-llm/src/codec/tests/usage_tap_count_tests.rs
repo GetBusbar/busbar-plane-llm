@@ -2,13 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE USAGE-TAP FAULT PIN: every way a same-protocol
-//! usage tap can fail to read a 2xx body is RETURNED as its fault, under the reason that says which
-//! way, whether the tap is the chat cell's own (unknown protocol / bad JSON / a body its reader
-//! refuses) or a leaf cell's default (a decode failure). The door carries the fault out on its
-//! answer and the kernel counts it, one increment of
-//! `busbar_billing_tap_decode_fail_total{protocol,reason}`: the kernel's suite pins that step. The
-//! codec names no metrics crate, reaches no host and holds no latch: this suite reads what the tap
-//! returns.
 
 use busbar_contract::codec::{OperationHandler, UsageTapFault};
 use busbar_contract::operation::OpVerb;

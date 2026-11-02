@@ -2,16 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The OpenAI Responses webhook receiver, ported from the retiring engine crate's
-//! `openai_responses_webhook.rs` onto this plane: the plane's own
-//! `webhooks:` section switches it on, the auth kind verifies the sender, and the plane reads the
-//! delivery and acknowledges it.
-//!
-//! RED: before the port this plane had no receiver, no `webhooks:` section and no claim on the
-//! receiver's path, so every test here failed to build. The off-by-default half is the parity
-//! guard: a document that does not write the section claims exactly what it claimed before.
 
-// A list read is `unsafe` while its pointer and length fields are pub, and safe once they are
-// private: the same `unsafe { x.list() }` compiles on both.
 #![allow(unused_unsafe)]
 
 use busbar_contract::abi::mechanism::door::{SECTION_CONSUMED, SECTION_DECLARING};
@@ -141,12 +132,7 @@ fn a_delivery_missing_or_mistyping_what_it_must_carry_is_refused() {
 }
 
 /// LEGACY `crates/busbar-llm/src/tests/webhook_tests.rs::body_tolerates_absent_and_unknown_fields`
-/// and `::body_rejects_present_but_wrong_typed_modeled_fields`. A delivery that leaves out the
-/// optional `id` and `created_at` and carries keys this receiver does not model still reads, while
-/// a `type` that is present but not text is refused like any other mistyped field.
-///
-/// RED: a receiver that requires the optional fields refuses a lenient delivery, or one that
-/// stringifies a numeric `type` acknowledges it.
+
 #[test]
 fn a_delivery_without_its_optional_fields_reads_and_a_numeric_type_does_not() {
     let lenient = br#"{"type":"response.failed","data":{"id":"resp_1","status":"failed"},

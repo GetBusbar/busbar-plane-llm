@@ -2,39 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The LLM plane's door: the plane kind's memory-ABI table (`busbar_contract::abi::plane`) built
-//! with the SDK's `plugin_door!` over the exchange's sans-I/O answers ([`crate::exchange`]). [`door`]
-//! is the linked door; the same function is the dropped-in door once a `cdylib` exports it
-//! (`busbar-plane-llm-plugin`, via `busbar_contract::export_door!`), so the two cannot answer
-//! differently. That twin's `tests/both_ways.rs` loads both through one loader and requires one
-//! transcript.
-//!
-//! The composition root links [`door`] on its `plane-door` axis (the plane's switch `plane-llm`, in
-//! the default build) and binds it through the loader beside the dropped-in plane doors. The serve
-//! path composes it with the kernel-owned sections it reads and mounts its claims as the data routes,
-//! so every arrival it claims is served through the plane driver.
-//!
-//! One unit, as the plane driver serves it:
-//!
-//! | crossing | here |
-//! |---|---|
-//! | `arrive` | [`crate::exchange::arrive::arrive`]: the dialect, the operation and the model, or the refusal; a probe claim needs no principal |
-//! | `on_piece`, ATTEMPT | [`crate::exchange::attempt::build`] for the member the walk picked (or [`crate::exchange::probe::request`] for a probe unit) |
-//! | `on_piece`, the caller's body | the far-end body the attempt wrote for this member |
-//! | `on_piece`, the far end | [`crate::exchange::reply::Reply`]: the caller's head, bytes, verdict and cumulative counts |
-//! | `refusal` | [`crate::exchange::refuse`]: the declined arrival's own envelope, else the kernel's refusal in the unit's dialect |
-//!
-//! The plane states its paths as claims, like every plane ([`claims`]): each dialect's own paths,
-//! then the fallback as prefix claims on `/`, which the claim precedence ranks below every more
-//! specific claim. Its detection decides the dialect of an arrival.
-//!
-//! An answer is computed once per piece and kept with its unit: a re-call after a short answer or
-//! `more = 1` re-delivers it, never re-computes it. The host's `clock.now` ([`Services::clock_now`])
-//! is read at an ATTEMPT (its start) and on the last piece of an answer taken whole (creation stamp
-//! and elapsed milliseconds), never per relayed chunk; the plane reads no clock of its own.
-//!
-//! Counts, never money: a unit reports the far end's cumulative token counts, and each open count
-//! it counted beside them ([`OPEN_CLASSES`]), in the tail's billable classes; the kernel prices
-//! them.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -92,9 +59,6 @@ use crate::exchange::{handler_of, probe, project, refuse};
 use crate::meta::PROVIDER_KEYS;
 
 /// The protocol axis of the door's linked row: the plane's six dialect declarations in operator
-/// order, as contract data (`busbar_contract::protocol::ProtocolDecl`). A composition root linking
-/// this door seeds the kernel's protocol registry from them, so the kernel names no dialect.
-/// busbar's `build.rs` names it in every linked roster (`<module>::PROTOCOLS`), so it is public surface.
 pub use crate::codec::DECLS as PROTOCOLS;
 
 /// The version the Statement names: the crate's (a test pins the two equal).
@@ -120,9 +84,7 @@ const fn section(name: &'static str, flags: u32) -> Section {
 }
 
 /// `pools:` declared; `providers:`, `models:` and `limits:` read beside it; `webhooks:` its own,
-/// opened with as written (the receivers it switches on, [`webhook`]). `models:` also selects the
-/// plane: a document that routes to its models directly, with no `pools:`, uses it, serving
-/// `/<model>/v1/messages` with no pool configured.
+
 const SECTIONS: &[Section] = &[
     section(sections::POOLS, SECTION_DECLARING),
     section(sections::PROVIDERS, SECTION_CONSUMED | SECTION_REQUIRED),
@@ -159,8 +121,7 @@ const fn op(i: usize) -> OpClass {
 }
 
 /// The token classes, the one source of this plane's token class names: the first four of the tail's
-/// billable classes. They are the `rate_card:` tiers (`input_utok`, `output_utok`, `cache_read_utok`,
-/// `cache_write_utok`), the ledger's `TierTokens` fields and the spend metrics' `tier` label.
+
 pub const TOKEN_CLASSES: [&str; 4] = [
     busbar_contract::records::UNIT_INPUT,
     busbar_contract::records::UNIT_OUTPUT,
@@ -178,8 +139,6 @@ const fn billable(i: usize) -> BillableClass {
 const DIALECT_NAMES: &[AbiStr] = &rows!(AbiStr; DIALECTS.len(), dialect);
 const OP_CLASSES: &[OpClass] = &rows!(OpClass; OPS.len(), op);
 /// The open classes a far end counts beside its tokens, each `(class, family)`: every name the reply
-/// can report in its open counts, from `codec/ir/open_class.rs` (each priced under
-/// `rate_card.<model>.units`), so no count is dropped. They follow the token classes in the tail.
 pub use crate::codec::ir::open_class::OPEN_CLASSES;
 
 const fn open_class(k: usize) -> BillableClass {
@@ -190,9 +149,7 @@ const fn open_class(k: usize) -> BillableClass {
 }
 
 /// The fee unit the plane counts: one per billable request (`busbar_contract::plane::PER_REQUEST`),
-/// reported as 1 exactly where the flat request fee is billed (a reply with a success caller status)
-/// and never where it is refunded (the plane's report is the one fee decider). The last of the tail's
-/// billable classes, never usage.
+
 pub const FEE_CLASS: &str = busbar_contract::plane::PER_REQUEST;
 /// [`FEE_CLASS`]'s index in the tail's billable classes.
 pub const FEE_CLASS_INDEX: u32 = (TOKEN_CLASSES.len() + OPEN_CLASSES.len()) as u32;
@@ -220,7 +177,7 @@ const FEE_UNITS: &[AbiStr] = &[abi_str(FEE_CLASS)];
 const INPUT_TOKEN_CLASS_INDEX: u32 = 0;
 const OUTPUT_TOKEN_CLASS_INDEX: u32 = 1;
 /// Historical default routing score: the mean of the input and output token prices.
-/// Other token classes, open units and the request fee do not participate in this score.
+
 const INPUT_OUTPUT_ROUTE_WEIGHT: f64 = 0.5;
 const ROUTE_COST: &[RouteCost] = &[
     RouteCost {
@@ -236,8 +193,7 @@ const ROUTE_COST: &[RouteCost] = &[
 ];
 
 /// The outbound auth styles the members are bound under: each dialect's default (`egress_style`),
-/// then the provider `auth:` overrides the grammar accepts (`api-key` is also a default), each named
-/// once. One outbound need per style ([`NEEDS`]); a member dials the need its resolved style names.
+
 pub const EGRESS_STYLES: &[&str] = &[
     DIALECTS[1].egress_style,
     DIALECTS[0].egress_style,
@@ -256,8 +212,7 @@ const _: () = assert!(
 );
 
 /// The tail's per-dialect flags: a provider's `protocol`
-/// may name every dialect this plane speaks ([`DIALECT_PROVIDER`]); the kernel reads it as declared
-/// data.
+
 const DIALECT_FLAG: u32 = DIALECT_PROVIDER;
 
 const fn dialect_auth(i: usize) -> DialectAuth {
@@ -266,7 +221,7 @@ const fn dialect_auth(i: usize) -> DialectAuth {
         dialect: i as u32,
         flags: DIALECT_FLAG,
         style: abi_str(DIALECTS[i].egress_style),
-        // The default style's parameters.
+
         params: if params.is_empty() {
             Blob::ABSENT
         } else {
@@ -294,10 +249,7 @@ pub(crate) const fn const_eq(a: &str, b: &str) -> bool {
 }
 
 /// Response head fields the plane never reads beyond the kernel's strip list: what a far end derives
-/// from busbar's own credential and tenant, every dialect's governed response fields (`governed_response_headers`),
-/// and the cookies a far end sets for busbar's own connection ([`crate::dialect::ACCOUNT_RESPONSE_HEADERS`]).
-/// Every other field crosses; the plane then drops the operator's rate-limit families while relaying
-/// ([`crate::exchange::reply::wire::governed_response`]).
+
 pub const DENY_RESPONSE_HEADERS: &[&str] = &[
     DIALECTS[0].governed_response_headers[0],
     DIALECTS[1].governed_response_headers[0],
@@ -324,7 +276,7 @@ const fn need(auth: &'static str) -> Need {
 }
 
 /// The plane's needs: outbound to a configured provider over the claim's transport, one per
-/// outbound style a member may be bound under ([`EGRESS_STYLES`]).
+
 pub const NEEDS: &[Need] = &[
     need(EGRESS_STYLES[0]),
     need(EGRESS_STYLES[1]),
@@ -357,14 +309,13 @@ const TAIL_ROW: PlaneTail = {
         .with_refusal_statuses(&crate::refusal::REFUSAL_STATUSES);
     t.flags = TAIL_FALLBACK | TAIL_PROBES;
     t.ingress = INGRESS_REQUEST_RESPONSE | INGRESS_RESPONSE_STREAM;
-    // The kernel pushes the caller's body and the far end's answer piece by piece.
+
     t.dispatch_shape = SHAPE_PIECEWISE;
-    // The layout this plane writes its answers in: the contract's it was built against.
+
     t.answer_layout = ANSWER_LAYOUT;
     t.scope = abi_str(sections::POOLS);
     t.label = abi_str(LABEL);
-    // What one registration of the `pools:` map is called, in a refusal naming it ("a pool may not
-    // be named `hooks`") and in the admin surface.
+
     t.subject_noun = abi_str(POOL_NOUN);
     t.admin_noun = abi_str(POOL_NOUN);
     t.cli_help = abi_str(crate::meta::CLI_HELP_TEXT);
@@ -374,7 +325,7 @@ const TAIL_ROW: PlaneTail = {
 pub const TAIL: &PlaneTail = &TAIL_ROW;
 
 /// The Statement's extensions: the plane's provider keys ([`crate::meta::PROVIDER_KEYS`]) under the
-/// contract's one key for them, built at compile time.
+
 pub(crate) const EXTENSIONS: &[u8] = &extensions::entry::<
     { extensions::entry_len(EXT_PROVIDER_KEYS, PROVIDER_KEYS.as_bytes()) },
 >(EXT_PROVIDER_KEYS, PROVIDER_KEYS.as_bytes());
@@ -389,14 +340,8 @@ pub const STATEMENT: Statement = {
     s
 };
 
-// ── the settings ─────────────────────────────────────────────────────────────────────────────────
-
 /// The settings blob read as the plane's tables: `{section: value}` for the sections it reads; an
-/// empty blob is no section at all.
-///
-/// # Errors
-///
-/// Why the blob does not describe a generation the plane can serve.
+
 pub fn read_settings(settings: &[u8]) -> Result<Shaping, String> {
     let value = if settings.is_empty() {
         Value::Object(serde_json::Map::new())
@@ -405,8 +350,6 @@ pub fn read_settings(settings: &[u8]) -> Result<Shaping, String> {
     };
     Shaping::from_settings(&value)
 }
-
-// ── what the door keeps ──────────────────────────────────────────────────────────────────────────
 
 /// One answer to one piece, in plain data, before it is written into the host's buffers.
 #[derive(Debug, Default)]
@@ -444,8 +387,7 @@ struct Answer {
 const DROPPED_CONTROL: &[u8] = b"egress.control_unrepresentable";
 
 /// The action of the audit row a stream synthesised from a whole answer writes (busbar answers in
-/// the caller's dialect and mode, and marks the conversion): its outcome is
-/// `applied`, its resource names the far end's dialect.
+
 pub const STREAM_SYNTHESIZED: &[u8] = b"egress.stream_synthesized";
 
 impl Answer {
@@ -500,7 +442,6 @@ struct UnitState {
     /// The caller was answered under a success status: the request's fee unit was incurred.
     fee: bool,
     /// The kernel stated the current attempt's answer will not be failed over (`PIECE_FINAL`): a
-    /// retry verdict on it ends the unit like any other done answer.
     final_answer: bool,
     /// A unit the plane answers itself (a webhook delivery, `ROUTE_LOCAL`): no far end, no fee.
     local: bool,
@@ -571,7 +512,7 @@ impl<S> UnitBook<S> {
     }
 
     /// The unit's pieces come on `ticket`: a `cancel` on it finds the unit. A ticket the unit came
-    /// on before is unbound.
+
     pub fn bind(&mut self, ticket: Ticket, unit: u64) {
         if let Some(old) = self.ticket_of.insert(unit, ticket) {
             if old != ticket {
@@ -590,9 +531,7 @@ impl<S> UnitBook<S> {
     }
 
     /// A `cancel` of `unit` (the kernel's key the cancel names; `0` names none) else of the unit
-    /// bound to `ticket`: that unit leaves the book, its ticket binding with it, and its state is
-    /// handed back. Keyed on the unit first, so a unit cancelled before any piece bound a ticket
-    /// (its caller left during admission or the hooks) leaves nothing either.
+
     pub fn cancel(&mut self, UnitCancel { ticket, unit }: UnitCancel) -> Option<S> {
         let unit = if unit == 0 {
             *self.tickets.get(&ticket)?
@@ -613,7 +552,7 @@ impl<S> UnitBook<S> {
 }
 
 /// One instance: every live generation's snapshot and tables, the units in flight, and the host's
-/// clock.
+
 pub struct LlmDoor {
     generations: Generations<PlaneSnapshot>,
     shapings: Mutex<BTreeMap<u64, Arc<Shaping>>>,
@@ -643,7 +582,7 @@ impl LlmDoor {
 }
 
 /// A ticketless handle: the two services a codec reads never pend, so they are called outside any
-/// op's ticket (the host runs a ticketless call fresh every time and stores nothing).
+
 const UNTICKETED: CompletionHandle = CompletionHandle {
     ticket: Ticket::NONE,
     ..CompletionHandle::ZERO
@@ -687,19 +626,16 @@ impl busbar_contract::codec::CodecHost for DoorHost {
     }
 }
 
-// ── the claims ───────────────────────────────────────────────────────────────────────────────────
-
 /// One claim: its verb, its target, whether the target is exact (else its whole subtree), and the
-/// dialect a refusal on it wears before `arrive` has read the arrival.
+
 type ClaimRow = (&'static str, &'static str, bool, &'static str);
 
 /// The verbs the fallback answers on any path (a dialect path hit with another
-/// verb reads the dialect's 405 from `arrive`; any other path its not-found).
+
 const FALLBACK_VERBS: [&str; 5] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
 /// The dialects' own paths, each with the dialect its path shape names (the rule
-/// [`crate::exchange::arrive::envelope_for`] renders a refusal by): exact where one path is
-/// named, the whole subtree where a family is.
+
 const DIALECT_CLAIMS: [ClaimRow; 7] = [
     ("POST", "/v1/messages", true, "anthropic"),
     ("POST", "/v1/chat/completions", true, "openai"),
@@ -760,23 +696,18 @@ const ENTRY_FACTS: [(&str, &str); 19] = [
 ];
 
 /// The signed paths: request shapes whose callers sign each request (the bedrock converse surfaces),
-/// claimed as raw affixes flagged `CLAIM_SIGNED_INGRESS`. The kernel matches each against the raw path
-/// (`starts_with("/model/")` and `ends_with` the surface), odd paths included (an unencoded
-/// inference-profile ARN's raw `/`, an encoded one), whatever the verb. They mount no route: the
-/// `/model` subtree claim serves the dialect's paths, and its other surfaces (`/model/{id}/invoke`) sign nothing.
+
 const SIGNED_CLAIMS: [&str; 2] = ["/model/*/converse", "/model/*/converse-stream"];
 
 /// The list-models catalog routes: `GET` on each listing path,
-/// exact, answered with no unit by [`CatalogSlot`] over the names the kernel lists for the caller.
+
 const CATALOG_PATHS: [&str; 2] = [
     crate::exchange::catalog::PATH,
     crate::exchange::catalog::BETA_PATH,
 ];
 
 /// The plane's claims: [`DIALECT_CLAIMS`], the [`ENTRY_FACTS`], the [`SIGNED_CLAIMS`], the
-/// [`CATALOG_PATHS`], then the fallback, a prefix claim on `/` per verb wearing the residual
-/// default dialect. The fallback reaches every path at any depth no more specific claim or kernel
-/// route takes; the router has no plane-shaped branch.
+
 #[must_use]
 pub fn claims() -> Vec<ClaimSpec> {
     let fallback = crate::exchange::arrive::envelope_for("/");
@@ -822,8 +753,7 @@ pub fn claims() -> Vec<ClaimSpec> {
 }
 
 /// The receivers' claims: each webhook receiver its `webhooks:` section switches on, an exact path
-/// that ranks above the fallback's prefix claim. None when the section names none, so a document
-/// without it claims nothing extra.
+
 #[must_use]
 pub fn webhook_claims(webhooks: Webhooks) -> Vec<ClaimSpec> {
     webhooks
@@ -851,8 +781,6 @@ fn snapshot(webhooks: Webhooks) -> SnapshotSpec {
     }
 }
 
-// ── the answers ──────────────────────────────────────────────────────────────────────────────────
-
 fn dialect_index(name: &str) -> u32 {
     DIALECTS
         .iter()
@@ -862,10 +790,7 @@ fn dialect_index(name: &str) -> u32 {
 }
 
 /// The route an arrival names: the model it asked for, as the entry inside the plane's own
-/// sections, and what that entry is. A model resolves as a pool first, then as a configured model
-/// (its by-model lane); the plane says which by its own tables, and the kernel resolves the entry.
-/// A model that is neither is named as a direct entry the kernel does not hold, so the kernel
-/// refuses it (`no_destination`, rendered as a 404).
+
 #[must_use]
 pub fn route_of<'a>(shaping: &Shaping, model: &'a str) -> (u8, &'a str) {
     let class = if shaping.pools.contains_key(model) {
@@ -897,8 +822,7 @@ fn owned(fields: Vec<(String, Vec<u8>)>) -> Vec<(Vec<u8>, Vec<u8>)> {
 }
 
 /// The far end's cumulative counts, in the tail's billable-class order: tokens in, tokens out,
-/// cache read, cache write, then each open class it counted ([`OPEN_CLASSES`]). Nothing until the
-/// far end has reported a count.
+
 #[must_use]
 pub fn counts(units: &Units) -> Vec<UnitCount> {
     let tokens = [
@@ -930,8 +854,7 @@ pub fn counts(units: &Units) -> Vec<UnitCount> {
                 source: UNITS_REPORTED,
                 amount,
             }),
-            // Every open class the codec can count is stated above: a name outside the table is a
-            // defect, reported, never counted as zero in silence.
+
             None => {
                 tracing::warn!(class = %name, "an open count names a class the plane does not state");
             }
@@ -941,12 +864,7 @@ pub fn counts(units: &Units) -> Vec<UnitCount> {
 }
 
 /// The breaker's reading of a judged answer (one neutral vocabulary, stated apart from the walk's
-/// verdict), recorded per disposition: the caller's own bad input records nothing
-/// against the destination; a transient failure (an `error_map` entry naming `rate_limit` among
-/// them) counts toward the pool cell's trip; a refused credential or account trips every cell; a
-/// request too large for the window fails over with nothing recorded. A 2xx that failed after its
-/// head (a stream's terminal error, a cut body, an untranslatable answer, a failed generation) is
-/// the compensating transient recorded.
+
 #[must_use]
 pub fn breaker_fault(f: Option<&Fault>) -> u8 {
     match f {
@@ -962,10 +880,7 @@ pub fn breaker_fault(f: Option<&Fault>) -> u8 {
 }
 
 /// The reason the breaker's reading states (the far-end fault reading): the plane classifies the
-/// far end's answer and states why in neutral words, which the kernel carries verbatim to the
-/// breaker's record (the member's down reason and its operator diagnostic): an exhausted account is
-/// `billing / insufficient balance`, a refused own credential `auth rejected (HTTP <status>)`, any
-/// other hard-down `request rejected (HTTP <status>)`. Every other reading states none.
+
 #[must_use]
 pub fn fault_reason(f: Option<&Fault>, status: u16) -> Option<String> {
     let Some(Fault::Judged {
@@ -992,10 +907,7 @@ fn verdict(v: Verdict) -> u32 {
 }
 
 /// The request's fee unit on `answer` (the plane's report is the one fee decider): incurred when
-/// the caller's reply opens under a success status (the fee is refunded for a non-2xx caller
-/// status, and only then). From that answer on, every answer that carries counts carries the fee unit's 1 beside the
-/// far end's last cumulative counts; an answer that carries none leaves the last report standing.
-/// A probe is no billable request.
+
 fn fee_unit(unit: &mut UnitState, answer: &mut Answer) {
     if !answer.units.is_empty() {
         unit.reported.clone_from(&answer.units);
@@ -1017,9 +929,7 @@ fn fee_unit(unit: &mut UnitState, answer: &mut Answer) {
 }
 
 /// The unit's sticky-routing key: the value of
-/// the pool's affinity header (`header`, matched case-blind) where the caller sent one readable as
-/// text, else the operation's body key (chat's non-empty `system`); `None` = no affinity. The kernel
-/// hashes it and picks the member; the plane never does.
+
 #[must_use]
 pub fn affinity_key(
     header: &str,
@@ -1064,7 +974,7 @@ fn to_caller(piece: Piece<'_>) -> Answer {
 }
 
 /// A far-end reply piece as the caller's answer, with the reason its fault reading states (`status`:
-/// the far end's own, which the reason names).
+
 fn far_answer(piece: Piece<'_>, status: u16) -> Answer {
     let reason = fault_reason(piece.fault.as_ref(), status);
     Answer {
@@ -1099,7 +1009,6 @@ fn at(clock: Option<ClockReading>, started: Option<u64>) -> At {
 struct PieceIn<'a> {
     last: bool,
     /// The far end's answer ended without completing (`PIECE_CUT`, on its last piece): its
-    /// connection failed or the send's deadline passed after its head.
     cut: bool,
     status: Option<u32>,
     fields: Vec<(&'a [u8], &'a [u8])>,
@@ -1134,8 +1043,6 @@ fn attempt(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
     };
     match built {
         Ok(mut request) => {
-            // A control the far end's dialect cannot carry, one degraded row each (`<control> on
-            // <dialect>`).
             let egress = unit.shaping.lane(&unit.member).map_or("", |l| l.dialect);
             let answer = Answer {
                 to_far_end: true,
@@ -1160,7 +1067,7 @@ fn attempt(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
             unit.request = Some(request);
             answer
         }
-        // The attempt answers the caller itself: the far end is not reached.
+
         Err(Some(refused)) => answered(refuse::answered(host, &refused)),
         Err(None) => Answer::hard(),
     }
@@ -1171,7 +1078,7 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
     let Some(lane) = unit.shaping.lane(&unit.member) else {
         return Answer::hard();
     };
-    // A probe's answer is the far end's own: the breaker classifies it by its status.
+
     let Some(arrived) = &unit.arrived else {
         let v = match piece.status {
             None => VERDICT_NONE,
@@ -1201,11 +1108,6 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
         return Answer::hard();
     };
     if piece.cut {
-        // The far end's answer was cut (`PIECE_CUT`): after a streamed first byte the caller's answer
-        // ends with an in-band error in its own framing; a buffered answer, the caller's 502; a
-        // failure's body is judged on what arrived. Units stated up to the cut are reported (a cut
-        // bills what streamed). The kernel's far end recorded the compensating transient of a success
-        // cut after its head, so that cut states no second reading; a failure's judged reading stands.
         let arrived = piece.bytes;
         let mut fed = if arrived.is_empty() {
             Piece::default()
@@ -1216,7 +1118,7 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
         if matches!(cut.fault, Some(Fault::Transient(_))) {
             cut.fault = None;
         }
-        // Bytes the cut piece itself carried reach the caller before the cut's own end.
+
         if !fed.bytes.is_empty() {
             let mut bytes = std::mem::take(&mut fed.bytes).into_owned();
             bytes.extend_from_slice(&cut.bytes);
@@ -1227,16 +1129,14 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
         }
         return far_answer(cut, unit.far_status);
     }
-    // The host's clock is read only for the piece whose answer states the time (zero host calls
-    // per relayed chunk).
+
     let time = if reply.takes_time(piece.last) {
         at(host.clock(), unit.started)
     } else {
         At::default()
     };
     let mut fed = reply.feed(host, &ctx, piece.bytes, piece.last, time);
-    // An answer member the caller's dialect has no form for, one degraded row each (`<path> from
-    // <dialect>`).
+
     let dropped = std::mem::take(&mut fed.dropped);
     let synthesized = fed.synthesized;
     let mut answer = far_answer(fed, unit.far_status);
@@ -1250,8 +1150,7 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
             )
         })
         .collect();
-    // A stream the caller reads that the far end answered as one whole body: marked, so the
-    // conversion is never silent.
+
     if synthesized {
         answer.audits.push((
             AUDIT_APPLIED,
@@ -1270,7 +1169,7 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
 fn answer(host: &DoorHost, unit: &mut UnitState, from: u32, piece: &PieceIn<'_>) -> Answer {
     match from {
         FROM_KERNEL => attempt(host, unit, piece),
-        // A unit the plane answers itself: its acknowledgement, once the caller's body is in.
+
         FROM_CALLER if unit.local => {
             let ack = piece.last.then(|| unit.ack.take()).flatten();
             ack.map_or_else(Answer::default, |ack| Answer {
@@ -1286,8 +1185,7 @@ fn answer(host: &DoorHost, unit: &mut UnitState, from: u32, piece: &PieceIn<'_>)
                 ..Answer::default()
             })
         }
-        // The kernel re-pushes the caller's body on every attempt, once, after its ATTEMPT piece;
-        // what goes to the far end is the body the attempt wrote for this member, moved.
+
         FROM_CALLER => Answer {
             to_far_end: true,
             bytes: unit
@@ -1301,8 +1199,6 @@ fn answer(host: &DoorHost, unit: &mut UnitState, from: u32, piece: &PieceIn<'_>)
         _ => Answer::hard(),
     }
 }
-
-// ── the host buffers ─────────────────────────────────────────────────────────────────────────────
 
 /// `(written, needed)` of every buffer an answer fills, short as a whole when one is short.
 fn settle(
@@ -1329,8 +1225,7 @@ fn settle(
 }
 
 /// Write the unit's pending answer's next chunk: its head, fields and units first (FAILED, with
-/// the sizes it needs, when they do not fit), then as many bytes as the reply buffer holds,
-/// `more = 1` while any are left. Answers the outcome and whether the caller's reply is complete.
+
 fn deliver(
     unit: &mut UnitState,
     input: Lent<'_, OnPieceIn>,
@@ -1358,7 +1253,7 @@ fn deliver(
             });
         }
         units.extend(&p.answer.units);
-        // The reason the answer's fault reading states, on the window that carries the reading.
+
         let reason = (p.answer.fault != FAULT_NONE && !p.answer.fault_reason.is_empty())
             .then(|| arena.span(&p.answer.fault_reason));
         for (outcome, action, resource) in &p.answer.audits {
@@ -1385,21 +1280,19 @@ fn deliver(
     let rest = &p.answer.bytes[p.sent..];
     let n = input.reply_buf().stream(rest);
     if n == 0 && !rest.is_empty() {
-        // No room for a single byte: `more = 1` with nothing emitted is a FAULT by the contract.
         return (Outcome::Fault, false);
     }
     p.sent += n;
     let more = p.sent < p.answer.bytes.len();
     let to_far_end = p.answer.to_far_end;
     let done = p.answer.done && !more;
-    // A RETRY verdict the kernel may still fail over keeps the unit for its next ATTEMPT; a done
-    // answer of any other verdict, or one the kernel stated is final (`PIECE_FINAL`), ends it.
+
     let retried = p.answer.verdict == VERDICT_RETRY && !unit.final_answer;
     let far = if to_far_end { EMIT_TO_FAR_END } else { 0 };
     out.set(|o| &o.emitted, n as u64);
     out.set(|o| &o.more, u32::from(more));
     out.set(|o| &o.verdict, p.answer.verdict);
-    // Once per answer: a reading recorded on every window of a long answer would count it again.
+
     out.set(|o| &o.fault, std::mem::take(&mut p.answer.fault));
     out.set(|o| &o.tap_fault, std::mem::take(&mut p.answer.tap_fault));
     out.set(|o| &o.flags, far | if done { EMIT_DONE } else { 0 });
@@ -1408,8 +1301,6 @@ fn deliver(
     }
     (Outcome::Ready, done && !to_far_end && !retried)
 }
-
-// ── the slots ────────────────────────────────────────────────────────────────────────────────────
 
 /// One slot body on the SDK's safe surface, over this plane's [`LlmDoor`].
 macro_rules! slot {
@@ -1429,8 +1320,7 @@ macro_rules! slot {
 }
 
 /// The plane's lifecycle on the SDK's [`PlaneLife`] (`lifecycle: plane_life(LlmDoor)`): `tick`,
-/// `drive`, `release` and `close` are defaults (no tick, no unsolicited output, no lease); the plane
-/// states its settings, what a generation publishes, its tables beside each generation, and its `cancel`.
+
 impl PlaneLife for LlmDoor {
     type Held = ();
 
@@ -1446,7 +1336,7 @@ impl PlaneLife for LlmDoor {
     }
 
     /// `open`: the instance, its host clock, and the first generation's tables and snapshot; a
-    /// failed open answers FAILED with the reader's words in the host's reason buffer.
+
     fn open(input: &Lent<'_, PlaneOpenIn>) -> Result<Opened<Self>, Refusal> {
         let open = input.open();
         let shaping = read_settings(open.settings().bytes()).map_err(Refusal::failed)?;
@@ -1476,13 +1366,13 @@ impl PlaneLife for LlmDoor {
     }
 
     /// `retire`, after the SDK dropped the generation's snapshot: its tables are dropped; a unit
-    /// that arrived on them keeps its own hold until it ends.
+
     fn retire(&self, generation: u64) {
         guard(&self.shapings).remove(&generation);
     }
 
     /// `cancel`: the cancelled unit (the unit the cancel names, else the one on its ticket) ends;
-    /// nothing it owed is delivered.
+
     fn cancel(
         instance: Instance<'_, Self>,
         input: Lent<'_, PlaneCancelIn>,
@@ -1491,10 +1381,7 @@ impl PlaneLife for LlmDoor {
         let cancelled = instance
             .get()
             .and_then(|door| guard(&door.units).cancel(UnitCancel::of(&input)));
-        // A caller that left a usable part of the answer leaves a partial unit: the units stated so far
-        // bill (a same-dialect whole body states none while relaying, so bills none). A unit whose
-        // far end answered but left the caller nothing usable FAILED; one cancelled before its far end
-        // answered was ABORTED. Neither bills.
+
         let disposition = match cancelled.as_ref().and_then(|u| u.reply.as_ref()) {
             Some(reply) if reply.partial() => CANCEL_OK_PARTIAL,
             Some(_) => CANCEL_FAILED,

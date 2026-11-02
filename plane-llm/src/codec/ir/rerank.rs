@@ -2,10 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Rerank IR (the seventh operation), cross-protocol across Cohere (`/v2/rerank`) and Bedrock (rerank
-//! models via `InvokeModel`), the only protocols with a rerank surface. The wires are near-identical
-//! (query + documents in, index + relevance_score out), so the IR is a thin normalization; the others
-//! 404 via the standard no-handler rule. Search-unit metered: `Billing::Counted` (Cohere bills per
-//! search unit, ledgered as the open class `search_units` and priced by the card, item 134).
 
 use busbar_contract::billing::Billing;
 use busbar_contract::ir::SourceScopedExtra;
@@ -17,16 +13,14 @@ pub struct RerankReq {
     pub query: String,
     pub documents: Vec<String>,
     pub top_n: Option<u32>,
-    pub max_tokens_per_doc: Option<u32>, // Cohere
+    pub max_tokens_per_doc: Option<u32>,
     /// Cohere/Bedrock `return_documents`: echo each ranked document's text back in the response.
     pub return_documents: Option<bool>,
     pub extra: SourceScopedExtra,
 }
 
 /// The rerank family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. The `query`
-/// and every `document` are caller free text sent upstream verbatim, so both are
-/// [`busbar_contract::ir::facts::ContentItem::Text`] for a screening gate. `top_n` and
-/// `max_tokens_per_doc` are numeric knobs.
+
 impl busbar_contract::ir::facts::IrFacts for RerankReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::RERANK
@@ -75,8 +69,7 @@ pub struct RerankResult {
 }
 
 /// The meter class billed searches are ledgered and priced under (a rerank's search units, and an
-/// Anthropic turn's server-side web searches via `IrUsage::to_token_usage`): the key an operator
-/// writes under `rate_card.<model>.units` (Cohere's own field name).
+
 pub const SEARCH_UNITS_CLASS: &str = "search_units";
 
 /// Rerank response IR.
@@ -84,16 +77,13 @@ pub const SEARCH_UNITS_CLASS: &str = "search_units";
 pub struct RerankResp {
     pub id: Option<String>,
     pub results: Vec<RerankResult>,
-    pub search_units: Option<u64>, // Cohere meta.billed_units.search_units
+    pub search_units: Option<u64>,
     pub extra: SourceScopedExtra,
 }
 
 impl RerankResp {
     /// Billing projection: no token meter on either wire. The search units Cohere billed
-    /// (`meta.billed_units.search_units`, read exactly by the response reader) are the price's quantity
-    /// and reach it as the open class [`SEARCH_UNITS_CLASS`] (item 134), so a 5,000-document rerank no
-    /// longer bills like a 1-document one. A response reporting none (Bedrock, or Cohere without
-    /// `billed_units`) stays the flat marker.
+
     pub fn billing(&self) -> Option<Billing> {
         Some(match self.search_units {
             Some(count) => Billing::Counted {

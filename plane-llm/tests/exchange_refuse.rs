@@ -2,7 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Refusals, rendered, against the previous release's recorded answers (the shadow oracle's golden
-//! cells, read here and never written): the status, the JSON body and the head field names.
 
 mod common;
 
@@ -35,8 +34,7 @@ const HOST: &dyn busbar_contract::codec::CodecHost = &SevensHost;
 /// The answer 1.6.0 owes for `cell`: the recording, with the owner-accepted differences applied.
 fn owed(cell: &str) -> Value {
     let mut want = recorded(cell);
-    // Accepted difference A17 (owner, 2026-09-05): an Anthropic-dialect quota refusal names
-    // Anthropic's own `billing_error`, where 1.5.5 named OpenAI's `insufficient_quota`.
+
     if cell == "llm__anthropic__anthropic__request__over_budget_total" {
         want["body"]["json"]["error"]["type"] = Value::String("billing_error".into());
     }
@@ -52,7 +50,7 @@ fn assert_matches(cell: &str, r: &Rendered) {
         "{cell}: status"
     );
     let mut body: Value = serde_json::from_slice(&r.body).expect("the rendered body is JSON");
-    // A minted request id is recorded as the oracle's placeholder.
+
     if let Some(id) = body.get_mut("request_id") {
         *id = Value::String("<ID>".into());
     }
@@ -101,7 +99,7 @@ fn an_unauthenticated_caller_reads_its_paths_dialect_in_vendor_terms() {
     for d in SIX {
         let cell = format!("llm__{d}__{d}__request__unauthenticated");
         let status = recorded(&cell)["status"].as_u64().expect("status") as u16;
-        // Rendered before the plane read the arrival: the envelope comes from the target alone.
+
         let envelope = envelope_for(target_of(d));
         assert_eq!(envelope, d, "the path rule names {d}");
         let r = kernel_refusal(
@@ -168,9 +166,7 @@ fn a_model_no_rate_prices_reads_the_kernels_no_rate_text() {
 }
 
 /// A model that names no pool and no configured model: 1.5.5 answered the dialect's not-found
-/// envelope, 404, with its model-not-found sentence (1.5.5 `native_ingress`, the destination miss).
-/// No cell records it yet, so the recorded not-found envelope of the same dialect (the unknown-path
-/// cell) is the shape, with the model's sentence in it.
+
 #[test]
 fn a_model_that_resolves_to_no_destination_reads_the_not_found_answer() {
     let message = busbar_plane_llm::exchange::refuse::model_not_found("nope", None);
@@ -184,7 +180,7 @@ fn a_model_that_resolves_to_no_destination_reads_the_not_found_answer() {
     assert_eq!(r.status, 404);
     let body: Value = serde_json::from_slice(&r.body).expect("the rendered body is JSON");
     assert_eq!(body, want["body"]["json"]);
-    // The dialect's own copy, where the path gave one, is the sentence.
+
     assert_eq!(
         busbar_plane_llm::exchange::refuse::model_not_found("m", Some("models/m is not found")),
         "models/m is not found"
@@ -251,8 +247,6 @@ fn an_unparseable_body_reads_the_dialects_400() {
     }
 }
 
-// ── rehomed from the legacy engine's refusal tests: literal statuses and bodies ─────────────────
-
 use busbar_contract::abi::plane::RefusalCode;
 use busbar_plane_llm::exchange::arrive::{Decline, Declined};
 use busbar_plane_llm::exchange::refuse::{declined, model_not_found, render};
@@ -279,7 +273,7 @@ fn aws(kind: &str) -> &'static str {
 }
 
 /// 1.5.5's refusal body, spelled out per dialect (the shapes of the recorded `malformed` and
-/// pool-refusal cells); a dialect the plane does not hold reads the agnostic envelope.
+
 fn native(dialect: &str, status: u16, kind: &str, message: &str) -> Value {
     match dialect {
         "openai" | "responses" => serde_json::json!({
@@ -366,11 +360,7 @@ fn message_in(dialect: &str, body: &Value) -> Option<String> {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/auth_native_envelope_tests.rs::test_vendor_auth_failure_message_is_plausible_per_proto`.
-/// 1.5.5 behaviour pinned: an authentication refusal reads each vendor's own sentence: anthropic
-/// "invalid x-api-key", openai and responses "Incorrect API key provided.", gemini "API key not
-/// valid. Please pass a valid API key.", cohere "invalid api token", bedrock none (AWS says it in
-/// `__type`), and a dialect the plane does not hold the neutral "authentication failed".
-/// RED if any of the seven sentences differs or busbar's own wording appears.
+
 #[test]
 fn an_authentication_refusal_reads_each_vendors_own_sentence() {
     for (dialect, status, sentence) in [
@@ -420,9 +410,7 @@ fn an_authentication_refusal_reads_each_vendors_own_sentence() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_ingress_error_bedrock_amzn_headers`.
-/// 1.5.5 behaviour pinned: a bedrock caller's 429 rate-limit refusal carries `x-amzn-requestid` and
-/// `x-amzn-errortype: ThrottlingException` (the body's `__type`); an openai caller's 400 carries
-/// neither. RED if either field is missing on bedrock, the type differs, or openai carries one.
+
 #[test]
 fn a_bedrock_throttle_carries_both_amzn_fields_and_an_openai_refusal_neither() {
     for r in [
@@ -449,9 +437,7 @@ fn a_bedrock_throttle_carries_both_amzn_fields_and_an_openai_refusal_neither() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_ingress_error_has_amzn_headers`.
-/// 1.5.5 behaviour pinned: a bedrock 404 carries a UUID-shaped (8-4-4-4-12, lowercase hex)
-/// `x-amzn-requestid` and `x-amzn-errortype: ResourceNotFoundException`.
-/// RED if the id is not UUID-shaped or the type differs.
+
 #[test]
 fn a_bedrock_not_found_carries_a_uuid_request_id_and_its_exception() {
     let r = render(
@@ -477,12 +463,7 @@ fn a_bedrock_not_found_carries_a_uuid_request_id_and_its_exception() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_errortype_header_matches_body_and_others_omit`.
-/// 1.5.5 behaviour pinned: for every refusal kind a bedrock caller can read, `x-amzn-errortype`
-/// equals the body's `__type`: invalid request ValidationException, rate limit
-/// ThrottlingException, permission AccessDeniedException, quota 400
-/// ServiceQuotaExceededException (1.5.5's, non-retryable; OWNER 2026-10-27);
-/// the same holds on the kernel's refusals of those classes; an openai 404 carries neither amzn
-/// field. RED if a value differs from its body or the table, or openai carries one.
+
 #[test]
 fn a_bedrock_refusals_errortype_is_its_body_type_for_every_kind() {
     for (kind, status, code, expected) in [
@@ -525,7 +506,7 @@ fn a_bedrock_refusals_errortype_is_its_body_type_for_every_kind() {
 }
 
 /// The kernel answers a model that names no pool and no configured model with its class default
-/// (`NotFound`, 404: a policy refusal, never a server fault), which this plane does not restate.
+
 fn no_destination_status() -> u16 {
     assert!(
         !busbar_plane_llm::refusal::REFUSAL_STATUSES
@@ -564,9 +545,7 @@ fn unknown_model(target: &str, body: &[u8]) -> (String, Rendered) {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_unknown_model_404_native_shape`.
-/// 1.5.5 behaviour pinned: a gemini caller naming a model nothing serves reads a 404 in gemini's
-/// own envelope, `error.status` NOT_FOUND, with gemini's own sentence for the model.
-/// RED if the status, the envelope or the sentence differs.
+
 #[test]
 fn a_gemini_unknown_model_reads_gemini_not_found() {
     let (message, r) = unknown_model(
@@ -582,9 +561,7 @@ fn a_gemini_unknown_model_reads_gemini_not_found() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_unknown_model_404_native_shape`.
-/// 1.5.5 behaviour pinned: a bedrock caller naming a model nothing serves reads a 404 whose body
-/// `__type` and `x-amzn-errortype` are both ResourceNotFoundException.
-/// RED if the status, the type or the header differs.
+
 #[test]
 fn a_bedrock_unknown_model_reads_resource_not_found() {
     let (message, r) = unknown_model("/model/no-such/converse", br#"{"messages":[]}"#);
@@ -596,8 +573,7 @@ fn a_bedrock_unknown_model_reads_resource_not_found() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_cohere_unknown_model_404_native_shape`.
-/// 1.5.5 behaviour pinned: a cohere caller naming a model nothing serves reads a 404 in cohere's
-/// bare `{"message": ...}` envelope. RED if the status or the envelope differs.
+
 #[test]
 fn a_cohere_unknown_model_reads_coheres_not_found() {
     let (message, r) = unknown_model("/v2/chat", br#"{"model":"no-such-model","messages":[]}"#);
@@ -609,9 +585,7 @@ fn a_cohere_unknown_model_reads_coheres_not_found() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_responses_unknown_model_404_native_shape`.
-/// 1.5.5 behaviour pinned: a responses caller naming a model nothing serves reads a 404 whose
-/// `error.type` is `not_found_error`, in the OpenAI-identical envelope.
-/// RED if the status, the type or the envelope differs.
+
 #[test]
 fn a_responses_unknown_model_reads_not_found_error() {
     let (message, r) = unknown_model(
@@ -623,11 +597,7 @@ fn a_responses_unknown_model_reads_not_found_error() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_no_client_error_message_carries_router_prefix`.
-/// 1.5.5 behaviour pinned: no refusal a caller can read on any dialect carries `router:` (a proxy
-/// tell): bad JSON, a missing model, an unknown model on openai, cohere, responses, gemini,
-/// bedrock and the named anthropic surface, a colon-less gemini path, an unsupported gemini
-/// action, and a non-object body on gemini and bedrock. Every legacy case is driven.
-/// RED if any body contains `router:`.
+
 #[test]
 fn no_refusal_body_carries_the_router_prefix() {
     let json = [("content-type", "application/json")];
@@ -686,9 +656,7 @@ fn pool_not_permitted(dialect: &str) -> Rendered {
 const NOT_PERMITTED: &str = "Your API key does not have permission to access this resource.";
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_governance_pool_acl_403_cohere_native_envelope`.
-/// 1.5.5 behaviour pinned: a cohere caller refused by the pool ACL reads a 403 JSON
-/// `{"message": "Your API key does not have permission to access this resource."}`.
-/// RED if the status, the envelope or the sentence differs.
+
 #[test]
 fn a_cohere_pool_refusal_reads_coheres_403() {
     assert_native(
@@ -701,8 +669,7 @@ fn a_cohere_pool_refusal_reads_coheres_403() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_governance_pool_acl_403_responses_native_envelope`.
-/// 1.5.5 behaviour pinned: a responses caller refused by the pool ACL reads a 403 JSON whose
-/// `error.type` is `permission_error`. RED if the status, the type or the envelope differs.
+
 #[test]
 fn a_responses_pool_refusal_reads_permission_error() {
     let r = pool_not_permitted("responses");
@@ -711,8 +678,7 @@ fn a_responses_pool_refusal_reads_permission_error() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_governance_pool_acl_403_openai_native_envelope`.
-/// 1.5.5 behaviour pinned: an openai caller refused by the pool ACL reads a 403 JSON whose
-/// `error.type` is `permission_error`. RED if the status, the type or the envelope differs.
+
 #[test]
 fn an_openai_pool_refusal_reads_permission_error() {
     let r = pool_not_permitted("openai");
@@ -721,8 +687,7 @@ fn an_openai_pool_refusal_reads_permission_error() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_governance_pool_acl_403_gemini_native_envelope`.
-/// 1.5.5 behaviour pinned: a gemini caller refused by the pool ACL reads a 403 JSON with
-/// `error.code` 403 and `error.status` PERMISSION_DENIED. RED if any of the three differs.
+
 #[test]
 fn a_gemini_pool_refusal_reads_permission_denied() {
     let r = pool_not_permitted("gemini");
@@ -732,9 +697,7 @@ fn a_gemini_pool_refusal_reads_permission_denied() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_governance_pool_acl_403_bedrock_native_envelope`.
-/// 1.5.5 behaviour pinned: a bedrock caller refused by the pool ACL reads a 403 JSON whose
-/// `__type` and `x-amzn-errortype` are AccessDeniedException, with an `x-amzn-requestid`.
-/// RED if the status, the type, either header or the envelope differs.
+
 #[test]
 fn a_bedrock_pool_refusal_reads_access_denied() {
     let r = pool_not_permitted("bedrock");
@@ -778,10 +741,7 @@ fn refusal_in(
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::a_non_object_body_refuses_with_the_live_arms_bytes`.
-/// 1.5.5 behaviour pinned: a body that is JSON but not an object (`[]`, `"a string"`, `7`) on a
-/// path-model arrival is refused 400 "Request body must be a JSON object." (not the parse
-/// sentence), and that refusal reads 1.5.5's bytes in every dialect's envelope.
-/// RED if any of the three bodies is accepted or refused otherwise, or a dialect's bytes differ.
+
 #[test]
 fn a_non_object_body_reads_the_released_400_in_every_dialect() {
     let json = [("content-type", "application/json")];
@@ -824,9 +784,7 @@ fn a_non_object_body_reads_the_released_400_in_every_dialect() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::the_reserialize_guard_renders_the_live_arms_bytes`.
-/// 1.5.5 behaviour pinned: the re-serialization guard (unreachable on the request path, so pinned
-/// by its rendering) reads 400 "The request body could not be processed." in every dialect's
-/// envelope. RED if a dialect's bytes differ.
+
 #[test]
 fn the_reserialize_guard_reads_the_released_400_in_every_dialect() {
     for dialect in SIX {
@@ -847,10 +805,7 @@ fn the_reserialize_guard_reads_the_released_400_in_every_dialect() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::every_arrival_refusal_renders_through_audit_to_the_legacy_bytes`.
-/// 1.5.5 behaviour pinned: the whole arrival refusal set (the parse 400, the non-object 400, the
-/// re-serialization 400) reads 1.5.5's bytes in every dialect AND in a dialect the plane does not
-/// hold (the agnostic envelope), and no refusal grows a head field of its own beyond its dialect's.
-/// RED if the set changes size or any cell's status, body or head fields differ.
+
 #[test]
 fn every_arrival_refusal_reads_the_released_bytes_in_every_dialect_and_none() {
     let cases = [
@@ -874,9 +829,7 @@ fn every_arrival_refusal_reads_the_released_bytes_in_every_dialect_and_none() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::a_refusal_renders_even_with_no_dialect_registered`.
-/// 1.5.5 behaviour pinned: a parse refusal (400) for a dialect the plane does not hold still renders
-/// a 400 with a non-empty envelope (the agnostic one), never a panic or an empty body.
-/// RED if the status differs or the body is empty.
+
 #[test]
 fn a_parse_refusal_renders_for_a_dialect_the_plane_does_not_hold() {
     let r = refusal_in(
@@ -898,10 +851,7 @@ fn a_parse_refusal_renders_for_a_dialect_the_plane_does_not_hold() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::the_missing_model_refusal_carries_the_live_arms_bytes`.
-/// 1.5.5 behaviour pinned: the missing-model refusal reads 400 "Missing required parameter:
-/// 'model'." in each of the six dialects' envelopes, with the dialect's head fields; the four
-/// body-model dialects are driven from a real arrival that names no model.
-/// RED if any dialect's status, body or head fields differ.
+
 #[test]
 fn the_missing_model_refusal_reads_the_released_bytes_in_every_dialect() {
     let json = [("content-type", "application/json")];
@@ -923,10 +873,7 @@ fn the_missing_model_refusal_reads_the_released_bytes_in_every_dialect() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::every_decode_refusal_renders_through_audit_to_the_legacy_bytes`.
-/// 1.5.5 behaviour pinned: the whole decode refusal set, the protocol miss (404 "This protocol
-/// does not support that operation."), the endpoint miss (404 "This endpoint does not support
-/// that operation.") and the missing model (400), reads 1.5.5's bytes in every dialect and in a
-/// dialect the plane does not hold. RED if the set changes size or any cell differs.
+
 #[test]
 fn every_decode_refusal_reads_the_released_bytes_in_every_dialect_and_none() {
     let cases = [
@@ -959,11 +906,7 @@ fn every_decode_refusal_reads_the_released_bytes_in_every_dialect_and_none() {
 }
 
 /// THE KERNEL-SHAPED REFUSALS, RENDERED BY THE PLANE: the kernel
-/// decides the reason, the status and the words — a method no route at the path takes
-/// (`MethodNotAllowed`, 405), a body over the cap (`BodyTooLarge`, 413) — and the plane renders the
-/// body in the dialect its path rule reads off the target, byte for byte the previous release's
-/// recorded answer. RED arms: the reason's own word is never the message, and a reason classed
-/// otherwise would wear another kind.
+
 #[test]
 fn the_kernels_method_and_size_refusals_read_as_the_previous_release_answered() {
     use busbar_contract::abi::plane::reason_code;
@@ -1017,12 +960,7 @@ fn the_kernels_method_and_size_refusals_read_as_the_previous_release_answered() 
 }
 
 /// EVERY DIALECT, AS THE PREVIOUS RELEASE'S KERNEL WROTE IT: the
-/// previous release answered these three refusals with the dialect's own error writer over
-/// `(status, kind, message)` — 405 `invalid_request` "method not allowed for this resource", 413
-/// `request_too_large` "request body exceeds the maximum allowed size", and a handler panic's 500
-/// `api_error` "internal error". The plane's rendering of the kernel's reason is that same writing,
-/// field for field and byte for byte, in all six dialects. RED arm: the reason classes are what pick
-/// the kind, so a reason classed otherwise breaks the equality.
+
 #[test]
 fn the_kernels_refusals_are_the_previous_releases_writing_in_every_dialect() {
     use busbar_contract::abi::plane::reason_code;

@@ -1,7 +1,5 @@
 //! CONFORMANCE (botocore `bedrock-runtime/2023-09-30/service-2.json`, `ConverseStreamOutput`): the
-//! `:exception-type` of a modeled exception frame names a MEMBER of the output union, and the
-//! members are lowerCamel (`internalServerException`). v1.5.5 sent the PascalCase shape name, which
-//! is not a member, so a decoder that looks the header up among the union's members finds none.
+
 use super::*;
 
 fn exception_type_of(frame: &[u8]) -> String {
@@ -12,7 +10,7 @@ fn exception_type_of(frame: &[u8]) -> String {
         .windows(name.len())
         .position(|w| w == name)
         .expect("the :exception-type header is present");
-    // header layout: u8 name_len, name, u8 type(7), u16 value_len, value
+
     let v = at + name.len() + 1;
     let vlen = u16::from_be_bytes([headers[v], headers[v + 1]]) as usize;
     String::from_utf8(headers[v + 2..v + 2 + vlen].to_vec()).unwrap()

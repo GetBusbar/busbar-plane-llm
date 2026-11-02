@@ -2,17 +2,17 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE LLM PLANE'S REFUSAL STATUSES, AS THE PLANE DRIVER CHOOSES THEM, AGAINST 1.5.5 (coverage map
-//! v2 rows 743, 744 and 746, the legacy crate's `tests/llm_refusal_statuses.rs`).
-//!
-//! These cases need the kernel's plane driver and this plane's stated rows together, which only the
-//! composition root links. Their map home was the root's own test crate, and they are compiled into
-//! the root's test binary from here (the driver-proofs row): the root's sources name no plane and
-//! no dialect, and these cases are written in this plane's words.
-//!
-//! The kernel's plane driver chooses a refusal's status from the plane's stated rows, else its own
-//! default. For every refusal the previous release recorded (the shadow oracle's golden cells, read
-//! here and never written), the status the driver chooses for the plane's dialect and the refusal's
-//! reason equals the recorded status.
+
+
+
+
+
+
+
+
+
+
+
 
 use std::path::{Path, PathBuf};
 
@@ -22,9 +22,9 @@ use busbar_plane_llm::dialect::DIALECTS;
 use busbar_plane_llm::refusal::REFUSAL_STATUSES;
 
 /// The recorded cells, in busbar's tree. This file compiles only into the composition root's
-/// `hook_parity_driver` suite, so `CARGO_MANIFEST_DIR` is the root crate (`crates/busbar`) and
-/// `../..` is busbar's checkout, where that suite runs; `BUSBAR_CHECKOUT` is plugin CI's, not the
-/// root's, and is unset there.
+
+
+
 fn golden() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testing/shadow-oracle/golden/1.5.5/cells")
 }
@@ -81,12 +81,12 @@ fn every_dialect(condition: &str, reason: ReasonCode) -> Vec<(String, &'static s
 }
 
 /// LEGACY `crates/busbar-llm/tests/llm_refusal_statuses.rs::every_recorded_llm_refusal_wears_the_status_the_driver_chooses`
-/// 1.5.5: every recorded llm refusal wears the status the driver now
-/// chooses: unauthenticated 401 (403 on bedrock, 400 on gemini), a spend cap 429 (1.5.5 answered
-/// 400 on bedrock; 1.6.0 answers 429 there too, PR #958, see `ACCEPTED`), a count cap 429, an unreadable body 400, every member down 503 for every ingress and far
-/// dialect, an oversized body 413, and a model no rate prices 400.
-///
-/// RED: a stated row goes missing, or a row says something the recording does not.
+
+
+
+
+
+
 #[test]
 fn every_recorded_llm_refusal_wears_the_status_the_driver_chooses() {
     let config = config();
@@ -144,10 +144,10 @@ fn every_recorded_llm_refusal_wears_the_status_the_driver_chooses() {
 }
 
 /// LEGACY `crates/busbar-llm/tests/llm_refusal_statuses.rs::every_stated_row_differs_from_the_kernel_default`
-/// 1.5.5's statuses are kept with no dead row: every row the plane
-/// states differs from the kernel's default for its reason, so each one is needed.
-///
-/// RED: a row restates the kernel default (dead weight that hides a later default change).
+
+
+
+
 #[test]
 fn every_stated_row_differs_from_the_kernel_default() {
     assert!(!REFUSAL_STATUSES.is_empty(), "the plane states its rows");
@@ -163,12 +163,12 @@ fn every_stated_row_differs_from_the_kernel_default() {
 }
 
 /// LEGACY `crates/busbar-llm/tests/llm_refusal_statuses.rs::p_item_refusal_reason_collapse_no_llm_refusal_reads_as_an_internal_error`
-/// 1.5.5 answered every limit reason with its own status and kind and
-/// none of them as an internal error: for every dialect and every reason the driver can refuse
-/// for, the status it chooses is never a bare 500, and the kind the plane renders is the generic
-/// `api_error` only for the node's own faults and for a timeout (whose 504 is its own status).
-///
-/// RED: a reason collapses into a bare 500, or a limit reason reads as the generic internal kind.
+
+
+
+
+
+
 #[test]
 fn p_item_refusal_reason_collapse_no_llm_refusal_reads_as_an_internal_error() {
     use busbar_contract::abi::plane::{class_of, RefusalClass};

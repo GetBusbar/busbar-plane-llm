@@ -2,9 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR mapping — the cross-protocol SEAM: what `chat_prepare_for_ingress` and the
-//! shared OpenAI annotation mapping keep. Probe-style: a real upstream body goes through the egress
-//! dialect's reader, the production seam step, and the ingress dialect's writer, exactly as the
-//! forward path runs them.
 
 use serde_json::{json, Value};
 
@@ -13,7 +10,7 @@ fn cohere_folded_documents_keep_their_distinct_drop_origins() {
     use crate::codec::{drops, proto_codec::protocol_for, test_host::HOST};
     let cohere = protocol_for("cohere").unwrap();
     let anthropic = protocol_for("anthropic").unwrap();
-    // Cohere's declared document input accepts objects; an opaque document has no foreign handle.
+
     let document = json!({"id":"same-document"});
     let body = json!({
         "model":"m",
@@ -168,7 +165,7 @@ fn translated_upstream_failure_is_terminal_even_with_open_blocks_or_deferred_suc
             } else {
                 assert!(tail.is_empty(), "{ingress}: {tail:?}");
             }
-            // Late upstream frames still report work, but cannot reopen the failed client stream.
+
             assert!(stream.feed(host, opening.as_bytes()).is_empty());
             assert!(stream.feed(host, stop.as_bytes()).is_empty());
             let usage = stream.usage().unwrap();
@@ -328,7 +325,6 @@ fn url_citations(v: &Value) -> Vec<Value> {
         match n {
             Value::Object(m) => {
                 if m.get("type").and_then(Value::as_str) == Some("url_citation") {
-                    // Chat nests the fields under `url_citation`; Responses flattens them.
                     out.push(m.get("url_citation").cloned().unwrap_or_else(|| n.clone()));
                 }
                 stack.extend(m.values());
@@ -341,8 +337,7 @@ fn url_citations(v: &Value) -> Vec<Value> {
 }
 
 /// SHR-01: an OpenAI Chat backend's `url_citation` (with its character span) reaches a Responses
-/// client. Before, the shared reader dropped the span and the Responses writer, which requires one,
-/// dropped the whole citation — `annotations: []`.
+
 #[test]
 fn shr01_chat_citation_with_its_span_reaches_a_responses_client() {
     let body = json!({
@@ -389,7 +384,7 @@ fn shr01_responses_citation_keeps_its_span_for_a_chat_client() {
 }
 
 /// The span rule's other half: offsets a citation carries into the CITED DOCUMENT (an Anthropic
-/// `char_location`) are not a span of the answer text and must never be written as one.
+
 #[test]
 fn shr01_document_offsets_are_never_written_as_an_answer_span() {
     let c = crate::codec::ir::IrCitation {
@@ -409,7 +404,7 @@ fn shr01_document_offsets_are_never_written_as_an_answer_span() {
         chat[0]["url_citation"].get("start_index").is_none(),
         "a document offset was written as an answer span: {chat:?}"
     );
-    // A text-span kind keeps its carried span.
+
     let web = crate::codec::ir::IrCitation {
         kind: Some("web_search_result_location".to_string()),
         ..c
@@ -420,10 +415,7 @@ fn shr01_document_offsets_are_never_written_as_an_answer_span() {
 }
 
 /// SEAM (`chat_prepare_for_ingress`): the matched stop string survives the buffered seam. A
-/// Bedrock Converse body carries it (`additionalModelResponseFields.stop_sequence`) and the
-/// Anthropic writer emits it; the seam used to null it, so the buffered answer said `null` where
-/// the stream path (`MessageDelta.stop_sequence`, never stripped) kept it. Driven from the IR the
-/// egress reader hands the seam, so it pins the seam step itself whichever reader filled the field.
+
 #[test]
 fn seam_matched_stop_sequence_survives_the_buffered_seam() {
     let mut ir = crate::codec::ir::IrResponse {
@@ -455,7 +447,7 @@ fn seam_matched_stop_sequence_survives_the_buffered_seam() {
 }
 
 /// The seam still normalizes what no target can carry: the backend's id format never reaches a
-/// different dialect's client, and `system_fingerprint` (OpenAI Chat only) is cleared.
+
 #[test]
 fn seam_still_mints_a_native_id_and_clears_the_chat_only_fingerprint() {
     let body = json!({
@@ -472,7 +464,7 @@ fn seam_still_mints_a_native_id_and_clears_the_chat_only_fingerprint() {
 }
 
 /// SHR-03: one OpenAI Files id namespace, two dialect tags. The shared helper reads the id off a
-/// reference either OpenAI reader produced, and nothing else.
+
 #[test]
 fn shr03_openai_file_id_is_read_from_either_openai_dialects_reference() {
     use crate::codec::ir::IrImageSource;
@@ -500,8 +492,7 @@ fn shr03_openai_file_id_is_read_from_either_openai_dialects_reference() {
 }
 
 /// The tags ARE what the two OpenAI readers stamp: a Chat `file.file_id` part and a Responses
-/// `input_file.file_id` part both read into a reference the helper resolves — if either reader
-/// renames its tag, this fails rather than the id silently stopping to cross.
+
 #[test]
 fn shr03_both_openai_readers_produce_a_reference_the_helper_resolves() {
     fn first_media_source(ir: &crate::codec::ir::IrRequest) -> crate::codec::ir::IrImageSource {
@@ -534,9 +525,7 @@ fn shr03_both_openai_readers_produce_a_reference_the_helper_resolves() {
 }
 
 /// Through the production write (`write_egress_request` with the lane model), a cross-protocol
-/// reasoning ask writes no Converse `thinking` on ANY Bedrock lane, Claude or Nova, as in 1.5.5
-/// (v1.5.5 `crates/busbar/src/proto/bedrock/writer.rs:139-146`), so it bills no thinking tokens 1.5.5
-/// did not bill. RED while a Claude lane received `thinking {enabled}`.
+
 #[test]
 fn bedrock_thinking_is_written_for_no_lane_model() {
     use busbar_contract::ir::handle::IrHandle;
@@ -1647,7 +1636,7 @@ fn stream_index_reset_preserves_duplicate_start_identity_and_delta_only_calls() 
         });
         assert_eq!(mapped_stream_index(&frames[0]), Some(1));
         emit(&IrStreamEvent::MessageStop);
-        // A late block from the retired stream must not cancel the next message's reset.
+
         emit(&IrStreamEvent::BlockStart {
             index: 90,
             block: IrBlockMeta::Text,

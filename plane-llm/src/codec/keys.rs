@@ -2,8 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE WIRE WORDS TWO OR MORE DIALECTS SPELL ALIKE: one const each (OWNER 2026-10-01, one spelling
-//! per fact). A word only one dialect speaks is that dialect's own const; the mapping files
-//! (`dialects/<d>.toml`) spell the flat fields.
 
 pub const NONE_UPPER: &str = "NONE";
 pub const ADDITIONAL_PROPERTIES: &str = "additionalProperties";

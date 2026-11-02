@@ -2,10 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The invoke envelope: an Anthropic Messages exchange carried over Bedrock's `InvokeModel` and
-//! `InvokeModelWithResponseStream`.
-//!
-//! RED: before the envelope, `models.<m>.protocol: bedrock-invoke` was refused as an unknown
-//! protocol, so none of these builds or holds.
 
 mod common;
 
@@ -24,7 +20,7 @@ use serde_json::{json, Value};
 const HOST: &dyn busbar_contract::codec::CodecHost = &TestHost;
 
 /// A Bedrock provider (its own dialect, SigV4), one model served over it in Converse and one over
-/// the invoke envelope, and an Anthropic provider for the carried dialect's own lane.
+
 fn shaping() -> Shaping {
     Shaping::from_settings(&json!({
         "providers": {
@@ -265,8 +261,7 @@ fn a_refusal_is_restated_in_the_carried_dialects_error_envelope() {
 }
 
 /// THE MONEY READ: a streamed answer over the envelope reaches the carried dialect's caller as that
-/// dialect's own events, and the units it reports are the carried dialect's usage (11 in, 7 out),
-/// exactly as on that dialect's own lane.
+
 #[test]
 fn a_streamed_answer_meters_the_carried_dialects_usage() {
     let s = shaping();
@@ -318,10 +313,7 @@ fn a_streamed_answer_meters_the_carried_dialects_usage() {
 }
 
 /// THE KERNEL NEVER SEES THE ENVELOPE: it is no codec
-/// protocol this plane declares, so the protocols the composition root installs, and with them the
-/// previous release's "must be one of" list a provider's unknown protocol is refused with, stay
-/// exactly 1.5.5's six in 1.5.5's order (oracle cell `boot.refusal|BOOT-020|validate`; the binary's
-/// own `validate_unknown_protocol_lists_only_the_configured_planes_dialects` pins the line).
+
 #[test]
 fn the_envelope_is_no_declared_protocol_and_the_1_5_5_list_is_unchanged() {
     let declared: Vec<&str> = busbar_plane_llm::codec::DECLS

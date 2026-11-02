@@ -21,8 +21,7 @@ fn anthropic_off() -> crate::codec::ir::IrRequest {
 }
 
 /// Item 12: an Off ask writes no `thinking` on any Bedrock lane, `thinking_always_on` or not: a
-/// cross-protocol reasoning ask does not reach Bedrock, as in 1.5.5 (v1.5.5
-/// `crates/busbar/src/proto/bedrock/writer.rs:139-146`).
+
 #[test]
 fn item12_off_writes_no_thinking_on_any_lane() {
     let w = protocol_for("bedrock").unwrap();
@@ -48,12 +47,8 @@ fn item12_off_writes_no_thinking_on_any_lane() {
     }
 }
 
-// ───────────────────────── item 8: the shipped Bedrock catalog entry ─────────────────────────
-
 /// Item 8, the writer's half: a lane whose catalog entry turns adaptive thinking and native
-/// structured output on still receives no `thinking` for a foreign word ask. The ask does not reach
-/// Bedrock, as in 1.5.5 (v1.5.5 `crates/busbar/src/proto/bedrock/writer.rs:139-146`), so the
-/// request bills no thinking tokens 1.5.5 did not bill. RED while it wrote adaptive thinking.
+
 #[test]
 fn item8_a_word_ask_on_an_adaptive_lane_writes_no_thinking() {
     let caps = LaneCaps {
@@ -80,10 +75,8 @@ fn item8_a_word_ask_on_an_adaptive_lane_writes_no_thinking() {
     );
 }
 
-// ─────────────── item 14: citation domain and the Converse serviceTier member ───────────────
-
 /// Item 14 (BED-14): a Converse `web` citation location's `domain` rides IrCitation.domain and is
-/// written back beside the url.
+
 #[test]
 fn item14_web_citation_domain_round_trips() {
     let converse = json!({
@@ -122,7 +115,7 @@ fn item14_web_citation_domain_round_trips() {
 }
 
 /// Item 14 (IR-04): Converse `serviceTier: {type}` reads into the IR tier and a foreign tier ask
-/// reaches a Bedrock lane as that member; Auto / Scale have no Converse word (dropped, reported).
+
 #[test]
 fn item14_converse_service_tier_maps_both_ways() {
     let ir = protocol_for("bedrock")

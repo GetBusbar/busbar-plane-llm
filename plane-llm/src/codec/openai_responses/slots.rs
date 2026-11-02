@@ -2,13 +2,11 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The Responses spelling of the typed IR slots: what the reader fills and the writer emits for each
-//! request / block slot the dialect can carry. Every helper returns the absent value for an absent
-//! wire member, so a request that never carried a concept gains nothing on the wire.
 
 use super::*;
 
 /// IR-08. `input_image.detail` → the IR detail. An unknown word is dropped with a warn rather than
-/// coerced onto a fidelity the caller did not ask for.
+
 pub(super) fn read_image_detail(
     item: &serde_json::Value,
 ) -> Option<crate::codec::ir::IrImageDetail> {
@@ -27,8 +25,7 @@ pub(super) fn read_image_detail(
 }
 
 /// IR-17. Which reasoning array a Responses `reasoning` item filled: `content[]` alone is full
-/// reasoning, `summary[]` alone a summary. Both or neither give `None`: the reader keeps its
-/// concatenated text and no writer is told a kind the item did not have.
+
 pub(super) fn reasoning_kind(item: &serde_json::Value) -> Option<crate::codec::ir::IrThinkingKind> {
     let has_text = |key: &str| {
         item.get(key).and_then(|a| a.as_array()).is_some_and(|arr| {
@@ -47,8 +44,7 @@ pub(super) fn reasoning_kind(item: &serde_json::Value) -> Option<crate::codec::i
 }
 
 /// IR-17 writer half: the `summary` / `content` members of a written `reasoning` item. A `Summary`
-/// block's text goes into `summary[]` (a `summary_text` part) with `content` omitted; a `Full` or
-/// unknown block keeps the pre-slot shape (`summary: []`, the text as a `reasoning_text` part).
+
 pub(super) fn insert_reasoning_text(
     item: &mut serde_json::Map<String, serde_json::Value>,
     text: &str,
@@ -69,8 +65,7 @@ pub(super) fn insert_reasoning_text(
 }
 
 /// IR-18 (RSP-13). Whether a thinking signature may be written as `encrypted_content`: only a blob
-/// OpenAI minted (or of unknown origin, the pre-slot behaviour). An Anthropic / Gemini / other-Bedrock
-/// signature is a foreign blob a Responses backend cannot decrypt, so it is not sent.
+
 pub(super) fn own_signature(origin: Option<crate::codec::ir::IrSignatureOrigin>) -> bool {
     matches!(
         origin,
@@ -79,8 +74,7 @@ pub(super) fn own_signature(origin: Option<crate::codec::ir::IrSignatureOrigin>)
 }
 
 /// IR-10 (RSP-15). The Responses `tool_choice:{type:"allowed_tools", mode, tools:[…]}` form to the IR
-/// `(tool_choice, allowed_tools)` pair: the listed function tool names, and `Auto` (`mode:"auto"` or
-/// absent) / `Required` (`mode:"required"`). `None` for any other object.
+
 pub(super) fn read_allowed_tools(
     o: &serde_json::Map<String, serde_json::Value>,
 ) -> Option<(crate::codec::ir::IrToolChoice, Vec<String>)> {
@@ -116,7 +110,7 @@ pub(super) fn read_allowed_tools(
 }
 
 /// IR-10 writer half: the subset as the Responses `allowed_tools` tool choice. `Required` →
-/// `mode:"required"`; anything else (`Auto`, or no directive) → `mode:"auto"`.
+
 pub(super) fn write_allowed_tools(
     names: &[String],
     choice: Option<&crate::codec::ir::IrToolChoice>,
@@ -142,11 +136,7 @@ const WEB_SEARCH_KEYS: [&str; 4] = [
 ];
 
 /// IR-11. A Responses hosted tool the IR models neutrally: `web_search` / `web_search_preview` to
-/// `WebSearch`, `code_interpreter` on an auto container to `CodeExecution`. Recognised only when
-/// every member it carries has an IR slot; one carrying a member the IR cannot hold (a `file_search`
-/// vector store, an explicit container id or `file_ids`, an unknown web-search member) stays the raw
-/// same-protocol `IrTool::hosted`, which the seam drops with its warn, never a typed tool that
-/// silently lost configuration.
+
 pub(super) fn read_hosted_tool(tool: &serde_json::Value) -> Option<crate::codec::ir::IrHostedTool> {
     let obj = tool.as_object()?;
     match obj.get(keys::TYPE).and_then(|t| t.as_str())? {
@@ -189,7 +179,7 @@ pub(super) fn read_hosted_tool(tool: &serde_json::Value) -> Option<crate::codec:
             (auto_container && obj.len() == 2)
                 .then_some(crate::codec::ir::IrHostedTool::CodeExecution)
         }
-        // OAI-09: the flat Responses custom tool.
+
         keys::CUSTOM => crate::codec::ir::IrCustomTool::read_members(obj, &[keys::TYPE])
             .map(crate::codec::ir::IrHostedTool::Custom),
         _ => None,
@@ -197,8 +187,7 @@ pub(super) fn read_hosted_tool(tool: &serde_json::Value) -> Option<crate::codec:
 }
 
 /// IR-11 writer half: a neutral hosted tool in Responses spelling, or `None` for a kind with no tool
-/// here (`WebFetch`), dropped with a warn. A web-search field Responses cannot express (`max_uses`,
-/// `blocked_domains`) is dropped with a warn and the tool kept.
+
 pub(super) fn write_hosted_tool(
     tool: &crate::codec::ir::IrHostedTool,
 ) -> Option<serde_json::Value> {
@@ -246,7 +235,7 @@ pub(super) fn write_hosted_tool(
             );
             None
         }
-        // OAI-09: a custom (free-text / grammar) tool, flat on this wire.
+
         crate::codec::ir::IrHostedTool::Custom(c) => {
             let mut out = serde_json::Map::new();
             out.insert(keys::TYPE.to_string(), serde_json::json!(keys::CUSTOM));
@@ -257,8 +246,7 @@ pub(super) fn write_hosted_tool(
 }
 
 /// IR-14 reader half: the role of the folded system entries. `Some(Developer)` / `Some(System)` only
-/// when every folded `input` entry used that role and no top-level `instructions` was folded beside
-/// them (`instructions` names no role, so a mix is unknown); else `None`.
+
 pub(super) fn system_role(
     saw_system: bool,
     saw_developer: bool,

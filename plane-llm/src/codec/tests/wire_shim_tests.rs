@@ -2,22 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! `tier_usage()`'s OWN dedicated suite (item 307) — until now the function every dialect's usage
-//! funnels through before the ledger/metering write had no `#[cfg(test)] mod tests` of its own and
-//! was exercised only incidentally, by two other suites' goldens (`ir::tests::tests` line 360,
-//! `bedrock::tests::tests::bedrock_input_tier_excludes_cache_at_billing_boundary`), neither of which
-//! ever built the one case that matters for money: a cache field that is `None` because the provider
-//! never reported it, versus a cache field that is `None` because an upstream `read_count_u64` READ
-//! REFUSED an unparseable value.
-//!
-//! Item 133 (`92227db57`, "a present-but-unreadable billed count REFUSES, never ledgers 0") already
-//! moved the fix to the ROOT: every dialect reader (`read_count`/`read_count_opt` over
-//! `usage_count::billed_count`) now refuses BEFORE a [`TokenUsage`] is ever constructed, so by the
-//! time a value reaches `tier_usage()`, `None` can only mean "legitimately absent" — the refusal
-//! never survives to become a collapsed `None` here. That invariant is what makes `tier_usage()`'s
-//! `.unwrap_or(0)` safe, and it is exactly what this suite pins: the reported/absent split at
-//! `tier_usage()` itself (this module's own contract), AND — end to end, through a real dialect
-//! reader this crate owns — that an unreadable cache count REFUSES through item 133's path rather
-//! than ever reaching `tier_usage()` as a bare, indistinguishable `None`.
 
 use crate::codec::usage_census::tier_usage;
 use busbar_contract::billing::TokenUsage;
@@ -27,7 +11,7 @@ fn unit(usage: &busbar_contract::billing::Usage, k: &str) -> Option<u64> {
 }
 
 /// A tier the dialect reader actually reported (including an honest zero, distinct from a
-/// legitimately-absent tier — see `sparse_zero_and_absent_cache_tiers_are_both_omitted`) is priced.
+
 #[test]
 fn reported_tiers_are_priced() {
     let tu = TokenUsage {
@@ -57,10 +41,7 @@ fn reported_tiers_are_priced() {
 }
 
 /// A cache tier the provider genuinely never reported (`None`, per `read_count_opt`'s absent/null
-/// contract) is OMITTED from the sparse map — not billed, not present as a zero entry either. This
-/// is the legitimate-absence case `tier_usage()` must keep distinguishable from a refusal: a refusal
-/// never reaches this function at all (see `unreadable_top_level_cache_count_refuses_before_reaching_tier_usage`
-/// below), so every `None` this function ever sees is this case.
+
 #[test]
 fn absent_cache_tiers_are_omitted_not_billed() {
     let tu = TokenUsage {
@@ -79,9 +60,7 @@ fn absent_cache_tiers_are_omitted_not_billed() {
         unit(&usage, busbar_contract::records::UNIT_CACHE_WRITE),
         None
     );
-    // input/output are unconditional tiers (not `Option`), so a genuine zero on them is a real
-    // reported zero (e.g. an embeddings response), not an absence — and is likewise omitted by the
-    // no-zero-entry sparse contract.
+
     let tu_zero_output = TokenUsage {
         input: 5,
         output: 0,
@@ -93,11 +72,7 @@ fn absent_cache_tiers_are_omitted_not_billed() {
 }
 
 /// An explicit reported zero (`Some(0)`) and a legitimately-absent tier (`None`) price IDENTICALLY —
-/// both omitted — which is correct: neither should ever be billable money, and the map's sparse
-/// contract (module doc, `wire_shim.rs`) makes no distinction between "reported zero" and
-/// "not reported" once the value is a readable zero. The distinction this suite exists to police is
-/// a DIFFERENT one: a refused, UNREADABLE value must never collapse into either of these — it must
-/// never reach `tier_usage()` as a value at all.
+
 #[test]
 fn sparse_zero_and_absent_cache_tiers_are_both_omitted() {
     let reported_zero = TokenUsage {
@@ -118,14 +93,7 @@ fn sparse_zero_and_absent_cache_tiers_are_both_omitted() {
 }
 
 /// END TO END, through a real dialect reader this crate owns (not cohere/openai_responses): a
-/// present-but-unparseable top-level `cache_read_input_tokens`/`cache_creation_input_tokens` is
-/// REFUSED on its own (the path over `usage_count::billed_count`: each usage
-/// field is judged on its own): it bills nothing, the readable counts beside
-/// it bill as stated, and it never reaches `tier_usage()` as a priced tier. Nothing in this crate's existing suites drove an unreadable
-/// TOP-LEVEL cache count through a buffered response before this test (the item-133 refusal suite,
-/// `anthropic/tests/unreadable_count_refusal_tests.rs`, covers `input_tokens`/`output_tokens` and the
-/// nested 5m/1h cache-creation detail tiers, never the top-level `cache_read_input_tokens`/
-/// `cache_creation_input_tokens` fields `tier_usage()` actually prices).
+
 #[test]
 fn unreadable_top_level_cache_count_refuses_before_reaching_tier_usage() {
     use crate::codec::anthropic::AnthropicReader;
@@ -171,9 +139,6 @@ fn unreadable_top_level_cache_count_refuses_before_reaching_tier_usage() {
     );
     assert_eq!(unit(&usage, busbar_contract::records::UNIT_OUTPUT), Some(9));
 
-    // Control: the SAME shape with a readable cache count reads fine and prices through tier_usage
-    // as a real, present tier — proving the refusal above is about readability, not the field's mere
-    // presence.
     let body = serde_json::json!({
         "role": "assistant",
         "content": [{"type": "text", "text": "hi"}],
@@ -196,9 +161,7 @@ fn unreadable_top_level_cache_count_refuses_before_reaching_tier_usage() {
 }
 
 /// A RESIDUAL NEVER REACHES A BILL (MONEY LAW, owner 2026-10-02). A usage carrying residual units
-/// (Bedrock guardrail policy units, a stated total above its itemized sum) projects into the two
-/// billed-usage builders exactly as the same usage with none: `tier_usage` holds the four token
-/// tiers only, and `Units::of` adds no open class. RED if either builder copies the residual map.
+
 #[test]
 fn a_residual_never_reaches_a_bill() {
     let billed = TokenUsage {
@@ -229,8 +192,7 @@ fn a_residual_never_reaches_a_bill() {
 }
 
 /// The open classes a non-token answer ledgers, through both projections: the plane's `Units`
-/// (built from `token_usage_of` and `open_units_of`, as the reply builds it) and the governance
-/// ledger's map (`open_units_of`, which `record_resp_usage` ledgers verbatim).
+
 fn non_token_open(
     billing: busbar_contract::billing::Billing,
 ) -> std::collections::BTreeMap<String, u64> {
@@ -255,8 +217,7 @@ fn non_token_open(
 }
 
 /// A PER-IMAGE ANSWER LEDGERS ITS IMAGES (owner LEDGER-100). dall-e/Imagen/Titan/SDXL answers carry
-/// no token usage; the far end returned 3 images, so the answer is one `images` line of 3. RED
-/// before this lane: `Billing::Images` was dropped by both projections and nothing was ledgered.
+
 #[test]
 fn a_per_image_answer_ledgers_one_images_line() {
     let open = non_token_open(busbar_contract::billing::Billing::Images {
@@ -280,9 +241,7 @@ fn a_per_image_answer_ledgers_one_images_line() {
 }
 
 /// A TRANSCRIPTION'S REPORTED DURATION LEDGERS WHOLE MILLISECONDS (owner LEDGER-100). whisper's
-/// `usage.seconds` is an exact decimal; it is ledgered as `audio_ms`, integer only, floored (never
-/// more than reported): 9 s is 9000, 12.3456 s is 12345, 0.0004 s is no line. RED before this lane:
-/// `Billing::Duration` was dropped by both projections.
+
 #[test]
 fn a_transcription_duration_ledgers_one_audio_ms_line() {
     let ms = |text: &str| {
@@ -307,14 +266,10 @@ fn a_flat_answer_ledgers_no_open_class() {
     assert!(non_token_open(busbar_contract::billing::Billing::Flat).is_empty());
 }
 
-// ── F25 REHOME (rows 504, 505): the router shim keys ─────────────────────────────────────────────
-
 const SHIM: &str = crate::codec::gemini::GEMINI_JSON_ARRAY_SHIM_KEY;
 
 /// F25 REHOME row 504, from `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs:294` (`test_strip_router_shim_keys`):
-/// `strip_router_shim_keys` removes the never-native shim keys per egress — the gemini array key for
-/// every egress, `stream` for a path-model egress (bedrock, gemini) — and never `model`; a
-/// body-model egress (openai) keeps its genuine `model` and `stream`.
+
 #[test]
 fn strip_router_shim_keys_removes_the_never_native_keys_per_egress() {
     use super::strip_router_shim_keys;
@@ -350,11 +305,7 @@ fn strip_router_shim_keys_removes_the_never_native_keys_per_egress() {
 }
 
 /// F25 REHOME row 505, from `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs:337`
-/// (`test_shim_strip_ordering_cross_protocol_keeps_model`): a path-model ingress (gemini) crossing to
-/// a body-model egress (openai) reaches the far end WITH the authoritative model: strip, then
-/// `rewrite_model_if_needed`, leaves `model: gpt-4o` and the writer-authored `stream: true`, with
-/// the array key gone; within one dialect (gemini→gemini) the relay sends the caller's own bytes,
-/// with the spliced `model` and `stream` removed.
+
 #[test]
 fn shim_strip_then_rewrite_model_keeps_the_model_cross_protocol() {
     use super::strip_router_shim_keys;

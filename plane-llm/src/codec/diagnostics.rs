@@ -2,20 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The LLM plane's own coded diagnostics: the thirty-two codes only this plane emits: the nine
-//! cross-protocol IR normalizations, two usage-tap faults, three event-stream framing guards, the
-//! dropped provider-metadata report, and sixteen lane-engine codes (usage-tap reassembly cap, two
-//! upstream transport interruptions, the lane breaker trip, six cross-protocol response faults, three
-//! rewrite-pass refusals, two per-attempt timeouts, and the restrict fallback with no eligible lane).
-//! The plane owns its constants and hands them to the host's catalog through
-//! [`DIAGNOSTICS`](crate::codec::diagnostics::DIAGNOSTICS) (`install_diagnostics` at the composition
-//! root); the host registry holds none.
-//!
-//! Numbering and text are frozen. Each constant keeps the `BUSBAR-NNNN`, slug, title, summary and
-//! action the host catalog publishes in `docs/diagnostics.md` / `docs/diagnostics.json`, and the drift
-//! test beside this module fails if a constant and its catalog entry disagree in any field.
-//!
-//! `USAGE_TAP_DECODE_FAILED` is not here: a cell's default tap and this plane both print it, so it is
-//! one contract shape (`busbar_contract::diagnostic`).
 
 use busbar_contract::diagnostic::{Class, Diagnostic, Severity};
 
@@ -542,21 +528,18 @@ pub const FALLBACK_RESTRICT_NO_ELIGIBLE_LANE: Diagnostic = Diagnostic {
     retired: false,
 };
 /// Report an operator `error_map` value naming no status class, once per distinct value per process,
-/// as 1.5.5 did: an uncoded warning (1.5.5 had no code, nor does the catalogue). It sits on the hot
-/// error path, so it logs once, never per request. The set only dedupes this line; no answer depends
-/// on it, hence it sits with the codec's other scratch state and not in the exchange.
+
 pub fn warn_error_map_class_unrecognized(value: &str) {
     use std::collections::HashSet;
     use std::sync::{Mutex, OnceLock};
     static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
-    // Poisoning is harmless here (the set only dedupes a warning); recover the guard either way.
+
     let fresh = {
         let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
         seen.insert(value.to_string())
     };
-    // A subscriber is a caller callback and may re-enter classification. The dedupe mutex
-    // protects only the insertion, never the callback.
+
     if fresh {
         tracing::warn!(
             error_map_value = value,
@@ -572,7 +555,7 @@ pub fn warn_error_map_class_unrecognized(value: &str) {
 mod reentry_tests;
 
 /// Every code this plane defines, in catalog order, for the composition root's
-/// `install_diagnostics`.
+
 pub static DIAGNOSTICS: &[&Diagnostic] = &[
     &USAGE_TAP_UNKNOWN_PROTOCOL,
     &USAGE_TAP_BAD_JSON,

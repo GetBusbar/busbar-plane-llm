@@ -1,15 +1,4 @@
 //! A refusal, rendered: the status, head fields and body the caller reads, in the dialect envelope
-//! the previous release answered in.
-//!
-//! One renderer for every refusal the plane writes (its own decode refusals, an attempt answered
-//! without the far end, and the kernel's refusals), as 1.5.5's was: the envelope dialect's error
-//! writer over `(status, kind, message)`, `content-type: application/json`, the dialect's error
-//! headers, then `retry-after` when the refusal advises a wait. A dialect the plane does not hold
-//! renders the agnostic envelope.
-//!
-//! For a kernel refusal the plane chooses the kind (and, for authentication, the dialect's vendor
-//! sentence) from the reason; every other message is the kernel's own text, naming facts only the
-//! kernel has (a group, a window, a model with no rate).
 
 use crate::codec::framework::KIND_TIMEOUT;
 use busbar_contract::abi::plane::{class_of_word, reason_of, RefusalClass};
@@ -80,7 +69,6 @@ pub fn render(
 /// The kind a kernel refusal wears, by its reason; an unknown reason by its status family.
 #[must_use]
 pub fn kind_of(reason: &str, status: u16) -> &'static str {
-    // A class-to-kind table over the one classification: this plane holds no reason match.
     match class_of_word(reason) {
         Some(RefusalClass::Unreadable | RefusalClass::Rejected) => KIND_INVALID_REQUEST,
         Some(RefusalClass::Forbidden) => KIND_PERMISSION,
@@ -89,7 +77,7 @@ pub fn kind_of(reason: &str, status: u16) -> &'static str {
         Some(RefusalClass::QuotaExhausted) => KIND_INSUFFICIENT_QUOTA,
         Some(RefusalClass::NotFound) => KIND_NOT_FOUND,
         Some(RefusalClass::PlaneFault | RefusalClass::NodeFault) => KIND_API_ERROR,
-        // The class names no kind of its own here: the status the kernel chose says it.
+
         Some(
             RefusalClass::Unauthenticated
             | RefusalClass::Unreachable
@@ -113,8 +101,7 @@ fn kind_of_status(status: u16) -> &'static str {
 }
 
 /// The kind a hook's refusal wears, by the status the hook chose (the previous release's
-/// `reject_kind_for_status`): 429 a rate limit, 408 a timeout, the 503 of a load-bearing hook that
-/// could not answer overloaded (retryable), any status with no natural kind an invalid request.
+
 #[must_use]
 pub fn gate_kind(status: u16) -> &'static str {
     match status {
@@ -129,7 +116,7 @@ pub fn gate_kind(status: u16) -> &'static str {
 }
 
 /// RENDER A HOOK'S REFUSAL in `envelope`'s dialect: the hook's own status and words, as the
-/// kernel's hook engine clamped and sanitised them.
+
 #[must_use]
 pub fn gate_refusal(
     host: &dyn busbar_contract::codec::CodecHost,
@@ -141,7 +128,7 @@ pub fn gate_refusal(
 }
 
 /// The sentence the previous release answered a model with when it named no pool and no configured
-/// model: the dialect's own copy where the path gave one (`shaped`), else the neutral sentence.
+
 #[must_use]
 pub fn model_not_found(model: &str, shaped: Option<&str>) -> String {
     shaped.map_or_else(
@@ -151,13 +138,13 @@ pub fn model_not_found(model: &str, shaped: Option<&str>) -> String {
 }
 
 /// Whether a reason is an authentication refusal (its class is `Unauthenticated`): those answer in
-/// the dialect's own vendor terms.
+
 fn is_authentication(reason: &str) -> bool {
     class_of_word(reason) == Some(RefusalClass::Unauthenticated)
 }
 
 /// RENDER A KERNEL REFUSAL in `envelope`'s dialect: `reason` is the reason's code on the plane ABI,
-/// `status` the status the kernel chose, `text` its message.
+
 #[must_use]
 pub fn kernel_refusal(
     host: &dyn busbar_contract::codec::CodecHost,

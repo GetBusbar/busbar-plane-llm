@@ -1,27 +1,4 @@
 //! The invoke-model envelope, sans I/O: an Anthropic Messages exchange carried over Amazon Bedrock's
-//! `InvokeModel` / `InvokeModelWithResponseStream`.
-//!
-//! Bedrock serves Anthropic's models over two APIs. Converse is the plane's `bedrock` dialect.
-//! `InvokeModel` takes the Anthropic Messages body itself, so it is not a dialect: the request body,
-//! answer body, stream events and usage are the Anthropic dialect's, read and written by it, and only
-//! the envelope is Bedrock's. A model selects it with `models.<m>.protocol: bedrock-invoke`
-//! ([`PROTOCOL`]); a provider never defaults to it (the name is no codec protocol the kernel knows, so
-//! the provider sweep refuses it in the previous release's words). The kernel names none of this.
-//!
-//! The envelope, both ways:
-//! - the target is `/model/{model}/invoke`, or `/model/{model}/invoke-with-response-stream` for a
-//!   streamed answer ([`path`]);
-//! - the body loses `model` (it rides the target) and `stream` (the operation says it) and states
-//!   `anthropic_version: bedrock-2023-05-31`; the caller's `anthropic-beta` field becomes the body's
-//!   `anthropic_beta` list and `anthropic-version` is not sent ([`body`], [`fields`]);
-//! - a streamed answer arrives as AWS event-stream frames, each `chunk` carrying one Anthropic stream
-//!   event base64-encoded in `bytes`, re-framed as the Anthropic dialect's own server-sent events, the
-//!   event JSON byte for byte ([`Transcoder`]);
-//! - a refusal arrives as `{"message": …}` beside an `x-amzn-ErrorType` field (or, mid-stream, an
-//!   exception frame), re-stated as the Anthropic dialect's error envelope ([`error_body`]).
-//!
-//! The credential is the provider's: a Bedrock provider's SigV4 style, which the composition root
-//! falls back to when the model's own protocol states no default style.
 
 use std::borrow::Cow;
 
@@ -69,8 +46,7 @@ pub fn path(model: &str, stream: bool) -> String {
 pub type HeadField = (String, Vec<u8>);
 
 /// The far request's head fields over the envelope: the Messages API version is not sent (the body
-/// states the envelope's), the caller's beta flags are taken out to ride in the body, and a streamed
-/// answer is asked for in the event-stream framing. Returns the fields and the beta flags.
+
 #[must_use]
 pub fn fields(fields: Vec<HeadField>, stream: bool) -> (Vec<HeadField>, Vec<Vec<u8>>) {
     let (beta, rest): (Vec<_>, Vec<_>) = fields
@@ -91,8 +67,7 @@ pub fn fields(fields: Vec<HeadField>, stream: bool) -> (Vec<HeadField>, Vec<Vec<
 }
 
 /// The far request's body over the envelope, a byte-level edit of the Messages body (never a
-/// re-serialization): `model` and `stream` removed, `anthropic_version` stated, and the caller's beta
-/// flags (each field's comma-separated list, in order) as `anthropic_beta`. `None` for a non-object body.
+
 #[must_use]
 pub fn body(messages: &[u8], beta: &[Vec<u8>]) -> Option<Vec<u8>> {
     let flags: Vec<Value> = beta
@@ -122,7 +97,7 @@ pub fn body(messages: &[u8], beta: &[Vec<u8>]) -> Option<Vec<u8>> {
 }
 
 /// The Anthropic dialect's error kind for a Bedrock exception name (`ValidationException`, or the
-/// event-stream form `validationException`, with or without a `:…` suffix).
+
 fn kind_of(exception: &str) -> &'static str {
     let name = exception.split(':').next().unwrap_or("").trim();
     match name.to_ascii_lowercase().as_str() {
@@ -146,7 +121,7 @@ fn envelope(kind: &str, message: &str) -> Vec<u8> {
 }
 
 /// A refused answer's body, re-stated in the Anthropic dialect's error envelope from Bedrock's
-/// `{"message": …}` and its `x-amzn-ErrorType` field. A body already in that envelope is kept.
+
 #[must_use]
 pub fn error_body(head: HeadFields<'_>, body: &[u8]) -> Vec<u8> {
     let parsed: Option<Value> = serde_json::from_slice(body).ok();
@@ -264,7 +239,7 @@ impl Transcoder {
 }
 
 /// One `chunk` frame's event: its `bytes` member, base64-decoded. An event that spans lines is
-/// written on one, since a server-sent event's data is one line here.
+
 fn chunk_event(payload: &[u8]) -> Option<Vec<u8>> {
     let v: Value = serde_json::from_slice(payload).ok()?;
     let encoded = v.get("bytes")?.as_str()?;

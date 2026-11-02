@@ -2,9 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Item 305 — a STREAMED Responses upstream's `url_citation` annotations. A native stream carries
-//! each annotation as a `response.output_text.annotation.added` frame; the reader must carry it as
-//! an `IrDelta::CitationsDelta` on the text block, and the streamed citations must EQUAL what the
-//! buffered `read_response` reads from the same answer's `annotations` array (stream ≡ non-stream).
 
 use super::*;
 
@@ -54,7 +51,7 @@ fn completed_response() -> serde_json::Value {
 }
 
 /// The native event sequence for `completed_response`, in wire order: the annotation frames arrive
-/// after the text deltas and before `output_text.done`.
+
 fn stream_events() -> Vec<crate::codec::ir::IrStreamEvent> {
     let item =
         serde_json::json!({"type": "message", "id": "msg_1", "role": "assistant", "content": []});
@@ -154,8 +151,6 @@ fn streamed_responses_annotations_equal_buffered_citations() {
         "streamed annotations must equal the buffered ones: {events:?}"
     );
 
-    // Every CitationsDelta lands inside the open text block: after its BlockStart, before its
-    // BlockStop — never an orphan delta.
     let pos =
         |pred: &dyn Fn(&crate::codec::ir::IrStreamEvent) -> bool| events.iter().position(pred);
     let start = pos(&|e| {
@@ -206,7 +201,7 @@ fn streamed_responses_annotation_reaches_chat_egress() {
 }
 
 /// An annotation frame for an index with no open text block has nothing to attach to: no orphan
-/// `CitationsDelta` is emitted.
+
 #[test]
 fn annotation_without_open_text_block_emits_nothing() {
     let reader = ResponsesReader;

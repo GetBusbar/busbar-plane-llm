@@ -2,24 +2,23 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! OpenAI Responses `RequestHandler`. Chat-only (the `/v1/responses` conversational API); non-chat
-//! operations stay `None` = no-handler 404. Chat dispatches through the same registry as every op.
 
 use busbar_contract::codec::EgressCtx;
 use busbar_contract::codec::RequestHandler;
 use busbar_contract::operation::OpVerb;
 
 /// Endpoint paths — each appears on BOTH the egress side (`upstream_path`) and the ingress match
-/// (`resolve_operation`); single-sourced so the two sides cannot drift.
+
 const PATH_RESPONSES: &str = "/v1/responses";
 
 pub struct ResponsesRequestHandler;
 /// This protocol's OWN chat instance — delete this line (and the registry arm) and this
-/// protocol's chat 404s via the standard no-handler path; everything else keeps working.
+
 static CHAT: super::super::chat_handle::ChatOperation =
     super::super::chat_handle::ChatOperation(super::VENDOR_NAME);
 
 /// THE RESPONSES API'S ROW OF THE SUPPORT MATRIX — one verb; every other verb is the standard
-/// no-handler 404.
+
 static CELLS: &[busbar_contract::codec::Cell] = &[(OpVerb::CHAT, &CHAT)];
 
 impl RequestHandler for ResponsesRequestHandler {

@@ -21,7 +21,7 @@ impl ProtocolWriter for AnthropicWriter {
     }
 
     /// Replace only the minted top-level `request_id`, and only where the writer put one, with the
-    /// id the caller's entropy produces; every other byte is the writer's.
+
     fn write_error_from_entropy(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -50,30 +50,21 @@ impl ProtocolWriter for AnthropicWriter {
         kind: &str,
         message: &str,
     ) -> serde_json::Value {
-        // Native error envelope: `{"type":"error","error":{"type":<kind>,"message":<msg>}}`; the
-        // SDK decodes `error.type` into the typed exception. Generic router `kind`s map to
-        // Anthropic's vocabulary; an unrecognized `kind` passes through verbatim.
-        //
-        // Status first: native Anthropic reports upstream overload (503 or 529) as
-        // `overloaded_error`, never `api_error`, and the wire status is the authoritative signal.
         if status == STATUS_OVERLOADED || status == STATUS_ANTHROPIC_OVERLOADED {
             return Self::error_envelope(host, ERR_TYPE_OVERLOADED, message);
         }
         let anthropic_type = match kind {
-            // Generic router/auth/forward `kind`s → Anthropic's typed error vocabulary.
             "invalid_request" | "bad_request" => ERR_TYPE_INVALID_REQUEST,
             "authentication" | keys::UNAUTHORIZED => ERR_TYPE_AUTHENTICATION,
             "permission" | "forbidden" => ERR_TYPE_PERMISSION,
             "not_found" => ERR_TYPE_NOT_FOUND,
             ERR_TYPE_REQUEST_TOO_LARGE | "payload_too_large" => ERR_TYPE_REQUEST_TOO_LARGE,
             "rate_limit" | "too_many_requests" => ERR_TYPE_RATE_LIMIT,
-            // Billing exhaustion: the router's quota kind aliases OpenAI's `insufficient_quota`,
-            // which is not in the Anthropic error union; the billing member is `billing_error`.
+
             busbar_contract::protocol::KIND_INSUFFICIENT_QUOTA | "quota_exceeded" => {
                 ERR_TYPE_BILLING
             }
-            // Context overflow: `context_length_exceeded` is a reader-synthesized provider code,
-            // not an Anthropic type; real Anthropic returns `invalid_request_error`.
+
             crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH
             | busbar_contract::protocol::DISPOSITION_CONTEXT_LENGTH => ERR_TYPE_INVALID_REQUEST,
             busbar_contract::protocol::KIND_OVERLOADED => ERR_TYPE_OVERLOADED,
@@ -81,7 +72,7 @@ impl ProtocolWriter for AnthropicWriter {
             ERR_TYPE_API_ERROR | crate::codec::framework::KIND_SERVER_ERROR | "internal" => {
                 ERR_TYPE_API_ERROR
             }
-            // Already Anthropic-native or unmapped: emit unchanged.
+
             other => other,
         };
         Self::error_envelope(host, anthropic_type, message)
@@ -94,9 +85,6 @@ impl ProtocolWriter for AnthropicWriter {
         _kind: &str,
         envelope: &serde_json::Value,
     ) {
-        // A real response always carries the id in the `request-id` header (the SDK reads it
-        // there, not from the body). Mirror the minted body `request_id` into it so they agree;
-        // omitting it is a proxy tell.
         if let Some(rid) = envelope.get(super::REQUEST_ID).and_then(|v| v.as_str()) {
             if let Ok(hv) = busbar_contract::http::HeaderValue::from_str(rid) {
                 headers.insert(HDR_REQUEST_ID, hv);
@@ -109,8 +97,6 @@ impl ProtocolWriter for AnthropicWriter {
         host: &dyn busbar_contract::codec::CodecHost,
         upstream_request_id: Option<&str>,
     ) -> Option<(&'static str, String)> {
-        // The captured upstream `request-id` verbatim on a same-protocol passthrough, else a
-        // synthesized `req_…` id. Synthesis failure omits the header.
         upstream_request_id
             .map(String::from)
             .or_else(|| synth_anthropic_request_id(host))
@@ -118,9 +104,6 @@ impl ProtocolWriter for AnthropicWriter {
     }
 
     fn reshape_for_path_base(&self, body: &mut serde_json::Value) -> bool {
-        // Claude on Vertex: the model rides the URL (`:rawPredict`), so the body omits `model`
-        // and carries `anthropic_version`. This mutates the body, so a same-protocol passthrough
-        // to such a lane is never pristine.
         match body.as_object_mut() {
             Some(obj) => {
                 obj.remove(keys::MODEL);
@@ -143,12 +126,8 @@ impl ProtocolWriter for AnthropicWriter {
         req: &crate::codec::ir::IrRequest,
         caps: &LaneCaps,
     ) -> Vec<&'static str> {
-        // Mirrors the `write_request` warns: `frequency_penalty`/`presence_penalty`/`seed`/`n` have
-        // no Anthropic form and are dropped. A schema-carrying `response_format` is not listed
-        // (it projects onto `output_config.format`); a schema-less `json_object` is.
         let mut dropped = Vec::new();
-        // A NATIVE-structured-output lane drops only a schema-less JSON mode; every other lane
-        // drops the directive.
+
         if req
             .response_format
             .as_ref()
@@ -160,7 +139,7 @@ impl ProtocolWriter for AnthropicWriter {
             crate::codec::carry::dropped(super::map::REQUEST, super::map::CONTROLS, req)
                 .map(crate::codec::carry::Slot::name),
         );
-        // Every hosted tool that crossed the seam is dropped on Anthropic egress.
+
         dropped.extend(req.hosted_tools.iter().map(|h| h.kind_str()));
         dropped
     }
@@ -198,10 +177,7 @@ impl ProtocolWriter for AnthropicWriter {
             validate_tool_inputs(&message.content)?;
         }
         let mut out = serde_json::Map::new();
-        // There is no `system` role inside `messages`. Anthropic's reader promotes a wire system
-        // message into `req.system`, but a cross-protocol IR can still carry an `IrRole::System`
-        // message; fold its blocks into the top-level system array so `write_message` never
-        // emits `role:"system"` (a 400).
+
         let mut system_blocks: Vec<serde_json::Value> = req
             .system
             .iter()
@@ -234,9 +210,7 @@ impl ProtocolWriter for AnthropicWriter {
                 serde_json::Value::Array(system_blocks),
             );
         }
-        // Splice back raw blocks `read_request` parked because the IR cannot model them (see
-        // `ANTHROPIC_UNMODELED_BLOCKS_SENTINEL`). Empty when absent, and always for a
-        // cross-protocol IR since `prepare_for_egress` clears `extra`.
+
         let unmodeled_sentinel: &[serde_json::Value] = req
             .extra
             .get(ANTHROPIC_UNMODELED_BLOCKS_SENTINEL)
@@ -265,15 +239,7 @@ impl ProtocolWriter for AnthropicWriter {
             keys::MESSAGES.to_string(),
             serde_json::Value::Array(messages_array),
         );
-        // `strict` is carried natively, so no drop warn here.
-        //
-        // A tool subset (`allowed_tools`) has no `tool_choice` form, so it is expressed by
-        // omission: only the listed function tools are sent.
-        //
-        // A hosted tool that crossed the seam (a Responses `web_search`, a Chat
-        // `web_search_options`, a web fetch or code execution) is dropped with a warn. Writing it
-        // as an Anthropic server tool would run Anthropic searches and charge the key
-        // `search_units` it was never charged.
+
         crate::codec::dialect::warn_dropped(
             req.hosted_tools.iter().map(|h| h.kind_str()),
             &super::map::DROP_WARN,
@@ -296,13 +262,8 @@ impl ProtocolWriter for AnthropicWriter {
                 serde_json::Value::Array(tools_array),
             );
         }
-        // `tool_choice` in the native object shape. The parallelism carry (OpenAI
-        // `parallel_tool_calls`) rides the same object as the inverted `disable_parallel_tool_use`,
-        // valid on auto/any/tool, not on `none`.
+
         if let Some(tc) = &req.tool_choice {
-            // Anthropic 400s on a `tool_choice` with no `tools`. Reachable cross-protocol:
-            // `prepare_for_egress` strips hosted tools, so a Responses web_search-only request can
-            // arrive with `tools == []` and `tool_choice` set. Drop with a warn.
             if !out.contains_key(keys::TOOLS) {
                 crate::codec::drops::writer_drop!(
                     crate::codec::drops::TOOL_CHOICE,
@@ -326,8 +287,6 @@ impl ProtocolWriter for AnthropicWriter {
                 out.insert(keys::TOOL_CHOICE.to_string(), tc_val);
             }
         } else if let Some(parallel) = req.parallel_tool_calls {
-            // No directive but parallelism was set: it only fits inside a tool_choice object, so
-            // synthesize the neutral `auto` carrier, and only when tools are present.
             if out.contains_key(keys::TOOLS) {
                 out.insert(
                     keys::TOOL_CHOICE.to_string(),
@@ -335,26 +294,16 @@ impl ProtocolWriter for AnthropicWriter {
                 );
             }
         }
-        // `output_config` holds both native structured outputs (`format`) and the reasoning
-        // effort word (`effort`); built up below, emitted once.
+
         let mut output_config = serde_json::Map::new();
-        // response_format uses native structured outputs, not a synthetic forced tool (which
-        // overwrote the caller's `tool_choice`, lost the schema when thinking was on, and 400s on
-        // models that reject forced tool use). The native slot constrains the answer, leaves tool
-        // selection to the caller, and needs no mapping back on either path.
-        //
-        // Only a schema-carrying directive has a native form: a schema-less `json_object` is
-        // dropped with a warn and reported through `dropped_egress_controls`, with no invented
-        // schema. Whether the lane supports the native form is `LaneCaps::native_structured_output`
-        // (it 400s on models that predate it); the default is the drop.
+
         if caps.native_structured_output {
             if let Some(rf) = req.response_format.as_ref().filter(|rf| rf.json) {
                 match &rf.schema {
                     Some(schema) => {
                         let mut schema = schema.clone();
                         close_object_schemas(&mut schema);
-                        // OpenAI's `json_schema.description` has no sibling slot; the schema's own
-                        // `description` keyword carries it when the schema lacks one.
+
                         if let (Some(desc), Some(obj)) = (&rf.description, schema.as_object_mut()) {
                             obj.entry(keys::DESCRIPTION)
                                 .or_insert_with(|| serde_json::json!(desc));
@@ -376,9 +325,6 @@ impl ProtocolWriter for AnthropicWriter {
                 }
             }
         } else if req.response_format.as_ref().is_some_and(|rf| rf.json) {
-            // A lane without native structured outputs drops the directive with a warn. A
-            // synthetic forced tool is not its mapping: it overwrote the caller's `tool_choice`,
-            // and a streamed answer reached the client as a tool call instead of JSON content.
             crate::codec::drops::writer_drop!(
                 crate::codec::drops::RESPONSE_FORMAT,
                 &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
@@ -390,22 +336,9 @@ impl ProtocolWriter for AnthropicWriter {
         if let Some(max_tokens) = req.max_tokens {
             out.insert(keys::MAX_TOKENS.to_string(), serde_json::json!(max_tokens));
         }
-        // The reasoning carry: project the IR ask into `thinking`.
-        //
-        // A word-form ask (OpenAI `reasoning_effort`, Responses `reasoning.effort`, Anthropic
-        // `output_config.effort`) or a "model decides" ask (Gemini `thinkingBudget:-1`) projects
-        // onto adaptive thinking plus `output_config.effort`, the only on-mode Opus 4.7+/5.x,
-        // Sonnet 5 and Fable accept (`budget_tokens` 400s there). A numeric ask keeps its number
-        // as `budget_tokens`, clamped to leave >=1024 tokens of answer under max_tokens
-        // (`budget_tokens < max_tokens`) and floored at the API's 1024 minimum; when max_tokens
-        // cannot fit any thinking the ask is dropped with a warn. Anthropic also rejects modified
-        // temperature/top_p/top_k alongside thinking, so those are omitted (warned) below.
+
         let mut thinking_emitted = false;
         match req.reasoning {
-            // Reasoning off is matched first: it has no budget, and the caller's "off" must reach
-            // a reasoning-by-default model. It is not an emitted ask, so the sampling knobs stay.
-            // A lane whose model cannot switch thinking off (`LaneCaps::thinking_always_on`)
-            // rejects `{type:"disabled"}`: the ask is omitted with a warn.
             Some(crate::codec::ir::IrReasoningAsk::Off) if caps.thinking_always_on => {
                 crate::codec::drops::writer_drop!(
                     crate::codec::drops::REASONING,
@@ -435,15 +368,13 @@ impl ProtocolWriter for AnthropicWriter {
                 thinking_emitted = true;
             }
             Some(crate::codec::ir::IrReasoningAsk::Dynamic) if caps.anthropic_adaptive_thinking => {
-                // "The model decides" is adaptive thinking; no effort word is invented.
                 out.insert(
                     keys::THINKING.to_string(),
                     serde_json::json!({ (keys::TYPE): THINKING_TYPE_ADAPTIVE }),
                 );
                 thinking_emitted = true;
             }
-            // "The model decides" on a lane without adaptive thinking: `budget_tokens` has no such
-            // value, so the ask is dropped (no table entry stands in) and the model runs at default.
+
             Some(crate::codec::ir::IrReasoningAsk::Dynamic) => {
                 crate::codec::drops::writer_drop!(
                     crate::codec::drops::REASONING,
@@ -453,14 +384,12 @@ impl ProtocolWriter for AnthropicWriter {
                      not declare adaptive thinking and budget_tokens has no dynamic form"
                 );
             }
-            // A numeric ask on every lane, and a word ask on a lane without adaptive thinking
-            // (`LaneCaps::anthropic_adaptive_thinking` false; Haiku 4.5 / Sonnet 4.5 / Opus 4.5 and
-            // older): `budget_tokens`, a word projected through the operator's effort table.
+
             Some(ask) => {
                 let table = req
                     .reasoning_budgets
                     .unwrap_or(crate::codec::ir::REASONING_BUDGET_DEFAULTS);
-                // `Off` and `Dynamic` are matched above; every other ask has a table entry.
+
                 if let Some(want) = ask.to_budget(table) {
                     let cap = req.max_tokens.map(|mt| mt.saturating_sub(1024));
                     let budget = cap.map_or(want, |c| want.min(c));
@@ -496,9 +425,6 @@ impl ProtocolWriter for AnthropicWriter {
             );
         }
         if thinking_emitted {
-            // Anthropic 400s a forced or targeted tool_choice (`any` / `tool`) alongside extended
-            // thinking; only `auto`/`none` are allowed. tool_choice was written above, so downgrade
-            // `any`/`tool` to `auto` here, keeping `disable_parallel_tool_use`, with a warn.
             if let Some(tc) = out
                 .get_mut(keys::TOOL_CHOICE)
                 .and_then(|v| v.as_object_mut())
@@ -512,13 +438,11 @@ impl ProtocolWriter for AnthropicWriter {
                         "downgrading forced/targeted tool_choice to 'auto' on Anthropic egress: \
                          not compatible with thinking");
                     tc.insert(keys::TYPE.to_string(), serde_json::json!(keys::AUTO));
-                    tc.remove(keys::NAME); // `name` is only valid on `{type:"tool"}`
+                    tc.remove(keys::NAME);
                 }
             }
         }
-        // temperature (clamped to [0.0, 1.0]) / top_p / top_k / stop_sequences. Beside an emitted
-        // thinking ask Anthropic 400s on a modified sampling knob, so each is omitted, observably.
-        // Emitted before the `extra` overlay (the reader pulled these keys out of extra).
+
         crate::codec::carry::write_fields(
             super::map::REQUEST,
             req,
@@ -528,16 +452,14 @@ impl ProtocolWriter for AnthropicWriter {
             &mut out,
         );
         out.insert(keys::STREAM.to_string(), serde_json::json!(req.stream));
-        // Controls with no Messages form (the penalties, `seed`, `n`, an unnameable tier, typed
-        // slots with no member) are dropped with a warn and reported by `dropped_egress_controls`.
+
         crate::codec::carry::warn_drops(
             super::map::REQUEST,
             super::map::CONTROLS,
             Some(&super::map::DROP_WARN),
             req,
         );
-        // The end-user identifier as `metadata.user_id`, emitted before the `extra` overlay so a
-        // native `metadata` object in `extra` wins.
+
         if let Some(user) = &req.user {
             out.insert(
                 keys::METADATA.to_string(),
@@ -545,8 +467,6 @@ impl ProtocolWriter for AnthropicWriter {
             );
         }
         for (key, value) in &req.extra {
-            // Skip busbar's positional-stash sentinel: `write_message` already consumed it, and
-            // emitting it would put an undefined body key on the wire (a latent 400 and a proxy tell).
             if key == ANTHROPIC_UNMODELED_BLOCKS_SENTINEL {
                 continue;
             }
@@ -585,20 +505,14 @@ impl ProtocolWriter for AnthropicWriter {
                     _ => return Ok(Vec::new()),
                 };
                 let mut msg_obj = serde_json::Map::new();
-                // `message_start.message` is a skeleton Message an SDK reads
-                // `id`/`type`/`role`/`model`/`content`/`usage` from (`stop_reason`/`stop_sequence`
-                // null at start). Emit it unconditionally, synthesizing a `msg_` id when the source
-                // carried none: this runs only on the cross-protocol path, where `StreamTranslate`
-                // strips the foreign `id`, and a degenerate `{role,usage}` message_start fails SDK
-                // decoding. The first `message_start` decides the stream's id; a duplicate replays it.
+
                 let msg_id = self.carried_message_id(|| {
                     id.clone().map(Ok).unwrap_or_else(|| synth_message_id(host))
                 })?;
                 msg_obj.insert(keys::ID.to_string(), serde_json::json!(msg_id));
                 msg_obj.insert(keys::TYPE.to_string(), serde_json::json!(keys::MESSAGE));
                 msg_obj.insert(keys::ROLE.to_string(), serde_json::json!(role_str));
-                // `model` is a required string in the SDK's type: emit it unconditionally (empty
-                // when the source carried none) so the skeleton stays structurally valid.
+
                 let model_str = model.as_deref().unwrap_or("");
                 msg_obj.insert(keys::MODEL.to_string(), serde_json::json!(model_str));
                 msg_obj.insert(
@@ -607,21 +521,13 @@ impl ProtocolWriter for AnthropicWriter {
                 );
                 msg_obj.insert(super::STOP_REASON.to_string(), serde_json::Value::Null);
                 msg_obj.insert(keys::STOP_SEQUENCE.to_string(), serde_json::Value::Null);
-                // The published `Message` schema also requires nullable `stop_details` and
-                // `container`, `null` at stream open.
+
                 msg_obj.insert(super::STOP_DETAILS.to_string(), serde_json::Value::Null);
                 msg_obj.insert(keys::CONTAINER.to_string(), serde_json::Value::Null);
-                // `usage` is a REQUIRED field of `message_start.message`, typed as the same full
-                // `Usage` schema the buffered response carries: a client that reads
-                // `event.message.usage.input_tokens` on the first event throws if it is absent. On
-                // the cross-protocol path (e.g. OpenAI→Anthropic) the first chunk carries no usage,
-                // so `usage` is `None`; `write_usage_object` emits the zero-valued skeleton in that
-                // case (which also matches native behavior: output_tokens is 0 at stream open) and
-                // fills every spec-required member either way.
+
                 msg_obj.insert(keys::USAGE.to_string(), write_usage_object(usage.as_ref()));
                 let mut data_obj = serde_json::Map::new();
-                // Native SSE data bodies carry a top-level `type` matching the `event:` header, and
-                // consumers that dispatch on `data.type` require it: emit it on every event body.
+
                 data_obj.insert(keys::TYPE.to_string(), serde_json::json!(EVT_MESSAGE_START));
                 data_obj.insert(
                     keys::MESSAGE.to_string(),
@@ -638,27 +544,13 @@ impl ProtocolWriter for AnthropicWriter {
                 refusal: _,
             } => {
                 let content_block = match block {
-                    // `content_block_start` carries the block's seed so an SDK accumulator
-                    // initializes the field before any delta: `text:""`, tool_use `input:{}`,
-                    // thinking `thinking:""` + `signature:""`. Without it the first delta
-                    // concatenates onto `undefined` and accumulation breaks. The response schemas
-                    // also require `citations` on text (null; they stream as `citations_delta`)
-                    // and `caller` on tool_use (`{"type":"direct"}`).
                     IrBlockMeta::Text => {
                         serde_json::json!({ (keys::TYPE): keys::TEXT, (keys::TEXT): "", (keys::CITATIONS): null })
                     }
                     IrBlockMeta::Thinking { .. } => {
                         serde_json::json!({ (keys::TYPE): keys::THINKING, (keys::THINKING): "", (keys::SIGNATURE): "" })
                     }
-                    // A redacted thinking block emits no start here: native carries its opaque `data`
-                    // inline on the start (no seed, no delta), so the start is written from the
-                    // following `RedactedReasoningDelta`. A plaintext `thinking` seed here would
-                    // mis-type the block and duplicate the start.
-                    //
-                    // The index is not marked open here: the open set is what the paired
-                    // `BlockStop` consults, and a stream that ends before the delta (truncation, an
-                    // upstream error, `close_open_blocks`) would otherwise close a block the client
-                    // never saw opened. The delta that writes the start marks it open.
+
                     IrBlockMeta::RedactedThinking => return Ok(Vec::new()),
                     IrBlockMeta::ToolUse { id, name } => {
                         serde_json::json!({
@@ -669,10 +561,7 @@ impl ProtocolWriter for AnthropicWriter {
                             (super::W_CALLER): { (keys::TYPE): super::DIRECT },
                         })
                     }
-                    // An image block has no Anthropic response projection: the published
-                    // `content_block` union has no `image` member, so an `image` frame is one no
-                    // client can deserialize. Emit no frame and do not mark the index open, so the
-                    // paired `BlockStop` stays silent.
+
                     IrBlockMeta::Image => {
                         crate::codec::drops::writer_drop!(
                             crate::codec::drops::IMAGE,
@@ -728,16 +617,9 @@ impl ProtocolWriter for AnthropicWriter {
                     IrDelta::SignatureDelta(sig) => {
                         serde_json::json!({ (keys::TYPE): DELTA_TYPE_SIGNATURE, (keys::SIGNATURE): sig })
                     }
-                    // A streamed redacted-reasoning delta (opaque encrypted bytes). There is no
-                    // redacted delta type on the wire and the paired `BlockStart` was suppressed, so
-                    // this delta emits the block's sole start, a `redacted_thinking`
-                    // content_block_start carrying the bytes; `BlockStop` then closes it. This
-                    // preserves the blob a later turn must replay for extended-thinking continuity.
+
                     IrDelta::MediaDelta(_) => return Ok(Vec::new()),
                     IrDelta::RedactedReasoningDelta(bytes) => {
-                        // Writing the start and marking the index open are one decision.
-                        // `mark_block_open` reports whether the index was newly opened, so a second
-                        // redacted delta adds no duplicate start.
                         if !self.mark_block_open(*index) {
                             return Ok(Vec::new());
                         }
@@ -759,18 +641,10 @@ impl ProtocolWriter for AnthropicWriter {
                             serde_json::Value::Object(data_obj),
                         )]));
                     }
-                    // Anthropic has no logprobs: lossy by target, emit nothing.
+
                     IrDelta::LogprobsDelta(_) => return Ok(Vec::new()),
-                    // Streaming citation: each carried citation is its own `citations_delta` (the
-                    // wire carries one `citation` per delta). `write_citation` re-emits a
-                    // byte-exact Anthropic `raw` verbatim and otherwise synthesizes the object from
-                    // neutral fields; `is_anthropic_citation_shape` keeps a foreign `raw` out.
+
                     IrDelta::CitationsDelta(citations) => {
-                        // A `citations_delta` carries exactly one citation object, never an array
-                        // (an SDK crashes on one). The writer returns at most one event per call, and
-                        // `StreamTranslate` splits a multi-citation delta upstream, so each call sees
-                        // one. An empty vec emits no event. A vec of >1 cannot occur via the framer;
-                        // defensively take the first.
                         let Some(c) = citations.first() else {
                             return Ok(Vec::new());
                         };
@@ -808,8 +682,7 @@ impl ProtocolWriter for AnthropicWriter {
                     serde_json::Value::Object(data_obj),
                 ))
             }
-            // An untracked index is a block whose start had no projection (Image); closing it would
-            // orphan a `content_block_stop`.
+
             IrStreamEvent::BlockStop { index } => {
                 self.stream.lock().tool_input_started.remove(index);
                 if !self.take_block_open(*index) {
@@ -844,8 +717,7 @@ impl ProtocolWriter for AnthropicWriter {
                 } else {
                     delta_obj.insert(super::STOP_REASON.to_string(), serde_json::Value::Null);
                 }
-                // `stop_sequence`: `message_delta` always carries it, the matched stop string or
-                // explicit `null`.
+
                 delta_obj.insert(
                     keys::STOP_SEQUENCE.to_string(),
                     stop_sequence
@@ -853,15 +725,13 @@ impl ProtocolWriter for AnthropicWriter {
                         .map(serde_json::Value::from)
                         .unwrap_or(serde_json::Value::Null),
                 );
-                // `MessageDelta` also requires nullable `stop_details` (the refusal object when the
-                // IR carries one) and `container` (always `null`: busbar has no container).
+
                 delta_obj.insert(
                     super::STOP_DETAILS.to_string(),
                     write_anthropic_stop_details(*stop_reason, stop_detail.as_ref()),
                 );
                 delta_obj.insert(keys::CONTAINER.to_string(), serde_json::Value::Null);
-                // `usage`: every required `MessageDeltaUsage` member, plus the 5m/1h tier split when
-                // reported, so a request reconciles per tier at `stream: true` as at `stream: false`.
+
                 let mut data_obj = serde_json::Map::new();
                 data_obj.insert(keys::TYPE.to_string(), serde_json::json!(EVT_MESSAGE_DELTA));
                 data_obj.insert(
@@ -879,13 +749,6 @@ impl ProtocolWriter for AnthropicWriter {
                 serde_json::json!({ (keys::TYPE): EVT_MESSAGE_STOP }),
             )),
             IrStreamEvent::Error(err) => {
-                // In-stream error event:
-                // `{"type":"error","error":{"type":<type>,"message":<msg>},"request_id":..}`. The
-                // SDK reads both `error.type` (typed exception) and `error.message`.
-                //
-                // `error.type` must be one of the nine published ErrorResponse tokens: a provider
-                // signal that is one stays the type; any other (free text no SDK could map) becomes
-                // the message and the type is the token for the error's class.
                 let signal = err.provider_signal.as_deref().filter(|s| !s.is_empty());
                 let (err_type, message) = match signal {
                     Some(ps) if is_error_type_token(ps) => (ps, ps.to_string()),
@@ -895,22 +758,18 @@ impl ProtocolWriter for AnthropicWriter {
                         "an error occurred while streaming the response".to_string(),
                     ),
                 };
-                // The message text must stay native-plausible: no reverse-proxy vocabulary
-                // ("upstream", "gateway", "backend"), so provider text is verbatim and the fallback
-                // generic.
+
                 let mut error_obj = serde_json::Map::new();
                 error_obj.insert(keys::TYPE.to_string(), serde_json::json!(err_type));
                 error_obj.insert(keys::MESSAGE.to_string(), serde_json::json!(message));
                 let mut data_obj = serde_json::Map::new();
-                // The body carries top-level `type:"error"` matching the `event: error` header; an
-                // SDK dispatching on `data.type` will not recognize the error without it.
+
                 data_obj.insert(keys::TYPE.to_string(), serde_json::json!(keys::ERROR_WORD));
                 data_obj.insert(
                     keys::ERROR_WORD.to_string(),
                     serde_json::Value::Object(error_obj),
                 );
-                // The body is an ErrorResponse, whose schema requires a nullable top-level
-                // `request_id`; the buffered `error_envelope` mints one and so does this event.
+
                 data_obj.insert(
                     super::REQUEST_ID.to_string(),
                     serde_json::json!(synth_request_id(host).ok()),
@@ -950,11 +809,6 @@ impl ProtocolWriter for AnthropicWriter {
         validate_tool_inputs(&resp.content)?;
         let mut obj = serde_json::Map::new();
 
-        // id: `Message.id` is a required `msg_<rand>` string, so emit it unconditionally. A source
-        // id is re-emitted verbatim; an absent one (including a Bedrock Converse body, which has
-        // neither id nor created) is synthesized via `synth_message_id`. This is safe because
-        // `write_response` runs only on the cross-protocol path; same-protocol non-stream relays
-        // the raw body.
         let id = resp
             .id
             .clone()
@@ -962,20 +816,12 @@ impl ProtocolWriter for AnthropicWriter {
             .unwrap_or_else(|| synth_message_id(host))?;
         obj.insert(keys::ID.to_string(), serde_json::json!(id));
 
-        // type/role are constant for a Messages API response ("message"/"assistant").
         obj.insert(keys::TYPE.to_string(), serde_json::json!(keys::MESSAGE));
         obj.insert(keys::ROLE.to_string(), serde_json::json!(keys::ASSISTANT));
 
-        // model: a required string in the SDK types, so emit it unconditionally; fall back to an
-        // empty string when the reader did not surface one (notably Bedrock/Cohere).
         let model = resp.model.as_deref().unwrap_or("");
         obj.insert(keys::MODEL.to_string(), serde_json::json!(model));
 
-        // content blocks in their response shape (see `write_response_block`).
-        //
-        // A response block is never an `image` or `document` and has no JSON block, so a foreign
-        // backend's image or attachment output is omitted with a warn (as the streamed path does
-        // for `IrBlockMeta::Image`) and a JSON block rides as the text of its JSON.
         let content_array: Vec<serde_json::Value> = resp
             .content
             .iter()
@@ -1013,8 +859,6 @@ impl ProtocolWriter for AnthropicWriter {
             serde_json::Value::Array(content_array),
         );
 
-        // stop_reason: required and nullable; an explicit `null` when the source carried none.
-        // `read_response` maps `null` back to `None`.
         obj.insert(
             super::STOP_REASON.to_string(),
             resp.stop_reason
@@ -1027,8 +871,6 @@ impl ProtocolWriter for AnthropicWriter {
                 .unwrap_or(serde_json::Value::Null),
         );
 
-        // stop_sequence: a native `Message` always carries it, the matched stop string or `null`.
-        // Emit an explicit `null` when absent; `read_response` maps it back to `None`.
         match &resp.stop_sequence {
             Some(seq) => {
                 obj.insert(keys::STOP_SEQUENCE.to_string(), serde_json::json!(seq));
@@ -1038,16 +880,12 @@ impl ProtocolWriter for AnthropicWriter {
             }
         }
 
-        // stop_details / container: required, nullable. `stop_details` is the refusal object when
-        // the IR carries one; `container` is always `null`.
         obj.insert(
             super::STOP_DETAILS.to_string(),
             write_anthropic_stop_details(resp.stop_reason, resp.stop_detail.as_ref()),
         );
         obj.insert(keys::CONTAINER.to_string(), serde_json::Value::Null);
 
-        // usage: every member the published `Usage` schema requires, with the source's values
-        // where it reported them and the spec's zero/null/default shape otherwise.
         obj.insert(
             keys::USAGE.to_string(),
             write_usage_object(Some(&resp.usage)),

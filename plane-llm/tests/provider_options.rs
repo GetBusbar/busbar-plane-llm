@@ -2,9 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE PROVIDER OPTIONS (`busbar_plane_llm::options`): a provider's block takes busbar's keys and
-//! the names its dialect's far end accepts, nothing else. A set option reaches the wire. An unknown
-//! name, a credential, a hop-by-hop field or a value of the wrong type fails the load. A
-//! same-dialect caller's own value beats an operator default, and a forced option beats the caller.
 
 mod common;
 
@@ -66,7 +63,7 @@ fn send(s: &Shaping, target: &str, h: &[(&'static str, &'static str)], body: &st
 }
 
 /// A set option reaches the wire, on every dialect's placement: head fields under their wire name,
-/// whatever case the operator wrote it in, and a query parameter on the target.
+
 #[test]
 fn a_set_option_reaches_the_wire() {
     let s = load(json!({
@@ -124,7 +121,7 @@ fn a_set_option_reaches_the_wire() {
 }
 
 /// A provider that sets no option writes exactly what it wrote before options existed: the
-/// anthropic dialect's declared version, and no other field or parameter.
+
 #[test]
 fn a_provider_that_sets_nothing_sends_nothing_extra() {
     let s = load(json!({ "protocol": "anthropic" })).expect("reads");
@@ -141,7 +138,7 @@ fn a_provider_that_sets_nothing_sends_nothing_extra() {
 }
 
 /// A name on no list fails the load, naming the key and listing what the dialect accepts in the
-/// provider's documented spelling. A name valid on one dialect is unknown on another.
+
 #[test]
 fn an_unknown_option_is_refused_with_the_dialects_list() {
     let e = load(json!({ "protocol": "openai", "hello": 1 })).expect_err("refused");
@@ -158,10 +155,10 @@ fn an_unknown_option_is_refused_with_the_dialects_list() {
         e.contains("the gemini dialect accepts `X-Goog-User-Project`, `X-Goog-Quota-User`"),
         "{e}"
     );
-    // The retired friendly names are not aliases.
+
     let e = load(json!({ "protocol": "openai", "organization": "org-abc" })).expect_err("refused");
     assert!(e.contains("unknown key `organization`"), "{e}");
-    // A query parameter's name matches exactly.
+
     let e =
         load(json!({ "protocol": "openai", "API-Version": "2024-10-21" })).expect_err("refused");
     assert!(e.contains("unknown key `API-Version`"), "{e}");
@@ -209,7 +206,7 @@ fn a_hop_by_hop_field_is_refused() {
 }
 
 /// A value of the wrong type is refused, saying what the name takes and echoing the name in the
-/// provider's spelling.
+
 #[test]
 fn a_wrong_type_is_refused_with_what_the_name_takes() {
     let e = load(json!({ "protocol": "gemini", "x-server-timeout": "soon" })).expect_err("refused");
@@ -232,7 +229,7 @@ fn a_wrong_type_is_refused_with_what_the_name_takes() {
 }
 
 /// PRECEDENCE. A same-dialect caller's own head field and query parameter beat the operator's
-/// default. A forced option (a tenant selector) beats the caller's, which never goes out.
+
 #[test]
 fn per_request_beats_static_unless_forced() {
     let s = load(json!({
@@ -250,7 +247,7 @@ fn per_request_beats_static_unless_forced() {
         ANTHROPIC_BODY,
     );
     assert_eq!(field(&r, "anthropic-beta"), [b"caller-beta-2".as_slice()]);
-    // A caller of another dialect forwards no field: the operator's default goes out.
+
     let r = send(
         &s,
         "/v1/chat/completions",
@@ -329,7 +326,7 @@ fn no_list_names_a_credential() {
 }
 
 /// Bedrock's `InvokeModel` headers reach a model served over the invoke envelope, and not a
-/// Converse model, which takes the same settings in its body.
+
 #[test]
 fn bedrock_invoke_headers_reach_only_invoke_models() {
     let block = json!({

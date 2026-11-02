@@ -2,9 +2,9 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! `v1.5.5` `crates/busbar/src/proxy/tests/hook_seam_tests.rs`, on the driver: the opt-in grants
-//! (what a hook is shown), the decision gates and the base policy (reject, restrict, order and
-//! their reconcile), the on-error chain, the rewrite chain, the stage taps, the reject envelopes
-//! and the correlation id. Each test keeps its 1.5.5 name and the values 1.5.5 asserted.
+
+
+
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -38,8 +38,8 @@ fn one_dead() -> Pool {
 }
 
 fn body() -> Value {
-    // The end-user id spelled the way this dialect spells it (`metadata.user_id` on Anthropic),
-    // and the `user` key beside it, as a client may send both.
+
+
     json!({
         "model": "m0",
         "max_tokens": 16,
@@ -59,7 +59,7 @@ fn chat_body() -> Value {
 }
 
 /// The previous release's `run`: a one-member pool whose base route policy is a capturing
-/// policy with these grants and this decision, one unit of `v`; what it saw and the answer.
+
 async fn run(
     send_prompt: bool,
     send_user: bool,
@@ -122,7 +122,7 @@ async fn global_gate_abstain_does_not_reject() {
 
 #[test]
 fn enforce_restricts_reapplies_compliance_tags_across_pools() {
-    // Fallback pool "fb": member 0 carries `baa`, member 1 carries nothing.
+
     let tags: Vec<Vec<String>> = vec![vec!["baa".to_string()], vec![]];
     let members = || tags.iter().enumerate().map(|(i, t)| (i, t.as_slice()));
     let restrict = |tag: &str, on_empty: PolicyOnError, name: &'static str| Constraint {
@@ -134,7 +134,7 @@ fn enforce_restricts_reapplies_compliance_tags_across_pools() {
         ..Constraint::default()
     };
 
-    // A required `baa` restrict narrows the fallback pool to ONLY the tagged member.
+
     assert_eq!(
         restrict("baa", PolicyOnError::Reject, "baa-gate")
             .enforce(members())
@@ -142,14 +142,14 @@ fn enforce_restricts_reapplies_compliance_tags_across_pools() {
         vec![0],
         "only the baa-tagged fallback lane may survive a required restrict"
     );
-    // A required restrict with NO matching fallback member fails CLOSED, never spills.
+
     assert!(
         restrict("hipaa", PolicyOnError::Reject, "hipaa-gate")
             .enforce(members())
             .is_err(),
         "a required restrict with no eligible fallback lane must fail closed, not spill"
     );
-    // A `weighted` restrict with no match is an advisory escape — candidates pass unchanged.
+
     assert_eq!(
         restrict("hipaa", PolicyOnError::Weighted, "hipaa-advisory")
             .enforce(members())
@@ -158,7 +158,7 @@ fn enforce_restricts_reapplies_compliance_tags_across_pools() {
         2,
         "a weighted restrict with no eligible lane escapes (candidates unchanged)"
     );
-    // No active restrict → identity.
+
     assert_eq!(Constraint::default().enforce(members()).unwrap().len(), 2);
 }
 
@@ -218,7 +218,7 @@ async fn completion_tap_status_is_protocol_native_gemini_400() {
     let mut hooks = Hooks::default();
     hooks.taps.response = vec![tap];
     let rig = Rig::new(one_dead(), None, hooks);
-    // Gemini ingress path + bad key → the served response is HTTP 400 (not 401).
+
     let answer = rig
         .fire_unauthenticated(
             "/v1beta/models/gemini-x:generateContent",
@@ -462,7 +462,7 @@ async fn pool_gate_reject_fires_from_pool_runtime_gates() {
 
 #[tokio::test]
 async fn reject_priority_tie_break_surfaces_lowest_priority() {
-    // Deliberately stated out of order: the stable sort must put 1 before 5.
+
     let rig = Rig::new(
         one_dead(),
         None,
@@ -662,7 +662,7 @@ async fn max_tokens_saturates_not_wraps() {
     });
     let (_, captured) = run(false, false, None, v).await;
     let captured = captured.expect("policy must have been called");
-    // 1.5.5: an absurd caller cap still signals "the largest cap there is".
+
     assert_eq!(captured.max_tokens, Some(u32::MAX));
     assert_ne!(
         captured.max_tokens,
@@ -704,15 +704,15 @@ async fn send_user_projects_governance_key_identity() {
     assert_eq!(key_id.as_deref(), Some("vk_123"));
     assert_eq!(key_name.as_deref(), Some("sales-team"));
     assert_eq!(user.as_deref(), Some("alice"));
-    // The secret NEVER rides the projection, under any configuration.
+
     assert_ne!(key_id.as_deref(), Some(secret));
     assert_ne!(key_name.as_deref(), Some(secret));
 }
 
 #[tokio::test]
 async fn send_user_falls_back_to_synthesized_group_key_identity() {
-    // The key the identity step resolved for a group/SSO principal: its id/name carry the
-    // principal.
+
+
     let captured = identity_seen(Some(CallerKey {
         id: "eng-oncall".to_string(),
         name: "eng-oncall".to_string(),
@@ -729,8 +729,8 @@ async fn send_user_falls_back_to_synthesized_group_key_identity() {
 
 #[tokio::test]
 async fn send_user_prefers_resolved_key_over_disabled_legacy_lookup() {
-    // The identity a hook sees is the key of the principal the kernel VERIFIED (the authoritative
-    // admission), never a second lookup of the raw token.
+
+
     let captured = identity_seen(Some(CallerKey {
         id: "synthesized-principal".to_string(),
         name: "synthesized-principal".to_string(),
@@ -839,7 +839,7 @@ async fn reject_rides_the_full_forward_path() {
 }
 
 /// The gate's status picks the refusal's kind, rendered in the caller's dialect (here Anthropic's
-/// `error.type`): 401, 403, 404, 408 and 429 their own kinds, every other 4xx an invalid request.
+
 #[tokio::test]
 async fn reject_kind_mapping_matches_status_semantics() {
     for (status, kind) in [
@@ -912,8 +912,8 @@ async fn reject_produces_bedrock_native_envelope() {
 
 #[test]
 fn request_id_counter_is_unique_and_monotonic_across_sequential_requests() {
-    // The counter the driver's binder stamps each unit from is the process's one counter
-    // (`App::next_request_id`).
+
+
     let app = busbar_kernel_testkit::test_support::TestApp::new().build();
     let a = app.next_request_id();
     let b = app.next_request_id();
@@ -1004,7 +1004,7 @@ async fn request_id_is_recorded_as_native_u64_tracing_field() {
     );
 }
 
-// ── F25 REHOME: the hook seam rows the coverage map (v2) homes on the driver ─────────────────────
+
 
 /// The 503 body a decision gate that could not complete answers (1.5.5's literal).
 const GATE_COULD_NOT_COMPLETE: &str = "A required gate could not complete. Please retry shortly.";
@@ -1069,9 +1069,9 @@ enum Seat {
 }
 
 /// The chat-completions caller's own spelling of busbar's overloaded 503 kind, read off the plane's
-/// own refusal renderer, so the test pins "the same kind as every other busbar 503" and no literal.
+
 fn overloaded_kind_on_chat_completions() -> String {
-    // The chat-completions envelope mints nothing, so the host it is rendered with gives nothing.
+
     struct NoHost;
     impl busbar_contract::codec::CodecHost for NoHost {
         fn fill_entropy(&self, _out: &mut [u8]) -> bool {
@@ -1094,7 +1094,7 @@ fn overloaded_kind_on_chat_completions() -> String {
 }
 
 /// One chat-completions request at a two-lane pool with the faulty hook in `seat`: (status, error
-/// kind, error message) off the caller's envelope, and whether a far end was reached.
+
 async fn fire_faulty(
     seat: Seat,
     fault: Fault,
@@ -1137,11 +1137,11 @@ async fn fire_faulty(
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/gate_policy_503_literals_tests.rs::decision_gate_that_cannot_complete_has_its_own_503_body`
-/// (coverage map v2 row 213). 1.5.5: a load-bearing decision gate that could not complete answers
-/// 503, busbar's overloaded kind, and its own words: "A required gate could not complete. Please
-/// retry shortly."
-///
-/// RED: the failed gate's refusal collapses into another 503 body, another status or kind.
+
+
+
+
+
 #[tokio::test]
 async fn decision_gate_that_cannot_complete_has_its_own_503_body() {
     let (status, kind, message, _) =
@@ -1151,11 +1151,11 @@ async fn decision_gate_that_cannot_complete_has_its_own_503_body() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/gate_policy_503_literals_tests.rs::decision_gate_restriction_leaving_no_lane_has_its_own_503_body`
-/// (coverage map v2 row 214). 1.5.5: a decision gate whose restriction leaves no lane answers 503,
-/// the overloaded kind, and "No upstream satisfies a required gate's restriction. Please retry
-/// shortly."
-///
-/// RED: the restriction's refusal wears another body (a policy's, or a generic exhaustion).
+
+
+
+
+
 #[tokio::test]
 async fn decision_gate_restriction_leaving_no_lane_has_its_own_503_body() {
     let (status, kind, message, _) = fire_faulty(
@@ -1169,11 +1169,11 @@ async fn decision_gate_restriction_leaving_no_lane_has_its_own_503_body() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/gate_policy_503_literals_tests.rs::base_policy_that_cannot_select_has_its_own_503_body`
-/// (coverage map v2 row 215). 1.5.5: the pool's base routing policy that could not select answers
-/// 503, the overloaded kind, and "The routing policy could not select an upstream. Please retry
-/// shortly."
-///
-/// RED: a policy's fault is served under a gate's body, or under another status or kind.
+
+
+
+
+
 #[tokio::test]
 async fn base_policy_that_cannot_select_has_its_own_503_body() {
     let (status, kind, message, _) =
@@ -1183,11 +1183,11 @@ async fn base_policy_that_cannot_select_has_its_own_503_body() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/gate_policy_503_literals_tests.rs::base_policy_restriction_leaving_no_lane_has_its_own_503_body`
-/// (coverage map v2 row 216). 1.5.5: a base policy whose restriction leaves no lane answers 503,
-/// the overloaded kind, and "No upstream satisfies the routing policy's restriction. Please retry
-/// shortly."
-///
-/// RED: the policy's restriction refusal collapses into the gate's words or another body.
+
+
+
+
+
 #[tokio::test]
 async fn base_policy_restriction_leaving_no_lane_has_its_own_503_body() {
     let (status, kind, message, _) = fire_faulty(
@@ -1201,12 +1201,12 @@ async fn base_policy_restriction_leaving_no_lane_has_its_own_503_body() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/gate_policy_503_literals_tests.rs::decision_gate_that_cannot_complete_only_refuses_when_declared_load_bearing`
-/// (coverage map v2 row 217). 1.5.5: the SAME failed gate under `on_error: weighted` refuses
-/// nothing: the unit proceeds to a route, and the "could not complete" body belongs to
-/// `on_error: reject` alone.
-///
-/// RED: a gate the operator did not declare load-bearing still refuses with its 503 body, or the
-/// unit never reaches a far end.
+
+
+
+
+
+
 #[tokio::test]
 async fn decision_gate_that_cannot_complete_only_refuses_when_declared_load_bearing() {
     let (_status, _kind, message, dispatched) =
@@ -1220,12 +1220,12 @@ async fn decision_gate_that_cannot_complete_only_refuses_when_declared_load_bear
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_seam_tests.rs::reject_kind_mapping_matches_status_semantics`
-/// (coverage map v2 row 311). 1.5.5: the refusal a load-bearing hook's FAILED call produces
-/// (`REQUIRED_HOOK_UNAVAILABLE_STATUS`, 503) reads as RETRYABLE, the overloaded kind: on the
-/// Anthropic envelope `error.type` is `overloaded_error`, never a client error.
-///
-/// RED: the required-hook-unavailable 503 renders as an invalid request (or any non-retryable
-/// kind), so an SDK caller never retries a transient hook outage.
+
+
+
+
+
+
 #[tokio::test]
 async fn reject_kind_mapping_matches_status_semantics_required_hook_unavailable() {
     assert_eq!(busbar_kernel::hooks::REQUIRED_HOOK_UNAVAILABLE_STATUS, 503);
@@ -1287,17 +1287,17 @@ async fn settled_count(tap: &CountingTap) -> usize {
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    // And a little longer, so a SECOND (wrong) delivery has the chance to land too.
+
     tokio::time::sleep(Duration::from_millis(100)).await;
     tap.fired.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_seam_tests.rs::substrate_fire_stage_taps_honors_group_scope_via_host_seam`
-/// (coverage map v2 row 279). 1.5.5: a stage tap scoped to a group fires for a caller inside the
-/// group and does NOT fire for a caller outside it.
-///
-/// RED: the served driver fires a group-scoped tap for an out-of-group caller (a governance or
-/// audit tap mis-firing), or drops it for an in-group one.
+
+
+
+
+
 #[tokio::test]
 async fn substrate_fire_stage_taps_honors_group_scope_via_host_seam() {
     async fn fired_for(groups_of_caller: &[&str]) -> usize {
@@ -1330,14 +1330,14 @@ async fn substrate_fire_stage_taps_honors_group_scope_via_host_seam() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_seam_tests.rs::unreadable_content_reaches_the_gate_and_is_forwarded`
-/// (coverage map v2 row 317). 1.5.5: a valid-JSON request carrying a block type the reader does not
-/// model reaches a content gate, which is shown the turns busbar CAN read, and is forwarded to the
-/// far end byte for byte; unreadable content contributes nothing and never refuses the request.
-/// (Rewritten with an unknown block type only: an unknown role is a 400 since
-/// `hook_ir_differential`.)
-///
-/// RED: the request is refused for content the reader cannot model, it reaches the far end
-/// altered, or the gate is shown an empty or invented turn.
+
+
+
+
+
+
+
+
 #[tokio::test]
 async fn unreadable_content_reaches_the_gate_and_is_forwarded() {
     let (seen, gate) = capturing(true, false, None);
@@ -1457,13 +1457,13 @@ async fn fire_chat_completions(rig: &Rig, body: &Value) -> crate::rig::Answered 
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/usage_tap_tests.rs::apply_rewrite_to_body_swaps_messages_and_is_fail_safe`
-/// (coverage map v2 row 622). 1.5.5: a rewrite on an openai chat body replaces `messages` with the
-/// hook's (`[{"role":"user","content":"compressed"}]`), injects the hook's tool BESIDE the caller's
-/// (2 tools), and leaves every unrelated field (the model) untouched; a body with no `messages`
-/// array is left untouched (fail-safe, not applied), and an empty rewrite changes nothing.
-///
-/// RED: the rewrite drops the caller's tool or the model, writes a non-chat body it cannot frame,
-/// or an empty rewrite alters the request.
+
+
+
+
+
+
+
 #[tokio::test]
 async fn apply_rewrite_to_body_swaps_messages_and_is_fail_safe() {
     let hook = FixedRewrite::rewriting(
@@ -1498,8 +1498,8 @@ async fn apply_rewrite_to_body_swaps_messages_and_is_fail_safe() {
     assert_eq!(tools.len(), 2, "tool injected, existing kept: {sent}");
     assert_eq!(sent["model"], "m0", "unrelated fields untouched");
 
-    // The fail-safe arms, through the plane's own apply step: a body with no `messages` array and
-    // an empty rewrite both leave the arrival untouched.
+
+
     use busbar_plane_llm::exchange::arrive::arrive;
     use busbar_plane_llm::exchange::project::apply_rewrite;
     let head: &[(&[u8], &[u8])] = &[(b"content-type", b"application/json")];
@@ -1526,12 +1526,12 @@ async fn apply_rewrite_to_body_swaps_messages_and_is_fail_safe() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/usage_tap_tests.rs::apply_global_rewrites_chains_in_order`
-/// (coverage map v2 row 625). 1.5.5: global rewrites fire in order and each sees the prior's
-/// output: hook A rewrites to "A", hook B (shown A's output) rewrites to "B", and "B" is what the
-/// far end is sent; the order reversed ends at "A".
-///
-/// RED: the chain runs out of order, a later hook is shown the caller's original body, or only one
-/// rewrite of the chain is applied.
+
+
+
+
+
+
 #[tokio::test]
 async fn apply_global_rewrites_chains_in_order() {
     async fn chained(first: &'static str, second: &'static str) -> (Value, Vec<(String, String)>) {
@@ -1571,10 +1571,10 @@ async fn apply_global_rewrites_chains_in_order() {
 }
 
 /// LEGACY `crates/busbar-llm/src/unit/tests/approve.rs::with_no_seat_installed_the_step_is_a_no_op_exactly_as_the_live_path_is`
-/// (coverage map v2 row 659). 1.5.5: with no hook seated, a unit passes the hook stage unchanged:
-/// nothing refused, nothing added, and the far end is sent exactly the caller's bytes.
-///
-/// RED: an empty hook stage alters the request (a re-serialization, an added field) or refuses.
+
+
+
+
 #[tokio::test]
 async fn with_no_seat_installed_the_step_is_a_no_op_exactly_as_the_live_path_is() {
     let rig = Rig::new(one(), None, Hooks::default());
@@ -1602,15 +1602,15 @@ async fn with_no_seat_installed_the_step_is_a_no_op_exactly_as_the_live_path_is(
 }
 
 /// LEGACY `crates/busbar-llm/src/unit/tests/approve.rs::the_first_veto_wins_and_nothing_after_it_is_consulted`
-/// (coverage map v2 row 662). 1.5.5: of two ordered request seats, the first one's veto wins, the
-/// unit is refused as a hook veto, and the seat after it is never consulted (its call counter stays
-/// 0). Seated as the request stage's ordered rewrite seats (the decision gates are consulted
-/// together, as 1.5.5 fanned them out). The request stage runs at the head of the route leg, and
-/// the loop ends a refused route leg as `Failed(Route, reason)` (`teller.rs` `under_hold`), the
-/// outcome the kernel's own `a_veto_is_rendered_by_the_plane_with_the_hooks_status_and_words_before_any_attempt`
-/// pins for a request-stage veto.
-///
-/// RED: a seat after the veto is still asked, or the refusal is not the hook veto.
+
+
+
+
+
+
+
+
+
 #[tokio::test]
 async fn the_first_veto_wins_and_nothing_after_it_is_consulted() {
     let vetoing = FixedRewrite::new(
@@ -1652,11 +1652,11 @@ async fn the_first_veto_wins_and_nothing_after_it_is_consulted() {
 }
 
 /// LEGACY `crates/busbar-llm/src/unit/tests/route.rs::completion_tap_fires_once_on_the_walk_and_never_on_a_pre_forward_refusal`
-/// (coverage map v2 row 727). 1.5.5: a served unit fires the completion (response-stage) tap
-/// exactly ONCE, with the response payload (`at: response`, `outcome: ok`, `status: 200`); a unit
-/// refused before the walk (an unknown model, 404) fires it zero times.
-///
-/// RED: the completion tap fires twice for one unit, or a pre-forward 404 fires one.
+
+
+
+
+
 #[tokio::test]
 async fn completion_tap_fires_once_on_the_walk_and_never_on_a_pre_forward_refusal() {
     let (tap, entry) = counting_tap(Vec::new());
@@ -1675,7 +1675,7 @@ async fn completion_tap_fires_once_on_the_walk_and_never_on_a_pre_forward_refusa
     assert_eq!(payload["stage"]["outcome"], "ok");
     assert_eq!(payload["stage"]["status"], 200);
 
-    // The pre-forward refusal: no destination, so no walk and no completion tap.
+
     let (missed, entry) = counting_tap(Vec::new());
     let mut hooks = Hooks::default();
     hooks.taps.response = vec![entry];
@@ -1702,15 +1702,15 @@ async fn completion_tap_fires_once_on_the_walk_and_never_on_a_pre_forward_refusa
 }
 
 /// LEGACY `crates/busbar-llm/src/unit/tests/route.rs::completion_tap_carries_response_tokens_out_when_declared`
-/// (coverage map v2 row 728), held to 1.5.5: 1.5.5 never computed `response_tokens_out`. Its
-/// stage taps (candidate, routing, response) projected no catalog signal
-/// (`v1.5.5 crates/busbar/src/proxy/hooks.rs:1348-1352`, `signals: Default::default()`, "the wire is
-/// byte-identical"), and the signal was reserved in the catalog with no compute fn
-/// (`v1.5.5 crates/api/src/signal.rs:90-95`). The legacy crate's figure (the far end's 1 output token
-/// on the tap) was post-1.5.5 drift. So the `response` stage tap's payload carries no
-/// `response_tokens_out` key, declared or not (PR #919's finding).
-///
-/// RED: a `response_tokens_out` key on the completion tap, which 1.5.5's wire never carried.
+
+
+
+
+
+
+
+
+
 #[tokio::test]
 async fn completion_tap_carries_no_response_tokens_out_as_in_1_5_5() {
     async fn tapped(declared: bool) -> Value {
@@ -1743,16 +1743,16 @@ async fn completion_tap_carries_no_response_tokens_out_as_in_1_5_5() {
 }
 
 /// Q128 arch u58 (HIGH): AN AD-HOC ROUTE THAT MISNAMES ITS MODEL'S PROVIDER is refused behind the
-/// caller's identity and grant, as 1.5.5's `adhoc()` ran its governance guard before it answered the
-/// mismatch. The plane's `arrive` names the entry its refusal concerns (abi/plane "A refused
-/// arrival", rule 6), so a caller the grant refuses hears the grant's refusal, and a granted one
-/// hears the mismatch's own 400 at admission, with nothing sent upstream.
+
+
+
+
 #[tokio::test]
 async fn an_adhoc_provider_mismatch_is_judged_behind_the_callers_grant() {
     use busbar_contract::caps::{Outcome, ReasonCode, StepName};
     let rig = Rig::new(one(), None, Hooks::default());
     let body = serde_json::to_vec(&body()).unwrap();
-    // `m0` is served by `ant`; the path names `oai`.
+
     let target = "/oai/m0/v1/messages";
     let fields = super::wire::FIRE_FIELDS;
 

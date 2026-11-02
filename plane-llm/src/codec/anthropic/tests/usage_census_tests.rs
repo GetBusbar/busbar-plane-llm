@@ -2,13 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE ANTHROPIC USAGE CENSUS (MONEY-AUDIT A-F1; owner 2026-10-02: every billed count lands in an
-//! existing meter class by the provider's own semantics; the plane reports units, never a price).
-//!
-//! The census is the pinned wire lock (`testing/llm-conformance/wire/anthropic.wire.json`, read
-//! through `codec::usage_census`): every integer count it declares under the response `usage` object and under the `message_delta` stream
-//! frame's `usage` has a class below, and reporting 7 more of it moves the ledgered units by exactly
-//! that class on the buffered read, the truncated-body recovery and the stream tap, as both ledger
-//! projections read them (the governance ledger's `tier_usage` and the plane's `Units`).
 
 use super::super::proto_codec::ProtocolReader;
 use super::AnthropicReader;
@@ -17,11 +10,7 @@ use crate::codec::usage_census::{
 };
 
 /// What each Anthropic `usage` count IS, as the move one more of it makes on the ledgered units.
-/// The four totals are the reserved token classes. A web search is one billed search, the open
-/// class `search_units`. The 5m/1h tiers are slices of `cache_creation_input_tokens` and the
-/// thinking count a slice of `output_tokens`, so neither moves a unit of its own (the per-TTL rate
-/// split is escalated, A-F1). A web fetch is the open class `web_fetch_requests` (owner LEDGER-100:
-/// every reported unit is a ledger line; the operator's card prices it).
+
 const ANTHROPIC_COUNT_CLASSES: &[(&str, Ledgered)] = &[
     ("input_tokens", at(IN, 1)),
     ("output_tokens", at(OUT, 1)),
@@ -103,8 +92,7 @@ fn streamed(usage: &serde_json::Value) -> Ledgered {
 }
 
 /// EVERY COUNT ANTHROPIC REPORTS IS LEDGERED IN ITS OWN CLASS, ON EVERY READ PATH. RED when the
-/// reader drops a count (a web search ledgered nowhere), mis-classes one, or the lock gains a count
-/// nobody classed.
+
 #[test]
 fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {
     let response = lock_counts("anthropic", "response", "usage.");
@@ -154,8 +142,7 @@ fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {
 }
 
 /// A turn's web searches reach the ledger as `search_units` on every read path, and a turn that ran
-/// none puts NO `search_units` row on it: a zero is no hit on the class, so a card silent about
-/// `search_units` on that lane is never refused for a turn that searched nothing.
+
 #[test]
 fn web_searches_ledger_as_search_units_and_none_is_no_row() {
     let usage = base_usage();
@@ -187,8 +174,7 @@ fn web_searches_ledger_as_search_units_and_none_is_no_row() {
 }
 
 /// A turn's web fetches reach the ledger as exactly one `web_fetch_requests` line on every read
-/// path (buffered, truncated, stream), beside its searches and its tokens, and move no other class
-/// (owner LEDGER-100). RED before this lane: the reader did not read the count at all.
+
 #[test]
 fn web_fetches_ledger_as_web_fetch_requests_on_every_path() {
     let usage = base_usage();

@@ -2,14 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! **THE 1.5.5 UPGRADE THROUGH BOTH DOORS** (`busbar --migrate-config`; FLEET "Plugin-side migrate
-//! entries", lead rulings in llm-migrate-design.md): 1.5.5 dialled a private or loopback provider
-//! upstream with no allowlist, 1.6.0 refuses one unless `advanced.allow_destinations` names it. The
-//! plane's migrate hands core every host a provider's `base_url` or `token_url` names, as
-//! `AllowDestinationIfPrivate`, once each; core resolves and judges it with the destination guard's
-//! own predicates. The sections come back as they went in (`providers:` is handed read-only).
-//!
-//! RED before: the door stated no `migrate`, so the host passed the sections through and raised
-//! nothing: a 1.5.5 deployment on a local Ollama stopped working after the upgrade.
 
 use std::path::PathBuf;
 
@@ -19,7 +11,7 @@ use busbar_plugin_loader::dispatch::migrate::{migrate_door, migrate_library};
 use serde_json::json;
 
 /// This crate's built cdylib (uplifted or under `deps`, newest wins). A missing artifact is a
-/// failure, never a skip.
+
 fn cdylib() -> PathBuf {
     let exe = std::env::current_exe().expect("the test binary has a path");
     let profile = exe
@@ -36,7 +28,7 @@ fn cdylib() -> PathBuf {
 }
 
 /// The private-destinations corpus shape (busbar `tests/migration-corpus/private-destinations`), as
-/// core hands it to the plane: its own sections, and the merged catalog+deployment `providers:`.
+
 fn sections() -> serde_json::Value {
     json!({
         "pools": { "local": { "members": [{ "model": "llama-local" }] } },

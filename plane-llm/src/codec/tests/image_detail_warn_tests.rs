@@ -2,10 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! TODO 585 (IMAGE-DETAIL-WARN): 1.5.5 warned the operator when an image's `image_url.detail` was
-//! dropped. The IR now carries the ask (IR-08), so the loss moved to the egress write of a dialect
-//! with no slot for it: anthropic, gemini and bedrock each log the 1.5.5 line, once per image,
-//! naming the word; `auto` and an absent ask log nothing, and a dialect that carries the ask is
-//! silent.
 
 use crate::codec::chat_handle::ChatReqHandle;
 use crate::codec::ir::{IrBlock, IrImageDetail, IrImageSource, IrMessage, IrRequest, IrRole};

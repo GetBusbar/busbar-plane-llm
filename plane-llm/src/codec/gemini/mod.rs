@@ -17,11 +17,10 @@ use busbar_contract::protocol::{
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
 use busbar_contract::upstream::StatusClass;
-// Relative path so it resolves both standalone and netted into core.
+
 #[allow(unused_imports)]
-// used standalone; redundant with the `busbar_contract::protocol::*` glob when netted into core
 use super::proto_codec::*;
-// Explicit import so it binds to this crate's own `proto_codec`, not the `busbar_contract::protocol::*` glob.
+
 #[allow(unused_imports)]
 use super::proto_codec::{Protocol, ProtocolReader, ProtocolWriter, StreamFraming};
 
@@ -45,7 +44,7 @@ use slots::*;
 use usage::*;
 
 /// The query pair a Gemini request carries to ask for event-framed chunks, written on the far-end
-/// stream path and read at arrival.
+
 pub const STREAM_QUERY: (&str, &str) = ("alt", "sse");
 
 /// Build this dialect's wire codec. A fresh instance per resolution.
@@ -54,8 +53,7 @@ pub fn protocol() -> Protocol {
 }
 
 /// The [`ProtocolDecl::models_list_envelope`] builder: Gemini's `GET /v1(beta)/models` shape. Each
-/// name becomes a `Model` resource (`models/{id}`, with the two generation methods busbar serves),
-/// wrapped in the `{ "models": [...] }` envelope the SDK expects.
+
 fn models_list_envelope(names: &[&str]) -> serde_json::Value {
     let models: Vec<serde_json::Value> = names
         .iter()
@@ -71,9 +69,7 @@ fn models_list_envelope(names: &[&str]) -> serde_json::Value {
 }
 
 /// Router detection, stated here so core folds it without naming Gemini: the unique `x-goog-api-key`
-/// header (rung 3, tighter than the shared path suffixes), the `:{action}` path verbs (rung 5), then
-/// the `/v1{,beta}/models/` wildcard surface (rung 6). Strengths are ladder positions (lower binds
-/// tighter), shared with the sibling dialects' predicates.
+
 fn claims(
     h: busbar_contract::protocol::HeadFields<'_>,
     path: &str,
@@ -98,8 +94,7 @@ fn claims(
 }
 
 /// Gemini action suffixes the residual classifier recognises on the shared `/v1/models/{id}`
-/// surface, distinct from the router's `:{verb}` set. A last segment ending in one is Gemini; any
-/// other colon-bearing id (an OpenAI fine-tune) falls to the OpenAI residual.
+
 const GEMINI_RESIDUAL_ACTIONS: [&str; 7] = [
     ":generateContent",
     ":streamGenerateContent",
@@ -111,8 +106,7 @@ const GEMINI_RESIDUAL_ACTIONS: [&str; 7] = [
 ];
 
 /// Headerless residual detection: the whole `/v1beta/models…` surface is Gemini-only (rung 10), and
-/// a `/v1/models/{id}` whose last segment carries a Gemini action suffix is Gemini (rung 20,
-/// tighter than the OpenAI `/v1/models/` catch at rung 25).
+
 fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrength> {
     use busbar_contract::protocol::ClaimStrength;
     if path.starts_with("/v1beta/models") {
@@ -131,7 +125,7 @@ fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrengt
 }
 
 /// Gemini's declaration. The only protocol declaring an array-stream shim key, a declaration rather
-/// than a literal so `proxy` removes every declared shim key without naming one.
+
 pub const DECL: ProtocolDecl = ProtocolDecl {
     name: COUNT_LABEL,
     codec: dialect_codec!(COUNT_LABEL),
@@ -146,16 +140,14 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     head_keys: super::proto_codec::LLM_CHAT_HEAD_KEYS,
     streaming_content_type: Some(busbar_contract::protocol::TEXT_EVENT_STREAM),
     array_stream_shim_key: Some(GEMINI_JSON_ARRAY_SHIM_KEY),
-    // No tool id on the wire (Gemini correlates `functionCall`s by name): nothing to reshape.
+
     native_tool_id_prefix: None,
     ingress_auth: IngressAuth::Bearer,
-    // The native credential is the raw key in `x-goog-api-key` (no Bearer), declared as data: the
-    // kernel's egress-auth unit presents the lane credential and the key never passes through this plane.
+
     egress_auth_headers: None,
     egress_auth_lane_constant: false,
     egress_scheme: Some(EgressScheme::header(FIELD_X_GOOG_API_KEY)),
-    // The model is in the URL (`/v1beta/models/{model}:generateContent`); the arrival is registered
-    // via `busbar_llm::PATH_INGRESS` and the boot parity assert pairs it with `has_model_in_url: true`.
+
     stream_usage_requires_opt_in: false,
     requires_max_tokens: false,
     stop_sequence_cap: Some((5, "Gemini")),
@@ -168,9 +160,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     ingress_is_eventstream: false,
     emits_sse_done_terminator: false,
     max_citations_per_delta: None,
-    // Google GenAI SDK UA. Re-verify per release; `test_egress_ua_versions_are_pinned_and_present`
-    // guards drift. Written on a translated route, on a same-dialect route whose caller sent no
-    // user-agent, and on the health probe.
+
     egress_user_agent: "google-genai-sdk/0.8.0 gl-python/3.11",
     has_model_in_url: true,
     auth_failure_status_and_kind: (
@@ -188,8 +178,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     residual_claims: Some(residual_claims),
     residual_default: false,
     vendor_response_metadata: Some(vendor_response_metadata),
-    // The SDK sends `x-goog-api-key`, which disambiguates the shared list-models surface as Gemini
-    // (the `/v1beta` path is handled by the detection fold).
+
     list_models_fingerprint_headers: &[FIELD_X_GOOG_API_KEY],
     static_headers: &[],
 };
@@ -207,9 +196,8 @@ pub(crate) const ENTRY: super::proto_codec::DialectEntry = super::proto_codec::D
 };
 
 /// Response-side untranslatable metadata: `safetyRatings` under `candidates[].safetyRatings`, present
-/// only when requested. Reported so the seam logs the drop; no other protocol can carry them.
+
 fn vendor_response_metadata(body: &serde_json::Value) -> Vec<&'static str> {
-    // Named by wire path, as the drop path reports it.
     [(FIELD_SAFETY_RATINGS, "candidates[].safetyRatings")]
         .into_iter()
         .filter(|(k, _)| {
@@ -236,7 +224,7 @@ const REQUEST_PART_KINDS: &[&str] = &[
 const PART_COMPANIONS: &[&str] = &[FIELD_THOUGHT, FIELD_THOUGHT_SIGNATURE];
 
 /// The Gemini request content grammar (`codec::drops`): a union keyed by its kind member. A part of
-/// any other kind (`executableCode` / `codeExecutionResult`) is named as dropped on a translate attempt.
+
 const REQUEST_BLOCKS: &[crate::codec::drops::Blocks] = &[
     crate::codec::drops::Blocks {
         at: &["contents[]", "parts[]"],
@@ -302,7 +290,6 @@ const RESPONSE_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::B
 
 /// What the Gemini reader parks in `extra` beside the members its map file does not model.
 const PARKED: &[crate::codec::drops::Parked] = &[
-    // The model and the stream ask are the route's (they ride the URL).
     crate::codec::drops::Parked {
         key: keys::MODEL,
         holds: crate::codec::drops::Holds::Nothing,
@@ -311,12 +298,10 @@ const PARKED: &[crate::codec::drops::Parked] = &[
         key: keys::STREAM,
         holds: crate::codec::drops::Holds::Nothing,
     },
-    // `labels` crosses as the caller metadata.
     crate::codec::drops::Parked {
         key: FIELD_LABELS,
         holds: crate::codec::drops::Holds::Nothing,
     },
-    // Members of `generationConfig` the reader's code carries; the map file maps the rest.
     crate::codec::drops::Parked {
         key: FIELD_GENERATION_CONFIG,
         holds: crate::codec::drops::Holds::Members(&[
@@ -337,7 +322,7 @@ const PARKED: &[crate::codec::drops::Parked] = &[
 ];
 
 /// What this dialect's answers carry beyond its map file's rows (drop walk, design F3 "Drops").
-// The per-modality output split is read into the usage detail. A stream frame is an answer.
+
 const RESPONSE_CODE: &[&str] = &["usageMetadata.candidatesTokensDetails"];
 
 /// Answer paths inside a carried subtree that its code does not carry (where a coarse map row covers them).
@@ -376,23 +361,15 @@ const RESPONSE_DROPS: &[&str] = &[
 ];
 
 /// Router-internal shim key the ingress route injects when the client sent a streaming
-/// `:streamGenerateContent` request without `?alt=sse` (so the response must be JSON-array, not
-/// SSE). Shared by the route injection (`ingress`), the forward strip
-/// (`proxy::strip_router_shim_keys`) and the reader's `modeled_keys` exclusion so it never reaches
-/// a backend. The `__busbar` prefix rules out a collision with a real field.
+
 pub const GEMINI_JSON_ARRAY_SHIM_KEY: &str = "__busbar_gemini_json_array";
 
 /// The canonical Gemini bad-API-key message (`google.rpc.Status.message` of a real 400/INVALID_ARGUMENT).
-/// Returned by `GeminiWriter::auth_failure_message`; `write_error` matches it to gate the
-/// `details[].reason == "API_KEY_INVALID"` ErrorInfo onto exactly that 400.
+
 pub const GEMINI_BAD_KEY_MESSAGE: &str = "API key not valid. Please pass a valid API key.";
 
 /// Cap on distinct tool-call block indices in `state.open_tools` for one SSE stream. The set drains
-/// on either terminal path (a `finishReason` chunk, or a prompt-block envelope
-/// `candidates_absent` + `promptFeedback.blockReason`), so an upstream streaming unbounded
-/// `functionCall` parts without reaching one would grow it until OOM. Past the cap, new tool frames
-/// are not recorded and their BlockStart/BlockDelta are not emitted. No real response approaches
-/// it. Mirrors the Cohere reader's `MAX_TRACKED_TOOL_FRAMES`.
+
 const MAX_GEMINI_TOOL_FRAMES: usize = 4096;
 
 /// Gemini `FinishReason.STOP` — normal/tool-call end.
@@ -411,8 +388,7 @@ const GEMINI_FINISH_RECITATION: &str = "RECITATION";
 const GEMINI_FINISH_PROHIBITED_CONTENT: &str = "PROHIBITED_CONTENT";
 
 /// Upstream URL path prefix shared by all Gemini Generative Language API endpoints; the per-request
-/// path appends `/{model}:{method}` (and optionally `?alt=sse`) via `upstream_path_for` /
-/// `upstream_path_for_stream`.
+
 const GEMINI_PATH_BASE: &str = "/v1beta/models";
 
 /// JSON key for Gemini's top-level usage wrapper (`usageMetadata`).
@@ -424,19 +400,15 @@ const FIELD_CANDIDATES_TOKEN_COUNT: &str = "candidatesTokenCount";
 /// JSON key for the total token count inside `usageMetadata`.
 const FIELD_TOTAL_TOKEN_COUNT: &str = "totalTokenCount";
 /// Key for the thinking token count in `usageMetadata` (2.5-series models). Unlike OpenAI's
-/// `reasoning_tokens` it is not a subset of the visible output count but a separate additive term;
-/// see [`GEMINI_USAGE_ADDITIVE_TERMS`].
+
 const FIELD_THOUGHTS_TOKEN_COUNT: &str = "thoughtsTokenCount";
 /// JSON key for the context-cache token count inside `usageMetadata`.
 const FIELD_CACHED_CONTENT_TOKEN_COUNT: &str = "cachedContentTokenCount";
 /// Key for the server-side tool-use prompt tokens in `usageMetadata`. Despite the name it is not a
-/// slice of `promptTokenCount` but a fourth additive term beside it, charged at the input rate and
-/// billed since 1.6.0 (see [`GEMINI_USAGE_ADDITIVE_TERMS`]).
+
 const FIELD_TOOL_USE_PROMPT_TOKEN_COUNT: &str = "toolUsePromptTokenCount";
 /// Key for the billing-lane marker in `usageMetadata` (`ON_DEMAND` / `PROVISIONED`). Informational,
-/// not billed (see [`crate::codec::ir::types::IrUsageDetail::traffic_type`]). Not declared by the
-/// pinned generativelanguage discovery document (Vertex-only), so it is carried in the IR rather
-/// than dropped.
+
 const FIELD_TRAFFIC_TYPE: &str = "trafficType";
 
 /// The measured Gemini usage identity: the four `usageMetadata` counters that are additive terms of
@@ -477,11 +449,11 @@ const GEMINI_USAGE_ADDITIVE_TERMS: &[&str] = &[
 ];
 
 /// Stable identifier for the identity [`gemini_usage_identity_note`] checks, carried on
-/// [`crate::codec::ir::UsageIdentityNote::identity`] so callers branch on a constant.
+
 const GEMINI_USAGE_IDENTITY: &str = "gemini.usageMetadata";
 
 /// The sum of [`GEMINI_USAGE_ADDITIVE_TERMS`] on one `usageMetadata` object (absent terms are zero).
-/// `None` only for an unreadable term, which the usage table has already refused.
+
 fn additive_sum(u: &serde_json::Value) -> Option<u64> {
     GEMINI_USAGE_ADDITIVE_TERMS
         .iter()
@@ -492,41 +464,21 @@ fn additive_sum(u: &serde_json::Value) -> Option<u64> {
 }
 
 /// Cross-check what busbar will bill against the total Google stated, and report a disagreement
-/// instead of hiding one.
-///
-/// `summed_total` sums [`GEMINI_USAGE_ADDITIVE_TERMS`] (what the usage table folds in since 1.6.0),
-/// so this is a data-driven discrepancy metric over `totalTokenCount`: it fires only when Google's
-/// total cannot be reached from the table (an unmodelled counter, or a term whose meaning changed),
-/// and the answer is a new recording and table entry, not an adjustment here. `wire_sum` /
-/// `unmodelled_term` in the log line say which: the table failing to close is the "new counter"
-/// signal; a gap only against `billed` means normalization (cache subtraction) moved the money.
-///
-/// `None` ordinarily: no `totalTokenCount` (early SSE frames carry an empty `usageMetadata`), or
-/// the billed figure matches the total.
-///
-/// Nothing is zeroed, clamped or back-filled. A total above the bucket sum is the open class
-/// `unitemized_tokens` (`IrUsage::to_token_usage`); this note and its WARN say where it came from.
+
 fn gemini_usage_identity_note(
     u: Option<&serde_json::Value>,
 ) -> Option<crate::codec::ir::UsageIdentityNote> {
     let u = u?;
-    // Absent is not zero: a `usageMetadata` with no total has nothing to check, and treating it as 0
-    // would flag every ordinary streaming frame.
+
     let reported_total = u.get(FIELD_TOTAL_TOKEN_COUNT).and_then(read_count_u64)?;
-    // What busbar counts: every additive term, which is what the usage table folds into
-    // `input_tokens + cache_read_input_tokens + output_tokens`.
+
     let summed_total = additive_sum(u)?;
     if summed_total == reported_total {
         return None;
     }
     let unaccounted = i64::try_from(reported_total).unwrap_or(i64::MAX)
         - i64::try_from(summed_total).unwrap_or(i64::MAX);
-    // Which kind of shortfall? Sum the terms known to be additive from the const table. If that does
-    // not close against Google's total, Google reports a counter this dialect does not model and the
-    // table needs a new entry and recording. If it closes while `billed` disagrees, the gap is in
-    // normalization (e.g. more cached than prompt tokens), not on the wire. The responses differ, so
-    // the log line should say which. Read through `billed_count`, as the caller already refused
-    // unreadable terms.
+
     let wire_sum = summed_total;
     let unmodelled_term = wire_sum != reported_total;
     tracing::warn!(
@@ -556,12 +508,11 @@ const FIELD_RESPONSE_ID: &str = "responseId";
 /// JSON key for the serving model name emitted at the top level.
 const FIELD_MODEL_VERSION: &str = "modelVersion";
 /// Key for the RFC3339 response-creation timestamp Vertex stamps on every `GenerateContentResponse`.
-/// Undeclared by the pinned generativelanguage discovery document (Vertex-only, like
-/// [`FIELD_TRAFFIC_TYPE`]); carried in the IR. See [`crate::codec::ir::types::IrResponse::create_time`].
+
 const FIELD_CREATE_TIME: &str = "createTime";
 
 /// Read Gemini/Vertex's top-level `createTime` verbatim (a foreign timestamp parser could reject a
-/// Vertex precision/zone quirk). `None` for every non-Vertex Gemini response and non-Gemini protocol.
+
 fn read_gemini_create_time(body: &serde_json::Value) -> Option<String> {
     body.get(FIELD_CREATE_TIME)
         .and_then(|v| v.as_str())
@@ -640,7 +591,7 @@ const GRPC_DEADLINE_EXCEEDED: &str = "DEADLINE_EXCEEDED";
 const GRPC_NOT_FOUND: &str = "NOT_FOUND";
 const GRPC_UNIMPLEMENTED: &str = "UNIMPLEMENTED";
 /// The google.rpc.Code names and the HTTP status each pairs with on the Generative Language API:
-/// the error writer maps status to name and back from this one table.
+
 const STATUS_HTTP: &[(&str, u16)] = &[
     (GRPC_INVALID_ARGUMENT, 400),
     (GRPC_UNAUTHENTICATED, 401),
@@ -671,37 +622,28 @@ const FIELD_FINISH_REASON: &str = "finishReason";
 pub struct GeminiReader;
 
 /// Base62 alphabet for the synthesized `responseId` (shared atom `crate::codec::dialect::BASE62_ALPHABET`).
-/// No `-`/`_`, so no separator leaks the synthetic boundary.
+
 const RESPONSE_ID_ALPHABET: &[u8; 62] = crate::codec::dialect::BASE62_ALPHABET;
 
 /// Width of a synthesized `responseId`. Native ids are short opaque tokens (~11-16 chars) with no
-/// structure; 16 base62 chars stays in that profile so a length- or regex-checking client cannot
-/// fingerprint it as non-native.
+
 const RESPONSE_ID_TOKEN_LEN: usize = 16;
 
 /// Rejection threshold for the base62 reduction in `synth_response_id`: the largest multiple of 62
-/// in a `u8` is 248, so a byte `>= 248` is rejected and resampled to avoid a biased `byte % 62`.
+
 const RESPONSE_ID_REJECT_THRESHOLD: u8 = crate::codec::dialect::BASE62_REJECT_THRESHOLD;
 
 /// Mint a Gemini-shaped `responseId` where the backend supplied none (cross-protocol). A native id
-/// is an opaque mixed-case alphanumeric token with no hyphen, hex-only class or embedded timestamp;
-/// a `{:x}-{:x}` timestamp-and-counter form was distinguishable and leaked the host clock.
-/// The whole token is filled from the host entropy source with no counter overlay (a counter leaves
-/// predictable high digits at its position); 16 base62 chars is ~95 bits, collision-free per
-/// process. Failed or incomplete entropy draws return no identity.
-///
-/// Bytes reduce to base62 by rejection sampling, not `byte % 62` (`256 % 62 != 0` biases residues
-/// `0..=7`): any byte `>= RESPONSE_ID_REJECT_THRESHOLD` is skipped and more are drawn.
+
 fn synth_response_id(host: &dyn busbar_contract::codec::CodecHost) -> Option<String> {
     let mut token = [b'0'; RESPONSE_ID_TOKEN_LEN];
     let mut filled = 0usize;
-    // Bound the refill rounds so a stuck entropy source cannot spin the request path; ~4/256 of
-    // bytes are rejected, so a few rounds suffice; incomplete draws are never published.
+
     let mut rounds = 0u32;
     const MAX_ROUNDS: u32 = 8;
     while filled < RESPONSE_ID_TOKEN_LEN && rounds < MAX_ROUNDS {
         rounds += 1;
-        // A generous batch so one draw usually fills the token despite the ~1.6% reject rate.
+
         let mut batch = [0u8; RESPONSE_ID_TOKEN_LEN * 2];
         if !host.fill_entropy(&mut batch) {
             return None;
@@ -711,7 +653,6 @@ fn synth_response_id(host: &dyn busbar_contract::codec::CodecHost) -> Option<Str
                 break;
             }
             if byte >= RESPONSE_ID_REJECT_THRESHOLD {
-                // Biased residue region: reject and resample.
                 continue;
             }
             token[filled] = RESPONSE_ID_ALPHABET[(byte % 62) as usize];
@@ -722,26 +663,12 @@ fn synth_response_id(host: &dyn busbar_contract::codec::CodecHost) -> Option<Str
     if filled != RESPONSE_ID_TOKEN_LEN {
         return None;
     }
-    // Only a complete base62 token can become a response identity.
+
     String::from_utf8(token.to_vec()).ok()
 }
 
 /// Synthesize a stable, non-empty tool-call id for a Gemini `functionCall`. The wire carries none,
-/// and an empty id on Anthropic/OpenAI egress (which require one to correlate the later
-/// `tool_result`) made same-named calls indistinguishable and broke result routing.
-///
-/// The id is a deterministic hash of `(call_index, function_name, turn_salt)` via stdlib
-/// `DefaultHasher` (fixed seed, unlike `HashMap`'s `RandomState`), so it only needs to be stable
-/// within a request/response so the synthesized `tool_result` (keyed by function name, Gemini's only
-/// handle) and the `tool_use` agree; the index separates repeated names in a turn. The `call_`
-/// prefix marks it synthetic. An empty `name` still gives a non-empty id.
-///
-/// `turn_salt` separates turns: `call_index` restarts at 0 per `read_response`/`read_response_events`
-/// call (each response is one turn decoded in isolation), so two turns in one conversation whose
-/// first call shares a name (`get_weather` for another city) got the identical id, which
-/// Anthropic/OpenAI require to be unique. Response call sites pass the response's `responseId`
-/// (present on nearly every real response; see `write_response`'s synth-when-absent handling). The
-/// request reader passes `""`: its `call_index` is global across the whole `contents` array.
+
 fn synth_tool_call_id(call_index: usize, function_name: &str, turn_salt: &str) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -752,8 +679,7 @@ fn synth_tool_call_id(call_index: usize, function_name: &str, turn_salt: &str) -
 }
 
 /// The native call id on a `functionCall` / `functionResponse` object (IR audit GEM-08). Both `id`s
-/// are optional; when populated, the response is paired with its call by it. `None` when absent or
-/// empty, so the caller falls back to its synthesized id.
+
 fn gemini_call_id(obj: &serde_json::Value) -> Option<&str> {
     obj.get(keys::ID)
         .and_then(|v| v.as_str())
@@ -816,13 +742,7 @@ impl GeminiCallLedger {
 }
 
 /// Read one Gemini attachment part (`inlineData{mimeType,data}` or `fileData{fileUri,mimeType}`)
-/// into its IR block. Shared by the request reader, the `functionResponse.parts` reader (GEM-07) and
-/// the response reader (generated image/audio, GEM-17). `None` when the part is neither.
-///
-/// `inlineData` carries any mime type, so images route to `Image` and everything else to the typed
-/// `Media` block, whose writers know which target has a native slot (an `audio/*` payload sent to
-/// Anthropic as an `image` is a 400). `fileData` has an optional `mimeType`, the only thing saying
-/// whether it is an image, PDF or video; absent, an unqualified URL reads as an image.
+
 fn read_gemini_media_part(part: &serde_json::Value) -> Option<crate::codec::ir::IrBlock> {
     if let Some(inline_data) = part.get(FIELD_INLINE_DATA) {
         let mime_type = inline_data
@@ -893,8 +813,7 @@ fn read_gemini_media_part(part: &serde_json::Value) -> Option<crate::codec::ir::
 }
 
 /// Write one IR attachment block as its Gemini part (`inlineData` / `fileData`); inverse of
-/// [`read_gemini_media_part`], used for a tool result's attachments (`functionResponse.parts`,
-/// GEM-06). `None` for a non-attachment block or a vendor handle Gemini cannot resolve.
+
 fn write_gemini_media_part(block: &crate::codec::ir::IrBlock) -> Option<serde_json::Value> {
     let (source, url_mime): (&crate::codec::ir::IrImageSource, &str) = match block {
         crate::codec::ir::IrBlock::Image { source, .. } => (
@@ -921,9 +840,7 @@ fn write_gemini_media_part(block: &crate::codec::ir::IrBlock) -> Option<serde_js
 }
 
 /// A representative `mimeType` for a media kind whose source is a bare URL with no mime of its own.
-/// `fileData` requires a `mimeType`, so a well-formed generic beats omitting it: `application/pdf`
-/// (Gemini's own documented example) and container-agnostic audio/video types. A write-side default,
-/// never a claim about the bytes; a `Base64` source knows its real mime and never comes here.
+
 fn gemini_mime_for_kind(kind: crate::codec::ir::IrMediaKind) -> &'static str {
     match kind {
         crate::codec::ir::IrMediaKind::Document => "application/pdf",
@@ -933,10 +850,8 @@ fn gemini_mime_for_kind(kind: crate::codec::ir::IrMediaKind) -> &'static str {
 }
 
 /// A representative `image/*` `mimeType` for a bare-URL image (`fileData` requires one, see above).
-/// Derived from the URL's file extension, defaulting to `image/jpeg` when absent or unrecognized. A
-/// write-side default, never a claim about the bytes; a `Base64` image never comes here.
+
 fn gemini_image_mime_for_url(uri: &str) -> &'static str {
-    // Only the path's extension, lowercased, ignoring any `?query`/`#fragment`.
     let path = uri.split(['?', '#']).next().unwrap_or(uri);
     let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     const GEMINI_IMAGE_TYPES: &[(&str, &str)] = &[("heic", "image/heic"), ("heif", "image/heif")];
@@ -948,8 +863,7 @@ fn gemini_image_mime_for_url(uri: &str) -> &'static str {
 }
 
 /// `thinkingConfig.thinkingLevel` (Gemini 3) to the IR effort ask (IR audit GEM-09). The same concept
-/// as OpenAI's `reasoning_effort`, so one-for-one onto [`crate::codec::ir::IrReasoningEffort`].
-/// Case-insensitive (REST enum upper, docs lower). `None` for an unrecognized level.
+
 fn read_gemini_thinking_level(level: &str) -> Option<crate::codec::ir::IrReasoningAsk> {
     let effort = match level.to_ascii_lowercase().as_str() {
         "minimal" => crate::codec::ir::IrReasoningEffort::Minimal,
@@ -962,9 +876,7 @@ fn read_gemini_thinking_level(level: &str) -> Option<crate::codec::ir::IrReasoni
 }
 
 /// Read `thinkingConfig.thinkingBudget` as Gemini's API does (proto3 JSON int32: a whole number or a
-/// decimal string): `-1` ("the model decides"), `0` (off) or a positive count. `None` for anything
-/// else (wrong-typed, fractional, below -1, beyond int32), which the reader answers with Gemini's
-/// error envelope.
+
 fn read_gemini_thinking_budget(v: &serde_json::Value) -> Option<i32> {
     let n = match v {
         serde_json::Value::Number(n) => match n.as_i64() {
@@ -974,7 +886,7 @@ fn read_gemini_thinking_budget(v: &serde_json::Value) -> Option<i32> {
                 if f.fract() != 0.0 || !f.is_finite() {
                     return None;
                 }
-                // An integral float in int32 range; anything wider fails `try_from` below.
+
                 f as i64
             }
         },
@@ -985,12 +897,7 @@ fn read_gemini_thinking_budget(v: &serde_json::Value) -> Option<i32> {
 }
 
 /// Normalize a Gemini OpenAPI-subset `Schema` (`parameters`, `responseSchema`) into JSON Schema for
-/// the IR (IR audit GEM-11). Gemini spells types upper case (`OBJECT`) and marks optional-null with
-/// `nullable: true`, neither valid JSON Schema, so foreign targets got a malformed schema. Walks
-/// only schema positions (`properties` values, `items`, `prefixItems`, `anyOf`/`oneOf`/`allOf`, a
-/// schema-valued `additionalProperties`, `$defs`/`definitions` values), so an `enum`/`example`/
-/// `default` value holding a `type` key is never rewritten. `parametersJsonSchema` /
-/// `responseJsonSchema` are already JSON Schema and skip this.
+
 fn gemini_openapi_schema_to_json_schema(schema: &serde_json::Value) -> serde_json::Value {
     fn walk(v: &serde_json::Value, depth: usize) -> serde_json::Value {
         let Some(obj) = v.as_object() else {
@@ -1029,8 +936,7 @@ fn gemini_openapi_schema_to_json_schema(schema: &serde_json::Value) -> serde_jso
             };
             out.insert(k.clone(), mapped);
         }
-        // `nullable: true` becomes a `"null"` member in `type`; `nullable: false` goes. A `nullable`
-        // with no string `type` is left alone.
+
         if let Some(nullable) = out.get(FIELD_NULLABLE).and_then(|n| n.as_bool()) {
             match out
                 .get(keys::TYPE)
@@ -1055,8 +961,7 @@ fn gemini_openapi_schema_to_json_schema(schema: &serde_json::Value) -> serde_jso
 }
 
 /// Convert Vertex's RFC 3339 `createTime` (`2025-06-01T12:34:56.123456Z`, or with a `±HH:MM` offset)
-/// into Unix epoch seconds, the IR's `created`. `None` for a malformed value, which leaves
-/// `created` for the seam to stamp. Fractional seconds are truncated.
+
 fn gemini_rfc3339_to_epoch(s: &str) -> Option<u64> {
     let b = s.as_bytes();
     let num = |r: std::ops::Range<usize>| -> Option<i64> {
@@ -1112,7 +1017,7 @@ fn gemini_rfc3339_to_epoch(s: &str) -> Option<u64> {
         }
         _ => return None,
     };
-    // days_from_civil (Howard Hinnant's public-domain algorithm).
+
     let y = if month <= 2 { year - 1 } else { year };
     let era = y.div_euclid(400);
     let yoe = y - era * 400;
@@ -1125,7 +1030,7 @@ fn gemini_rfc3339_to_epoch(s: &str) -> Option<u64> {
 }
 
 /// Gemini's `logprobsResult` (parallel arrays `chosenCandidates[i]` and `topCandidates[i].candidates[]`)
-/// zipped into neutral IR entries. No byte arrays (`bytes: None`; an OpenAI writer synthesizes them).
+
 fn read_gemini_logprobs(v: Option<&serde_json::Value>) -> Vec<crate::codec::ir::IrTokenLogprob> {
     let chosen = match v
         .and_then(|lr| lr.get(FIELD_CHOSEN_CANDIDATES))
@@ -1169,7 +1074,7 @@ fn read_gemini_logprobs(v: Option<&serde_json::Value>) -> Vec<crate::codec::ir::
 }
 
 /// Neutral IR logprobs to `logprobsResult` (chosen + top arrays). `topCandidates` is emitted only
-/// when some position has alternatives, as Gemini omits it when the top-count was not requested.
+
 fn write_gemini_logprobs_result(lps: &[crate::codec::ir::IrTokenLogprob]) -> serde_json::Value {
     let chosen: Vec<serde_json::Value> = lps
         .iter()
@@ -1195,9 +1100,7 @@ fn write_gemini_logprobs_result(lps: &[crate::codec::ir::IrTokenLogprob]) -> ser
 }
 
 /// Normalize `toolConfig.functionCallingConfig` into the IR `tool_choice`: `AUTO` to `Auto`, `NONE`
-/// to `None`, `ANY` with no `allowedFunctionNames` to `Required`, `ANY` + `allowedFunctionNames:[X]`
-/// to `Tool{name:X}`. Absent config/mode or an unrecognized mode is `None`. Takes the whole
-/// `toolConfig` object.
+
 fn read_gemini_tool_choice(
     tool_config: Option<&serde_json::Value>,
 ) -> Option<crate::codec::ir::IrToolChoice> {
@@ -1207,10 +1110,6 @@ fn read_gemini_tool_choice(
         GEMINI_AUTO => Some(crate::codec::ir::IrToolChoice::Auto),
         keys::NONE_UPPER => Some(crate::codec::ir::IrToolChoice::None),
         GEMINI_ANY => {
-            // `allowedFunctionNames` is a list but `Tool` models one tool. One name maps to
-            // `Tool{name}`; with N>1, `Tool{first}` would invent a stricter constraint, so the
-            // directive is `Required` and the subset rides `allowed_tools` (IR-10,
-            // `read_gemini_allowed_tools`).
             let names = fcc
                 .get(FIELD_ALLOWED_FUNCTION_NAMES)
                 .and_then(|a| a.as_array());
@@ -1241,8 +1140,7 @@ fn write_gemini_tool_choice(tc: &crate::codec::ir::IrToolChoice) -> serde_json::
 }
 
 /// Default an absent `functionCall.args` to `{}`, not `null`. A zero-argument call omits `args` or
-/// sends an empty object; `null` leaked `"input": null` onto Anthropic/OpenAI egress, which strict
-/// SDKs reject. An explicitly present value (even `null`) is kept verbatim.
+
 fn empty_object_if_absent(args: Option<&serde_json::Value>) -> serde_json::Value {
     match args {
         Some(v) => v.clone(),
@@ -1251,13 +1149,8 @@ fn empty_object_if_absent(args: Option<&serde_json::Value>) -> serde_json::Value
 }
 
 /// Coerce an `IrBlock::ToolUse.input` into a valid `functionCall.args` (a protobuf Struct, so it
-/// must be a JSON object). A cross-protocol reader can hand us an array, scalar, `null` or
-/// unparseable string, which the backend 400s. As with `ToolResult.response` below: an object passes
-/// through byte-identical (keeping Gemini round-trips lossless), `null` becomes `{}`, and any other
-/// value is wrapped as `{"args": <value>}`. A string is parsed first and the result coerced; an
-/// unparseable one is wrapped as a scalar.
+
 fn coerce_tool_args(input: &serde_json::Value) -> serde_json::Value {
-    // A string is a serialized payload: parse it, else keep the string (a scalar). Non-strings as-is.
     let candidate: serde_json::Value = match input.as_str() {
         Some(s) => crate::codec::json::parse_str(s).unwrap_or_else(|_| input.clone()),
         None => input.clone(),
@@ -1272,12 +1165,7 @@ fn coerce_tool_args(input: &serde_json::Value) -> serde_json::Value {
 }
 
 /// True when a response/stream chunk has no usable `candidates` (absent, non-array or empty),
-/// distinguishing a prompt-block / error-only envelope from a candidate-bearing chunk. An empty
-/// `candidates: []` counts as missing: a native prompt rejection
-/// (`{"candidates":[],"promptFeedback":{"blockReason":"SAFETY"}}`) carries one, and keying on
-/// presence let it skip the prompt-block arm in both readers (a bare unterminated stream, and a
-/// spurious `ir_parse` error from `candidates.is_empty()`), dropping a content-policy block. An
-/// empty array with no block reason still falls through to the handling below.
+
 fn candidates_absent(data: &serde_json::Value) -> bool {
     match data.get(FIELD_CANDIDATES).and_then(|c| c.as_array()) {
         Some(arr) => arr.is_empty(),
@@ -1286,8 +1174,7 @@ fn candidates_absent(data: &serde_json::Value) -> bool {
 }
 
 /// A top-level `promptFeedback.blockReason` (the prompt-level block signal), e.g.
-/// `{"promptFeedback":{"blockReason":"SAFETY"}}`. The raw reason (SAFETY / BLOCKLIST /
-/// PROHIBITED_CONTENT / OTHER / …) for mapping to a stop reason; `None` when absent or empty.
+
 fn prompt_block_reason(data: &serde_json::Value) -> Option<&str> {
     data.get(FIELD_PROMPT_FEEDBACK)
         .and_then(|pf| pf.get("blockReason"))
@@ -1296,13 +1183,7 @@ fn prompt_block_reason(data: &serde_json::Value) -> Option<&str> {
 }
 
 /// Map a candidate `finishReason` to a canonical IR stop reason. `STOP`/`MAX_TOKENS`/`SAFETY` map
-/// to `end_turn`/`max_tokens`/`safety`. Content-policy stops (`RECITATION`, `IMAGE_SAFETY`, `SPII`,
-/// `BLOCKLIST`, `PROHIBITED_CONTENT`) map to `safety`. `MALFORMED_FUNCTION_CALL` (an unparseable tool
-/// call: generation failed, there is no call to run) maps to `error`, not `tool_use`, which would
-/// tell the client to execute a call that does not exist. `OTHER`, `LANGUAGE` and unknown future
-/// reasons map to `Other` (they were once lowercased verbatim into values no SDK enum recognizes).
-/// A Gemini round-trip is unaffected: the writer emits `Other` as `OTHER` and `safety` as `SAFETY`.
-/// Do not simplify `_ => S::Other` to `S::EndTurn`: that would turn a Gemini `OTHER` stop into `STOP`.
+
 fn map_gemini_finish_reason(finish_reason: &str) -> crate::codec::ir::IrStopReason {
     use crate::codec::ir::IrStopReason as S;
     match finish_reason {
@@ -1314,52 +1195,44 @@ fn map_gemini_finish_reason(finish_reason: &str) -> crate::codec::ir::IrStopReas
         | "SPII"
         | GEMINI_BLOCKLIST
         | GEMINI_FINISH_PROHIBITED_CONTENT
-        // Image-generation content-policy stops (IR audit GEM-15), as their text siblings above.
         | "IMAGE_PROHIBITED_CONTENT"
         | "IMAGE_RECITATION" => S::Safety,
-        // An invalid function call is an abnormal stop with no runnable call. `UNEXPECTED_TOOL_CALL`
-        // (a tool called while none was enabled) is the same failed generation (GEM-15).
+
         GEMINI_FINISH_MALFORMED_FUNCTION_CALL | "UNEXPECTED_TOOL_CALL" => S::Error,
-        // OTHER / LANGUAGE / any novel future reason.
+
         _ => S::Other,
     }
 }
 
 /// Map a `promptFeedback.blockReason` to a canonical IR stop reason. A prompt block refuses the
-/// input on content policy, so the well-known reasons surface as `safety` (as candidate-level
-/// `SAFETY` does); any other reason is lowercased so a novel one is surfaced, not dropped.
+
 fn prompt_block_stop_reason(block_reason: &str) -> crate::codec::ir::IrStopReason {
     use crate::codec::ir::IrStopReason as S;
     match block_reason {
-        // RECITATION maps to Safety at the candidate level (see GEMINI_FINISH_RECITATION); same here.
         GEMINI_FINISH_SAFETY
         | GEMINI_BLOCKLIST
         | GEMINI_FINISH_PROHIBITED_CONTENT
         | GEMINI_FINISH_RECITATION
-        // A prompt blocked for its image content is the same policy block (IR audit GEM-15).
         | GEMINI_IMAGE_SAFETY => S::Safety,
         _ => S::Other,
     }
 }
 
 /// IR stop reason to Gemini's native `finishReason`. Exhaustive. The enum has no TOOL_USE, so
-/// EndTurn/StopSequence/ToolUse give STOP; MaxTokens gives MAX_TOKENS; Safety gives SAFETY; any
-/// other gives the native `OTHER` (valid and honest, never an off-spec token).
+
 fn write_gemini_stop_reason(reason: crate::codec::ir::IrStopReason) -> &'static str {
     use crate::codec::ir::IrStopReason as S;
     match reason {
         S::EndTurn | S::StopSequence | S::ToolUse => GEMINI_FINISH_STOP,
         S::MaxTokens => GEMINI_FINISH_MAX_TOKENS,
         S::Safety => GEMINI_FINISH_SAFETY,
-        // A refusal has no Gemini finishReason: written as `OTHER`. `SAFETY` names a safety filter,
-        // which a refusal is not, so writing it would substitute a value the source never stated.
+
         S::Refusal | S::Error | S::PauseTurn | S::Other => GEMINI_FINISH_OTHER,
     }
 }
 
 /// Map a canonical `StatusClass` onto the `(HTTP code, google.rpc.Code name)` pair Gemini uses in
-/// its `google.rpc.Status` error envelope. Exhaustive over `StatusClass` (no `_ =>` catch-all) so
-/// a new class forces a conscious choice here rather than silently degrading to INTERNAL.
+
 fn gemini_stream_error_code_status(class: StatusClass) -> (u16, &'static str) {
     match class {
         StatusClass::RateLimit => (429, GRPC_RESOURCE_EXHAUSTED),
@@ -1375,13 +1248,7 @@ fn gemini_stream_error_code_status(class: StatusClass) -> (u16, &'static str) {
 }
 
 /// Map an inline google.rpc.Status `(status name, code)`, as in a 200-status SSE error chunk's
-/// `error` object, to a `StatusClass`. Read-side inverse of `gemini_stream_error_code_status`, so
-/// the ingress writer can end the stream with a protocol-shaped error frame.
-///
-/// The UPPER_SNAKE google.rpc.Code `status` is preferred (what a native SDK branches on), falling
-/// back to the numeric HTTP `code` when `status` is absent or unrecognized. A name we do not model
-/// binds to a named arm, not a degrading `_` (`&str` matches are never exhaustive). An absent or
-/// unknown code gives `ServerError`: retryable, trips the breaker, never masks a failure as success.
+
 fn gemini_error_status_class(status: Option<&str>, code: Option<u64>) -> StatusClass {
     if let Some(name) = status {
         match name {
@@ -1400,8 +1267,7 @@ fn gemini_error_status_class(status: Option<&str>, code: Option<u64>) -> StatusC
             GRPC_INTERNAL | GEMINI_UNKNOWN | "DATA_LOSS" | GRPC_UNIMPLEMENTED => {
                 return StatusClass::ServerError
             }
-            // A status outside the modeled google.rpc.Code set falls through to the numeric `code`
-            // mapping. Named (not `_`) per the no-catch-all rule.
+
             other => {
                 let _ = other;
             }
@@ -1414,7 +1280,7 @@ fn gemini_error_status_class(status: Option<&str>, code: Option<u64>) -> StatusC
         Some(401) => StatusClass::Auth,
         Some(403) => StatusClass::Billing,
         Some(c) if (400..500).contains(&c) => StatusClass::ClientError,
-        // Any 5xx or absent/unknown code: ServerError, the breaker-tripping default.
+
         Some(_) | None => StatusClass::ServerError,
     }
 }
@@ -1504,11 +1370,7 @@ struct GeminiStreamBlock {
 }
 
 /// Value-namespace constructor for [`GeminiWriter`], so sites writing the bare `GeminiWriter`
-/// literal (`Protocol::gemini()`, tests) compile unchanged. Each use inlines a fresh writer with an
-/// empty `open_tool` buffer, giving the per-stream scoping the single-frame functionCall fix needs.
-///
-/// `declare_interior_mutable_const` is suppressed deliberately: a `static` would share one buffer
-/// across every stream and bleed one stream's open tool name into another. Mirrors `ResponsesWriter`.
+
 #[allow(non_upper_case_globals)]
 #[allow(clippy::declare_interior_mutable_const)]
 pub const GeminiWriter: GeminiWriter = GeminiWriter {
@@ -1587,7 +1449,7 @@ mod ir_round3_tests;
 mod df_map_audit_tests;
 
 /// A candidate's and the prompt's `safetyRatings[]` to IR safety verdicts: the category, with
-/// `blocked` as both `flagged` and `blocked`. The probability is Google's scale and does not cross.
+
 fn read_safety_ratings(
     body: &serde_json::Value,
     candidate: &serde_json::Value,
@@ -1615,7 +1477,7 @@ fn read_safety_ratings(
 }
 
 /// The IR safety verdicts as a candidate's `safetyRatings[]` (`{category, blocked}`, no
-/// probability). `None` when there are none.
+
 fn write_safety_ratings(safety: &[crate::codec::ir::IrSafetyVerdict]) -> Option<serde_json::Value> {
     (!safety.is_empty()).then(|| {
         serde_json::Value::Array(

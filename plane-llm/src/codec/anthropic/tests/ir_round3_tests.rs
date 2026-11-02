@@ -13,13 +13,8 @@ fn sse_payloads(out: &str) -> Vec<Value> {
         .collect()
 }
 
-// ───────────────────────────── item 10: served service tier ─────────────────────────────
-
 /// Item 10: a Chat backend's `service_tier` `flex` / `scale` rides the IR attribution slot; an
-/// Anthropic client never receives it (its SDK types the member standard | priority | batch).
-/// `default` is OpenAI's standard tier. Buffered. A tier Anthropic cannot name is the schema's
-/// `null`, never `standard` in its place (DF-SITES: no substitution), so the buffered answer agrees
-/// with the stream, whose `message_delta` omits it.
+
 #[test]
 fn item10_unknown_served_tier_never_reaches_an_anthropic_client_buffered() {
     for (openai_tier, want) in [
@@ -114,8 +109,6 @@ fn item10_unknown_served_tier_never_reaches_an_anthropic_client_stream() {
     }
 }
 
-// ─────────────────────── item 12: thinking that cannot be switched off ───────────────────────
-
 fn off_ask() -> crate::codec::ir::IrRequest {
     let mut ir = protocol_for("openai")
         .unwrap()
@@ -131,7 +124,7 @@ fn off_ask() -> crate::codec::ir::IrRequest {
 }
 
 /// Item 12: on a lane declaring `thinking_always_on` (Fable 5.x, Opus 5.5) an Off ask OMITS
-/// `thinking` — `{type:"disabled"}` 400s there. The default lane keeps today's bytes.
+
 #[test]
 fn item12_off_omits_thinking_on_an_always_on_lane() {
     let w = protocol_for("anthropic").unwrap();

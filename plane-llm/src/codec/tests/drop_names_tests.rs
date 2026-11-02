@@ -2,11 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! A DROP IS NAMED BY THE CALLER'S WIRE PATH (design F3 "Drops"). A seam gate (`n`, the reasoning
-//! ask, the prompt-cache breakpoints, the stop cap) and a control the far end's dialect has no
-//! form for are named, in the warn's `path=` field and in the seam's audit, by the path the
-//! caller's own dialect spells them at (its map file's row, notation A): a Gemini caller's
-//! `generationConfig.candidateCount`, not the IR slot `n`. A slot the caller's map file has no row
-//! for keeps the slot's name.
 
 use super::tests::prep;
 use crate::codec::egress_prep::EgressPrep;
@@ -67,7 +62,7 @@ fn translate(
 }
 
 /// Whether a captured warn carries exactly `path=<path>` as one of its fields; `drop_path` picks the
-/// one drop path's warn (it carries `diag=`) or a writer's control warn (it does not).
+
 fn warned(cap: &WarnCapture, path: &str, drop_path: bool) -> bool {
     let field = format!("path={path}");
     cap.messages()
@@ -76,7 +71,7 @@ fn warned(cap: &WarnCapture, path: &str, drop_path: bool) -> bool {
 }
 
 /// A seam gate's drop is warned on the one drop path and audited under `path`, and never under the
-/// IR name `slot` (unless the two are the same).
+
 fn gate_named(ingress: &str, egress: &str, body: Value, path: &str, slot: &str) {
     let (audited, cap) = translate(ingress, egress, &body, CLOSED);
     assert!(
@@ -102,7 +97,7 @@ fn gate_named(ingress: &str, egress: &str, body: Value, path: &str, slot: &str) 
 }
 
 /// A control the far end's dialect has no form for is warned by the far end's writer and audited
-/// under `path`, never under the IR name `slot` (unless the two are the same).
+
 fn control_named(ingress: &str, egress: &str, body: Value, path: &str, slot: &str) {
     let (audited, cap) = translate(ingress, egress, &body, OPEN);
     assert!(
@@ -121,8 +116,6 @@ fn control_named(ingress: &str, egress: &str, body: Value, path: &str, slot: &st
         );
     }
 }
-
-// ───────────────────────────── OpenAI Chat: the slot names are its own ─────────────────────────────
 
 #[test]
 fn openai_chat_gates_are_named_by_its_own_wire_path() {
@@ -154,8 +147,6 @@ fn openai_chat_control_drop_is_named_by_its_own_wire_path() {
     );
 }
 
-// ───────────────────────────── OpenAI Responses ─────────────────────────────
-
 #[test]
 fn responses_gate_is_named_by_its_wire_path() {
     gate_named(
@@ -177,8 +168,6 @@ fn responses_control_drop_is_named_by_its_wire_path() {
         "verbosity",
     );
 }
-
-// ───────────────────────────── Anthropic ─────────────────────────────
 
 #[test]
 fn anthropic_gate_is_named_by_its_wire_path() {
@@ -205,8 +194,6 @@ fn anthropic_control_drop_is_named_by_its_wire_path() {
     );
 }
 
-// ───────────────────────────── Gemini ─────────────────────────────
-
 #[test]
 fn gemini_gate_is_named_by_its_wire_path() {
     gate_named(
@@ -230,8 +217,6 @@ fn gemini_control_drop_is_named_by_its_wire_path() {
         "seed",
     );
 }
-
-// ───────────────────────────── Bedrock ─────────────────────────────
 
 #[test]
 fn bedrock_gate_is_named_by_its_wire_path() {
@@ -258,8 +243,6 @@ fn bedrock_control_drop_is_named_by_its_wire_path() {
     );
 }
 
-// ───────────────────────────── Cohere ─────────────────────────────
-
 #[test]
 fn cohere_gate_is_named_by_its_wire_path() {
     gate_named(
@@ -284,8 +267,7 @@ fn cohere_control_drop_is_named_by_its_wire_path() {
 }
 
 /// A member the caller's map file has no row for, carried by the reader's own code: Cohere's
-/// budget ask is its `thinking.token_budget` member, and the gate's drop is named by it (DF-SITES: the
-/// reader's request code names), not by the IR name.
+
 #[test]
 fn a_slot_the_callers_reader_carries_by_code_is_named_by_its_wire_path() {
     gate_named(

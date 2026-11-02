@@ -2,12 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! EVERY RESPONSES USAGE COUNT IS LEDGERED, A DECLARED SLICE, OR THE CHECKED TOTAL (MONEY-AUDIT
-//! A-F4). The census is the pinned wire lock (`testing/llm-conformance/wire/responses.wire.json`):
-//! every integer member under `usage` has a declared class below, and the reader is driven on the
-//! buffered response, the streamed `response.completed` terminal and a truncated-body recovery to
-//! prove the class. `total_tokens` is OpenAI's sum, not a unit of its own: a gap between it and
-//! the ledgered classes is reported on the usage identity note (with its WARN), and a total ABOVE
-//! them ledgers the remainder as the open class `unitemized_tokens` (owner LEDGER-100).
 
 use super::*;
 use crate::codec::ir::StreamDecodeState;
@@ -32,9 +26,6 @@ const RESPONSES_COUNT_CLASSES: &[(&str, Class)] = &[
         "input_tokens_details.cached_tokens",
         Class::Ledgered(-1, 1, 0, 0),
     ),
-    // A slice of `input_tokens` billed at the input tier, as 1.5.5 billed it (it never split a
-    // cache write out of an OpenAI input total: v1.5.5 `crates/busbar/src/proto/openai_responses/reader.rs:1022, :1341`,
-    // `cache_creation_input_tokens: None`).
     (
         "input_tokens_details.cache_write_tokens",
         Class::SliceOf("input_tokens"),
@@ -48,7 +39,7 @@ const RESPONSES_COUNT_CLASSES: &[(&str, Class)] = &[
 ];
 
 /// The integer members the pinned wire lock declares under `usage` on a response, by their path
-/// below `usage`.
+
 fn lock_usage_counts() -> Vec<String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../testing/llm-conformance/wire/responses.wire.json");
@@ -99,7 +90,7 @@ fn units(u: &busbar_contract::billing::TokenUsage) -> Units {
 }
 
 /// The `unitemized_tokens` a usage ledgers: the stated total above its itemized classes (owner
-/// LEDGER-100), read through both ledger projections.
+
 fn unitemized(u: &busbar_contract::billing::TokenUsage) -> u64 {
     let l = crate::codec::usage_census::ledgered(u);
     let k = crate::codec::usage_census::slot(crate::codec::ir::open_class::UNITEMIZED_TOKENS_CLASS);
@@ -114,7 +105,7 @@ fn note_of(u: &crate::codec::ir::IrUsage) -> Note {
 }
 
 /// The ledgered units and the identity note on each read path: buffered, streamed, truncated
-/// (the truncated recovery carries units only).
+
 fn read_all_paths(usage: &serde_json::Value) -> [(Units, Note, u64); 3] {
     let body = serde_json::json!({
         "id": "resp_census",
@@ -168,10 +159,7 @@ fn read_all_paths(usage: &serde_json::Value) -> [(Units, Note, u64); 3] {
 }
 
 /// EVERY COUNT IN THE WIRE LOCK HAS A CLASS, AND THE READER HONOURS IT ON EVERY PATH. Reporting 7
-/// more of a ledgered count moves (input, cache read, cache write, output) by exactly its class; 7
-/// more of a slice moves nothing; 7 more on `total_tokens` alone moves no token class, is reported
-/// as a 7-unit gap and ledgers 7 `unitemized_tokens` (owner LEDGER-100). RED when the reader drops a ledgered count (a usage-table row removed),
-/// mis-classes one, stops checking the stated total, or the lock gains a count nobody classed.
+
 #[test]
 fn every_usage_count_in_the_wire_lock_is_ledgered_or_a_declared_slice() {
     let counts = lock_usage_counts();
@@ -196,8 +184,6 @@ fn every_usage_count_in_the_wire_lock_is_ledgered_or_a_declared_slice() {
         bump(&mut usage, field, 7);
         let (moved, gap, remainder) = match class {
             Class::Ledgered(di, dc, dw, dout) => {
-                // The stated total moves by what the count adds to the ledgered classes, so the
-                // identity still closes.
                 let adds = u64::try_from(di + dc + dw + dout).expect("non-negative");
                 bump(&mut usage, "total_tokens", 7 * adds);
                 ((7 * di, 7 * dc, 7 * dw, 7 * dout), None, 0)
@@ -239,9 +225,7 @@ fn every_usage_count_in_the_wire_lock_is_ledgered_or_a_declared_slice() {
 }
 
 /// A STATED TOTAL ABOVE ITS TERMS (a compatible backend counting reasoning outside
-/// `output_tokens`): total 35 against input 10 + output 5. The ledger holds what the counts itemize
-/// (10 in, 5 out); the 20-unit gap is reported with its WARN and ledgered as 20
-/// `unitemized_tokens`, one line (owner LEDGER-100; RED before this lane: an unbilled residual).
+
 #[test]
 fn a_total_above_the_ledgered_classes_ledgers_the_remainder_as_unitemized_tokens() {
     let usage = serde_json::json!({

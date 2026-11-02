@@ -2,10 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR-18 provenance survives the CLIENT round trip (architect ruling).
-//!
-//! The probe is the whole trip: an Anthropic backend answers a Responses client with signed
-//! thinking; the client sends the reasoning item back on its next turn; the Anthropic egress must
-//! carry the ORIGINAL signature byte-identical — buffered and stream.
 
 use super::sig_envelope::{self, ENVELOPE_PREFIX};
 use super::IrSignatureOrigin;
@@ -95,7 +91,7 @@ fn sse_payloads(out: &str) -> Vec<serde_json::Value> {
 }
 
 /// Feed each Anthropic SSE `data` payload through `t` as a framed event and collect every byte it
-/// writes, including the finish flush.
+
 fn feed_frames(
     t: &mut crate::codec::proto_stream::StreamTranslate,
     frames: impl IntoIterator<Item = String>,
@@ -127,11 +123,11 @@ fn ir18_envelope_round_trips_bytes_and_origin() {
                 sig_envelope::unwrap(&wrapped),
                 Some((origin, sig.to_string()))
             );
-            // Idempotent: wrapping an envelope again never nests it.
+
             assert_eq!(sig_envelope::wrap(origin, &wrapped), wrapped);
         }
     }
-    // A genuine vendor blob (no prefix, or a malformed envelope) is the carrier's own.
+
     assert_eq!(
         sig_envelope::read_carried(CLAUDE_SIG.into(), Some(IrSignatureOrigin::OpenAi)),
         (CLAUDE_SIG.to_string(), Some(IrSignatureOrigin::OpenAi))
@@ -220,8 +216,7 @@ fn ir18_claude_signature_survives_a_responses_client_round_trip_stream() {
 }
 
 /// The reverse trip: an OpenAI `encrypted_content` given to an Anthropic client comes back to a
-/// Responses backend as the original blob (it used to be read back as an Anthropic signature and
-/// dropped as foreign on Responses egress).
+
 #[test]
 fn ir18_openai_blob_survives_an_anthropic_client_round_trip() {
     let responses_answer = serde_json::json!({
@@ -277,8 +272,6 @@ fn ir18_openai_blob_survives_an_anthropic_client_round_trip() {
         .collect();
     assert_eq!(blobs, vec!["gAAAAB-openai-blob=="], "{out}");
 }
-
-// ───────────────────────── item 19: the same trip through a Gemini client ─────────────────────────
 
 /// The Gemini client's next turn: it replays the thought part it was given (text + signature).
 fn gemini_follow_up(thought_signature: &str) -> serde_json::Value {

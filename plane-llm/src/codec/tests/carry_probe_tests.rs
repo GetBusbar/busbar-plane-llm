@@ -2,18 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE CARRY PROBE (DF-MAP per-dialect audit, design F3/F4): which wire paths a dialect actually maps
-//! through the IR, MEASURED rather than read off the code.
-//!
-//! For every scalar path of the dialect's wire lock (`testing/llm-conformance/wire/<lock>.wire.json`),
-//! request and buffered response: plant a unique marker at that path in a minimal valid body, read it,
-//! clear the request's `extra` (exactly what the cross-dialect seam does), write it back in the SAME
-//! dialect, and look for the marker at the same path. A survivor is a path the dialect maps into and
-//! out of the IR, so its map file must declare it; a loss is either a field with no IR home (a
-//! no-equivalent mark, or a slot) or a miss. One line per path on stdout:
-//! `PROBE\t<lock>\t<direction>\t<path>\t<carried|lost|refused>`.
-//!
-//! A measurement, not a gate: `#[ignore]`d, run on demand with
-//! `cargo test -p busbar-plane-llm --lib carry_probe -- --ignored --nocapture`.
 
 use serde_json::{json, Map, Value};
 
@@ -46,7 +34,7 @@ fn segments(path: &str) -> Vec<Seg> {
 }
 
 /// The first scalar type of a lock entry's `type` (`null|string` is `string`), or `None` for a
-/// container.
+
 fn scalar(entry: &Value) -> Option<&'static str> {
     let ty = entry.get("type")?.as_str()?;
     ["string", "integer", "number", "boolean"]
@@ -104,7 +92,7 @@ fn fill_siblings(obj: &mut Map<String, Value>, prefix: &str, lock: &Map<String, 
 }
 
 /// Plant `value` at `path` into `root`, building the structure it names (a NEW array element at
-/// every `[]`), with each built object's scalar siblings filled from the lock.
+
 fn plant(root: &mut Value, path: &str, value: Value, lock: &Map<String, Value>) {
     let segs = segments(path);
     let mut cur = root;

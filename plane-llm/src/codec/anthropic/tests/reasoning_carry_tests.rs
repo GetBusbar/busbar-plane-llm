@@ -1,14 +1,12 @@
 //! The gated cross-protocol reasoning/thinking carry. The GATE lives at
-//! `IrReq::prepare_for_egress` (per-lane `reasoning` flag); these tests cover the codec halves
-//! (read the ask, project it) plus the gate itself, the clamp, and the sampling-knob omission.
+
 use super::super::proto_codec::{Protocol, ProtocolReader, ProtocolWriter};
 use super::{anthropic_writer, AnthropicReader};
 use crate::codec::egress_prep::{EgressPrep, LaneCaps};
 use crate::codec::ir::{IrReasoningAsk, IrReasoningEffort};
 
 /// A lane that declares adaptive thinking (Opus 4.7+/5.x, Sonnet 5, Fable). Every word-form
-/// assertion below that expects `thinking:{type:"adaptive"}` is about such a lane; a lane that
-/// declares nothing gets `budget_tokens` (see `effort_on_a_default_lane_is_budget_tokens`).
+
 fn adaptive(ir: &crate::codec::ir::IrRequest) -> serde_json::Value {
     anthropic_writer().write_request_for_lane(
         crate::codec::test_host::HOST,
@@ -31,7 +29,7 @@ fn openai_effort_body(effort: &str) -> serde_json::Value {
 }
 
 /// OpenAI `reasoning_effort` word -> Anthropic ADAPTIVE thinking + `output_config.effort` (ANT-10):
-/// a word-form ask never becomes `budget_tokens`, which Opus 4.7+/5.x, Sonnet 5 and Fable reject.
+
 #[test]
 fn openai_effort_projects_to_anthropic_adaptive_effort() {
     let ir = super::super::openai_chat::OpenAiReader
@@ -49,8 +47,7 @@ fn openai_effort_projects_to_anthropic_adaptive_effort() {
 }
 
 /// The same word-form ask on a lane that does NOT declare adaptive thinking (the default — Haiku
-/// 4.5, Sonnet 4.5, Opus 4.5 and older, which reject adaptive) is `thinking.budget_tokens` through
-/// the effort table, and no `output_config.effort`.
+
 #[test]
 fn effort_on_a_default_lane_is_budget_tokens() {
     let ir = super::super::openai_chat::OpenAiReader
@@ -68,7 +65,7 @@ fn effort_on_a_default_lane_is_budget_tokens() {
         "{out}"
     );
     assert!(out.get("output_config").is_none(), "{out}");
-    // The model-blind write is the default-lane write.
+
     assert_eq!(
         anthropic_writer().write_request(crate::codec::test_host::HOST, &ir),
         out
@@ -76,7 +73,7 @@ fn effort_on_a_default_lane_is_budget_tokens() {
 }
 
 /// Anthropic budget -> Gemini `thinkingBudget` is a straight number copy; and Gemini's
-/// dynamic -1 round-trips to Gemini verbatim.
+
 #[test]
 fn budgets_copy_between_anthropic_and_gemini() {
     let body = serde_json::json!({
@@ -145,13 +142,12 @@ fn budget_bucketizes_to_effort_words() {
     let ir = AnthropicReader.read_request(&body).expect("parses");
     let out = super::super::openai_chat::openai_writer()
         .write_request(crate::codec::test_host::HOST, &ir);
-    // 6000 sits between low (4096) and medium (8192) -> "low" (largest entry reached).
+
     assert_eq!(out["reasoning_effort"], "low");
 }
 
 /// The Anthropic clamp on a NUMERIC ask: budget must leave >=1024 answer tokens under
-/// max_tokens; too-small max_tokens drops the ask entirely (no thinking key, and sampling knobs
-/// survive). A word-form ask is adaptive and has no budget to clamp.
+
 #[test]
 fn anthropic_clamps_and_drops_by_max_tokens() {
     let budget_ir = |max_tokens: u32| crate::codec::ir::IrRequest {
@@ -163,19 +159,16 @@ fn anthropic_clamps_and_drops_by_max_tokens() {
         reasoning: Some(IrReasoningAsk::Budget(16384)),
         ..Default::default()
     };
-    // Clamped: 16384 under max_tokens 4096 -> 3072.
+
     let out = anthropic_writer().write_request(crate::codec::test_host::HOST, &budget_ir(4096));
     assert_eq!(out["thinking"]["budget_tokens"], 3072);
 
-    // Dropped: max_tokens 1500 leaves <1024 of thinking -> no thinking key at all.
     let out2 = anthropic_writer().write_request(crate::codec::test_host::HOST, &budget_ir(1500));
     assert!(
         out2.get("thinking").is_none(),
         "no room -> no thinking: {out2}"
     );
 
-    // A word-form ask at the same small max_tokens on an ADAPTIVE lane: nothing to clamp, still
-    // emitted.
     let mut small = openai_effort_body("high");
     small["max_tokens"] = serde_json::json!(1500);
     let ir3 = super::super::openai_chat::OpenAiReader
@@ -186,7 +179,7 @@ fn anthropic_clamps_and_drops_by_max_tokens() {
 }
 
 /// Anthropic rejects modified temperature/top_p alongside thinking: both are omitted (observably via
-/// warn) when the ask is emitted, and present when it is not.
+
 #[test]
 fn thinking_omits_incompatible_sampling_knobs() {
     let mut body = openai_effort_body("low");
@@ -211,7 +204,6 @@ fn thinking_omits_incompatible_sampling_knobs() {
         assert!(cap.contains(field), "{:?}", cap.messages());
     }
 
-    // Without a reasoning ask the same temperature is emitted normally.
     let mut plain = openai_effort_body("low");
     plain.as_object_mut().unwrap().remove("reasoning_effort");
     plain["temperature"] = serde_json::json!(0.5);
@@ -223,8 +215,7 @@ fn thinking_omits_incompatible_sampling_knobs() {
 }
 
 /// Anthropic rejects top_k modifications alongside thinking: top_k must be dropped when the
-/// thinking ask is emitted, while `thinking` itself is present. Driven from an Anthropic-native
-/// request (where `top_k` is a first-class IR field) carrying both a thinking budget and top_k.
+
 #[test]
 fn thinking_omits_top_k() {
     let body = serde_json::json!({
@@ -235,7 +226,7 @@ fn thinking_omits_top_k() {
         "top_k": 40
     });
     let ir = AnthropicReader.read_request(&body).expect("parses");
-    // Precondition: top_k arrived as a first-class field (not stranded in extra).
+
     assert_eq!(ir.top_k, Some(40), "top_k must be read as first-class");
     let out = anthropic_writer().write_request(crate::codec::test_host::HOST, &ir);
     assert!(
@@ -247,7 +238,6 @@ fn thinking_omits_top_k() {
         "top_k must be dropped with thinking (Anthropic 400s on it): {out}"
     );
 
-    // Without a reasoning ask the same top_k is emitted normally.
     let plain = serde_json::json!({
         "model": "claude-3-5-sonnet",
         "messages": [{"role": "user", "content": "hi"}],
@@ -260,7 +250,7 @@ fn thinking_omits_top_k() {
 }
 
 /// THE GATE: prepare_for_egress clears the ask when the lane did not claim the capability and
-/// stamps the budget table when it did. Absence of an ask is untouched either way.
+
 #[test]
 fn seam_gate_clears_or_stamps() {
     let prep = |allowed: bool| EgressPrep {
@@ -295,8 +285,7 @@ fn seam_gate_clears_or_stamps() {
         Some(IrReasoningAsk::Effort(IrReasoningEffort::High))
     );
     assert_eq!(allowed.reasoning_budgets, Some([1024, 2048, 3072, 4096]));
-    // An effort word projects to an adaptive lane as adaptive thinking at that effort (no table
-    // lookup).
+
     let out = adaptive(&allowed);
     assert_eq!(out["thinking"]["type"], "adaptive");
     assert_eq!(out["output_config"]["effort"], "high");
@@ -312,11 +301,9 @@ fn seam_gate_clears_or_stamps() {
 }
 
 /// CROSS-protocol Gemini egress MUST request `includeThoughts: true` alongside the budget, or
-/// a real Gemini backend spends the budget but returns no thought parts (empty carry).
+
 #[test]
 fn gemini_cross_protocol_egress_requests_include_thoughts() {
-    // openai reader -> IR carries a reasoning ask and NO native gemini generationConfig,
-    // so the gemini writer takes the synthesized (cross-protocol) path.
     let ir = super::super::openai_chat::OpenAiReader
         .read_request(&openai_effort_body("high"))
         .expect("parses");
@@ -346,14 +333,14 @@ fn responses_effort_round_trips() {
         ir.reasoning,
         Some(IrReasoningAsk::Effort(IrReasoningEffort::Medium))
     );
-    // Cross-protocol: extra cleared -> the typed field emits the native shape.
+
     let mut cleared = ir.clone();
     cleared.extra.clear();
     let out = Protocol::responses()
         .writer()
         .write_request(crate::codec::test_host::HOST, &cleared);
     assert_eq!(out["reasoning"]["effort"], "medium");
-    // Anthropic egress on an adaptive lane: medium -> adaptive thinking at effort medium.
+
     let mut with_max = cleared;
     with_max.max_tokens = Some(32000);
     let aout = adaptive(&with_max);
@@ -362,7 +349,7 @@ fn responses_effort_round_trips() {
 }
 
 /// A tiny cross-protocol budget (below the `low` table entry) must NOT emit the o-series-
-/// invalid `reasoning_effort: "minimal"` on OpenAI egress — it maps to `"low"` to avoid a 400.
+
 #[test]
 fn small_budget_maps_to_low_not_minimal_on_openai() {
     let body = serde_json::json!({
@@ -380,7 +367,7 @@ fn small_budget_maps_to_low_not_minimal_on_openai() {
 }
 
 /// A disabled-form `thinking` param reads as the explicit OFF ask (IR-09, ANT-09) and still rides
-/// extra for same-proto fidelity; no foreign target gains an ENABLE ask from it.
+
 #[test]
 fn disabled_thinking_stays_in_extra() {
     let body = serde_json::json!({
@@ -398,7 +385,7 @@ fn disabled_thinking_stays_in_extra() {
             c.extra.clear();
             c
         });
-    // Gemini's OFF is `thinkingBudget: 0`; anything else there would be an enable ask.
+
     let budget = gout.pointer("/generationConfig/thinkingConfig/thinkingBudget");
     assert!(
         budget.is_none() || budget == Some(&serde_json::json!(0)),

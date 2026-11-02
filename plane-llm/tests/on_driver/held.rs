@@ -2,10 +2,10 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The hook tests the legacy llm crate carries beyond the 1.5.5 set, held on the driver before that
-//! crate is deleted: the access amendment a hook handed the prompt leaves (`hook_access_tests`),
-//! the operation-general projection (`hook_non_chat_projection_tests`) and the in-band system turn
-//! (`hook_system_turn_tests`), each under its name with its values. The two seat-order tests ride
-//! the serving path's real admission and ledger, and are held there.
+
+
+
+
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -22,10 +22,10 @@ use serde_json::{json, Value};
 use super::policies::{capturing, RewritingGate};
 use crate::rig::{member, Answered, Hooks, Pool, Rig};
 
-// ── the access amendment ─────────────────────────────────────────────────────────────────────────
+
 
 /// Every hook access the node journal holds for `name` (the journal is process-wide: every hook
-/// here carries a name no other test uses).
+
 fn accesses(name: &str) -> Vec<Access> {
     node_recent()
         .into_iter()
@@ -223,10 +223,10 @@ async fn a_global_tap_leaves_an_access_amendment_only_when_handed_the_prompt() {
     assert!(accesses("access-tap-shape").is_empty());
 }
 
-// ── the operation-general projection ─────────────────────────────────────────────────────────────
+
 
 /// The exact strings a `prompt: ro` hook is shown for `body` posted to `path`, flattened across
-/// turns, and the size signal.
+
 async fn gate_view(path: &str, content_type: &str, body: &[u8]) -> (String, usize) {
     let (seen, policy) = capturing(true, false, None);
     let rig = Rig::new(
@@ -287,7 +287,7 @@ async fn image_body_is_no_longer_gate_blind() {
 
 #[tokio::test]
 async fn speech_body_projects_input_and_instructions() {
-    // The OpenAI `/v1/audio/speech` request body as a client sends it.
+
     let v: Value = serde_json::from_str(include_str!("speech_request.json"))
         .expect("the speech request fixture is JSON");
     let (view, _) = json_view("/v1/audio/speech", v).await;
@@ -312,7 +312,7 @@ async fn moderation_body_projects_text_and_marks_image_url_opaque() {
     )
     .await;
     assert!(view.contains("SCREEN-THIS-TEXT"));
-    // The image URL is present-but-unscreenable, shown as the marker — not empty, not leaked.
+
     assert!(view.contains(busbar_contract::ir::facts::OPAQUE_CONTENT_MARKER));
     assert!(!view.contains("x.test"));
 }
@@ -346,7 +346,7 @@ async fn transcription_prompt_is_seen_through_the_byte_seam() {
     );
 }
 
-// ── the in-band system turn ──────────────────────────────────────────────────────────────────────
+
 
 /// What a hook was shown.
 #[derive(Debug, Clone, PartialEq)]
@@ -358,7 +358,7 @@ struct Seen {
 }
 
 /// A headroom-shaped compressor: echoes every turn as `{role, content}`, keeps a `system` turn and
-/// the last turn verbatim, and replaces every other turn's text.
+
 struct Compressor(Mutex<Option<Seen>>);
 
 #[async_trait::async_trait]
@@ -408,7 +408,7 @@ impl RoutingPolicy for Compressor {
 }
 
 /// One rw hook over `v` posted to `path` in a same-dialect pool served by `provider`: what the
-/// hook saw, and the body the far end was sent.
+
 async fn rewrite(path: &str, provider: &'static str, v: Value) -> (Seen, Value) {
     let hook = Arc::new(Compressor(Mutex::new(None)));
     let rig = Rig::new(
@@ -580,10 +580,10 @@ async fn responses_instructions_are_system_and_a_system_item_is_a_turn() {
     assert_eq!(c.message_count, 2);
 }
 
-// ── F25 REHOME: the per-dialect rewrite write-back (coverage map v2) ─────────────────────────────
+
 
 /// `v` posted to `path` in a same-dialect pool served by `provider`, under a rw hook answering
-/// `messages`: the body the far end was sent.
+
 async fn rewritten(path: &str, provider: &'static str, v: Value, messages: Vec<Value>) -> Value {
     let rig = Rig::new(
         Pool {
@@ -612,7 +612,7 @@ async fn rewritten(path: &str, provider: &'static str, v: Value, messages: Vec<V
 }
 
 /// The plane's own rewrite step over `body` arriving at `target`: the rewritten body, `None` when
-/// the rewrite leaves the arrival untouched (and then the arrival's body is unchanged).
+
 fn applied(target: &str, body: &[u8], rewrite: &Value) -> Option<Value> {
     use busbar_plane_llm::exchange::arrive::arrive;
     use busbar_plane_llm::exchange::project::apply_rewrite;
@@ -633,14 +633,14 @@ fn applied(target: &str, body: &[u8], rewrite: &Value) -> Option<Value> {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/usage_tap_tests.rs::apply_rewrite_renders_per_dialect`
-/// (coverage map v2 row 623). 1.5.5: a rewrite is written back in the caller's own dialect:
-/// Bedrock re-frames each message into content BLOCKS (`messages[0].content[0].text` "compressed",
-/// `messages[1].content[0].text` "prior"), Gemini into `contents`/`parts` with the assistant role
-/// mapped to `model`, Responses into its `input` list (a string `input` replaced); a rewrite message
-/// whose content is not text aborts a re-framing dialect untouched.
-///
-/// RED: a re-framing dialect gets the rewrite inserted verbatim (corrupting its shape), Gemini's
-/// assistant turn reaches the far end as another role, or a non-text rewrite is half-applied.
+
+
+
+
+
+
+
+
 #[tokio::test]
 async fn apply_rewrite_renders_per_dialect() {
     let rewrite = vec![
@@ -689,12 +689,12 @@ async fn apply_rewrite_renders_per_dialect() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/usage_tap_tests.rs::gemini_rewrite_role_round_trips_model_and_assistant`
-/// (coverage map v2 row 624). 1.5.5: Gemini's native `model` role is shown to a hook as the
-/// canonical `assistant`, and the write-back accepts BOTH: a hook echoing `model` writes `model`
-/// back (never `user`), and a canonical `assistant` writes `model` too.
-///
-/// RED: a hook is shown `model` (a leaked dialect role), or an echoed `model`/`assistant` turn is
-/// written back as a user turn.
+
+
+
+
+
+
 #[tokio::test]
 async fn gemini_rewrite_role_round_trips_model_and_assistant() {
     let (seen, policy) = capturing(true, false, None);

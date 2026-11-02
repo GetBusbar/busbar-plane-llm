@@ -142,7 +142,7 @@ fn bedrock_rerank_writer_drops_return_documents_as_1_5_5_did() {
         "the drop is warned: {:?}",
         cap.messages()
     );
-    // The reader still reads a Bedrock caller's flag: nothing a caller sends is refused.
+
     let body = br#"{"query":"q","documents":["a"],"return_documents":true}"#;
     let back = read_rerank_request(body, "application/json").expect("read");
     assert_eq!(back.return_documents, Some(true));
@@ -172,9 +172,6 @@ fn bedrock_rerank_answer_echoes_no_document_as_1_5_5_did() {
     );
 }
 
-// L4: an oversize width/height must not WRAP through `as u32` (`4294967297 as u32 == 1`) — the
-// checked `u32::try_from(...).ok()` drops the geometry instead. Fails pre-fix: `size` became
-// `Wh { width: 1, .. }`.
 #[test]
 fn bedrock_image_oversize_geometry_does_not_wrap() {
     let body = serde_json::json!({
@@ -189,7 +186,6 @@ fn bedrock_image_oversize_geometry_does_not_wrap() {
         ir.size
     );
 
-    // A valid in-range geometry still parses.
     let body_ok = serde_json::json!({
         "textToImageParams": { "text": "a bus" },
         "imageGenerationConfig": { "width": 1024, "height": 768 },

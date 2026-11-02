@@ -1,20 +1,4 @@
 //! The far end's answer, sans I/O: the status, head fields and body the far end answered an attempt
-//! with, the units it reported, and what the answer means for the walk.
-//!
-//! [`Reply`] is one attempt's answer as a state machine over the far end's pieces: opened on the far
-//! end's status and head, fed its body piece by piece. Each [`Piece`] it answers carries the caller's
-//! head (on the first piece with anything for the caller), the caller's bytes, the far end's
-//! cumulative reported units, a [`Verdict`] and, when the answer failed, the [`Fault`] the far end's
-//! standing records. Three shapes:
-//!
-//! * a far-end error (any status outside 2xx) is read whole and judged ([`failure`]);
-//! * a success taken whole (across dialects without a stream, or asked to stream from a far end that
-//!   answered one body) is read whole and translated ([`whole`]);
-//! * any other success is relayed as it arrives ([`relay`]).
-//!
-//! Pure: no clock (wall-clock seconds and elapsed milliseconds arrive in [`At`]), no I/O, and no
-//! decision that is the kernel's (breaker, failover, money, timing, credentials); the plane reports
-//! and the kernel acts.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -124,7 +108,7 @@ pub struct Units {
 
 impl Units {
     /// The units of a token usage: its four token tiers, and every open class it counted (a turn's
-    /// billed searches) beside the open classes the answer's billing named.
+
     #[must_use]
     pub fn of(usage: Option<&TokenUsage>, mut open: BTreeMap<String, u64>) -> Self {
         let u = usage.cloned().unwrap_or_default();
@@ -194,14 +178,8 @@ enum State {
 pub struct Reply {
     state: State,
     /// The relayed answer ended a usable success the caller was reading (first byte reached it, stream
-    /// ended clean): a caller leaving while its last window is still being written bills the units
-    /// stated, as one leaving mid-relay does (L1#5). A relayed end that failed after the caller's first
-    /// byte yet bills what the far end reported (a failed generation, an aborted translation) sets it
-    /// too, as does a whole answer handed to the caller (a delivery, a failed generation, or a local
-    /// translation failure retaining reported usage): its body may span several windows.
     ended_partial: bool,
     /// A streamed answer over the invoke envelope, re-framed into its carried dialect's events
-    /// before it is read ([`invoke::Transcoder`]).
     invoke: Option<invoke::Transcoder>,
 }
 
@@ -225,7 +203,7 @@ fn json_array(ctx: &ReplyCtx<'_>) -> bool {
 }
 
 /// A WHOLE answer, rendered here in full (a translated answer, a judged failure, a refusal): its head
-/// states its length, so the caller is sent it under that length; a relayed answer states none and is sent as it is relayed.
+
 fn answered<'a>(r: Rendered, units: Units, verdict: Verdict, fault: Option<Fault>) -> Piece<'a> {
     let mut fields = r.fields;
     if !fields
@@ -281,8 +259,7 @@ impl Reply {
             };
         }
         let far_ct = wire::head_value(head, "content-type");
-        // A STREAM OVER THE INVOKE ENVELOPE is read as its carried dialect's stream: its frames are
-        // re-framed into that dialect's events before any byte is read.
+
         let invoke_stream = ctx.lane.invoke
             && far_ct
                 .and_then(wire::head_text)
@@ -308,9 +285,7 @@ impl Reply {
                 invoke: None,
             };
         };
-        // A translated answer, or one a stream-asking caller reads as its synthesised stream, is
-        // taken whole (its far head is relayed within one dialect at the end); any other
-        // same-dialect answer takes the relay path below, which carries the far head.
+
         if relay::takes_whole(
             ingress,
             egress,
@@ -438,9 +413,7 @@ impl Reply {
                     .collect();
                 let (piece, keeps_reported_usage) =
                     whole_piece(host, ctx, status, &body, &far_head, at);
-                // Keep the whole end's reported work across output windows, including a local
-                // rendering failure after that work completed. An end with no retained usage
-                // keeps its failure disposition; the host's delivered-byte billing rule still applies.
+
                 self.ended_partial = keeps_reported_usage;
                 piece
             }
@@ -452,9 +425,6 @@ impl Reply {
                 };
                 let head = head.take();
                 if !last {
-                    // What a stream's readers have read so far. A same-dialect whole body states
-                    // nothing while relaying: a caller leaving mid-body bills no tokens (a partially
-                    // buffered same-protocol body is not billed on a mid-buffer drop) and the kernel adds no floor.
                     if let Some(u) = relay.streamed_usage() {
                         *units = Units::of(Some(&u), BTreeMap::new());
                     }
@@ -483,12 +453,7 @@ impl Reply {
                 let fault = end.stream_fault.map(Fault::Transient).or(end
                     .generation_failed
                     .then_some(Fault::Transient(FAILED_GENERATION)));
-                // The end's report replaces a floor stated while relaying, even zero. A stream the far
-                // end ended as failed (in-band terminal error) delivered no completed generation and
-                // bills no tokens, as its buffered twin (a `failed` status) reports none. A failed
-                // generation is different: it bills what it reported ([`Relay::failed_generation`]). A
-                // translation that aborted after the first byte is a mid-stream cut, not a refund: it
-                // bills what the far end reported before it, as a caller leaving after it does.
+
                 let translate_aborted = end.stream_fault == Some("stream-translate-abort");
                 let bills = end.stream_fault.is_none() || failed_generation || translate_aborted;
                 let units = if bills {
@@ -499,10 +464,7 @@ impl Reply {
                 } else {
                     Units::default()
                 };
-                // An end that bills its units bills them whether or not the caller stays for its last
-                // window, as a whole answer does: a clean end the caller had a usable part of, and an end
-                // that failed after the first byte yet bills what the far end reported (a failed
-                // generation; an aborted translation). An end that bills nothing bills nothing.
+
                 self.ended_partial = if fault.is_none() {
                     partial
                 } else {
@@ -529,15 +491,14 @@ impl Reply {
     }
 
     /// The piece fed next reads its [`At`]: only the last piece of an answer taken whole (its
-    /// creation stamp and elapsed milliseconds). A relayed or judged answer reads none, so the door
-    /// reads no clock for its pieces (zero host calls per chunk).
+
     #[must_use]
     pub fn takes_time(&self, last: bool) -> bool {
         last && matches!(self.state, State::Whole { .. })
     }
 
     /// The answer retains its reported work on cancellation: a usable relay, or a whole answer
-    /// retaining usage through delivery failure. The host still requires delivered bytes to bill.
+
     #[must_use]
     pub fn partial(&self) -> bool {
         match &self.state {
@@ -548,7 +509,7 @@ impl Reply {
     }
 
     /// CUT the answer: the far end's transfer failed (`transport`) or the kernel's ceiling for it
-    /// expired, before its last piece.
+
     pub fn cut(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -603,7 +564,7 @@ impl Reply {
             .iter()
             .map(|(n, v)| (n.as_slice(), v.as_slice()))
             .collect();
-        // A refusal over the invoke envelope is read in its carried dialect's error envelope.
+
         let body = if ctx.lane.invoke {
             invoke::error_body(&pairs, &body)
         } else {
@@ -683,8 +644,7 @@ fn whole_piece<'a>(
         status,
         body,
     );
-    // A synthesized body's framing belongs to the new bytes, not the buffered upstream body.
-    // State it before relaying so an upstream Content-Length can never replace it.
+
     w.answer
         .fields
         .retain(|(n, _)| !n.eq_ignore_ascii_case("content-length"));
@@ -692,8 +652,7 @@ fn whole_piece<'a>(
         "content-length".to_string(),
         w.answer.body.len().to_string().into_bytes(),
     ));
-    // The whole-body renderer may have minted a request id before it had the native head.
-    // Preserve the native one for a same-dialect answer, just as the live relay does.
+
     let native_id = wire::ingress_relayed_response_header_names(ctx.arrived.dialect)
         .first()
         .and_then(|name| wire::head_value(far_head, name))
@@ -707,7 +666,7 @@ fn whole_piece<'a>(
             w.answer.fields.push((name, value));
         }
     }
-    // A same-dialect answer relays the far end's head (its head is empty across dialects).
+
     wire::relay_far_head(ctx.arrived.dialect, &mut w.answer.fields, far_head);
     let units = Units::of(
         wire::token_usage_of(&w.usage).as_ref(),

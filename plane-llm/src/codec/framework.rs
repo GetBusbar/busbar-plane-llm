@@ -2,9 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The parts of the dialect framework only this plane names: the codec-row lookups, the media
-//! carriers, the duration rendering, and the error kinds, signals and head reader its dialects
-//! share. The shapes the kernel also reads (`ProtocolDecl`, `DialectCodec`, the handler traits,
-//! the billing carriers, the upstream dispositions) stay in `busbar_contract`.
 
 use busbar_contract::codec::{Cell, OperationHandler};
 use busbar_contract::operation::OpVerb;
@@ -12,7 +9,7 @@ use busbar_contract::protocol::HeadFields;
 use busbar_contract::{Count, SlabBytes};
 
 /// The row lookup every [`RequestHandler::operation_handler`] is, stated once. Rows are
-/// single-digit, so a few pointer comparisons beat a map.
+
 pub fn cell_of(cells: &'static [Cell], op: OpVerb) -> Option<&'static dyn OperationHandler> {
     cells
         .iter()
@@ -21,7 +18,7 @@ pub fn cell_of(cells: &'static [Cell], op: OpVerb) -> Option<&'static dyn Operat
 }
 
 /// The (verb to upstream path) lookup for protocols whose egress paths are constants rather than
-/// templates. `resolve_operation` reads the same constants inbound, so the directions cannot drift.
+
 pub fn path_of(paths: &'static [(OpVerb, &'static str)], op: OpVerb) -> Option<&'static str> {
     paths
         .iter()
@@ -62,26 +59,15 @@ pub struct ImageOutput {
     pub b64: Option<String>,
     pub url: Option<String>,
     pub mime_type: Option<String>,
-    pub revised_prompt: Option<String>, // dall-e-3
-    pub seed: Option<u64>,              // SDXL / Stable Image
-    pub finish_reason: Option<String>,  // SUCCESS / CONTENT_FILTERED / "Filter reason: …"
+    pub revised_prompt: Option<String>,
+    pub seed: Option<u64>,
+    pub finish_reason: Option<String>,
 }
 
 /// Render an exact duration back onto the wire: the only place a billable quantity becomes a double.
-///
-/// The echoed usage object is JSON, and a `serde_json::Value` number can only be built from an
-/// integer or `f64` (no decimal-string constructor without `arbitrary_precision`, which would change
-/// `Number` for every unrelated read workspace-wide). So the conversion happens here, once, where a
-/// quantity becomes a rendering of one (the same reason as the #44 card-build exemption: a boundary
-/// may hold a decimal, a runtime path may not).
-///
-/// It is byte-identical, measured: `micros / 1e6` and parsing the original decimal text give the same
-/// double bit for bit for every quantity the scale holds (200,009 values from zero to a thousand
-/// hours, zero differed), so an echoed response carries the bytes it did before the quantity was exact.
+
 #[must_use]
 pub fn duration_seconds_to_wire(seconds: Count) -> f64 {
-    // Both operands are exactly representable and the division is correctly rounded, giving the
-    // nearest double to the exact decimal, as parsing the text does.
     seconds.micros() as f64 / 1_000_000.0_f64
 }
 
@@ -98,21 +84,19 @@ pub const KIND_TIMEOUT: &str = "timeout";
 pub const KIND_SERVER_ERROR: &str = ERR_TYPE_SERVER_ERROR;
 
 /// Provider error-code token for a request exceeding the model's context window. Returned for
-/// `StatusClass::ContextLength`; the per-protocol writer emits the native context-length category.
+
 pub const PROVIDER_CODE_CONTEXT_LENGTH: &str = "context_length_exceeded";
 
 /// Busbar-internal `provider_signal` label for an IR-parse failure (the lane label the breaker and
-/// metrics read). Not a wire shape; the readers reference it rather than re-spelling the literal.
+
 pub const SIGNAL_IR_PARSE: &str = "ir_parse";
 
 /// Client-visible detail for a mid-stream abort (upstream dropped or a translate step failed after
-/// the first byte). The kernel's forward engine and a plane's binary event-stream reassembler both
-/// emit it, so the text is identical on every framing.
+
 pub const STREAM_ABORT_DETAIL: &str = "The response stream was interrupted.";
 
 /// The value of the first field in `fields` named `name` (any case) whose value is a legal header
-/// value (every byte `>= 0x20` but DEL, or a tab), else `None`. An illegal value is passed over, so a
-/// predicate sees what a header map built from the same fields would hold.
+
 #[must_use]
 pub fn head_field<'a>(fields: HeadFields<'a>, name: &str) -> Option<&'a [u8]> {
     fields

@@ -2,20 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The per-`(operation, egress-protocol)` leaf-op writer dispatch.
-//!
-//! Chat selects its writer by egress-protocol string (`proto_codec::protocol_for(proto).writer()`);
-//! the six leaf ops (embeddings/image/rerank/transcription/speech/moderation) had each dialect's
-//! write body inline in its `OperationHandler::{write_request,write_response}`, reachable only by
-//! holding that handler. A leaf-op `IrHandle` cannot downcast (owner-forbidden) back to
-//! `&EmbeddingsReq` to feed that writer.
-//!
-//! So each leaf op gets a writer selected by `(operation, egress-protocol)`: the per-dialect body is
-//! a free fn in that dialect's `handler` module, and the dialect declares which ops it speaks as data,
-//! its [`LeafCodecs`] row on its registration ([`crate::codec::proto_codec::DialectEntry::leaf`]). The
-//! dispatchers find the egress dialect's row by name and call the fn it declared; none names a dialect
-//! (design F3 self-contained). The dialect `OperationHandler`s route their own writes through these
-//! (byte-identical), and the leaf-op `IrHandle::write_egress_request` calls the same dispatcher. Names
-//! no `IrReq`/`IrResp`, moves no bytes.
 
 use crate::codec::ir::audio::{SpeechReq, SpeechResp, TranscriptionReq, TranscriptionResp};
 use crate::codec::ir::embeddings::{EmbeddingsReq, EmbeddingsResp};
@@ -26,8 +12,7 @@ use busbar_contract::codec::{CodecError, IngressReject, WireBody};
 use bytes::Bytes;
 
 /// One leaf operation's four codec fns in one dialect: the egress request writer, the ingress response
-/// writer, and the two concrete reads (which the dialect's `OperationHandler` wraps in a leaf handle;
-/// the `(op, protocol)` read dispatch below reaches them in test builds).
+
 pub struct LeafCodec<Q: 'static, A: 'static> {
     pub write_request: fn(&Q) -> Bytes,
     pub write_response: fn(&A) -> WireBody,
@@ -36,7 +21,7 @@ pub struct LeafCodec<Q: 'static, A: 'static> {
 }
 
 /// A DIALECT'S ROW OF THE LEAF-OP SUPPORT MATRIX, as data: `Some` for each leaf op the dialect
-/// speaks, `None` for the rest. Declared once in the dialect's own `handler` module.
+
 pub struct LeafCodecs {
     pub embeddings: Option<LeafCodec<EmbeddingsReq, EmbeddingsResp>>,
     pub rerank: Option<LeafCodec<RerankReq, RerankResp>>,
@@ -59,7 +44,7 @@ impl LeafCodecs {
 }
 
 /// The `(operation, protocol)` cell: the named dialect's declared codec for the op `pick` selects.
-/// `None` when no dialect has that name, or it declares no codec for the op.
+
 fn cell<Q, A>(
     proto: &str,
     pick: fn(&'static LeafCodecs) -> Option<&'static LeafCodec<Q, A>>,
@@ -68,8 +53,7 @@ fn cell<Q, A>(
 }
 
 /// The write cell for `proto`. An unknown protocol, or one not speaking the op, is `unreachable!`:
-/// every caller passes a real egress protocol for an op routed there, so a protocol added without
-/// declaring the op fails loudly rather than emitting a malformed empty body.
+
 fn write_cell<Q, A>(
     proto: &str,
     pick: fn(&'static LeafCodecs) -> Option<&'static LeafCodec<Q, A>>,
@@ -137,7 +121,6 @@ pub fn moderation_write_response(proto: &str, r: &ModerationResp) -> WireBody {
     (write_cell(proto, |l| l.moderation.as_ref()).write_response)(r)
 }
 
-// The (op, protocol) READ dispatch the leaf-op fidelity tests read through: test-only.
 #[cfg(test)]
 #[path = "tests/leaf_read.rs"]
 mod leaf_read;

@@ -2,11 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Unit coverage for [`busbar_contract::ir::facts`] — the properties the projection owes, asserted against IR
-//! values built by hand so that a failure here names the projection and never a reader.
-//!
-//! The CROSS-implementation coverage (this projection versus the raw-body one it replaces, over a
-//! real corpus in every wire format) is `proxy/tests/hook_ir_differential_tests.rs`. These are the
-//! properties that must hold regardless of what the other implementation does.
 
 use super::*;
 use crate::codec::ir::{CacheControl, CacheKind, IrImageSource, IrMessage};
@@ -29,8 +24,7 @@ fn req(system: Vec<IrBlock>, messages: Vec<IrMessage>) -> IrRequest {
 }
 
 /// The flat rendering a consumer builds: system text, then one `(role, joined text)` per turn.
-/// Written here ONCE, the way [`project`]'s doc comment says to build it, so these tests exercise
-/// the documented grouping rather than a private one.
+
 fn flatten(r: &IrRequest) -> (Option<String>, Vec<(&'static str, String)>) {
     let items = project(r);
     let sys: Vec<String> = items
@@ -55,24 +49,11 @@ fn flatten(r: &IrRequest) -> (Option<String>, Vec<(&'static str, String)>) {
     )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-// OPACITY — the property this whole design turns on.
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-
 /// # THE BYPASS THAT MUST NOT REOPEN
-///
-/// All three opaque reasoning shapes project the MARKER, and none of them projects its payload.
-/// Two of them park provider ciphertext in `Thinking.text` (so a naive `text` passthrough is a new
-/// disclosure of provider ciphertext to the operator's sidecar); the third has EMPTY `text` with the
-/// blob on `signature` (so a naive `if redacted` check shows a hook an empty turn for a request the
-/// provider receives in full — the original bug, restored).
-///
-/// The three are asserted TOGETHER, in one test, because the defect was never "one shape is wrong":
-/// it was that the three were decided in different places and only two of them agreed.
+
 #[test]
 fn every_opaque_reasoning_shape_projects_the_marker_and_never_its_payload() {
     let shapes = [
-        // `text` IS the ciphertext, flagged by the reader.
         (
             "flagged, ciphertext in text",
             IrBlock::Thinking {
@@ -85,7 +66,6 @@ fn every_opaque_reasoning_shape_projects_the_marker_and_never_its_payload() {
             },
             "OPAQUE_CIPHERTEXT_BYTES",
         ),
-        // The same, with a signature alongside — still flagged, still ciphertext.
         (
             "flagged, ciphertext in text, signed",
             IrBlock::Thinking {
@@ -98,7 +78,6 @@ fn every_opaque_reasoning_shape_projects_the_marker_and_never_its_payload() {
             },
             "OPAQUE_BEDROCK_BYTES",
         ),
-        // NOT flagged: no plaintext at all, the whole payload is a carrier blob.
         (
             "unflagged, blob on the signature",
             IrBlock::Thinking {
@@ -142,7 +121,7 @@ fn every_opaque_reasoning_shape_projects_the_marker_and_never_its_payload() {
 }
 
 /// Reasoning busbar CAN read is ordinary content and is shown. A client replaying a multi-turn body
-/// sends this text to the provider, so a gate that cannot see it is a gate with a hole in it.
+
 #[test]
 fn readable_reasoning_is_projected_as_text() {
     let r = req(
@@ -169,13 +148,8 @@ fn readable_reasoning_is_projected_as_text() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-// THE EMPTY-TURN RULE — the surviving half of the index-alignment contract.
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-
 /// A turn whose every block is structurally text-less still appears. The old contract's LETTER
-/// (index alignment with the wire `messages` array) cannot survive the move onto the IR; its
-/// PURPOSE — a screening hook sees every turn — is asserted here against `IrRequest::messages`.
+
 #[test]
 fn a_turn_with_no_projectable_content_still_appears() {
     let r = req(
@@ -207,13 +181,8 @@ fn a_turn_with_no_projectable_content_still_appears() {
     assert_eq!(r.shape().turn_count, 3);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-// SLOTS — the protocol dimension, carried as provenance.
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-
 /// Tool-call ARGUMENTS and tool-result CONTENT are projected, attributed to the turn that carried
-/// them, and distinguishable from ordinary prose by their slot. The arguments are the half no
-/// projection saw before this module: attacker-influenceable, sent upstream verbatim.
+
 #[test]
 fn tool_arguments_and_results_carry_the_turn_they_belong_to() {
     let r = req(
@@ -266,9 +235,7 @@ fn tool_arguments_and_results_carry_the_turn_they_belong_to() {
 }
 
 /// The system slot is its own slot, never turn 0, on every dialect — because on the IR there is one
-/// place a system prompt lives and the reader already put it there. This is the mechanical reason
-/// the shipped system-prompt-shredding bug cannot exist under this projection: there is no dialect
-/// on which the operator's instructions arrive as an ordinary turn.
+
 #[test]
 fn the_system_prompt_is_its_own_slot_and_never_a_turn() {
     let r = req(
@@ -286,7 +253,7 @@ fn the_system_prompt_is_its_own_slot_and_never_a_turn() {
 }
 
 /// A request with no system prompt yields no system items at all — "absent" and "present but empty"
-/// stay distinguishable, which is what a hook keys its grant detection off.
+
 #[test]
 fn an_absent_system_prompt_projects_no_system_items() {
     let r = req(Vec::new(), vec![turn(IrRole::User, vec![text("hi")])]);
@@ -294,18 +261,8 @@ fn an_absent_system_prompt_projects_no_system_items() {
     assert!(project(&r).iter().all(|i| i.slot() != Slot::System));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-// SHAPE — the signals, and the drift that cannot happen any more.
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-
 /// # THE TRIPWIRE THAT IS NOW A STRUCTURAL FACT
-///
-/// `Shape::text_chars` is a SUM over the same items a content-granted hook is shown, so the size
-/// signal and the content projection cannot drift apart. The two tripwires this supersedes
-/// (`system_text_chars_counts_block_arrays`, `size_signal_and_projection_agree_on_reasoning`) were
-/// written because two functions computing the same answer diverged once. There is one function
-/// now; this test states the invariant that makes the tripwires unnecessary rather than merely
-/// passing.
+
 #[test]
 fn text_chars_is_exactly_what_a_content_granted_hook_is_shown() {
     let r = req(
@@ -347,9 +304,7 @@ fn text_chars_is_exactly_what_a_content_granted_hook_is_shown() {
 }
 
 /// The `max_tokens` signal is the READER's normalized value, whatever field the dialect spelled it
-/// in. Reading it here is a fix rather than a move: the raw-body projection is dialect-aware for one
-/// dialect's spelling only, and a body that spells the cap in a nested config object reads `None`
-/// there while the provider receives the cap in full.
+
 #[test]
 fn the_shape_signals_come_from_the_normalized_ir() {
     let r = IrRequest {
@@ -373,29 +328,15 @@ fn the_shape_signals_come_from_the_normalized_ir() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-// THE MARKER — pinned against the implementation this one replaces.
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-
 /// The marker is BYTE-IDENTICAL to the one the raw-body projection substitutes today.
-///
-/// Both constants exist for the duration of the changeover: this module cannot depend on
-/// `proxy/hooks.rs` (the dependency runs the other way, and inverting it is the whole point), and
-/// `proxy/hooks.rs` must not change while it is still the live implementation. This test is what
-/// makes the duplication safe: the day the cutover lands, the shape both implementations already
-/// agreed on must not ALSO become a wire change for the operator's sidecar.
+
 #[test]
 fn opaque_marker_is_byte_identical_to_the_projection_it_replaces() {
-    // The projection this replaced is GONE, so the comparison can no longer be made against it.
-    // What survives, and is the thing that mattered, is the literal itself: this exact string is
-    // what every deployed hook already receives for an opaque reasoning turn, and the cutover was
-    // not allowed to also be a wire change for the one shape both implementations agreed on.
     assert_eq!(OPAQUE_CONTENT_MARKER, "[busbar:redacted_reasoning]");
 }
 
 /// Structured tool-result members are content, not silence. A dialect's `{"json": …}`
-/// tool-result member reaches the IR as [`IrBlock::Json`] and is projected — it is exactly the
-/// "largest untrusted blob in a modern agent request" class the content grant exists to screen.
+
 #[test]
 fn a_structured_tool_result_member_is_projected_as_data() {
     let r = req(
@@ -424,8 +365,7 @@ fn a_structured_tool_result_member_is_projected_as_data() {
 }
 
 /// A cache breakpoint on a block changes nothing about what is projected. Recorded because
-/// `cache_control` is the field most likely to be added to a block in a future unit, and a walk that
-/// accidentally keyed on it would be a silent content-visibility change.
+
 #[test]
 fn cache_breakpoints_do_not_change_what_is_projected() {
     let r = req(
@@ -444,8 +384,6 @@ fn cache_breakpoints_do_not_change_what_is_projected() {
     );
     assert_eq!(flatten(&r).1, vec![("user", "hello".to_string())]);
 }
-
-// ── ContentItem::screening_digest (incremental-scan piece identity) ──────────────────────────────
 
 #[test]
 fn screening_digest_distinguishes_the_same_text_in_different_slots() {
@@ -478,7 +416,7 @@ fn screening_digest_distinguishes_authors() {
 }
 
 /// Without length-prefix framing, `("ab","c")` and `("a","bc")` would hash the same concatenated
-/// bytes — and one session's cleared-set could skip-screen the other piece. Framing prevents it.
+
 #[test]
 fn screening_digest_framing_prevents_a_concatenation_collision() {
     let a = ContentItem::Text {
@@ -495,9 +433,7 @@ fn screening_digest_framing_prevents_a_concatenation_collision() {
 }
 
 /// The VARIANT is part of a piece's identity. A `Text` body that happens to equal a `Data`
-/// payload's serialization, or an `Opaque` marker, is a DIFFERENT kind of piece and a guardrail acts
-/// differently on each — but with the variant absent from the framing all three digested the same,
-/// so one session's cleared-set could skip-screen a piece of another kind.
+
 #[test]
 fn screening_digest_distinguishes_variants_with_identical_text() {
     let value = serde_json::json!({"a": 1});
@@ -513,7 +449,7 @@ fn screening_digest_distinguishes_variants_with_identical_text() {
         label: "args",
         value: &value,
     };
-    // The two carry byte-identical screenable text by construction — only the variant differs.
+
     assert_eq!(text.screenable_text(), data.screenable_text());
     assert_ne!(text.screening_digest(), data.screening_digest());
 

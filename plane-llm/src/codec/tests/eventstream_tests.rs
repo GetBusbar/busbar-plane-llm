@@ -2,15 +2,11 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The framing codec's unit suite: decode, encode, the header guards and their coded drops, the
-//! checked drain's malformed-prelude signal and its linear scaling. It travelled with the codec to
-//! the plane's copy (#83a SD-8: the host's copy had no host consumer left and is deleted), so the
-//! copy that serves is the copy these hold.
 
 use super::*;
 
 /// AWS event-stream header name for the human-readable error text an error frame carries alongside
-/// its code. The decoder does not read it — the CODE is the classification, and the message rides in
-/// the frame the reader goes on to build — but it is part of the frame shape these tests construct.
+
 const HDR_ERROR_MESSAGE: &str = ":error-message";
 
 #[test]
@@ -27,7 +23,7 @@ fn test_decode_single_frame() {
 fn test_decode_multiple_and_partial() {
     let mut buf = encode_frame("messageStart", br#"{"role":"assistant"}"#);
     buf.extend(encode_frame("messageStop", br#"{"stopReason":"end_turn"}"#));
-    // Append a truncated third frame (only part of its prelude+body).
+
     let partial = encode_frame("metadata", br#"{"usage":{}}"#);
     buf.extend_from_slice(&partial[..partial.len() - 5]);
 
@@ -37,7 +33,6 @@ fn test_decode_multiple_and_partial() {
     assert_eq!(frames[1].0, "messageStop");
     assert!(!buf.is_empty(), "partial third frame remains buffered");
 
-    // Feed the rest → the third frame completes.
     buf.extend_from_slice(&partial[partial.len() - 5..]);
     let more = drain_frames(&mut buf);
     assert_eq!(more.len(), 1);
@@ -47,15 +42,12 @@ fn test_decode_multiple_and_partial() {
 
 #[test]
 fn test_oversized_total_len_is_abandoned_not_buffered() {
-    // A prelude declaring an enormous-but-internally-consistent total_len must be rejected
-    // immediately (buffer cleared, stream abandoned) rather than waiting to accumulate that many
-    // bytes — otherwise it is a memory-exhaustion DoS vector.
     let mut buf = Vec::new();
-    let huge: u32 = u32::MAX; // ~4 GiB, far above MAX_FRAME_BYTES but >= 16 and self-consistent
-    buf.extend_from_slice(&huge.to_be_bytes()); // total_len
-    buf.extend_from_slice(&0u32.to_be_bytes()); // headers_len = 0 (<= total_len - 16)
-    buf.extend_from_slice(&[0, 0, 0, 0]); // prelude CRC
-    buf.extend_from_slice(b"trailing junk"); // a few extra bytes
+    let huge: u32 = u32::MAX;
+    buf.extend_from_slice(&huge.to_be_bytes());
+    buf.extend_from_slice(&0u32.to_be_bytes());
+    buf.extend_from_slice(&[0, 0, 0, 0]);
+    buf.extend_from_slice(b"trailing junk");
 
     let frames = drain_frames(&mut buf);
     assert!(frames.is_empty(), "no frame should be emitted");
@@ -66,8 +58,7 @@ fn test_oversized_total_len_is_abandoned_not_buffered() {
 }
 
 /// `drain_frames(encode_frame(x)) == [x]` for a spread of event types + payload sizes, including
-/// empty and large payloads. This is the encoder's primary acceptance gate: it proves the
-/// framing + CRC are correct against the existing production decoder (decode(encode(x)) == x).
+
 #[test]
 fn test_encode_decode_round_trip() {
     let cases: &[(&str, Vec<u8>)] = &[
@@ -78,8 +69,8 @@ fn test_encode_decode_round_trip() {
             "metadata",
             br#"{"usage":{"inputTokens":3,"outputTokens":5}}"#.to_vec(),
         ),
-        ("contentBlockStop", Vec::new()), // empty payload
-        ("contentBlockDelta", vec![b'x'; 64 * 1024]), // large payload
+        ("contentBlockStop", Vec::new()),
+        ("contentBlockDelta", vec![b'x'; 64 * 1024]),
     ];
     for (event_type, payload) in cases {
         let mut buf = encode_frame(event_type, payload);
@@ -95,8 +86,7 @@ fn test_encode_decode_round_trip() {
 }
 
 /// The encoder writes REAL CRC32s (not the `[0,0,0,0]` placeholders the old test helper used).
-/// Independently recompute both CRCs over the exact byte ranges the spec defines and assert they
-/// match the bytes the encoder emitted — and that neither is zero.
+
 #[test]
 fn test_encode_crcs_are_real() {
     let frame = encode_frame("contentBlockDelta", br#"{"delta":{"text":"hi"}}"#);
@@ -107,7 +97,6 @@ fn test_encode_crcs_are_real() {
         "total_len matches the bytes written"
     );
 
-    // prelude_crc lives at bytes [8..12] and covers bytes [0..8].
     let prelude_crc = u32::from_be_bytes([frame[8], frame[9], frame[10], frame[11]]);
     let expected_prelude = crc32fast::hash(&frame[..8]);
     assert_eq!(
@@ -116,8 +105,6 @@ fn test_encode_crcs_are_real() {
     );
     assert_ne!(prelude_crc, 0, "prelude CRC is not the zero placeholder");
 
-    // message_crc is the trailing 4 bytes and covers everything before it (bytes 0..len-4).
-    // golden wire-contract literal (kept bare on purpose): pins the exact 4-byte CRC trailer offset.
     let len = frame.len();
     let message_crc = u32::from_be_bytes([
         frame[len - 4],
@@ -138,44 +125,40 @@ fn string_header(name: &str, value: &str) -> Vec<u8> {
     let mut h = Vec::new();
     h.push(name.len() as u8);
     h.extend_from_slice(name.as_bytes());
-    h.push(HDR_TYPE_STRING); // string
+    h.push(HDR_TYPE_STRING);
     h.extend_from_slice(&(value.len() as u16).to_be_bytes());
     h.extend_from_slice(value.as_bytes());
     h
 }
 
 /// `event_type_for_frame` returns `""` (rather than panic or misread) when it meets a header
-/// whose value-type byte is genuinely unknown / has no defined width before any recognized
-/// header.
+
 #[test]
 fn test_event_type_unknown_value_type_yields_empty() {
-    // One header named "x" with value_type = 200 (not a real AWS type) → malformed → no headers.
     let mut h = Vec::new();
-    h.push(1u8); // name_len
-    h.extend_from_slice(b"x"); // name
-    h.push(200u8); // value_type: unknown
+    h.push(1u8);
+    h.extend_from_slice(b"x");
+    h.push(200u8);
     assert_eq!(event_type_for_frame(&h), "");
 }
 
 /// A fixed-width header (e.g. a `timestamp`, type 8) appearing BEFORE `:event-type` must be
-/// skipped by advancing the correct number of bytes, not abort the scan — so the event type is
-/// still recovered.
+
 #[test]
 fn test_event_type_skips_fixed_width_header() {
     let mut h = Vec::new();
-    // Header 1: ":ts" timestamp (type 8, 8-byte value) — must be skipped.
+
     h.push(3u8);
     h.extend_from_slice(b":ts");
-    h.push(8u8); // timestamp
-    h.extend_from_slice(&0u64.to_be_bytes()); // 8 bytes
-                                              // Header 2: ":event-type" string = "messageStart".
+    h.push(8u8);
+    h.extend_from_slice(&0u64.to_be_bytes());
+
     h.extend_from_slice(&string_header(HDR_EVENT_TYPE, "messageStart"));
     assert_eq!(event_type_for_frame(&h), "messageStart");
 }
 
 /// A zero-length `:event-type` string value yields `""` — a present-but-empty event type is
-/// indistinguishable from absent at the `drain_frames` boundary, which is fine (the reader
-/// treats both as a no-op frame).
+
 #[test]
 fn test_event_type_empty_value() {
     let h = string_header(HDR_EVENT_TYPE, "");
@@ -183,14 +166,9 @@ fn test_event_type_empty_value() {
 }
 
 /// An AWS modeled-exception frame carries
-/// `:message-type: exception` + `:exception-type: <Name>` and NO `:event-type`. `drain_frames`
-/// must surface the exception name (normalized to the Smithy union-member token the reader
-/// matches) rather than the old empty string that fell into the no-op arm and silently dropped
-/// the mid-stream error.
+
 #[test]
 fn test_event_type_exception_frame_returns_normalized_exception_name() {
-    // Header order deliberately puts :exception-type before :message-type to prove the parser
-    // does not depend on ordering.
     let mut h = string_header(HDR_EXCEPTION_TYPE, "InternalServerException");
     h.extend_from_slice(&string_header(
         HDR_CONTENT_TYPE,
@@ -199,16 +177,13 @@ fn test_event_type_exception_frame_returns_normalized_exception_name() {
     h.extend_from_slice(&string_header(HDR_MESSAGE_TYPE, MSG_TYPE_EXCEPTION));
     assert_eq!(event_type_for_frame(&h), "internalServerException");
 
-    // A ThrottlingException maps the same way.
     let mut h2 = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_EXCEPTION);
     h2.extend_from_slice(&string_header(HDR_EXCEPTION_TYPE, "ThrottlingException"));
     assert_eq!(event_type_for_frame(&h2), "throttlingException");
 }
 
 /// The UNMODELED sibling of an exception frame: `:message-type: error` carrying `:error-code` /
-/// `:error-message` and NO `:event-type`. It resolved to `""` and was silently dropped, so a stream
-/// that FAILED mid-flight was indistinguishable from one that simply ended. It must normalize
-/// through the same namespace-strip + first-letter-lowercase walk the exception arm uses.
+
 #[test]
 fn test_event_type_error_frame_returns_normalized_error_code() {
     let mut h = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_ERROR);
@@ -219,7 +194,6 @@ fn test_event_type_error_frame_returns_normalized_error_code() {
     ));
     assert_eq!(event_type_for_frame(&h), "internalFailure");
 
-    // Header order must not matter, and a namespace-qualified code strips to the bare name.
     let mut h2 = string_header(
         HDR_ERROR_CODE,
         "com.amazon.coral.service#ThrottlingException",
@@ -227,21 +201,14 @@ fn test_event_type_error_frame_returns_normalized_error_code() {
     h2.extend_from_slice(&string_header(HDR_MESSAGE_TYPE, MSG_TYPE_ERROR));
     assert_eq!(event_type_for_frame(&h2), "throttlingException");
 
-    // An error frame with no `:error-code` falls through to the empty string, no panic.
     let h3 = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_ERROR);
     assert_eq!(event_type_for_frame(&h3), "");
 }
 
 /// AWS may qualify the `:exception-type`
-/// header with a Smithy namespace / shape-ARN prefix (e.g. `com.amazon.coral.service#ThrottlingException`).
-/// The prefix must be stripped before lowercasing — mirroring `extract_error`'s
-/// `rsplit(['#', '/'])` in proto/bedrock.rs — so the bare normalized name still matches the
-/// `read_response_events` exception arms. Before the fix this returned the whole namespaced
-/// string lowercased only at its first char (`com.amazon...`), which matched nothing and dropped
-/// the mid-stream error.
+
 #[test]
 fn test_event_type_exception_strips_namespace_prefix() {
-    // `#`-delimited Smithy shape id.
     let mut h = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_EXCEPTION);
     h.extend_from_slice(&string_header(
         HDR_EXCEPTION_TYPE,
@@ -253,7 +220,6 @@ fn test_event_type_exception_strips_namespace_prefix() {
         "namespace prefix stripped before lowercasing the bare exception name"
     );
 
-    // `/`-delimited ARN-style suffix.
     let mut h2 = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_EXCEPTION);
     h2.extend_from_slice(&string_header(
         HDR_EXCEPTION_TYPE,
@@ -261,7 +227,6 @@ fn test_event_type_exception_strips_namespace_prefix() {
     ));
     assert_eq!(event_type_for_frame(&h2), "internalServerException");
 
-    // A bare (unqualified) name is unaffected — no `#`/`/` to split on.
     let mut h3 = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_EXCEPTION);
     h3.extend_from_slice(&string_header(
         HDR_EXCEPTION_TYPE,
@@ -271,14 +236,9 @@ fn test_event_type_exception_strips_namespace_prefix() {
 }
 
 /// An `:exception-type` value
-/// that ENDS with a Smithy/ARN delimiter (`ThrottlingException#`, `aws.bedrock/`) made
-/// `rsplit(['#', '/']).next()` return the empty LEADING token, dropping the classification to
-/// `""` — re-sinking the mid-stream error into the no-op arm the namespace fix was meant to
-/// prevent. Taking the last NON-EMPTY token (`.find(|s| !s.is_empty())`) strips the trailing
-/// delimiter and recovers the bare name. The normal namespaced case is unaffected.
+
 #[test]
 fn test_event_type_exception_trailing_delimiter_recovers_name() {
-    // Trailing `#` — the empty leading token must be skipped, not returned.
     let mut h = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_EXCEPTION);
     h.extend_from_slice(&string_header(HDR_EXCEPTION_TYPE, "ThrottlingException#"));
     assert_eq!(
@@ -287,7 +247,6 @@ fn test_event_type_exception_trailing_delimiter_recovers_name() {
         "a trailing `#` must not drop the exception classification to empty"
     );
 
-    // Trailing `/` — same recovery.
     let mut h2 = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_EXCEPTION);
     h2.extend_from_slice(&string_header(HDR_EXCEPTION_TYPE, "ThrottlingException/"));
     assert_eq!(
@@ -296,7 +255,6 @@ fn test_event_type_exception_trailing_delimiter_recovers_name() {
         "a trailing `/` must not drop the exception classification to empty"
     );
 
-    // The normal namespaced value still resolves to the same bare token (no regression).
     let mut h3 = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_EXCEPTION);
     h3.extend_from_slice(&string_header(
         HDR_EXCEPTION_TYPE,
@@ -304,8 +262,6 @@ fn test_event_type_exception_trailing_delimiter_recovers_name() {
     ));
     assert_eq!(event_type_for_frame(&h3), "throttlingException");
 
-    // All-delimiter pathological value: every token is empty → `unwrap_or(&exc)` falls back to
-    // the raw value (lowercased first char), never panics and never yields `""`.
     let mut h4 = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_EXCEPTION);
     h4.extend_from_slice(&string_header(HDR_EXCEPTION_TYPE, "#"));
     assert_eq!(
@@ -316,12 +272,9 @@ fn test_event_type_exception_trailing_delimiter_recovers_name() {
 }
 
 /// An exception-typed frame
-/// (`:message-type: exception`) that carries NO `:exception-type` header must fall through to the
-/// empty string — never panic and never misreport. This guards the `None` arm of the
-/// `:exception-type` lookup, which a future refactor adding an assertion/panic there would break.
+
 #[test]
 fn test_event_type_exception_without_exception_type_yields_empty() {
-    // Only `:message-type: exception` is present; no `:exception-type`, no `:event-type`.
     let h = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_EXCEPTION);
     assert_eq!(
         event_type_for_frame(&h),
@@ -329,7 +282,6 @@ fn test_event_type_exception_without_exception_type_yields_empty() {
         "exception frame missing :exception-type falls through to empty, no panic"
     );
 
-    // Same, but with an unrelated (non-exception) header riding along — still empty.
     let mut h2 = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_EXCEPTION);
     h2.extend_from_slice(&string_header(
         HDR_CONTENT_TYPE,
@@ -343,7 +295,7 @@ fn test_event_type_exception_without_exception_type_yields_empty() {
 }
 
 /// A frame with `:message-type: event` (the normal case) must still report its `:event-type`,
-/// never an exception name, even if a stray `:exception-type` somehow rode along.
+
 #[test]
 fn test_event_type_event_message_type_prefers_event_type() {
     let mut h = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_EVENT);
@@ -352,9 +304,7 @@ fn test_event_type_event_message_type_prefers_event_type() {
 }
 
 /// End-to-end through `drain_frames`: a real binary exception frame (built by the production
-/// `encode_exception_frame`) decodes to the normalized exception event-type, so the egress
-/// decode path (`StreamTranslate::feed`) folds a matchable `type` into the JSON and the reader
-/// surfaces an error instead of dropping a typeless frame.
+
 #[test]
 fn test_drain_frames_surfaces_exception_event_type() {
     let mut buf =
@@ -371,18 +321,17 @@ fn test_drain_frames_surfaces_exception_event_type() {
 }
 
 /// A modeled-exception frame is a valid event-stream message: real CRC32s, and a header block
-/// carrying `:message-type: exception` + `:exception-type` + the JSON `{"message":...}` payload.
-/// This is what a Bedrock-ingress stream emits on a mid-stream upstream failure.
+
 #[test]
 fn test_encode_exception_frame_is_valid() {
     let frame = encode_exception_frame("InternalServerException", "upstream stream error");
-    // total_len must equal the bytes written.
+
     let total_len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
     assert_eq!(total_len, frame.len(), "total_len matches frame bytes");
-    // prelude CRC over [0..8] is real.
+
     let prelude_crc = u32::from_be_bytes([frame[8], frame[9], frame[10], frame[11]]);
     assert_eq!(prelude_crc, crc32fast::hash(&frame[..8]));
-    // message CRC over [0..len-4] is real.
+
     let len = frame.len();
     let msg_crc = u32::from_be_bytes([
         frame[len - CRC_BYTES],
@@ -391,32 +340,25 @@ fn test_encode_exception_frame_is_valid() {
         frame[len - CRC_BYTES + 3],
     ]);
     assert_eq!(msg_crc, crc32fast::hash(&frame[..len - CRC_BYTES]));
-    // Header block carries the exception markers.
+
     let headers_len = u32::from_be_bytes([frame[4], frame[5], frame[6], frame[7]]) as usize;
     let headers = String::from_utf8_lossy(&frame[PRELUDE_LEN..PRELUDE_LEN + headers_len]);
-    assert!(headers.contains(":message-type")); // golden wire-contract literal (kept bare on purpose)
-    assert!(headers.contains("exception")); // golden wire-contract literal (kept bare on purpose)
-    assert!(headers.contains(":exception-type")); // golden wire-contract literal (kept bare on purpose)
-    assert!(headers.contains("internalServerException")); // the union MEMBER name (botocore), not the shape
-                                                          // Payload is the JSON body the SDK surfaces.
+    assert!(headers.contains(":message-type"));
+    assert!(headers.contains("exception"));
+    assert!(headers.contains(":exception-type"));
+    assert!(headers.contains("internalServerException"));
+
     let payload = &frame[PRELUDE_LEN + headers_len..len - CRC_BYTES];
     let v: serde_json::Value = serde_json::from_slice(payload).unwrap();
     assert_eq!(v["message"], "upstream stream error");
-    // It must NOT be SSE text.
+
     assert!(!frame.starts_with(b"event:"));
 }
 
 /// THE CAP, FROM BOTH SIDES. A frame whose total length is EXACTLY `MAX_FRAME_BYTES` is encoded
-/// whole; one byte more is DROPPED (empty frame), never emitted as a CRC-valid frame carrying
-/// byte-truncated, unparseable JSON.
-///
-/// Asserting only the far side of a cap says something large is rejected; it does not say the
-/// boundary is where the code claims it is. An off-by-one that rejected the last legal frame — a
-/// silently dropped event on a live stream — would have passed a one-sided test.
+
 #[test]
 fn test_encode_frame_cap_admits_the_boundary_and_drops_one_past_it() {
-    // Measure the per-frame overhead (prelude + the three headers + trailing CRC) from the encoder
-    // itself rather than restating the wire layout here, so the boundary under test is its own.
     const EVENT: &str = "contentBlockDelta";
     let probe = encode_frame(EVENT, b"x");
     assert!(!probe.is_empty(), "the probe frame must encode");
@@ -443,15 +385,13 @@ fn test_encode_frame_cap_admits_the_boundary_and_drops_one_past_it() {
 }
 
 /// `drain_frames` must abandon (clear) the buffer on a frame whose `total_len` is in range but
-/// whose `headers_len` exceeds the space remaining after the 16-byte overhead — the second half
-/// of the prelude-validation guard, previously untested. Without the guard, `&frame[12..12 +
-/// headers_len]` would slice out of bounds and panic downstream.
+
 #[test]
 fn test_headers_len_overflow_abandoned() {
     let mut buf = Vec::new();
-    buf.extend_from_slice(&20u32.to_be_bytes()); // total_len = 20 (>= 16, <= cap)
-    buf.extend_from_slice(&5u32.to_be_bytes()); // headers_len = 5 (> 20 - 16 = 4)
-    buf.extend_from_slice(&[0, 0, 0, 0]); // prelude CRC
+    buf.extend_from_slice(&20u32.to_be_bytes());
+    buf.extend_from_slice(&5u32.to_be_bytes());
+    buf.extend_from_slice(&[0, 0, 0, 0]);
     buf.extend_from_slice(b"junk extra bytes");
 
     let frames = drain_frames(&mut buf);
@@ -466,73 +406,61 @@ fn test_headers_len_overflow_abandoned() {
 }
 
 /// An oversized header NAME or VALUE must DROP the whole frame (empty `Vec`) rather than silently
-/// byte-truncate the string — a truncation could split a multi-byte UTF-8 sequence and emit a
-/// CRC-valid frame carrying an invalid-UTF-8 type-7 header a strict AWS SDK rejects.
+
 #[test]
 fn test_oversized_header_value_drops_frame() {
-    // A header value just over the u16 cap (65535 bytes).
     let huge_value = "x".repeat(u16::MAX as usize + 1);
     let frame = encode_exception_frame(&huge_value, "msg");
     assert!(
         frame.is_empty(),
         "an oversized exception-type header must drop the frame, not truncate the string"
     );
-    // A short, valid exception type still encodes normally.
+
     let ok = encode_exception_frame("InternalServerException", "msg");
     assert!(!ok.is_empty());
 }
 
 /// `encode_frame` must DROP the whole frame (empty `Vec`) when the caller-supplied `:event-type`
-/// value exceeds the type-7 string cap (u16, 65535 bytes), rather than emit a CRC-valid frame
-/// carrying a byte-truncated (possibly invalid-UTF-8) header. This exercises the `encode_frame`
-/// early-return on a failed `push_string_header` for `:event-type` — the only caller-supplied
-/// header in that path — which the payload-cap and exception-frame tests do not reach.
+
 #[test]
 fn test_encode_frame_oversized_event_type_drops_frame() {
-    // An event-type value one byte over the u16 type-7 string cap.
     let huge_event_type = "e".repeat(u16::MAX as usize + 1);
     let frame = encode_frame(&huge_event_type, br#"{"x":1}"#);
     assert!(
         frame.is_empty(),
         "an oversized :event-type header must drop the frame, not truncate the string"
     );
-    // A short, valid event type still encodes normally.
+
     let ok = encode_frame("contentBlockDelta", br#"{"x":1}"#);
     assert!(!ok.is_empty());
 }
 
 /// The encoder carries the three Bedrock framing headers (`:event-type`, `:content-type`,
-/// `:message-type`); `parse_event_type` must skip past the others and still find the event name.
+
 #[test]
 fn test_encode_carries_three_headers() {
     let frame = encode_frame("messageStart", br#"{"role":"assistant"}"#);
     let headers_len = u32::from_be_bytes([frame[4], frame[5], frame[6], frame[7]]) as usize;
     let headers = &frame[PRELUDE_LEN..PRELUDE_LEN + headers_len];
-    // :content-type and :message-type values must be present in the header block.
+
     let hs = String::from_utf8_lossy(headers);
-    assert!(hs.contains(":event-type")); // golden wire-contract literal (kept bare on purpose)
-    assert!(hs.contains(":content-type")); // golden wire-contract literal (kept bare on purpose)
-    assert!(hs.contains("application/json")); // golden wire-contract literal (kept bare on purpose)
-    assert!(hs.contains(":message-type")); // golden wire-contract literal (kept bare on purpose)
-    assert!(hs.contains("event")); // golden wire-contract literal (kept bare on purpose)
+    assert!(hs.contains(":event-type"));
+    assert!(hs.contains(":content-type"));
+    assert!(hs.contains("application/json"));
+    assert!(hs.contains(":message-type"));
+    assert!(hs.contains("event"));
 }
 
 /// The SMALLEST valid frame —
-/// `total_len == 16` (12-byte prelude + 0-byte headers + 0-byte payload + 4-byte message CRC) —
-/// must decode cleanly. This is the lower boundary of the `(16..=MAX_FRAME_BYTES)` guard at line
-/// 61: a frame this small carries an empty header block and an empty payload (e.g. a
-/// `contentBlockStop` with no body). It is hand-crafted here (the production `encode_frame`
-/// always writes three headers, so it can never emit a 16-byte frame) so that tightening the
-/// guard from `16..=` to `17..=` — which would wrongly abandon a valid minimum frame — is caught.
+
 #[test]
 fn test_drain_frames_minimum_valid_frame() {
-    // 16-byte frame: prelude(12) + headers(0) + payload(0) + message_crc(4).
-    let mut frame = Vec::with_capacity(16); // golden wire-contract literal (kept bare on purpose)
-    frame.extend_from_slice(&16u32.to_be_bytes()); // golden wire-contract literal (kept bare on purpose): total_len = 16 (the minimum valid value)
-    frame.extend_from_slice(&0u32.to_be_bytes()); // headers_len = 0
+    let mut frame = Vec::with_capacity(16);
+    frame.extend_from_slice(&16u32.to_be_bytes());
+    frame.extend_from_slice(&0u32.to_be_bytes());
     let prelude_crc = crc32fast::hash(&frame[..8]);
-    frame.extend_from_slice(&prelude_crc.to_be_bytes()); // prelude CRC over [0..8]
-                                                         // No headers, no payload. message_crc over everything written so far ([0..12]).
+    frame.extend_from_slice(&prelude_crc.to_be_bytes());
+
     let message_crc = crc32fast::hash(&frame);
     frame.extend_from_slice(&message_crc.to_be_bytes());
     assert_eq!(
@@ -554,37 +482,29 @@ fn test_drain_frames_minimum_valid_frame() {
 }
 
 /// The single-buffer
-/// encoder must be BYTE-FOR-BYTE identical to the prior two-Vec (`headers` + `frame`) encoding.
-/// We independently rebuild the exact wire bytes from the documented layout — placeholder-free,
-/// in one pass — and assert equality, so a future refactor of the buffer plumbing that perturbs
-/// even one byte (a wrong CRC range, a misplaced length, a dropped/extra header byte) is caught.
+
 #[test]
 fn test_encode_frame_byte_for_byte_matches_reference() {
-    // A representative Bedrock ConverseStream delta frame.
     let event_type = "contentBlockDelta";
     let payload = br#"{"delta":{"text":"hi"}}"#;
     let got = encode_frame(event_type, payload);
 
-    // Reference encoding, built straight from the documented wire layout (NOT via encode_frame):
-    //   header block = the three Bedrock string headers in order.
-    // golden wire-contract literal (kept bare on purpose): header name/value strings pin the
-    // exact bytes the encoder must emit; changing them here changes the wire format.
     let mut headers = Vec::new();
     headers.extend_from_slice(&string_header(":event-type", event_type));
     headers.extend_from_slice(&string_header(":content-type", "application/json"));
     headers.extend_from_slice(&string_header(":message-type", "event"));
 
     let headers_len = headers.len();
-    let total_len = 12 + headers_len + payload.len() + 4; // golden wire-contract literal (kept bare on purpose)
+    let total_len = 12 + headers_len + payload.len() + 4;
 
     let mut want = Vec::new();
-    want.extend_from_slice(&(total_len as u32).to_be_bytes()); // total_len
-    want.extend_from_slice(&(headers_len as u32).to_be_bytes()); // headers_len
-    let prelude_crc = crc32fast::hash(&want[..8]); // prelude CRC over the two length fields
+    want.extend_from_slice(&(total_len as u32).to_be_bytes());
+    want.extend_from_slice(&(headers_len as u32).to_be_bytes());
+    let prelude_crc = crc32fast::hash(&want[..8]);
     want.extend_from_slice(&prelude_crc.to_be_bytes());
     want.extend_from_slice(&headers);
     want.extend_from_slice(payload);
-    let message_crc = crc32fast::hash(&want); // message CRC over everything written so far
+    let message_crc = crc32fast::hash(&want);
     want.extend_from_slice(&message_crc.to_be_bytes());
 
     assert_eq!(
@@ -596,20 +516,13 @@ fn test_encode_frame_byte_for_byte_matches_reference() {
 use busbar_test_kit::warn_capture::WarnCapture;
 
 /// When an oversized `:event-type` makes `push_string_header` reject the header, `encode_frame`
-/// drops the frame. The drop stays OBSERVABLE in the diagnostics catalog: it carries
-/// `EVENTSTREAM_EVENTTYPE_HEADER_OVERSIZE`'s own code, at `debug!` — a per-request data-path event
-/// unreachable for any real Bedrock event name, so it must not spam operator WARN logs.
-///
-/// The capture asserts the CODE, at the level the diagnostic actually emits at. Capturing only at
-/// WARN and asserting nothing was captured says the event is not a warning; it says nothing about
-/// whether the event happened at all, so deleting the emission entirely would have passed.
+
 #[test]
 fn test_encode_frame_oversized_event_type_is_a_coded_debug_drop() {
     use crate::codec::diagnostics::EVENTSTREAM_EVENTTYPE_HEADER_OVERSIZE as DIAG;
 
     let huge_event_type = "e".repeat(u16::MAX as usize + 1);
 
-    // The same deterministic encode, once under each threshold: DEBUG-and-above, then WARN-and-above.
     let debug_cap = WarnCapture::capturing_debug();
     let frame = tracing::subscriber::with_default(debug_cap.clone(), || {
         encode_frame(&huge_event_type, br#"{"x":1}"#)
@@ -637,15 +550,13 @@ fn test_encode_frame_oversized_event_type_is_a_coded_debug_drop() {
 }
 
 /// The same guarantee for `encode_exception_frame` — an oversized `:exception-type` drops the frame,
-/// and the drop carries `EVENTSTREAM_EXCEPTIONTYPE_HEADER_OVERSIZE`'s code at `debug!` (a swallowed
-/// mid-stream error signal, near-unreachable per request) rather than spamming per frame.
+
 #[test]
 fn test_encode_exception_frame_oversized_type_is_a_coded_debug_drop() {
     use crate::codec::diagnostics::EVENTSTREAM_EXCEPTIONTYPE_HEADER_OVERSIZE as DIAG;
 
     let huge = "x".repeat(u16::MAX as usize + 1);
 
-    // The same deterministic encode, once under each threshold: DEBUG-and-above, then WARN-and-above.
     let debug_cap = WarnCapture::capturing_debug();
     let frame = tracing::subscriber::with_default(debug_cap.clone(), || {
         encode_exception_frame(&huge, "msg")
@@ -671,17 +582,13 @@ fn test_encode_exception_frame_oversized_type_is_a_coded_debug_drop() {
 }
 
 /// A malformed prelude must abandon
-/// the stream via a DISTINCT propagated status (`DrainStatus::MalformedPrelude`), not be inferred
-/// from the buffer being emptied. The key discriminator this test pins: a NORMAL full drain that
-/// also leaves the buffer empty returns `DrainStatus::Ok`, so the abort signal is unambiguous —
-/// length alone could not tell the two apart, which was the fragile behavior being fixed.
+
 #[test]
 fn test_drain_frames_checked_signals_malformed_prelude_distinctly() {
-    // (a) Malformed prelude: oversized total_len. Buffer cleared AND status is MalformedPrelude.
     let mut bad = Vec::new();
-    bad.extend_from_slice(&u32::MAX.to_be_bytes()); // total_len ~4 GiB, above MAX_FRAME_BYTES
-    bad.extend_from_slice(&0u32.to_be_bytes()); // headers_len = 0
-    bad.extend_from_slice(&[0, 0, 0, 0]); // prelude CRC
+    bad.extend_from_slice(&u32::MAX.to_be_bytes());
+    bad.extend_from_slice(&0u32.to_be_bytes());
+    bad.extend_from_slice(&[0, 0, 0, 0]);
     bad.extend_from_slice(b"trailing junk");
     let (frames, status, valid_consumed) = drain_frames_checked(&mut bad, None);
     assert!(
@@ -700,19 +607,16 @@ fn test_drain_frames_checked_signals_malformed_prelude_distinctly() {
         "malformed prelude must propagate the DISTINCT abort signal, not be length-inferred"
     );
 
-    // (b) headers_len overflow is the OTHER malformed-prelude shape — same distinct signal.
     let mut bad2 = Vec::new();
-    bad2.extend_from_slice(&20u32.to_be_bytes()); // total_len = 20 (>= 16, <= cap)
-    bad2.extend_from_slice(&5u32.to_be_bytes()); // headers_len = 5 (> 20 - 16 = 4)
-    bad2.extend_from_slice(&[0, 0, 0, 0]); // prelude CRC
+    bad2.extend_from_slice(&20u32.to_be_bytes());
+    bad2.extend_from_slice(&5u32.to_be_bytes());
+    bad2.extend_from_slice(&[0, 0, 0, 0]);
     bad2.extend_from_slice(b"junk extra bytes");
     let (frames2, status2, _) = drain_frames_checked(&mut bad2, None);
     assert!(frames2.is_empty());
     assert!(bad2.is_empty());
     assert_eq!(status2, DrainStatus::MalformedPrelude);
 
-    // (c) The AMBIGUITY case the old length-inference got wrong: a CLEAN full drain that consumes
-    // every buffered byte also leaves an EMPTY buffer — but it is NOT an abort. Status is Ok.
     let mut good = encode_frame("contentBlockDelta", br#"{"delta":{"text":"hi"}}"#);
     let good_len = good.len();
     let (frames3, status3, valid_consumed3) = drain_frames_checked(&mut good, None);
@@ -731,7 +635,6 @@ fn test_drain_frames_checked_signals_malformed_prelude_distinctly() {
         "an empty buffer after a clean full drain must NOT be read as an abort"
     );
 
-    // (d) A trailing PARTIAL frame is healthy too (buffer non-empty): status Ok, await more bytes.
     let full = encode_frame("messageStop", br#"{"stopReason":"end_turn"}"#);
     let mut partial = full[..full.len() - 4].to_vec();
     let (frames4, status4, _) = drain_frames_checked(&mut partial, None);
@@ -743,7 +646,6 @@ fn test_drain_frames_checked_signals_malformed_prelude_distinctly() {
         "a buffered partial is not an abort"
     );
 
-    // (e) The thin `drain_frames` wrapper still returns just the frames (existing callers).
     let mut buf = encode_frame("messageStart", br#"{"role":"assistant"}"#);
     let only_frames = drain_frames(&mut buf);
     assert_eq!(only_frames.len(), 1);
@@ -751,23 +653,21 @@ fn test_drain_frames_checked_signals_malformed_prelude_distinctly() {
 }
 
 /// The smallest frame with a NON-empty
-/// payload that carries no headers — `total_len == 18` (12 prelude + 0 headers + 2 payload + 4
-/// CRC). Sits one above the empty-payload minimum and guards the `12 + headers_len .. total_len
-/// - 4` payload slice arithmetic at its lower edge.
+
 #[test]
 fn test_drain_frames_two_byte_payload_no_headers() {
     let payload = b"hi";
-    // total_len = prelude(12) + headers(0) + payload + message_crc(4) = 18.
+
     let total_len = PRELUDE_LEN as u32 + payload.len() as u32 + CRC_BYTES as u32;
     let mut frame = Vec::with_capacity(total_len as usize);
     frame.extend_from_slice(&total_len.to_be_bytes());
-    frame.extend_from_slice(&0u32.to_be_bytes()); // headers_len = 0
+    frame.extend_from_slice(&0u32.to_be_bytes());
     let prelude_crc = crc32fast::hash(&frame[..8]);
     frame.extend_from_slice(&prelude_crc.to_be_bytes());
     frame.extend_from_slice(payload);
     let message_crc = crc32fast::hash(&frame);
     frame.extend_from_slice(&message_crc.to_be_bytes());
-    assert_eq!(frame.len(), 18); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(frame.len(), 18);
 
     let mut buf = frame;
     let frames = drain_frames(&mut buf);
@@ -778,8 +678,7 @@ fn test_drain_frames_two_byte_payload_no_headers() {
 }
 
 /// Regression proof (byte-identical behavior before and after the O(frames²)→O(bytes) rewrite
-/// of `drain_frames_checked`'s per-frame buffer advance): many frames, a trailing partial, a
-/// `consumed_sink` populated in order, exact `valid_consumed`.
+
 #[test]
 fn drain_frames_checked_is_byte_identical_after_the_index_rewrite() {
     let mut buf = Vec::new();
@@ -790,7 +689,7 @@ fn drain_frames_checked_is_byte_identical_after_the_index_rewrite() {
         buf.extend_from_slice(&frame);
         expected.push(("contentBlockDelta".to_string(), payload.into_bytes()));
     }
-    // Trailing partial frame.
+
     let partial_full = encode_frame("messageStop", br#"{"stopReason":"end_turn"}"#);
     let partial = &partial_full[..partial_full.len() - 3];
     buf.extend_from_slice(partial);
@@ -808,7 +707,7 @@ fn drain_frames_checked_is_byte_identical_after_the_index_rewrite() {
         buf, partial,
         "the trailing partial frame remains buffered, byte-identical"
     );
-    // The sink holds exactly the 50 valid frames' verbatim bytes, in order.
+
     let mut expected_sink = Vec::new();
     for i in 0..50 {
         let payload = format!("{{\"i\":{i}}}");
@@ -818,9 +717,7 @@ fn drain_frames_checked_is_byte_identical_after_the_index_rewrite() {
 }
 
 /// Extends `test_drain_frames_checked_signals_malformed_prelude_distinctly` with valid frames
-/// BEFORE the malformed one — the case the index-tracking rewrite is most likely to break,
-/// since it is the first test to exercise `pos` advancing across multiple frames before hitting
-/// the `buf.clear()` / status-abort arm.
+
 #[test]
 fn a_malformed_prelude_after_valid_frames_still_clears_and_reports_the_prefix() {
     let mut buf = Vec::new();
@@ -831,7 +728,7 @@ fn a_malformed_prelude_after_valid_frames_still_clears_and_reports_the_prefix() 
         prefix_len += frame.len();
         buf.extend_from_slice(&frame);
     }
-    // Malformed prelude appended after 5 valid frames.
+
     buf.extend_from_slice(&u32::MAX.to_be_bytes());
     buf.extend_from_slice(&0u32.to_be_bytes());
     buf.extend_from_slice(&[0, 0, 0, 0]);
@@ -862,14 +759,13 @@ fn frames_buffer(n: usize) -> Vec<u8> {
 }
 
 /// The drain's work grew linearly from `n` to `4n` frames: under 8× — the log-scale midpoint of
-/// linear's ~4× and quadratic's ~16× — in COUNTED work units, so no scheduler, cache or neighbour
-/// load can move the verdict (Law 8).
+
 fn scales_linearly(small: DrainWork, big: DrainWork) -> bool {
     big.total() < small.total() * 8
 }
 
 /// The drain as it was before the index-tracking rewrite: one front `drain` PER FRAME, each
-/// memmoving the whole remaining tail. The deliberately quadratic reference the checker must reject.
+
 fn per_frame_drain(buf: &mut Vec<u8>) -> DrainWork {
     let mut work = DrainWork::default();
     while buf.len() >= PRELUDE_LEN {
@@ -885,16 +781,7 @@ fn per_frame_drain(buf: &mut Vec<u8>) -> DrainWork {
 }
 
 /// Complexity regression: `drain_frames_checked` used `Vec::drain(..total_len)` PER FRAME, which
-/// memmoves the entire remaining tail on every call — O(frames × bytes) for a buffer of many small
-/// frames. The index-tracking rewrite does ONE buffer edit for the whole pass, O(bytes).
-///
-/// COUNTED, NOT TIMED. The previous form compared wall-clock times of 1M- and 4M-frame drains and
-/// flaked under shared CI load (ModernCI quarantined it): a ratio of two timings measures the
-/// machine as much as the code. The drain now counts its own buffer work ([`DrainWork`]: bytes
-/// walked as frames, buffer edits, bytes those edits moved), and every buffer edit goes through the
-/// counting [`consume_front`] / [`clear_all`]. So: one pass makes exactly ONE edit, moves nothing
-/// when it consumes whole frames, walks every byte once, and its total work grows ~4× from n to 4n
-/// frames — while the per-frame drain makes n edits, moves O(n²) bytes and fails the same check.
+
 #[test]
 fn drain_frames_checked_scales_linearly_in_frame_count() {
     let run = |n: usize| {
@@ -922,7 +809,6 @@ fn drain_frames_checked_scales_linearly_in_frame_count() {
         big.total() as f64 / small.total() as f64
     );
 
-    // A trailing partial frame is kept and moved once, not once per frame.
     let mut buf = frames_buffer(1_000);
     buf.extend_from_slice(&frames_buffer(1)[..PRELUDE_LEN + 2]);
     let mut work = DrainWork::default();
@@ -933,7 +819,7 @@ fn drain_frames_checked_scales_linearly_in_frame_count() {
 }
 
 /// The RED arm: the per-frame drain this test exists to catch makes one edit per frame and moves a
-/// quadratic number of bytes, and the same linearity check rejects it.
+
 #[test]
 fn the_linearity_check_rejects_a_per_frame_drain() {
     let small = per_frame_drain(&mut frames_buffer(1_000));

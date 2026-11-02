@@ -2,16 +2,12 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR MAPPING — the Bedrock reasoning ask (dropped both ways, as in 1.5.5)
-//! and structured output (BED-08). Split from `ir_mapping_tests.rs`; BED-08 moves a committed
-//! request golden (`req_o2b_tools.json`).
 
 use super::*;
 use serde_json::json;
 
 /// The reader promotes no `additionalModelRequestFields` reasoning ask, as in 1.5.5 (v1.5.5
-/// `crates/busbar/src/proto/bedrock/reader.rs:678`, `reasoning: None`): the native object stays a
-/// same-protocol member and is re-emitted verbatim. RED while `thinking` read as `Budget(4096)` and
-/// Nova `reasoningConfig` as `Effort(High)`.
+
 #[test]
 fn a_native_reasoning_ask_is_not_promoted_to_the_ir() {
     let body = json!({
@@ -27,7 +23,7 @@ fn a_native_reasoning_ask_is_not_promoted_to_the_ir() {
     });
     let ir = BedrockReader.read_request(&nova).expect("read");
     assert_eq!(ir.reasoning, None);
-    // Same-protocol: the native object is re-emitted verbatim.
+
     let back = writer().write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(
         back["additionalModelRequestFields"],
@@ -37,9 +33,7 @@ fn a_native_reasoning_ask_is_not_promoted_to_the_ir() {
 }
 
 /// A foreign reasoning ask is DROPPED on Bedrock egress, as in 1.5.5 (v1.5.5
-/// `crates/busbar/src/proto/bedrock/writer.rs:139-146`): no `thinking` is written, so no thinking
-/// tokens are billed, and the sampling knobs (`temperature`, `topP`, `top_k`) are sent as 1.5.5
-/// sent them. RED while the ask wrote `thinking {enabled, 7168}` and stripped the knobs.
+
 #[test]
 fn a_foreign_reasoning_ask_is_dropped_on_bedrock_egress() {
     let ir = crate::codec::ir::IrRequest {
@@ -68,7 +62,7 @@ fn a_foreign_reasoning_ask_is_dropped_on_bedrock_egress() {
 }
 
 /// BED-08: Converse's `outputConfig.textFormat` and `toolSpec.strict` are read into the IR and
-/// written back, so a JSON-schema directive and per-tool strict cross in both directions.
+
 #[test]
 fn bed08_output_config_and_tool_strict_map_both_ways() {
     let body = json!({
@@ -85,15 +79,14 @@ fn bed08_output_config_and_tool_strict_map_both_ways() {
     assert_eq!(rf.name.as_deref(), Some("extract"));
     assert_eq!(rf.description.as_deref(), Some("d"));
     assert_eq!(ir.tools[0].strict, Some(true));
-    // Same-protocol round trip keeps the native bytes (the raw textFormat wins).
+
     let back = writer().write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(back["outputConfig"], body["outputConfig"], "{back}");
     assert_eq!(
         back["toolConfig"]["tools"][0]["toolSpec"]["strict"], true,
         "{back}"
     );
-    // Cross-protocol: the typed directive is projected from the IR alone, on a lane that declares
-    // native structured outputs.
+
     let mut cross = ir.clone();
     cross.extra.clear();
     let native = LaneCaps {
@@ -117,8 +110,7 @@ fn bed08_output_config_and_tool_strict_map_both_ways() {
     assert!(writer()
         .dropped_egress_controls_for_lane(&cross, &native)
         .is_empty());
-    // A lane that does not declare them drops the directive (the pre-structured-output form) and
-    // says so; per-tool strict still rides.
+
     let out = writer().write_request(crate::codec::test_host::HOST, &cross);
     assert!(out.get("outputConfig").is_none(), "{out}");
     assert_eq!(

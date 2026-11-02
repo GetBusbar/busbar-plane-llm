@@ -50,10 +50,6 @@ use crate::codec::ir::IrRequest;
 use busbar_contract::ir::facts::IrFacts;
 use serde_json::Value;
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-// THE NORMALIZED VIEW — the canonical form both implementations reduce to.
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-
 /// One request, as seen by ONE of the two implementations.
 ///
 /// Every field is something a shipped hook actually receives: `system`/`turns` are the `prompt: ro`
@@ -76,10 +72,7 @@ struct Fixture {
 }
 
 /// THE view: the protocol's real reader, then the surviving projection.
-///
-/// `Err` is a first-class outcome, not a test failure: five readers hard-reject bodies the deleted
-/// projection screened happily, and turning that asymmetry into a 400 is one of the shipped
-/// behaviour changes rather than an accident of this test.
+
 fn ir_view(f: &Fixture) -> Result<View, String> {
     let proto = crate::codec::proto_codec::protocol_for(f.proto)
         .unwrap_or_else(|| panic!("no protocol registered for '{}'", f.proto));
@@ -91,16 +84,7 @@ fn ir_view(f: &Fixture) -> Result<View, String> {
 }
 
 /// Reduce the successor projection to the same [`View`] the LHS reduces to.
-///
-/// This is the ONLY place the differential still does any flattening of its own, and it is
-/// deliberately the grouping `ir::facts::project` documents rather than a private one: group the
-/// item stream on `Slot::turn_index`, take the role from the items, join with a newline. The
-/// system slot is its own bucket and is never merged into the turn list — structural difference is
-/// what this file is for.
-///
-/// `text_chars` and `max_tokens` come from `IrFacts::shape()` and the end-user id from
-/// `IrFacts::end_user()`, so the SIZE-signal half of the comparison exercises the production
-/// accessors too and not just the content walk.
+
 fn project_ir(ir: &IrRequest) -> View {
     let mut system_pieces: Vec<String> = Vec::new();
     let mut turns: Vec<(String, Vec<String>)> = Vec::new();
@@ -124,25 +108,15 @@ fn project_ir(ir: &IrRequest) -> View {
             .into_iter()
             .map(|(role, pieces)| (role, pieces.join("\n")))
             .collect(),
-        // Counted like the SIZE signal counts: text, never the join separators.
+
         text_chars: shape.text_chars,
         max_tokens: shape.max_tokens,
         end_user: ir.end_user().map(str::to_string),
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-// THE CORPUS — every wire format, plus the shapes that were each once a bug.
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-
 /// Real request bodies across all six formats.
-///
-/// It carries the eight shapes today's projection tests were written for, because each one was once
-/// a defect (an in-band system turn, an Anthropic `thinking` block, a Bedrock `reasoningContent`, a
-/// Responses summary-only `reasoning` item, a Responses `encrypted_content`-only item with
-/// `content: []`, a Gemini `thought: true` part, a media-only turn, a tool-result turn), a plain
-/// baseline per dialect so an "agreeing" row is real evidence rather than an absence of coverage,
-/// and the shapes named as divergences.
+
 fn corpus() -> Vec<Fixture> {
     vec![
         // ── OPENAI ────────────────────────────────────────────────────────────────────────────
@@ -436,16 +410,8 @@ fn corpus() -> Vec<Fixture> {
     ]
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-// THE GOLDEN — the surviving projection, pinned per fixture so it cannot drift either.
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-
 /// One fixture's view rendered as a single canonical line. Deliberately a string rather than a
-/// struct table: the assertion is a whole-corpus diff a reviewer reads top to bottom, and a
-/// hand-maintained struct table invites updating one field and calling it a review.
-///
-/// `REJECTED` stands for a body the reader refuses; the door projects such a body off its raw
-/// JSON instead (exchange/project_raw.rs), as 1.5.5 did.
+
 fn render_view(measured: &Result<View, String>) -> String {
     match measured {
         Err(_) => "REJECTED".to_string(),
@@ -473,8 +439,7 @@ fn render_corpus() -> String {
 }
 
 /// THE PIN. Regenerate deliberately, never reflexively: every line here is what a `prompt: ro` hook
-/// is shown for that request and what the size signal reports for it, so a moved line is an
-/// operator-visible behaviour change and belongs in the CHANGELOG with a reason.
+
 const CORPUS_GOLDEN: &str = include_str!("golden/hook_ir_projection.txt");
 
 #[test]
@@ -490,18 +455,8 @@ fn the_surviving_projection_matches_its_pinned_golden() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-// THE NINE. The rows this file was RED on, re-asserted as the behaviour that shipped.
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-
 /// # THE NINE INTENDED DIVERGENCES, CHECKED RATHER THAN CLAIMED
-///
-/// Before the cutover this file measured nine fixtures on which the two implementations disagreed.
-/// Each one was a decision, not an accident, and each is a CHANGELOG line. Here each is asserted as
-/// the NEW behaviour — because "the divergence list went to zero" is only meaningful if the list
-/// went to zero in the direction that was chosen.
-///
-/// A failure here means the cutover did not do what it said it did, in a named way.
+
 #[test]
 fn the_nine_intended_divergences_are_the_ones_that_landed() {
     let view = |name: &str| -> Result<View, String> {
@@ -512,10 +467,6 @@ fn the_nine_intended_divergences_are_the_ones_that_landed() {
         ir_view(&f)
     };
 
-    // ── THE FIX. `inferenceConfig.maxTokens` is Bedrock Converse's spelling of the output cap. The
-    // deleted projection was dialect-aware for exactly one dialect's spelling and read `max_tokens`
-    // everywhere else, so on Bedrock ingress it reported `None` — a routing policy keyed on the
-    // size signal was BLIND to the caller's cap. The reader reads it; the signal now carries it.
     assert_eq!(
         view("bedrock_inference_config_max_tokens")
             .unwrap()
@@ -525,11 +476,6 @@ fn the_nine_intended_divergences_are_the_ones_that_landed() {
          blind to it"
     );
 
-    // ── THE IN-BAND SYSTEM TURN, on both dialects that carry it inside the turns array: NOT a
-    // divergence. It once was one (the system turn moved into `system`), and it deleted the
-    // operator's system prompt upstream, because a `prompt: rw` hook's reply replaces the whole
-    // turn array. A hook sees the same view 1.5.5 showed it: the system turn is
-    // a turn, at its wire position, and `system` is only the dialect's own system field.
     for name in ["openai_in_band_system_turn", "cohere_in_band_system_turn"] {
         let v = view(name).unwrap();
         assert_eq!(v.system, None, "{name}: no system FIELD on this body");
@@ -543,9 +489,6 @@ fn the_nine_intended_divergences_are_the_ones_that_landed() {
         );
     }
 
-    // ── THE TOP-LEVEL `system` KEY on a dialect that does not model one. It is legal to send, the
-    // old projection showed it to a hook as a system prompt, and the reader sweeps it into `extra`
-    // — so a hook was being shown a "system prompt" the provider would never receive as one.
     for name in ["openai_top_level_system_key", "cohere_top_level_system_key"] {
         assert_eq!(
             view(name).unwrap().system,
@@ -554,26 +497,16 @@ fn the_nine_intended_divergences_are_the_ones_that_landed() {
         );
     }
 
-    // ── THE ROLELESS GEMINI TURN. Legal on the wire, where an omitted role means `user`. The old
-    // projection emitted `""`, so a hook that switches on role — "screen user turns strictly, trust
-    // assistant turns" is the common shape — took its DEFAULT arm on caller-supplied input.
     assert_eq!(
         view("gemini_roleless_turn").unwrap().turns[0].0,
         "user",
         "an omitted gemini role means `user`, and a role-switching guardrail must see that"
     );
 
-    // ── THE OPENAI `refusal` PART. `generic_block_text` probed only `text`, so both the content
-    // projection AND the size signal read zero for a turn carrying real model-authored prose: a
-    // guardrail could not screen a replayed refusal.
     let refusal = view("openai_refusal_part").unwrap();
     assert_eq!(refusal.turns[0].1, "I cannot help with that");
     assert!(refusal.text_chars > 0, "the refusal now counts as content");
 
-    // ── TOOL-CALL ARGUMENTS. Attacker-influenceable, sent upstream verbatim, and projected by
-    // nothing before the cutover. A gate that cannot see the arguments of a tool call cannot screen
-    // the most attacker-influenceable field in an agent request. A WIDENING, in the CHANGELOG, and
-    // bounded by `limits.hook_content_max_bytes`.
     let tools = view("openai_tool_call_and_result").unwrap();
     assert!(
         tools.turns[0].1.contains("ARGUMENT PAYLOAD"),
@@ -585,11 +518,6 @@ fn the_nine_intended_divergences_are_the_ones_that_landed() {
         "the tool result stays visible too"
     );
 
-    // ── THE UNKNOWN ROLE. The readers refuse `role: "wizard"`, so the IR view does not exist for
-    // it. The door does not refuse the request for that: like 1.5.5's projection, which never
-    // failed (v1.5.5 proxy/hooks.rs:682), it projects the raw body and the request goes on
-    // (exchange/project_raw.rs; tests/hook_unknown_role_1_5_5.rs). Only a translation to another
-    // dialect refuses it, as 1.5.5's did (v1.5.5 proxy/wire.rs:456).
     assert!(
         view("openai_unknown_role").is_err(),
         "the reader refuses a role it does not recognise"
@@ -597,9 +525,7 @@ fn the_nine_intended_divergences_are_the_ones_that_landed() {
 }
 
 /// The opacity decisions, asserted as a set rather than one fixture at a time: three wire shapes
-/// across three dialects are opaque for the same reason, and a consumer must not be able to tell
-/// which one it is looking at. An opacity decision that silently regresses is a provider-ciphertext
-/// disclosure on two dialects and a policy bypass on the third.
+
 #[test]
 fn every_opaque_shape_projects_the_marker_and_never_the_bytes() {
     for (name, secret) in [
@@ -624,21 +550,8 @@ fn every_opaque_shape_projects_the_marker_and_never_the_bytes() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-// THE ACCEPTANCE PROPERTY: a protocol is covered by REGISTERING, not by adding an arm here.
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-
 /// # THE CORPUS WALK IS PROTOCOL-BLIND
-///
-/// The standard's acceptance test is *"if adding a protocol requires touching anything outside
-/// `proto/`, its handler and its codec, the standard is not held"*. This file is one of the places
-/// that would break first, so it asserts the weaker half it CAN assert today: every registered
-/// protocol has fixtures in the corpus, and the walk needs no per-protocol code — it contains no
-/// protocol name at all, only `crate::codec::proto_codec::protocol_for(f.proto)`.
-///
-/// A seventh protocol therefore joins by appearing in `KNOWN_PROTOCOLS` and getting fixtures. If it
-/// ever needs an arm in the walk, the standard is not held and this test's neighbours are the place
-/// to say so.
+
 #[test]
 fn corpus_covers_every_known_protocol() {
     let covered: std::collections::BTreeSet<&str> = corpus().iter().map(|f| f.proto).collect::<_>();

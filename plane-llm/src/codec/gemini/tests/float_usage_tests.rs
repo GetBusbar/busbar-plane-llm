@@ -2,23 +2,12 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! FLOAT-ENCODED USAGE COUNTS, PROVEN THROUGH `read_count_u64`.
-//!
-//! `serde_json::Value::as_u64()` returns `None` for ANY float-backed number, `27.0` included. The
-//! Gemini dialect's usage reads used to go through that bare idiom with `.unwrap_or(0)`, so a
-//! provider that spells a count as a float (e.g. `"thoughtsTokenCount": 372.0`) had a real count of
-//! 372 recorded as a billed ZERO. These tests pin realistic float-encoded wire payloads through every
-//! Gemini usage read site: the truncated-stream recovery path (`recover_truncated_usage`), the
-//! buffered path (`read_response`), the streaming path (`read_response_events`), and — because
-//! `gemini_usage` sums four terms into one billed total — the case where only ONE of those terms
-//! arrives float-spelled while its siblings are plain integers.
 
 use super::*;
 use crate::codec::ir::StreamDecodeState;
 
 /// THE TRUNCATED-STREAM RECOVERY PATH. `recover_truncated_usage` parses the trailing `usageMetadata`
-/// object independently of `gemini_usage`, so it needed its own proof: every one of its five fields
-/// (prompt, candidates, thoughts, tool-use, cached) spelled as a float must still be read as the real
-/// count, not silently dropped to zero by `.as_u64()`.
+
 #[test]
 fn recover_truncated_usage_reads_float_encoded_counts() {
     let reader = GeminiReader;
@@ -43,7 +32,7 @@ fn recover_truncated_usage_reads_float_encoded_counts() {
 }
 
 /// THE BUFFERED PATH. A native, non-streamed `generateContent` response with every usage field
-/// float-spelled must bill and attribute exactly as the integer-spelled twin would.
+
 #[test]
 fn buffered_read_response_reads_float_encoded_counts() {
     let body = serde_json::json!({
@@ -85,9 +74,7 @@ fn buffered_read_response_reads_float_encoded_counts() {
 }
 
 /// THE STREAMING PATH. The identical float-spelled `usageMetadata` on the terminal `finishReason`
-/// chunk of a stream must produce the same billed `MessageDelta` usage as the buffered path — a fix
-/// that only covers `read_response` and leaves `read_response_events` on the broken idiom is not a
-/// fix, because Gemini's stream terminal carries the exact same JSON shape.
+
 #[test]
 fn streaming_terminal_reads_float_encoded_counts() {
     let reader = GeminiReader;
@@ -126,12 +113,7 @@ fn streaming_terminal_reads_float_encoded_counts() {
 }
 
 /// THE ADDITIVE SUM, WITH EXACTLY ONE TERM FLOAT-SPELLED. `gemini_usage` sums four terms into the
-/// billed total, and `gemini_usage_identity_note` cross-checks that sum against Google's own stated
-/// `totalTokenCount`. A single float-spelled term reading as zero would still produce a PLAUSIBLE —
-/// merely short — total, which is harder to notice than an all-zero bill. Here only
-/// `thoughtsTokenCount` is float-spelled; `promptTokenCount`/`candidatesTokenCount`/
-/// `toolUsePromptTokenCount` are plain integers, so a regression in exactly one term of the sum is
-/// what this test is sensitive to.
+
 #[test]
 fn additive_sum_is_correct_when_exactly_one_term_is_float_spelled() {
     let usage_metadata = serde_json::json!({
@@ -166,25 +148,10 @@ fn additive_sum_is_correct_when_exactly_one_term_is_float_spelled() {
     );
 }
 
-// ── AN UNREADABLE COUNT REFUSES, IT DOES NOT BILL ZERO (#81/#42) ────────────────────────────────
-//
-// The float-spelled counts above are the case busbar CAN read. This is the case it cannot: a
-// `usageMetadata` field that is there and is not a number busbar understands. The old readers
-// defaulted it to zero, writing "no work happened" into the ledger for work that did.
-
 /// AN UNREADABLE IMAGE COUNT IS RECORDED AS UNKNOWN: THE ANSWER IS SERVED, THE COUNT NEVER 0.
-///
-/// The image tokens are recorded (residual units), never billed. 1.5.5 served the answer whatever
-/// its usage said (v1.5.5 `crates/busbar/src/handlers/gemini.rs:446-472` read no usage at all), so
-/// an unreadable count must not refuse it; and a recorded count is a ledger row, so it must not
-/// become a fabricated 0 either (#81, OWNER rule 21). It is UNKNOWN: left out of the record, named
-/// on the answer's warnings. The re-emitted Imagen body carries no `usageMetadata` at all (1.5.5's
-/// `{predictions}` alone, v1.5.5 `crates/busbar/src/handlers/gemini.rs:474-492`), so no 0 can be
-/// written for it there. RED while `gemini/handler.rs` `read_image_response` defaulted it to zero,
-/// and while it refused the answer.
+
 #[test]
 fn an_unreadable_image_count_is_recorded_as_unknown_and_the_answer_served() {
-    // `"27"` is a string, not a number: present, and not a count.
     let wire = br#"{"predictions":[{"bytesBase64Encoded":"aGk="}],"usageMetadata":{"promptTokenCount":"27","candidatesTokenCount":5}}"#;
     let resp = crate::codec::gemini::handler::read_image_response(wire)
         .expect("the answer is served whatever its usage said, as in 1.5.5");
@@ -221,7 +188,6 @@ fn an_unreadable_image_count_is_recorded_as_unknown_and_the_answer_served() {
         "the Imagen body is `{{predictions}}` alone, as in 1.5.5; no usage (and so no 0) is written: {written}"
     );
 
-    // The same body, float-spelled, reads and is recorded: only an unreadable count is unknown.
     let ok = br#"{"predictions":[{"bytesBase64Encoded":"aGk="}],"usageMetadata":{"promptTokenCount":27.0,"candidatesTokenCount":5}}"#;
     let resp = crate::codec::gemini::handler::read_image_response(ok)
         .expect("a float-spelled count reads");
@@ -235,10 +201,7 @@ fn an_unreadable_image_count_is_recorded_as_unknown_and_the_answer_served() {
 }
 
 /// THE TRANSCRIPTION READER REFUSES AN UNREADABLE BILLED COUNT ON ITS OWN (LLM3#6) — reached on
-/// the CROSS-PROTOCOL seam (the op does not tap same-protocol usage). The refused count bills
-/// nothing, the readable one bills as stated and the transcript is served: v1.5.5's
-/// `.and_then(Value::as_u64).unwrap_or(0)` figure (v1.5.5 `handlers/gemini.rs:229-241`). Refusing
-/// the whole answer was a 500 with no usage.
+
 #[test]
 fn an_unreadable_transcription_count_refuses_itself_and_the_transcript_is_served() {
     let wire = br#"{"candidates":[{"content":{"parts":[{"text":"hi"}]}}],"usageMetadata":{"promptTokenCount":[],"candidatesTokenCount":5}}"#;
@@ -254,10 +217,7 @@ fn an_unreadable_transcription_count_refuses_itself_and_the_transcript_is_served
 }
 
 /// THE TRANSCRIPTION READER LEDGERS EVERY COUNT GOOGLE REPORTS (LLM3#1, owner LEDGER-100), and its
-/// BILL STAYS v1.5.5's (prompt and candidates only; v1.5.5 `handlers/gemini.rs:229-241`): the
-/// thinking, cached-content and tool-use counts are RECORDED as residual units under Google's own
-/// names, never billed. Zero and absent counts are left off; an unreadable one is unknown, left
-/// off, and refuses nothing.
+
 #[test]
 fn transcription_records_thought_cached_and_tool_use_counts_as_residual_units() {
     let wire = br#"{"candidates":[{"content":{"parts":[{"text":"hi"}]}}],"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":5,"thoughtsTokenCount":40,"cachedContentTokenCount":8,"toolUsePromptTokenCount":3,"totalTokenCount":68}}"#;

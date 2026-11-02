@@ -16,11 +16,11 @@ fn path_model_extracts_the_segment_before_the_last_colon() {
         h.path_model("/v1beta/models/gemini-1.5-pro:streamGenerateContent"),
         Some("gemini-1.5-pro".to_string())
     );
-    // No `/models/` segment at all -> None.
+
     assert_eq!(h.path_model("/v1beta/foo:bar"), None);
-    // No trailing `:action` -> None (rsplit_once finds no colon).
+
     assert_eq!(h.path_model("/v1beta/models/gemini-2.0-flash"), None);
-    // Empty model segment (colon right after `/models/`) -> None, not Some("").
+
     assert_eq!(h.path_model("/v1beta/models/:generateContent"), None);
 }
 
@@ -34,19 +34,18 @@ fn path_base_reshapes_the_gemini_url_for_vertex() {
         stream: false,
         path_base,
     };
-    // Default (no override): the native Generative Language layout is unchanged.
+
     assert_eq!(
         h.upstream_path(&ctx(None)),
         "/v1beta/models/gemini-2.0-flash:generateContent"
     );
-    // With a Vertex path_base: the base segment is replaced; the `/{model}:verb` suffix survives,
-    // so a `gemini`-protocol provider reaches the Vertex URL by config alone.
+
     let vbase = "/v1/projects/my-proj/locations/us-central1/publishers/google/models";
     assert_eq!(
             h.upstream_path(&ctx(Some(vbase))),
             "/v1/projects/my-proj/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent"
         );
-    // Embeddings keep their verb on the overridden base too.
+
     assert_eq!(
             h.upstream_path(&EgressCtx {
                 operation: OpVerb::EMBEDDINGS,
@@ -59,9 +58,7 @@ fn path_base_reshapes_the_gemini_url_for_vertex() {
 }
 
 /// Moderation and rerank (no Gemini cell) answer `:generateContent` whether or not the request
-/// streams, as 1.5.5 did (v1.5.5 `crates/busbar/src/handlers/gemini.rs:62-63`); only chat,
-/// transcription and speech are stream-aware (`:52-58`). RED while every fallback verb took
-/// `:streamGenerateContent` on a streamed request.
+
 #[test]
 fn moderation_and_rerank_always_use_generate_content() {
     let h = GeminiRequestHandler;
@@ -96,8 +93,6 @@ fn moderation_and_rerank_always_use_generate_content() {
 
 #[test]
 fn transcription_read_request_captures_inline_audio() {
-    // A generateContent body with a valid-base64 inline_data audio part → IR Transcription
-    // carrying the audio blob (and any text part as the prompt).
     let audio_b64 = base64_encode(b"pretend-audio-bytes");
     let body = serde_json::to_vec(&json!({
         "contents": [{ "role": "user", "parts": [
@@ -124,8 +119,6 @@ fn transcription_read_request_captures_inline_audio() {
 
 #[test]
 fn transcription_read_request_invalid_base64_is_bad_request() {
-    // Malformed base64 in inline_data.data must 400 at this trust boundary rather than
-    // silently truncate to an empty audio body downstream.
     let body = serde_json::to_vec(&json!({
         "contents": [{ "role": "user", "parts": [
             { "inline_data": { "mime_type": "audio/wav", "data": "!!!not base64!!!" } },
@@ -143,9 +136,6 @@ fn transcription_read_request_invalid_base64_is_bad_request() {
 
 #[test]
 fn transcription_read_response_captures_input_and_output_token_counts() {
-    // input and output must map from DIFFERENT usageMetadata fields (promptTokenCount vs
-    // candidatesTokenCount) - a dropped `output:` field would silently read back as 0
-    // regardless of the real candidatesTokenCount.
     let wire = serde_json::to_vec(&json!({
         "candidates": [{ "content": { "parts": [{ "text": "hello" }] } }],
         "usageMetadata": { "promptTokenCount": 11, "candidatesTokenCount": 7 },
@@ -164,7 +154,6 @@ fn transcription_read_response_captures_input_and_output_token_counts() {
 
 #[test]
 fn transcription_read_request_without_inline_data_is_bad_request() {
-    // No inline_data audio part → the specific "requires an inline_data audio part" 400.
     let body = serde_json::to_vec(&json!({
         "contents": [{ "role": "user", "parts": [{ "text": "just text" }]}],
     }))
@@ -185,7 +174,6 @@ fn transcription_read_request_without_inline_data_is_bad_request() {
 
 #[test]
 fn resolve_operation_audio_out_is_speech() {
-    // responseModalities:["AUDIO"] on generateContent ⇒ Speech (TTS).
     let h = GeminiRequestHandler;
     let body = serde_json::to_vec(&json!({
         "contents": [{ "role": "user", "parts": [{ "text": "say hi" }]}],
@@ -200,7 +188,6 @@ fn resolve_operation_audio_out_is_speech() {
 
 #[test]
 fn resolve_operation_audio_in_is_transcription() {
-    // An inline_data part with an audio/* mime ⇒ Transcription.
     let body = serde_json::to_vec(&json!({
         "contents": [{ "role": "user", "parts": [
             { "inline_data": { "mime_type": "audio/wav", "data": "AAAA" } },
@@ -216,12 +203,6 @@ fn resolve_operation_audio_in_is_transcription() {
 
 #[test]
 fn resolve_operation_multiple_markers_prefers_speech_over_transcription() {
-    // A body carrying BOTH responseModalities:AUDIO and an inline_data audio part exercises
-    // the single-pass pre-filter's "any marker present" gate with more than one marker
-    // actually present, then leaves the existing JSON-pointer logic (unchanged by this fix)
-    // to disambiguate — which checks audio_out (Speech) before audio_in (Transcription), so
-    // Speech wins. Locks in that the combined-scan pre-filter doesn't change which branch the
-    // downstream classifier picks when multiple markers co-occur.
     let body = serde_json::to_vec(&json!({
         "contents": [{ "role": "user", "parts": [
             { "inline_data": { "mime_type": "audio/wav", "data": "AAAA" } },
@@ -238,9 +219,6 @@ fn resolve_operation_multiple_markers_prefers_speech_over_transcription() {
 
 #[test]
 fn resolve_operation_no_markers_at_all_is_chat() {
-    // An empty-ish body with none of the three markers must fall through to Chat without
-    // attempting a JSON parse of a body that isn't even valid JSON — this is the pre-filter's
-    // "false || false || false" common case the single-pass scan exists to speed up.
     let h = GeminiRequestHandler;
     assert_eq!(
         h.resolve_operation(
@@ -253,7 +231,6 @@ fn resolve_operation_no_markers_at_all_is_chat() {
 
 #[test]
 fn resolve_operation_plain_text_is_chat() {
-    // A plain text chat body (no audio modalities, no inline_data) ⇒ Chat.
     let body = serde_json::to_vec(&json!({
         "contents": [{ "role": "user", "parts": [{ "text": "hello" }]}],
     }))
@@ -267,7 +244,6 @@ fn resolve_operation_plain_text_is_chat() {
 
 #[test]
 fn embeddings_read_request_captures_content_text() {
-    // embedContent body → IR Embeddings carrying content.parts[].text.
     let body = serde_json::to_vec(&json!({
         "content": { "parts": [{ "text": "embed me" }] },
     }))
@@ -284,7 +260,6 @@ fn embeddings_read_request_captures_content_text() {
 
 #[test]
 fn embeddings_read_request_without_text_is_bad_request() {
-    // No content.parts text ⇒ 400.
     let body = serde_json::to_vec(&json!({ "content": { "parts": [] } })).unwrap();
     let err = super::super::super::leaf_codec::embeddings_read_request(
         "gemini",
@@ -297,7 +272,6 @@ fn embeddings_read_request_without_text_is_bad_request() {
 
 #[test]
 fn image_read_request_captures_prompt_and_count() {
-    // Imagen :predict body → IR Image with instances[0].prompt and parameters.sampleCount.
     let body = serde_json::to_vec(&json!({
         "instances": [{ "prompt": "a fox" }],
         "parameters": { "sampleCount": 3 },
@@ -339,10 +313,6 @@ fn image_read_response_captures_base64_image_bytes() {
     assert_eq!(r.images[0].mime_type.as_deref(), Some("image/png"));
 }
 
-// A token-reporting Gemini image response carries a `usageMetadata` token object. Its tokens are
-// RECORDED (residual units) and bill NOTHING on the four token tiers, as in 1.5.5, whose Imagen
-// reader read no `usageMetadata` (v1.5.5 `crates/busbar/src/handlers/gemini.rs:446-472`) and whose
-// image op tapped no same-dialect body. RED while the reader token-billed 20 in / 10 out.
 #[test]
 fn image_response_usage_metadata_is_recorded_never_billed() {
     let wire = serde_json::to_vec(&json!({
@@ -368,8 +338,6 @@ fn image_response_usage_metadata_is_recorded_never_billed() {
     }
 }
 
-// FIND (money): an Imagen `:predict` response has NO `usageMetadata`; the reader must record a cost
-// basis from the N returned images so `billing()` is `Images{count:N}`, not `None`. Fails pre-fix.
 #[test]
 fn image_response_without_usage_bills_per_image() {
     let wire = serde_json::to_vec(&json!({
@@ -390,7 +358,6 @@ fn image_response_without_usage_bills_per_image() {
 
 #[test]
 fn image_write_read_roundtrip_preserves_prompt() {
-    // write_request emits instances[].prompt + parameters.sampleCount; read_request recovers.
     let req = crate::codec::ir::image::ImageReq {
         prompt: Some("roundtrip fox".to_string()),
         n: Some(2),
@@ -407,8 +374,6 @@ fn image_write_read_roundtrip_preserves_prompt() {
 
 #[test]
 fn embeddings_write_request_carries_dimensions_task_type_and_title() {
-    // Gemini `:embedContent` supports these natively; dropping `outputDimensionality` returned
-    // full-width vectors, and taskType/title steer retrieval quality.
     let ir = crate::codec::ir::embeddings::EmbeddingsReq {
         input: EmbInput::Text(vec!["hi".into()]),
         dimensions: Some(256),
@@ -425,8 +390,6 @@ fn embeddings_write_request_carries_dimensions_task_type_and_title() {
 
 #[test]
 fn embeddings_taps_usage_is_true() {
-    // Token-metered same-protocol path: extract_usage must actually read this response's
-    // usage object to bill the virtual key.
     assert!(EMB.taps_usage());
 }
 
@@ -505,8 +468,6 @@ fn embeddings_write_request_warns_on_dropped_non_text_input() {
 
 #[test]
 fn image_write_request_carries_aspect_ratio_and_person_generation() {
-    // Imagen generation controls must ride under `parameters`; dropping them fell back to
-    // Imagen's defaults (1:1 aspect, default person-generation policy).
     let ir = crate::codec::ir::image::ImageReq {
         prompt: Some("a fox".into()),
         aspect_ratio: Some("16:9".into()),
@@ -521,9 +482,6 @@ fn image_write_request_carries_aspect_ratio_and_person_generation() {
 
 #[test]
 fn speech_read_response_invalid_base64_is_malformed() {
-    // A corrupt inline base64 audio payload must fail LOUD (CodecError) at this trust boundary
-    // rather than reach the egress writer, where a decode failure would silently become an
-    // empty 200 audio body.
     let body = br#"{"candidates":[{"content":{"parts":[{"inlineData":{"data":"!!!not-base64!!!","mimeType":"audio/L16;codec=pcm;rate=24000"}}]}}]}"#;
     let res = super::super::super::leaf_codec::speech_read_response("gemini", body);
     assert!(matches!(res, Err(CodecError::Malformed(_))));
@@ -531,7 +489,6 @@ fn speech_read_response_invalid_base64_is_malformed() {
 
 #[test]
 fn speech_read_response_valid_base64_returns_audio_blob() {
-    // The valid-base64 case returns Ok with the audio blob carried as a B64 payload.
     let data = base64_encode(b"pretend-pcm-audio");
     let body = serde_json::to_vec(&json!({
         "candidates": [{ "content": { "parts": [{ "inlineData": {
@@ -551,7 +508,6 @@ fn speech_read_response_valid_base64_returns_audio_blob() {
 
 #[test]
 fn speech_read_request_captures_prompt_text() {
-    // A generateContent TTS body → IR Speech carrying the joined parts[].text as `input`.
     let body = serde_json::to_vec(&json!({
         "contents": [{ "parts": [{ "text": "hello" }] }],
         "generationConfig": { "responseModalities": ["AUDIO"] },
@@ -566,9 +522,6 @@ fn speech_read_request_captures_prompt_text() {
 
 #[test]
 fn speech_write_request_prefixes_instructions_to_prompt_not_language_code() {
-    // OpenAI-style free-text `instructions` steer Gemini TTS through the PROMPT, not the BCP-47
-    // `speechConfig.languageCode` (the old, request-corrupting behavior). Assert the prefix lands
-    // in parts[0].text as "<instr>: <input>" and no languageCode key is emitted.
     let ir = crate::codec::ir::audio::SpeechReq {
         input: "hello".into(),
         timbre: "Kore".into(),
@@ -588,7 +541,6 @@ fn speech_write_request_prefixes_instructions_to_prompt_not_language_code() {
     );
 }
 
-// FIND-2 (money): Gemini TTS response must be billed (non-None) so the synthesis is metered.
 #[test]
 fn gemini_speech_response_is_billed() {
     let resp = super::read_speech_response(b"\x00\x01raw-audio").unwrap();
@@ -598,10 +550,6 @@ fn gemini_speech_response_is_billed() {
     );
 }
 
-// A JSON body is a Gemini RESPONSE, and the only Gemini response shape carrying synthesis is the
-// `inlineData` one. A 200 whose body is an error envelope (or a candidate with no audio part) must
-// be refused here, not handed to the client as an MP3 whose bytes are a JSON object no player can
-// open — with the upstream's own explanation hidden inside it.
 #[test]
 fn a_json_error_shaped_speech_body_is_not_served_as_audio() {
     for body in [
@@ -616,7 +564,7 @@ fn a_json_error_shaped_speech_body_is_not_served_as_audio() {
             String::from_utf8_lossy(&body)
         );
     }
-    // And the raw-container arm is untouched: bytes that are not JSON at all really are the audio.
+
     let raw = super::read_speech_response(b"\xff\xfbraw-mp3").expect("a raw container still reads");
     assert_eq!(
         raw.audio.as_ref().map(|a| a.mime_type.as_str()),
@@ -624,11 +572,6 @@ fn a_json_error_shaped_speech_body_is_not_served_as_audio() {
     );
 }
 
-// A duration-billed transcription (whisper-1's `Billing::Duration`, an openai->gemini hop) reaches a
-// Gemini client with NO `usageMetadata`, exactly as 1.5.5 wrote it (v1.5.5
-// `crates/busbar/src/handlers/gemini.rs:259-265` wrote `usageMetadata` only for `Billing::Tokens`).
-// Gemini's `UsageMetadata` has no seconds member; the billed seconds are read off the egress reader,
-// never off these bytes. RED while the writer invented `usageMetadata.audioDurationSeconds`.
 #[test]
 fn a_duration_billed_transcription_writes_no_usage_metadata() {
     let ir = TranscriptionResp {
@@ -643,10 +586,6 @@ fn a_duration_billed_transcription_writes_no_usage_metadata() {
     assert!(v.get("usageMetadata").is_none(), "{v}");
 }
 
-// carryable-flatten #6: the gemini transcription writer REPLACED the caller's prompt with a fixed
-// directive (while the IR screens `prompt` as forwarded — the screening gate said "sent" and the wire
-// silently dropped it) and dropped `temperature`. Carry both. Fails pre-fix: no prompt part, no
-// generationConfig.temperature. Round-trips through the reader (which skips the synthetic directive).
 #[test]
 fn gemini_transcription_forwards_caller_prompt_and_temperature() {
     let ir = crate::codec::ir::audio::TranscriptionReq {
@@ -680,7 +619,7 @@ fn gemini_transcription_forwards_caller_prompt_and_temperature() {
         Some(0.5),
         "temperature must be forwarded via generationConfig: {v}"
     );
-    // And it round-trips: the reader recovers the caller prompt (skipping the synthetic directive).
+
     let back = super::super::super::leaf_codec::transcription_read_request(
         "gemini",
         &out,
@@ -691,9 +630,6 @@ fn gemini_transcription_forwards_caller_prompt_and_temperature() {
     assert_eq!(back.temperature, Some(0.5));
 }
 
-// carryable-flatten #5: Gemini multi-speaker TTS (`multiSpeakerVoiceConfig.speakerVoiceConfigs[]`) is
-// modelled by `SpeechReq::speakers` but the writer never read the field and the reader never parsed
-// the wire — a two-speaker request collapsed to a single voice. Read + emit. Fails pre-fix.
 #[test]
 fn gemini_speech_two_speaker_request_round_trips() {
     let ir = crate::codec::ir::audio::SpeechReq {
@@ -729,13 +665,8 @@ fn gemini_speech_two_speaker_request_round_trips() {
     );
 }
 
-// carryable-flatten #9: the Imagen `:predict` writer dropped negative_prompt/seed/guidance_scale/
-// image_size_tier (all Imagen-native params typed on `ImageReq`). Carry them. Fails pre-fix: a
-// bedrock->gemini image hop lost the negative prompt and determinism seed. Round-trips through gemini.
 #[test]
 fn gemini_imagen_image_carries_negative_prompt_seed_guidance_and_size_tier() {
-    // Shape a bedrock-ingress ImageReq (negative_prompt + seed are bedrock-native; add guidance +
-    // tier to prove all four survive) and cross to gemini egress.
     let ir = crate::codec::ir::image::ImageReq {
         model: "imagen-3.0-generate-002".into(),
         prompt: Some("a serene lake".into()),
@@ -763,9 +694,6 @@ fn gemini_imagen_image_carries_negative_prompt_seed_guidance_and_size_tier() {
     assert_eq!(back.image_size_tier.as_deref(), Some("2K"));
 }
 
-// M3: a gemini-ingress TRANSLATE transcription must read back AS translate (target_language set), so
-// re-emitting the request keeps TRANSLATE_INSTRUCTION instead of silently downgrading to transcribe.
-// Fails pre-fix: the reader skipped both instruction literals and left target_language None.
 #[test]
 fn transcription_translate_round_trips_as_translate() {
     let req = crate::codec::ir::audio::TranscriptionReq {
@@ -777,7 +705,7 @@ fn transcription_translate_round_trips_as_translate() {
         target_language: Some("en".into()),
         ..Default::default()
     };
-    // Writer selects TRANSLATE_INSTRUCTION when target_language is set.
+
     let wire = write_transcription_request(&req);
     let v: Value = serde_json::from_slice(&wire).unwrap();
     let first_text = v
@@ -788,13 +716,13 @@ fn transcription_translate_round_trips_as_translate() {
         Some(TRANSLATE_INSTRUCTION),
         "translate request must emit the translate directive: {v}"
     );
-    // Reader reconstructs translate mode.
+
     let back = read_transcription_request(&wire, "application/json").expect("re-read");
     assert!(
         back.target_language.is_some(),
         "TRANSLATE_INSTRUCTION must reconstruct target_language (translate mode), got None"
     );
-    // And a second egress re-emits the translate directive, not the transcribe one.
+
     let wire2 = write_transcription_request(&back);
     let v2: Value = serde_json::from_slice(&wire2).unwrap();
     assert_eq!(
@@ -805,7 +733,6 @@ fn transcription_translate_round_trips_as_translate() {
     );
 }
 
-// A plain transcribe request (no target_language) still reads back as transcribe.
 #[test]
 fn transcription_transcribe_round_trips_as_transcribe() {
     let req = crate::codec::ir::audio::TranscriptionReq {
@@ -824,10 +751,6 @@ fn transcription_transcribe_round_trips_as_transcribe() {
     );
 }
 
-// An upstream cannot choose the duration meter: a `usageMetadata.audioDurationSeconds` member (not
-// Gemini's wire) is not read, and the answer bills its token fields exactly as 1.5.5 read them
-// (v1.5.5 `crates/busbar/src/handlers/gemini.rs:229-241`: `promptTokenCount`/`candidatesTokenCount`
-// only, here both absent, so Tokens{0,0}). RED while the reader billed 12.5 seconds of `audio_ms`.
 #[test]
 fn transcription_response_reads_no_audio_duration_member() {
     let wire = json!({
@@ -843,7 +766,6 @@ fn transcription_response_reads_no_audio_duration_member() {
     );
 }
 
-// A real Gemini token usageMetadata still reads back as Tokens.
 #[test]
 fn transcription_response_reads_token_usage() {
     let wire = json!({
@@ -864,9 +786,6 @@ fn transcription_response_reads_token_usage() {
     );
 }
 
-// An Imagen `:predict` response is `{predictions}` alone, as 1.5.5 wrote it (v1.5.5
-// `crates/busbar/src/handlers/gemini.rs:474-492`): Imagen's `PredictResponse` has no `usageMetadata`,
-// so a foreign answer's token usage is not written into one. RED while the writer invented it.
 #[test]
 fn image_response_writer_writes_no_usage_metadata() {
     let resp = crate::codec::ir::image::ImageResp {
@@ -889,7 +808,6 @@ fn image_response_writer_writes_no_usage_metadata() {
     );
 }
 
-// An image response with no usage (per-image Imagen) emits no usageMetadata.
 #[test]
 fn image_response_writer_omits_usage_when_absent() {
     let resp = crate::codec::ir::image::ImageResp {
@@ -934,7 +852,7 @@ fn embeddings_refuse_every_malformed_coordinate_and_recover_usage_independently(
             Some(busbar_contract::billing::Billing::Tokens(usage))
         );
     }
-    // No arbitrary minimum dimension is imposed: a represented empty vector remains empty.
+
     let response = read_embeddings_response(br#"{"embedding":{"values":[]}}"#).unwrap();
     assert_eq!(
         response.embeddings[0].vectors.get(&EncFmt::Float),

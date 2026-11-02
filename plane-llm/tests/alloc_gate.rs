@@ -1,24 +1,9 @@
 //! What the same-dialect relay is allowed to allocate.
-//!
-//! A request whose dialect the lane already speaks, and whose model the lane already names, is
-//! relayed byte-for-byte: the bytes the client sent are the bytes the upstream gets. A relay that
-//! parses a second copy of that document on its way out is doing work whose only effect is to be
-//! thrown away, and no wall-clock test catches it reliably on a shared runner. An allocation COUNT
-//! does — it is the same number on every machine, so it can be pinned.
-//!
-//! The instrument is busbar-test-kit's counting allocator, counting per thread so a
-//! concurrently-running test never inflates the measured count. The bound is exact, not an upper
-//! bound: the measured call is a pure synchronous function over bytes, with no I/O and no clock, so
-//! its count does not vary run to run. If an intentional change moves it, run with `--nocapture`,
-//! read the printed count, and move the constant in the same commit — a raise IS the regression
-//! unless the commit says in words why the extra allocation is the cheaper of two evils.
 
 use busbar_test_kit::alloc_counter::{allocations_of, Counting};
 
 #[global_allocator]
 static ALLOC: Counting = Counting::new();
-
-// ── the whole forward the served door runs, bounded ─────────────────
 
 /// The generation the served door holds: one openai far end, under a pool that names it.
 fn served_generation() -> busbar_plane_llm::exchange::shaping::Shaping {
@@ -31,8 +16,7 @@ fn served_generation() -> busbar_plane_llm::exchange::shaping::Shaping {
 }
 
 /// The host the gated forward is handed: deterministic stack-only entropy and no clock. A native
-/// relay mints no id, while the buffered-to-stream arm must mint one successfully; the gate counts
-/// the plane's allocations and nothing of a host's entropy implementation.
+
 struct GateHost;
 
 impl busbar_contract::codec::CodecHost for GateHost {
@@ -52,8 +36,7 @@ const HOST: &dyn busbar_contract::codec::CodecHost = &GateHost;
 const FAR_OK: &[u8] = br#"{"id":"chatcmpl-gate","object":"chat.completion","created":0,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
 
 /// ONE served forward, as the plane's door runs it for a unit: the arrival read off the caller's
-/// head and body, the far-end request the attempt writes for the member, and the far end's whole
-/// answer relayed back to the caller. Answers the caller's status.
+
 fn one_forward(shaping: &busbar_plane_llm::exchange::shaping::Shaping, body: &[u8]) -> u16 {
     one_forward_with_host(shaping, body, HOST)
 }
@@ -94,21 +77,16 @@ fn one_forward_with_host(
 }
 
 /// COMMITTED BOUND (1.5.5's `FORWARD_PASSTHROUGH_MAX_ALLOCS`): the most allocations ONE warmed
-/// openai>openai passthrough forward may make, measured as the minimum over several iterations.
+
 const FORWARD_PASSTHROUGH_MAX_ALLOCS: u64 = 107;
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/alloc_gate_tests.rs::alloc_gate_openai_passthrough_forward`
-/// 1.5.5: one warmed, steady-state openai->openai chat forward through the
-/// served path (the arrival, the far-end exchange and the relay of the answer, 200 each) allocates
-/// at most 107 times, the minimum over the measured iterations.
-///
-/// RED: a new per-request allocation on the served forward (a builder per send, a codec boxed per
-/// call, a scaling allocation) pushes the warmed minimum over 107.
+
 #[test]
 fn alloc_gate_openai_passthrough_forward() {
     let shaping = served_generation();
     let body = br#"{"model":"p","messages":[{"role":"user","content":"hi"}],"max_tokens":16}"#;
-    // WARM UP: first-touch statics are per process, not per request.
+
     assert_eq!(one_forward(&shaping, body), 200, "passthrough must be 200");
     let mut min_allocs = u64::MAX;
     for _ in 0..4 {
@@ -130,8 +108,7 @@ fn alloc_gate_openai_passthrough_forward() {
 const ECHO_SCALING_MESSAGES: usize = 4_000;
 
 /// COMMITTED BOUND (1.5.5's `ECHO_BODY_SCALING_MAX_ALLOCS`): how many more allocations a request of
-/// [`ECHO_SCALING_MESSAGES`] messages may cost than the same request with one, on the buffered
-/// delivery arm (the caller asked to stream, the far end answered one body).
+
 const ECHO_BODY_SCALING_MAX_ALLOCS: u64 = 92_000;
 
 /// An openai chat request with `n` messages, asking to STREAM.
@@ -149,19 +126,13 @@ fn openai_stream_body(n: usize) -> Vec<u8> {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/alloc_gate_tests.rs::alloc_gate_request_echo_body_materialized_once`
-/// 1.5.5: on the buffered delivery arm (an openai caller asking to
-/// stream, answered one JSON body, 200 each), a body of 4000 messages costs at most 92000
-/// allocations more than the same body with one: the client-chosen node count multiplies no added
-/// per-node wave (the deep clone of the parsed request it once paid).
-///
-/// RED: the served forward gains a whole-body materialization (a second parse, a deep clone of the
-/// request) whose cost scales with the caller's message count past the 92000 delta.
+
 #[test]
 fn alloc_gate_request_echo_body_materialized_once() {
     let shaping = served_generation();
     let small_body = openai_stream_body(1);
     let large_body = openai_stream_body(ECHO_SCALING_MESSAGES);
-    // WARM both shapes outside the measured window.
+
     assert_eq!(one_forward(&shaping, &small_body), 200);
     assert_eq!(one_forward(&shaping, &large_body), 200);
     let mut status = (0, 0);
@@ -199,14 +170,7 @@ fn buffered_stream_synthesis_still_refuses_failed_entropy() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/alloc_gate_tests.rs::alloc_gate_dialect_seam_resolution_is_free_for_every_dialect`
-/// RESOLVING A DIALECT BY NAME COSTS NOTHING,
-/// for all six: the same stateless question (`requested_candidate_count`) asked through this plane's
-/// own resolution (`codec::decl_of(name)` then its codec) and on the dialect's writer directly
-/// allocates the same number of times. The difference is the resolution's own per-call cost, and
-/// it must be none: `decl_of` reads a `'static` table and the codec is a `&'static` borrow.
-///
-/// RED: a resolution that builds or boxes a codec per call allocates on every request of that
-/// dialect, and its count runs ahead of the writer's.
+
 #[test]
 fn resolving_every_dialect_by_name_allocates_nothing() {
     use busbar_plane_llm::codec::proto_codec::{self as p, ProtocolWriter};
@@ -222,8 +186,7 @@ fn resolving_every_dialect_by_name_allocates_nothing() {
         let codec = decl_of(name)
             .and_then(busbar_contract::protocol::ProtocolDecl::dialect)
             .unwrap_or_else(|| panic!("{name} declares a codec"));
-        // Warm both sides outside the measured windows: a first touch of a lazy static a writer
-        // reads is a per-process cost, not a per-request one.
+
         let _ = codec.requested_candidate_count(body);
         let _ = writer.requested_candidate_count(body);
         let direct = allocations_of(|| {
@@ -243,8 +206,7 @@ fn resolving_every_dialect_by_name_allocates_nothing() {
     }
 
     let body = serde_json::json!({ "model": "m", "messages": [] });
-    // Each writer is bound to a local before it is borrowed: the writers are constants with
-    // interior mutability, and a borrow of the constant itself would be a fresh copy per use.
+
     let anthropic = anthropic::AnthropicWriter;
     let bedrock = bedrock::BedrockWriter;
     let cohere = cohere::CohereWriter;

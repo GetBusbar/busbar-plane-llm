@@ -2,10 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE ONE DROP PATH (design F3 "Drops"; spec Part 2 #76). For every dialect, in both directions, a
-//! translate attempt that cannot carry a member WARNS naming its wire path and hands the path to
-//! the seam's audit; nothing is put in a dropped block's place. Each dialect test carries a RED
-//! arm: the same request or answer with only what the dialect maps drops nothing, so a walker that
-//! names too much (or a reader that substitutes) fails here.
 
 use super::*;
 use crate::codec::egress_prep::EgressPrep;
@@ -38,8 +34,6 @@ pub(super) fn prep(ingress: &str) -> EgressPrep {
         thought_signature_fill: false,
     }
 }
-
-// ───────────────────────────── the primitive ─────────────────────────────
 
 #[test]
 fn a_drop_outside_a_translate_attempt_says_nothing() {
@@ -101,8 +95,6 @@ fn a_scope_ends_with_its_attempt_even_on_unwind() {
     assert!(cap.messages().is_empty(), "no attempt is left open");
 }
 
-// ── the scope's discipline (ARCHITECT ruling, row-159 L1#4) ───────────────────────────────────
-
 fn drop_one(path: &'static str) {
     note(Dropped::new(
         path,
@@ -112,8 +104,7 @@ fn drop_one(path: &'static str) {
 }
 
 /// (a) Two interleaved translate calls on one thread — one nested inside the other — keep separate
-/// logs: the inner attempt's drops never reach the outer one's audit, and the outer one resumes
-/// with its own log when the inner one closes.
+
 #[test]
 fn nested_scopes_on_one_thread_keep_separate_logs() {
     let inner_seam = Seam {
@@ -136,7 +127,7 @@ fn nested_scopes_on_one_thread_keep_separate_logs() {
 }
 
 /// (b) A panic inside a scope — nested or not — leaves no attempt open afterwards: the guard puts
-/// the enclosing state back on unwind.
+
 #[test]
 fn a_panic_inside_a_nested_scope_leaves_the_slot_closed() {
     let unwound = std::panic::catch_unwind(|| {
@@ -151,8 +142,7 @@ fn a_panic_inside_a_nested_scope_leaves_the_slot_closed() {
 }
 
 /// (c) After a scope closes, the thread holds no drop entries: the next attempt on the same thread
-/// starts with an empty log (it warns and audits the same path again), and a drop outside any
-/// attempt records nothing at all.
+
 #[test]
 fn a_closed_scope_leaks_no_drop_entries_into_the_next_call() {
     let ((), first) = scope(SEAM, || drop_one("logit_bias"));
@@ -177,8 +167,7 @@ fn a_closed_scope_leaks_no_drop_entries_into_the_next_call() {
 }
 
 /// A scope never spans an await, a ticket boundary or a return to the driver, so its guard is
-/// closed on the thread that opened it; a debug build panics on a guard dropped elsewhere rather
-/// than writing another thread's slot. RED before the guard checked its thread.
+
 #[cfg(debug_assertions)]
 #[test]
 fn a_guard_dropped_on_another_thread_panics_in_debug() {
@@ -188,8 +177,7 @@ fn a_guard_dropped_on_another_thread_panics_in_debug() {
         joined.is_err(),
         "dropping the guard on another thread panics"
     );
-    // The opening thread's attempt was never closed by the panicking drop: clear it so this test
-    // thread ends clean.
+
     OPEN.with(|o| o.replace(None));
 }
 
@@ -256,7 +244,7 @@ fn parked_members_are_named_as_the_reader_declares_them() {
     let paths = extra_paths(extra.as_object().unwrap(), PARKED, |p| {
         p == ["config", "mapped"]
     });
-    // `extra` is a sorted map: the paths come in its key order.
+
     assert_eq!(
         paths,
         [
@@ -268,10 +256,8 @@ fn parked_members_are_named_as_the_reader_declares_them() {
     );
 }
 
-// ───────────────────────────── request direction, per dialect ─────────────────────────────
-
 /// Translate `body` from `ingress` onto `egress`: the far end's body, what the seam audits, and the
-/// warns.
+
 pub(super) fn translate(
     ingress: &str,
     egress: &str,
@@ -303,7 +289,7 @@ pub(super) fn translate(
 }
 
 /// The drop is warned and audited under `paths`; the RED arm — the request without the unmapped
-/// members — drops nothing; and no empty text block stands in for a dropped one.
+
 fn request_drops(
     ingress: &str,
     egress: &str,
@@ -462,10 +448,8 @@ fn responses_request_drops_name_the_wire_path() {
     );
 }
 
-// ───────────────────────────── response direction, per dialect ─────────────────────────────
-
 /// Translate the far end's `body` (`egress`) for a caller of `ingress`: the caller's body and the
-/// warns.
+
 fn answer(egress: &str, ingress: &str, body: &Value) -> (String, Vec<String>, WarnCapture) {
     let _ = protocol_for(egress);
     let ctx = crate::exchange::reply::whole::WholeCtx {
@@ -498,7 +482,7 @@ fn answer(egress: &str, ingress: &str, body: &Value) -> (String, Vec<String>, Wa
 }
 
 /// The answer's drop is warned under `paths`; the RED arm — the answer with only what maps —
-/// drops nothing; no empty text block stands in for a dropped one.
+
 fn response_drops(egress: &str, ingress: &str, with: Value, without: Value, paths: &[&str]) {
     let (body, audited, cap) = answer(egress, ingress, &with);
     for path in paths {
@@ -584,9 +568,7 @@ fn responses_answer_drops_name_the_wire_path() {
 }
 
 /// DF-MAP-IR-GAPS section E: a Responses answer carrying a hosted-tool item the IR has no form for
-/// (`file_search_call`; a `web_search_call` is the IR's hosted web-search record since DF-MAP item 2)
-/// translated to another dialect gives one drop WARN and one audit row naming the wire path. RED
-/// before: the reader warned outside the drop path (no path, no audit row).
+
 #[test]
 fn responses_hosted_tool_item_is_dropped_on_the_drop_path() {
     let answer = |hosted: bool| {
@@ -675,10 +657,8 @@ fn cohere_answer_drops_name_the_wire_path() {
     );
 }
 
-// ───────────────────────────── the answer walk ─────────────────────────────
-
 /// The walk names the shallowest member nothing carries, reads a union by its `type` arm where the
-/// map spells arms, treats a carried path as carrying its subtree, and skips a `null`.
+
 #[test]
 fn the_answer_walk_names_the_shallowest_uncarried_member() {
     let carried = crate::codec::drops::Carried {
@@ -714,7 +694,7 @@ fn the_answer_walk_names_the_shallowest_uncarried_member() {
             "type=content_block_delta.index"
         ]
     );
-    // Keyed by the event name: the walk starts at the event.
+
     let keyed = crate::codec::drops::Carried {
         map: &["contentBlockDelta.delta.text"],
         code: &[],
@@ -732,11 +712,7 @@ fn the_answer_walk_names_the_shallowest_uncarried_member() {
 }
 
 /// AN ECHOED DEFAULT IS NO UNREPRESENTABLE CONTROL (ARCHITECT RULING 2026-10-04): a Responses
-/// answer restates the request's `tools`, `tool_choice` and `parallel_tool_calls`, at their
-/// defaults when the caller set none; a TRANSLATE answer drops them, and the walk names none, so
-/// no `egress.control_unrepresentable` row is written for them (the 1.5.5 rows for
-/// `llm|*|responses|request|ok`). RED arm: a value the caller actually set (a real tool, a
-/// directed choice, parallel calls off) is still named, so its drop is still audited.
+
 #[test]
 fn an_echoed_request_default_names_no_drop_and_a_caller_set_value_still_does() {
     let carried =
@@ -760,10 +736,7 @@ fn an_echoed_request_default_names_no_drop_and_a_caller_set_value_still_does() {
 }
 
 /// DF-MAP-IR-GAPS SECTION E (ruled: every unmapped response/stream path is named, no extra
-/// bucket): every wire path of its list is named by the far end's drop walk when an answer carries
-/// it. RED before: the walk did not exist (a buffered answer named blocks and vendor metadata only;
-/// a stream named nothing), and a path inside a coarse carried row (`content` carries the blocks,
-/// not `tool_use.caller`) was never named.
+
 #[test]
 fn every_section_e_path_is_named_by_the_drop_walk() {
     let mut missed = Vec::new();
@@ -794,9 +767,7 @@ fn every_section_e_path_is_named_by_the_drop_walk() {
 }
 
 /// RED ARM of the buffered answer walk, over the whole golden corpus (every `resp_X2Y_*.json` is an
-/// answer written in dialect Y): the walk names nothing a dialect carries. What it does name is
-/// exactly the far end's members no other dialect has: a Responses answer's request echoes and
-/// Anthropic's `usage.output_tokens_details` (never read).
+
 #[test]
 fn the_answer_walk_names_only_true_drops_over_the_golden_corpus() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/codec/tests/proto/golden");
@@ -845,7 +816,7 @@ fn the_answer_walk_names_only_true_drops_over_the_golden_corpus() {
             .copied()
             .filter(|p| {
                 let pointer = format!("/{}", p.replace('.', "/"));
-                // An echoed request default is no drop (ARCHITECT RULING 2026-10-04).
+
                 let echoed = |v: &Value| {
                     far == "responses"
                         && crate::codec::openai_responses::ANSWER_DEFAULTS
@@ -865,8 +836,7 @@ fn the_answer_walk_names_only_true_drops_over_the_golden_corpus() {
 }
 
 /// A dialect never lists as dropped a path it carries (a map row or a code-carried path): the walk
-/// would name a member that crosses (red: Responses' stream events and three Gemini answer members
-/// were both carried and listed as drops after DF-MAP mapped them).
+
 #[test]
 fn no_dialect_drops_a_path_it_carries() {
     for dialect in [
@@ -883,7 +853,7 @@ fn no_dialect_drops_a_path_it_carries() {
                 ("stream", r.grammar().stream_carried),
             ] {
                 let Some(c) = carried else { continue };
-                // A re-rooted list is checked as the stream spells each of its paths.
+
                 let mut listed: Vec<String> = c.drops.iter().map(|d| d.to_string()).collect();
                 if let Some(r) = c.reroot {
                     for (from, to) in r.at {
@@ -906,8 +876,7 @@ fn no_dialect_drops_a_path_it_carries() {
 }
 
 /// Every dialect's drop list is sorted ascending, each path once: the walk binary-searches it for
-/// every member of every stream frame (red: a list out of order hides a drop from the walk; the
-/// linear scan it replaced made a Responses stream four times slower to relay).
+
 #[test]
 fn every_drop_list_is_sorted_for_the_walks_search() {
     for dialect in [
@@ -938,13 +907,7 @@ fn every_drop_list_is_sorted_for_the_walks_search() {
 }
 
 /// F25 REHOME row 109, from `crates/busbar-llm/src/engine/tests/egress_dropped_controls_audit_tests.rs:146`
-/// (`egress_dropped_controls_reports_the_right_controls_per_dialect`): the chat handle's dropped
-/// controls, per egress dialect, for an OpenAI request carrying tools, `response_format: json_object`
-/// and `tool_choice: "none"`. Anthropic on a default lane drops `response_format` (1.5.5's drop,
-/// v1.5.5 `crates/busbar/src/proto/anthropic/writer.rs:343-347`; the legacy expectation of an empty
-/// list pinned the post-1.5.5 forced tool) and on a native-structured-output lane drops the
-/// schema-less `response_format` too; Bedrock drops `response_format` and `tool_choice=none`;
-/// OpenAI drops nothing.
+
 #[test]
 fn egress_dropped_controls_reports_the_right_controls_per_dialect() {
     use busbar_contract::ir::handle::IrHandle as _;

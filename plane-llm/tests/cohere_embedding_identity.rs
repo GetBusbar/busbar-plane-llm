@@ -196,7 +196,7 @@ fn duplicate_sparse_missing_zero_and_huge_indices_refuse_every_encoding() {
                 embeddings: indices.iter().map(|&index| item(index, &[enc])).collect(),
                 ..Default::default()
             };
-            // Use finite payloads even with a huge index; the index controls identity, never allocation.
+
             let mut response = response;
             for item in &mut response.embeddings {
                 item.vectors.insert(enc, vector(enc, 0));

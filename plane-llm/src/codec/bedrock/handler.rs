@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 
 pub struct BedrockRequestHandler;
 /// This protocol's own chat instance; remove it and the registry arm and chat 404s via the
-/// standard no-handler path.
+
 static CHAT: super::super::chat_handle::ChatOperation =
     super::super::chat_handle::ChatOperation(super::VENDOR_NAME);
 static EMB: BedrockEmbeddings = BedrockEmbeddings;
@@ -25,7 +25,7 @@ static IMG: BedrockImage = BedrockImage;
 static RERANK: BedrockRerank = BedrockRerank;
 
 /// Bedrock's row of the support matrix, as data. A verb absent from it is a genuine gap (the
-/// standard no-handler 404).
+
 static CELLS: &[busbar_contract::codec::Cell] = &[
     (OpVerb::CHAT, &CHAT),
     (OpVerb::EMBEDDINGS, &EMB),
@@ -36,8 +36,6 @@ static CELLS: &[busbar_contract::codec::Cell] = &[
 impl RequestHandler for BedrockRequestHandler {
     dialect_identity!(super::VENDOR_NAME);
     fn upstream_path(&self, ctx: &EgressCtx) -> String {
-        // Chat uses Converse (stream-aware); everything else rides InvokeModel. The discriminator is
-        // this protocol's own verb constant, not a core enum variant (the 1.6.0 split).
         if ctx.operation == OpVerb::CHAT {
             let verb = if ctx.stream {
                 "converse-stream"
@@ -46,23 +44,16 @@ impl RequestHandler for BedrockRequestHandler {
             };
             return format!("/model/{}/{verb}", ctx.model);
         }
-        // Embeddings/image/rerank ride InvokeModel; a verb with no cell is unreachable here and
-        // answers this for want of a truer answer (the pre-1.6.0 answer, verbatim).
+
         format!("/model/{}/invoke", ctx.model)
     }
     fn resolve_operation(&self, path: &str, body: &[u8]) -> Option<OpVerb> {
-        // Converse is chat; InvokeModel multiplexes, so the body names the op. Unknown bodies give
-        // None (a clean 400 at the route layer).
         if path.ends_with("/converse") || path.ends_with("/converse-stream") {
             return Some(OpVerb::CHAT);
         }
         if path.ends_with("/invoke") {
-            // Anchor scans to the quoted JSON key (`"key"`): an unanchored `inputText` matched inside
-            // a rerank query/document value and misrouted to embeddings. Check rerank (the two-key
-            // body) first.
             let has = |n: &[u8]| body.windows(n.len()).any(|w| w == n);
-            // Rerank models (cohere.rerank-*, amazon.rerank-*) take {query, documents}; no other
-            // InvokeModel body carries both keys.
+
             if has(b"\"query\"") && has(b"\"documents\"") {
                 return Some(OpVerb::RERANK);
             }
@@ -76,7 +67,6 @@ impl RequestHandler for BedrockRequestHandler {
         None
     }
     fn path_model(&self, path: &str) -> Option<String> {
-        // `/model/{model}/{converse|converse-stream|invoke}`: the middle segment.
         let rest = path.strip_prefix("/model/")?;
         let (model, _verb) = rest.rsplit_once('/')?;
         (!model.is_empty()).then(|| model.to_string())
@@ -84,7 +74,7 @@ impl RequestHandler for BedrockRequestHandler {
 }
 
 /// Amazon Titan Image Generator via `/model/{id}/invoke`: prompt in, `images[]` (b64) out. The model
-/// rides the path; routing fills the IR's `model` (`IrReq::set_model`).
+
 struct BedrockImage;
 
 leaf_op! {
@@ -100,9 +90,7 @@ leaf_op! {
 }
 
 /// A request or answer member the InvokeModel writers do not send, dropped with a warn (the one
-/// drop path, `codec::drops`). They send only the members they always send; more would put new
-/// bytes on the far end's wire (e.g. an OpenAI `quality` is off Titan's `standard|premium` and
-/// could be refused with a 400).
+
 fn invoke_drop(name: &'static str) {
     crate::codec::drops::writer_drop!(
         crate::codec::drops::member(name),
@@ -114,8 +102,7 @@ fn invoke_drop(name: &'static str) {
 }
 
 /// IR to Titan image request wire ([`BedrockImage::write_request`]): `taskType`, prompt `text` and
-/// `numberOfImages` only. Every other control (negative prompt, seed, guidance scale, size,
-/// quality tier) is dropped with a warn ([`invoke_drop`]).
+
 pub fn write_image_request(r: &crate::codec::ir::image::ImageReq) -> Bytes {
     let body = json!({
         "taskType": "TEXT_IMAGE",
@@ -156,7 +143,7 @@ pub fn write_image_response(r: &crate::codec::ir::image::ImageResp) -> WireBody 
 }
 
 /// Amazon Titan Embeddings via `/model/{id}/invoke`: `inputText` (+ v2 dims/normalize). The model
-/// rides the path; routing fills it via `IrReq::set_model`.
+
 struct BedrockEmbeddings;
 
 leaf_op! {
@@ -174,8 +161,6 @@ leaf_op! {
 pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
     let text = match &r.input {
         EmbInput::Text(v) => {
-            // Titan takes a single `inputText`, so a multi-input request embeds only the first. Warn
-            // rather than drop silently; multi-input fan-out to single-input backends is a 1.3 item.
             if v.len() > 1 {
                 crate::codec::drops::writer_drop!(
                     crate::codec::drops::member(keys::INPUT),
@@ -202,7 +187,7 @@ pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
     if let Some(d) = r.dimensions {
         body[keys::DIMENSIONS] = json!(d);
     }
-    // `inputText` and `dimensions` only: a `normalize` is dropped with a warn ([`invoke_drop`]).
+
     if r.normalize.is_some() {
         invoke_drop(super::NORMALIZE);
     }
@@ -229,9 +214,7 @@ pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
 }
 
 /// Bedrock rerank models (`cohere.rerank-*`, `amazon.rerank-*`) via `/model/{id}/invoke`:
-/// `{query, documents[], top_n?, api_version}` to `{results: [{index, relevance_score}]}`, the same
-/// result shape as Cohere's `/v2/rerank`. The model rides the URL; `api_version: 2` is required by
-/// cohere.rerank and harmless to amazon.rerank.
+
 struct BedrockRerank;
 
 leaf_op! {
@@ -276,7 +259,7 @@ pub fn write_rerank_request(r: &crate::codec::ir::rerank::RerankReq) -> Bytes {
     if let Some(n) = r.top_n {
         body[keys::TOP_N] = json!(n);
     }
-    // `query`, `documents`, `api_version`, `top_n` only: a `return_documents` is dropped with a warn.
+
     if r.return_documents.is_some() {
         invoke_drop(keys::RETURN_DOCUMENTS);
     }
@@ -285,7 +268,6 @@ pub fn write_rerank_request(r: &crate::codec::ir::rerank::RerankReq) -> Bytes {
 
 /// IR to rerank response wire ([`BedrockRerank::write_response`]).
 pub fn write_rerank_response(r: &crate::codec::ir::rerank::RerankResp) -> WireBody {
-    // `index`, `relevance_score` and `id` only: a ranked `document` is dropped with a warn.
     if r.results.iter().any(|x| x.document.is_some()) {
         invoke_drop(keys::DOCUMENT);
     }
@@ -312,7 +294,7 @@ mod tests;
 mod titan_roundtrip_regression_tests;
 
 /// Wire to concrete `ImageReq`, shared by the leaf-op handle and the `leaf_codec` read dispatch so
-/// neither needs a downcast.
+
 pub fn read_image_request(
     body: &[u8],
     _content_type: &str,
@@ -345,13 +327,11 @@ pub fn read_image_request(
             .get(super::CFG_SCALE)
             .and_then(Value::as_f64)
             .map(|f| f as f32),
-        // Titan pixel geometry and quality tier, carried so egress re-emits them.
+
         size: match (
             cfg.get(super::WIDTH).and_then(Value::as_u64),
             cfg.get(super::HEIGHT).and_then(Value::as_u64),
         ) {
-            // Checked narrowing (as for `numberOfImages`): an out-of-range width/height drops the
-            // geometry rather than wrapping to a bogus dimension (`4294967297 as u32 == 1`).
             (Some(w), Some(h)) => match (u32::try_from(w).ok(), u32::try_from(h).ok()) {
                 (Some(width), Some(height)) => {
                     Some(crate::codec::ir::image::ImageSize::Wh { width, height })
@@ -385,9 +365,7 @@ pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::Image
                 .collect()
         })
         .unwrap_or_default();
-    // Titan/SDXL are per-image (N base64 `images`, no token usage). With no cost basis
-    // `ImageResp::billing()` is `None` and the response bills nothing, so record one image per
-    // `images` entry for `Billing::Images`. Size and quality live on the request, which this reader cannot see.
+
     let cost_basis = Some(crate::codec::ir::image::CostBasis {
         count: u32::try_from(images.len()).unwrap_or(u32::MAX),
         ..Default::default()
@@ -440,8 +418,7 @@ pub fn read_embeddings_response(
             ),
         );
     }
-    // Billed count: absent or `null` is no usage; an unreadable one is refused alone (`refused_count`):
-    // it bills nothing and the vector is served.
+
     let usage =
         crate::codec::usage_count::billed_count_opt(Some(&v), super::INPUT_TEXT_TOKEN_COUNT)
             .unwrap_or_else(|unreadable| {
@@ -479,7 +456,6 @@ pub fn read_rerank_request(
         ));
     }
     Ok(crate::codec::ir::rerank::RerankReq {
-        // Path-model protocol: routing calls `set_model`.
         model: String::new(),
         query,
         documents,
@@ -487,8 +463,7 @@ pub fn read_rerank_request(
             .get(keys::TOP_N)
             .and_then(Value::as_u64)
             .and_then(|n| u32::try_from(n).ok()),
-        // Read `return_documents` so a bedrock-to-bedrock rerank keeps the flag the writer re-emits,
-        // as Cohere's reader does.
+
         return_documents: wire.get(keys::RETURN_DOCUMENTS).and_then(Value::as_bool),
         ..Default::default()
     })
@@ -504,9 +479,7 @@ pub fn read_rerank_response(
         id: v.get(keys::ID).and_then(Value::as_str).map(str::to_string),
         results: crate::codec::rerank_wire::read_results(v.get(keys::RESULTS))
             .map_err(|message| CodecError::Malformed(message.into()))?,
-        // A Bedrock-hosted Cohere rerank model answers in Cohere's shape; the billed search units
-        // (`meta.billed_units.search_units`) are read exactly as the Cohere reader does, else the flat
-        // marker (nothing estimated). An unreadable count is refused alone (`refused_count`).
+
         search_units: crate::codec::rerank_wire::read_search_units(&v, super::VENDOR_NAME),
         ..Default::default()
     })

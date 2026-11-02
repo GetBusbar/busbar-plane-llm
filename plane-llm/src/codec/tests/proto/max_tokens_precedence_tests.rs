@@ -2,28 +2,16 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! `default_max_tokens` precedence and `cache_control` clamping on the IR egress-prep seam,
-//! RELOCATED here from `busbar-core`'s `proxy/tests/`. They drive
-//! the witnessed `chat_handle::chat_prepare_for_egress` over a concrete `IrRequest`, which a neutral
-//! crate's tests must not name — so they live beside the IR/codec they exercise.
-//!
-//! Byte-identical to the pre-relocation suite, save one mechanical fixture change: the core version
-//! built a `crate::codec::state::Lane` (a `pub(crate)` core type) purely to read its `protocol` and
-//! `default_max_tokens` into the `EgressPrep`. Here those two values are passed directly — the
-//! `EgressPrep` built, the seam driven, and every assertion are unchanged.
 
 use super::*;
 use crate::codec::ir::IrRequest;
 
 /// `default_max_tokens` resolution precedence on the translation seam (only fires when the source
-/// omitted `max_tokens` AND the egress protocol REQUIRES it): per-model lane default wins → else
-/// the global `limits.default_max_tokens` (the `global` arg) → else the historical 4096 (which is
-/// just the value the global itself defaults to). This pins all three rungs. The egress protocol is
-/// Anthropic (its writer `requires_max_tokens()` is true).
+
 #[test]
 fn per_model_then_global_then_4096() {
-    let global = 8192; // a non-4096 global to prove it is consulted distinctly.
-                       // The defaulting lives on the IR (`IrReq::prepare_for_egress`) — the engine passes the
-                       // lane's resolved primitives. Drive it exactly as the translate seam does.
+    let global = 8192;
+
     let prep = |proto: &'static str, lane_default: Option<u32>, global: u32| {
         crate::codec::egress_prep::EgressPrep {
             thought_signature_fill: false,
@@ -47,28 +35,24 @@ fn per_model_then_global_then_4096() {
         req.max_tokens
     };
 
-    // 1. Per-model set → per-model wins over the global.
     assert_eq!(
         apply(IrRequest::default(), Some(1234), global),
         Some(1234),
         "per-model default must win"
     );
 
-    // 2. Per-model unset → fall back to the global.
     assert_eq!(
         apply(IrRequest::default(), None, global),
         Some(global),
         "with no per-model default, the global limit must be used"
     );
 
-    // 3. Per-model unset AND global left at its historical default → 4096.
     assert_eq!(
         apply(IrRequest::default(), None, DEFAULT_MAX_TOKENS),
         Some(4096),
         "with neither per-model nor a custom global, the 4096 fallback must be used"
     );
 
-    // 4. A caller-supplied value is NEVER overridden by any default.
     assert_eq!(
         apply(
             IrRequest {
@@ -84,10 +68,7 @@ fn per_model_then_global_then_4096() {
 }
 
 /// Anthropic 400s with "A maximum of 4 blocks with cache_control may be provided".
-/// The IR carries breakpoints unbounded, so a cross-protocol request (e.g. Bedrock ingress, whose
-/// reader populates `cache_control` from `cachePoint`) can exceed it. `prepare_for_egress` must
-/// clamp to the egress writer's cap, in Anthropic's own prefix order (system -> messages -> tools),
-/// and warn with the dropped count.
+
 #[test]
 fn cache_control_breakpoints_clamped_to_four_on_anthropic_egress() {
     use crate::codec::ir::{CacheControl, CacheKind, IrBlock, IrMessage, IrRole};
@@ -105,7 +86,6 @@ fn cache_control_breakpoints_clamped_to_four_on_anthropic_egress() {
         refusal: false,
     };
 
-    // 6 breakpoints total: one on `system`, five spread across two user messages.
     let ir = IrRequest {
         system: vec![text_with("sys", bp())],
         messages: vec![
@@ -168,8 +148,6 @@ fn cache_control_breakpoints_clamped_to_four_on_anthropic_egress() {
         lane_caps: Default::default(),
     };
 
-    // The over-cap drop goes through the one drop path (`codec::drops`): a WARN (BUSBAR-7081) on a
-    // translate attempt.
     let seam = crate::codec::drops::Seam {
         direction: crate::codec::drops::Direction::Request,
         ingress: "bedrock",
@@ -190,8 +168,7 @@ fn cache_control_breakpoints_clamped_to_four_on_anthropic_egress() {
         4,
         "exactly 4 breakpoints must survive the Anthropic egress cap"
     );
-    // Anthropic's own prefix order: system first, so `sys` and the first three message
-    // breakpoints (`m1a`,`m1b`,`m1c`) survive; `m2a`/`m2b` are dropped.
+
     assert!(
         matches!(
             &clamped.system[0],

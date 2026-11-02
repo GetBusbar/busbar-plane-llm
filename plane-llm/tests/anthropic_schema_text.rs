@@ -38,7 +38,6 @@ fn openai_request(function: Value) -> Value {
 }
 
 fn schemas() -> Value {
-    // The committed primary specification, SHA-256 d1d189d791d1b551b33edebe9a60d63836d167070863ef366969e0df1e9c4f55.
     serde_json::from_str(include_str!(
         "../../testing/llm-conformance/specs/anthropic-e50cf35b.yml"
     ))
@@ -47,8 +46,6 @@ fn schemas() -> Value {
 
 #[test]
 fn absent_openai_parameters_reach_anthropic_as_an_empty_object_schema() {
-    // OpenAI's pinned FunctionParameters says omission defines an empty parameter list;
-    // Anthropic's pinned InputSchema requires an object with type="object".
     let body = openai_request(json!({"name":"ping"}));
     let ir = protocol_for("openai")
         .unwrap()
@@ -79,8 +76,7 @@ fn absent_openai_parameters_reach_anthropic_as_an_empty_object_schema() {
 fn present_openai_schemas_are_preserved_instead_of_normalized_as_absent() {
     let valid = json!({"type":"object","properties":{"city":{"type":"string"}},
         "required":["city"],"additionalProperties":false,"description":"keep me"});
-    // Presence is decisive even for malformed values. This absence-only repair does not
-    // globally tighten OpenAI ingress or silently substitute a schema for explicit null.
+
     for schema in [
         valid.clone(),
         json!({}),

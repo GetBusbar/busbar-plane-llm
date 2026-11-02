@@ -2,14 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE DOOR, BOTH WAYS (`BUSBAR-1.6.0.md` Part 2 #2, THE DESIGN, the section on one table for compiled-in and dropped-in): the linked door
-//! (`plane_door::door`) and this crate's dropped-in image (the `busbar-plane-llm-plugin` cdylib, the
-//! same door behind `export_door!`), each admitted through the one loader, run ONE script through every plane
-//! op, each answer read back. The two transcripts must be identical, and carry what the plane's
-//! answers to the driver require (Part 3, the plane seam's driver section).
-//!
-//! RED ARM, kept: the same door with `on_piece` swapped for one that relays the far end's answer
-//! and reports no count. Its transcript differs at the far end's answer, so a door that stopped
-//! counting cannot pass for this one.
 
 use std::mem::zeroed;
 use std::sync::Arc;
@@ -47,7 +39,7 @@ fn bind(d: &Dispatcher) -> Bind {
         max_inflight_cap: 64,
         sink: Arc::new(NoSink),
         dispatcher: d.adopter(),
-        // These rows never dial: the door's needs are not declared, bound as a probe.
+
         conns: busbar_plugin_loader::dispatch::ConnTable::Probe,
     }
 }
@@ -100,7 +92,7 @@ const CALLER: &[Field] = &[
     field(b"anthropic-version", b"2023-06-01"),
 ];
 /// An openai caller's head: no `anthropic-version`, whose header claim outranks the
-/// `/v1/chat/completions` path claim in 1.5.5's detection order (`codec/anthropic/mod.rs`).
+
 const OPENAI_CALLER: &[Field] = &[field(b"content-type", b"application/json")];
 /// What the far end answers: 7 tokens in, 3 out.
 const ANSWER: &[u8] = br#"{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":7,"output_tokens":3}}"#;
@@ -275,7 +267,6 @@ fn script(p: &Plugin<Plane>) -> Vec<String> {
     t.push(arrive(p, 7, b"/v1/messages", CHAT));
     t.push(arrive(p, 8, b"/nowhere", b"{}"));
 
-    // One unit: the ATTEMPT, the caller's body, the far end's whole answer.
     let mut piece = Piece::new(1024);
     t.push(format!(
         "attempt {}",
@@ -291,7 +282,6 @@ fn script(p: &Plugin<Plane>) -> Vec<String> {
         piece.call(p, 7, FROM_FAR_END, whole, ANSWER, 0)
     ));
 
-    // Another, whose answer is written 48 bytes at a time.
     t.push(arrive(p, 9, b"/v1/messages", CHAT));
     let mut narrow = Piece::new(48);
     t.push(format!(
@@ -313,7 +303,6 @@ fn script(p: &Plugin<Plane>) -> Vec<String> {
         ));
     }
 
-    // The declined arrival, in its own envelope; a refusal before any arrival, by its target.
     t.push(refusal(p, 8, 1, b"/nowhere"));
     t.push(refusal(p, 0, 0, b"/v1/messages"));
 
@@ -381,8 +370,7 @@ fn assert_the_planes_answers(t: &[String]) {
     let all = t.join("\n");
     assert_eq!(t[0], "validate broken Refused", "{all}");
     assert_eq!(t[1], "validate Ready", "{all}");
-    // ARCHITECT Q-FL1: the plane states its paths as claims, and 1.5.5's fallback is a prefix claim
-    // on `/` for every verb.
+
     assert!(
         t[2].starts_with("open Ready Some(")
             && t[2].contains(r#"verb: "POST", target: "/v1/messages", carrier: "http""#)
@@ -477,7 +465,7 @@ fn linked(d: &Dispatcher) -> Plugin<Plane> {
 }
 
 /// This crate's dropped-in image, the `busbar-plane-llm-plugin` cdylib `cargo test` builds beside
-/// the test. A missing artifact is a failure, never a skip: this test IS the dropped-in door's proof.
+
 fn dropped(d: &Dispatcher) -> Plugin<Plane> {
     let exe = std::env::current_exe().expect("the test binary has a path");
     let deps = exe.parent().expect("target/<profile>/deps");
@@ -503,10 +491,7 @@ fn the_linked_and_the_dropped_in_door_answer_every_op_the_same() {
 const UNREADABLE: &[u8] = b"{not json: the far end answered 200 with a body no reader can meter";
 
 /// THE USAGE-TAP FAULT RIDES THE DOOR'S ANSWER AS DATA, ONCE (row 155): a same-dialect 2xx body the
-/// tap cannot read is relayed as it came, and the answer that carries its units carries the fault
-/// beside them, on ONE window of the answer however many the reply takes, so the kernel, which
-/// counts each answer's fault, counts it exactly once. Linked and dropped in alike: the codec
-/// reaches no host to report it.
+
 #[test]
 fn a_usage_tap_fault_rides_one_window_of_the_doors_answer() {
     let d = Dispatcher::new(DispatchConfig::default());
@@ -549,7 +534,7 @@ fn a_usage_tap_fault_rides_one_window_of_the_doors_answer() {
 }
 
 /// The same far end, model and pool, with a translation cap below [`ANSWER`]'s length: the
-/// `limits.request_body_max_bytes` the kernel hands a plane in its settings.
+
 const SETTINGS_CAPPED: &[u8] = br#"{
     "providers": { "ant": { "protocol": "anthropic", "base_url": "https://anthropic.example" } },
     "models": { "claude": { "provider": "ant" } },
@@ -558,7 +543,7 @@ const SETTINGS_CAPPED: &[u8] = br#"{
 }"#;
 
 /// One openai caller's unit against the anthropic far end, its whole answer [`ANSWER`]: the far
-/// end's answer line.
+
 fn translated(p: &Plugin<Plane>, unit: u64) -> String {
     assert!(
         arrive_with(p, unit, b"/v1/chat/completions", OPENAI_CALLER, CHAT)
@@ -580,13 +565,9 @@ fn translated(p: &Plugin<Plane>, unit: u64) -> String {
 }
 
 /// THE TRANSLATE CAP IS THE SETTINGS' (row 155): the cap the door's codec enforces is the one the
-/// kernel handed in the settings the plane was opened and refreshed with. Opened with none, the
-/// whole answer of another dialect translates (200); refreshed onto settings whose
-/// `limits.request_body_max_bytes` is below the answer's length, the same answer is refused with
-/// the over-cap 500's own bytes. Linked and dropped in alike: no host reader is consulted.
+
 #[test]
 fn the_translate_cap_the_settings_carry_is_the_one_the_door_enforces() {
-    // The openai over-cap refusal mints nothing, so the host it is rendered with gives nothing.
     struct NoHost;
     impl busbar_contract::codec::CodecHost for NoHost {
         fn fill_entropy(&self, _out: &mut [u8]) -> bool {
@@ -628,7 +609,7 @@ fn the_translate_cap_the_settings_carry_is_the_one_the_door_enforces() {
 }
 
 /// A call capture for the hand-built table entry below: one slot per thread, as `plugin_door!`
-/// expands for a plugin's own image.
+
 struct TestCapture;
 impl CaptureHome for TestCapture {
     fn retention() -> &'static busbar_contract::abi::sdk::capture::CaptureRetention {
@@ -698,10 +679,7 @@ fn red_a_door_that_stops_counting_the_far_ends_units_answers_differently() {
 }
 
 /// THE PROVIDER KEYS THROUGH THE ONE LOADER (row 155 B1c, ARCHITECT ruling "Option A"): the
-/// descriptor the door states (`meta::PROVIDER_KEYS`) is what its Statement rendering carries under
-/// the contract's one extensions key, and what the loader hands on in the plane's registration.
-/// Held here because this is the one file of the crate that may name the loader; the descriptor's
-/// own shape is `tests/provider_keys.rs`'s.
+
 mod provider_keys_through_the_loader {
     use busbar_contract::abi::mechanism::{extensions, rendering};
     use busbar_contract::provider_keys::{decode, EXT_PROVIDER_KEYS};
@@ -711,7 +689,7 @@ mod provider_keys_through_the_loader {
     use busbar_plugin_loader::dispatch::rendering_of;
 
     /// The door's signed Statement rendering carries the descriptor under the one extensions key, as
-    /// octets, byte for byte the declared text.
+
     #[test]
     fn the_door_states_its_provider_keys_in_its_statement_extensions() {
         let stated = rendering_of(plane_door::door).expect("the door renders its Statement");
@@ -727,7 +705,7 @@ mod provider_keys_through_the_loader {
     }
 
     /// The one loader reads the descriptor off the bound door into the plane's registration, decoded
-    /// and equal to the declared one.
+
     #[test]
     fn the_loader_hands_the_provider_keys_on_in_the_registration() {
         let reg = registration(linked_probe(plane_door::door, "provider-keys-probe"))
@@ -743,17 +721,7 @@ mod provider_keys_through_the_loader {
 }
 
 /// THE DOOR'S UNITS ACROSS ATTEMPTS, driven through the one loader like the witness above. They live
-/// in this file because it is the one file a plugin's tests may drive its door through the loader
-/// from (kind isolation's both-ways witness rule).
-///
-/// THE DOOR'S UNITS ACROSS ATTEMPTS AND CUTS. A RETRY VERDICT, AS THE DOOR SERVES IT (row-159 audit plane-llm L1#1; status row 155): a far-end
-/// error the plane judges retryable (here a context-length 400, the error map's class) keeps the
-/// unit for the kernel's next ATTEMPT, so the failover reaches the next member, as 1.5.5 served the
-/// second member after the first failed (v1.5.5 `crates/busbar/src/ingress/tests/tests.rs`
-/// `test_real_failover_serves_second_member_after_first_5xx`, and the context-length exclusion of
-/// `proxy`'s failover walk). An answer the kernel states it will not fail over (`PIECE_FINAL`) ends
-/// the unit whatever its verdict, so the door keeps nothing behind it: a later piece of that unit is
-/// a FAULT, the unit is gone.
+
 mod door_units {
     use std::mem::zeroed;
     use std::sync::Arc;
@@ -824,7 +792,7 @@ mod door_units {
     const STREAM_CHAT: &[u8] =
         br#"{"model":"p","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}"#;
     /// The far end's stream before its connection dropped: its start (7 tokens in, 1 out so far) and
-    /// one content delta.
+
     const STREAM_START: &[u8] = b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"large\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":7,\"output_tokens\":1}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n";
 
     fn door() -> (Dispatcher, Plugin<Plane>) {
@@ -988,7 +956,7 @@ mod door_units {
     }
 
     /// RED: the door forgot the unit on its retry verdict, so the second ATTEMPT was a FAULT and the
-    /// failover never reached `large`.
+
     #[test]
     fn a_retry_verdict_keeps_the_unit_and_the_failover_reaches_the_next_member() {
         let (_d, p) = door();
@@ -1026,7 +994,7 @@ mod door_units {
             served.done && served.emitted.contains("hello"),
             "{served:?}"
         );
-        // The unit ended with its answer: nothing of it is left behind.
+
         let after = piece(&p, 7, FROM_KERNEL, 0, 0, b"", b"small", 3);
         assert_eq!(
             after.outcome,
@@ -1036,7 +1004,7 @@ mod door_units {
     }
 
     /// RED: a door that keeps every retried unit leaves one behind when the kernel will not fail the
-    /// answer over (a relayed answer): the unit's later piece is answered instead of faulted.
+
     #[test]
     fn a_final_answer_ends_the_unit_whatever_its_verdict() {
         let (_d, p) = door();
@@ -1083,11 +1051,7 @@ mod door_units {
     }
 
     /// A STREAM CUT AFTER ITS FIRST BYTE (`PIECE_CUT`; row-159 plane-llm L1#2), `$`: the caller's answer
-    /// ends in its in-band error, never its clean terminator, and the unit reports the units its
-    /// stream stated up to the cut (7 in, 1 out): the owner's #62, a cut bills what streamed (1.5.5
-    /// billed no tokens; register entry "#62 an upstream cut after the first byte bills what
-    /// streamed"). Nothing of the unit is left behind. RED: a cut fed to the reply as a clean end
-    /// writes `message_stop` and no `event: error`.
+
     #[test]
     fn a_cut_stream_ends_in_the_callers_error_and_bills_what_streamed() {
         let (_d, p) = door();
@@ -1142,7 +1106,7 @@ mod door_units {
     }
 
     /// THE SAME STREAM, COMPLETE (the control): its last piece unmarked ends on the caller's clean
-    /// terminator. A cut piece and a clean one are told apart only by `PIECE_CUT`.
+
     #[test]
     fn a_stream_that_completes_ends_cleanly() {
         let (_d, p) = door();
@@ -1173,14 +1137,7 @@ mod door_units {
     }
 
     /// A SAME-DIALECT WHOLE ANSWER CUT MID-BODY streams what arrived and bills no tokens. Under
-    /// ARCHITECT ruling (a) (the base cut path supersedes #891's) and as v1.5.5 relayed it (a
-    /// same-protocol non-stream body passes through verbatim as it arrives, v1.5.5
-    /// `proxy/response_body.rs:216-262`), the far end's bytes reach the caller under its 200 as
-    /// they come; the cut ends the body with nothing appended, and the far end reported no usage
-    /// in the bytes in hand, so nothing bills (OWNER RULING Q31). A cut before the first byte
-    /// never reaches the plane as a cut piece at all (the kernel's walk takes it as no answer and
-    /// fails over, `far_end::no_answer`). RED: the arrived bytes held back, a body appended at the
-    /// cut, or a token billed.
+
     #[test]
     fn a_same_dialect_answer_cut_mid_body_streams_what_arrived_and_bills_no_tokens() {
         let (_d, p) = door();
@@ -1239,11 +1196,7 @@ mod door_units {
     }
 
     /// A CALLER THAT LEAVES WHILE THE LAST WINDOW OF A COMPLETED STREAM IS BEING WRITTEN (row-159
-    /// plane-llm L1#5), `$`: the answer was a usable success, fully reported, so its cancel is PARTIAL and
-    /// the units the stream stated bill, as a caller that left mid-relay does and as 1.5.5's drop arm
-    /// billed the reader's usage (v1.5.5 `proxy/response_body.rs` `FirstByteBody::drop`). RED: the door
-    /// read the finished reply as nothing usable and answered ABORTED, billing 0 tokens for a fully
-    /// reported completion.
+
     #[test]
     fn a_caller_that_leaves_during_the_last_window_bills_what_the_stream_stated() {
         let (_d, p) = door();
@@ -1260,7 +1213,7 @@ mod door_units {
             0,
         );
         assert_eq!(head.outcome, Outcome::Ready, "{head:?}");
-        // The far end's last piece, its answer written 16 bytes at a time: the first window only.
+
         let last = piece_into(
             &p,
             31,
@@ -1308,8 +1261,7 @@ mod door_units {
     #[test]
     fn a_whole_local_delivery_failure_keeps_reported_work_on_the_actual_doors_late_cancel() {
         let (_d, p) = door();
-        // This dispatcher has no host services: random.fill refuses. The buffered Anthropic
-        // answer is complete, but writing the caller's OpenAI stream cannot mint its local id.
+
         openai_stream_arrives(&p, 41);
         let last = piece_into(
             &p,
@@ -1400,7 +1352,7 @@ mod door_units {
 }
 
 /// The door brought up on [`SETTINGS`]: settings checked, opened, hydrated and started, as the
-/// script brings it up.
+
 fn opened(dispatcher: &Dispatcher) -> Plugin<Plane> {
     let door = linked(dispatcher);
     let mut validate = Frame::new(
@@ -1462,7 +1414,7 @@ fn fee_line() -> String {
 }
 
 /// One whole caller unit on a fresh door: arrive, attempt, the caller's body, then the far end's
-/// whole answer under `status`. Answers the attempt, body and far-end lines.
+
 fn one_unit(status: u32, answer: &'static [u8]) -> (String, String, String) {
     let dispatcher = Dispatcher::new(DispatchConfig::default());
     let door = opened(&dispatcher);
@@ -1483,17 +1435,7 @@ fn one_unit(status: u32, answer: &'static [u8]) -> (String, String, String) {
 }
 
 /// THE FEE IS DECIDED BY THE LEG AND THE CLIENT-FACING STATUS (row 719).
-///
-/// Legacy: the retiring engine crate's `src/unit/tests/meter.rs::the_fee_is_decided_by_the_leg_and_the_client_facing_status`
-/// (coverage map row 719, REHOME). 1.5.5 behaviour pinned: one flat fee per delivered request that
-/// routed to a far end — a 2xx answer from the far end carries the fee unit; a far-end 502 and a
-/// post-admission 404 carry none; a leg that is not the caller's answer (the attempt and the body
-/// the door sends TO the far end, the kernel-verb side of a unit) carries none; and a breaker probe
-/// is no billable request, so its 2xx carries none either. `fee_unit()` in `plane_door.rs` is the
-/// one decider (2xx only, not a probe, not a far-end-bound leg).
-///
-/// RED: a door that bills the fee on any status (a 502 or a 404 carries the fee unit), on the
-/// far-end-bound legs, or on a probe's 2xx; or one that stops billing a delivered 2xx.
+
 #[test]
 fn the_fee_is_decided_by_the_leg_and_the_client_facing_status() {
     let fee = fee_line();
@@ -1528,7 +1470,6 @@ fn the_fee_is_decided_by_the_leg_and_the_client_facing_status() {
         assert!(!far.contains(&fee), "{why}: no fee unit: {far}");
     }
 
-    // A breaker probe: one member, no caller. Its 2xx is the far end's own, and no billable request.
     let dispatcher = Dispatcher::new(DispatchConfig::default());
     let door = opened(&dispatcher);
     assert_eq!(
@@ -1561,12 +1502,7 @@ const REDIRECT_BODY: &[u8] =
     b"<html><body>Moved: https://elsewhere.invalid/v1/messages</body></html>";
 
 /// A 3XX FROM THE PROVIDER IS A FAILURE, NOT FOLLOWED (security.md: redirects are refused on the
-/// provider surface). Whatever 3xx the far end answers under, the door reads it as a HARD failure
-/// (the breaker's reading of a provider that did not serve), ends the unit on that answer (`done`,
-/// and nothing is sent to the far end again: no second leg toward the redirect target), and posts
-/// no fee unit. The far end's answer is never read as a success.
-///
-/// RED: a door that treats a 3xx as a success, retries or re-issues toward it, or bills it.
+
 #[test]
 fn a_3xx_from_the_provider_is_a_failure_not_followed() {
     let fee = fee_line();
@@ -1589,8 +1525,6 @@ fn a_3xx_from_the_provider_is_a_failure_not_followed() {
     }
 }
 
-// ── THE HOST LOG ────────────────────────────────────────────────────────────────────────────────
-
 /// The host's envelope sink, keeping the text of every diagnostic and log record a call carried:
 /// what the host writes to the plugin's own log file.
 #[derive(Default)]
@@ -1608,9 +1542,7 @@ impl busbar_plugin_loader::dispatch::EnvelopeSink for HostLog {
 }
 
 /// THE PLANE'S LOG REACHES THE HOST'S LOG, DROPPED IN AS LINKED (owner ruling 2026-10-27): the
-/// line an unreadable usage raises (`busbar_contract::diag_warn!`, the plane's in-process
-/// `tracing`) is carried by the door's call capture in the answer's envelope to the host's sink,
-/// the one that writes the plugin's own log file, from the dropped-in image as from the linked one.
+
 #[test]
 fn an_unreadable_usage_line_reaches_the_host_log_dropped_in_as_linked() {
     let d = Dispatcher::new(DispatchConfig::default());

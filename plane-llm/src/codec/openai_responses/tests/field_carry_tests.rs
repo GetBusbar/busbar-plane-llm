@@ -2,17 +2,9 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! FIELD-COVERAGE CARRY INSTRUMENTS for the `responses` (OpenAI Responses API) dialect.
-//!
-//! Every test here watches fields of `dialects/openai_responses.toml`, and each is a
-//! genuine WATCHER: it drives a real read→IR→write hop (or a same-protocol byte-identity check, or a
-//! documented drop+warn) and asserts the named field SURVIVES. If a future edit drops or ignores the
-//! field, the corresponding assertion fails. A field with no target equivalent is carried as a
-//! documented drop+warn+test, never silently and never waived.
 
 use super::*;
 use busbar_test_kit::warn_capture::WarnCapture;
-
-// ─────────────────────────────────────── helpers ───────────────────────────────────────
 
 fn read_req(body: &serde_json::Value) -> crate::codec::ir::IrRequest {
     ResponsesReader
@@ -21,19 +13,18 @@ fn read_req(body: &serde_json::Value) -> crate::codec::ir::IrRequest {
 }
 
 fn write_req(ir: &crate::codec::ir::IrRequest) -> serde_json::Value {
-    // Bind the interior-mutable const to a local before borrowing (clippy::borrow_interior_mutable_const).
     let w = ResponsesWriter;
     w.write_request(crate::codec::test_host::HOST, ir)
 }
 
 /// Read a request JSON, translate to IR, and write it back on the SAME dialect — the round-trip a
-/// same-protocol Responses→Responses hop performs. Returns the re-emitted request body.
+
 fn roundtrip_req(body: &serde_json::Value) -> serde_json::Value {
     write_req(&read_req(body))
 }
 
 /// Every content-part object across the written `input` array (flattening message `content[]` and
-/// the flat top-level tool/reasoning items), so an assertion can look for one by shape.
+
 fn input_parts(body: &serde_json::Value) -> Vec<serde_json::Value> {
     let mut out = Vec::new();
     for item in body
@@ -92,7 +83,6 @@ fn mk_response(
 }
 
 fn write_response(resp: &crate::codec::ir::IrResponse) -> serde_json::Value {
-    // Bind the interior-mutable const to a local before borrowing (clippy::borrow_interior_mutable_const).
     let w = ResponsesWriter;
     w.write_response(crate::codec::test_host::HOST, resp)
 }
@@ -117,8 +107,6 @@ fn event_names(w: &ResponsesWriter, ev: crate::codec::ir::IrStreamEvent) -> Vec<
         .collect()
 }
 
-// ─────────────────────────── request: core modeled fields ───────────────────────────
-
 /// responses/request/{model,input,instructions,max_output_tokens,temperature,top_p,stream}
 #[test]
 fn responses_request_core_fields_survive_roundtrip() {
@@ -138,7 +126,7 @@ fn responses_request_core_fields_survive_roundtrip() {
         out["instructions"], "You are terse.",
         "instructions must survive: {out}"
     );
-    // input: the user turn's text reaches the re-emitted `input` array.
+
     assert!(
         input_parts(&out)
             .iter()
@@ -184,7 +172,6 @@ fn responses_request_tools_survive_roundtrip() {
     );
     assert_eq!(tool["strict"], true, "tool strict must survive: {out}");
 
-    // tool_choice: a targeted function directive re-emits in the FLAT Responses shape.
     assert_eq!(out["tool_choice"]["type"], "function", "tool_choice: {out}");
     assert_eq!(
         out["tool_choice"]["name"], "lookup",
@@ -214,7 +201,6 @@ fn responses_request_text_format_and_verbosity_survive_roundtrip() {
     });
     let out = roundtrip_req(&body);
 
-    // text.format: the flat json_schema shape survives.
     assert_eq!(
         out["text"]["format"]["type"], "json_schema",
         "text.format.type must survive: {out}"
@@ -231,7 +217,7 @@ fn responses_request_text_format_and_verbosity_survive_roundtrip() {
         out["text"]["format"]["strict"], true,
         "text.format.strict must survive: {out}"
     );
-    // text.verbosity: a non-`format` `text` sub-key busbar does not model must survive via extra.
+
     assert_eq!(
         out["text"]["verbosity"], "high",
         "text.verbosity must survive alongside format: {out}"
@@ -247,7 +233,6 @@ fn responses_request_reasoning_survives_roundtrip() {
     });
     let out = roundtrip_req(&body);
 
-    // The verbatim `reasoning` object (effort + summary) round-trips through `extra`.
     assert_eq!(
         out["reasoning"]["effort"], "high",
         "reasoning.effort must survive: {out}"
@@ -259,8 +244,7 @@ fn responses_request_reasoning_survives_roundtrip() {
 }
 
 /// responses/request/{max_tool_calls,top_logprobs,store,stream_options,truncation,include,metadata,
-/// prompt,prompt_cache_key,safety_identifier,service_tier,background,user} — provider-specific knobs
-/// with no cross-protocol target, carried LOSSLESS SAME-PROTOCOL via the pass-through `extra` map.
+
 #[test]
 fn responses_request_provider_specific_fields_survive_same_protocol() {
     let body = serde_json::json!({
@@ -308,10 +292,8 @@ fn responses_request_provider_specific_fields_survive_same_protocol() {
     assert_eq!(out["user"], "end-user-5", "user: {out}");
 }
 
-// ─────────────────────────── request: content parts ───────────────────────────
-
 /// responses/request/content[].type={input_text.text,output_text.text,input_image.image_url,
-/// input_image.file_id}
+
 #[test]
 fn responses_request_content_parts_survive_roundtrip() {
     let body = serde_json::json!({
@@ -357,8 +339,7 @@ fn responses_request_content_parts_survive_roundtrip() {
 }
 
 /// responses/request/content[].type=input_image.detail — IR-08: the detail rides the IR
-/// `Image.detail` slot (Chat and Cohere carry the same three words), and an unknown word is dropped
-/// with a warn naming the field. The image itself survives either way.
+
 #[test]
 fn responses_request_input_image_detail_carried() {
     let body = serde_json::json!({
@@ -400,8 +381,7 @@ fn responses_request_input_image_detail_carried() {
 }
 
 /// responses/request/content[].type=output_text.annotations — a prior-turn assistant `output_text`
-/// input part's URL-citation annotations are carried into the IR Text block's citations (the same
-/// neutral slot the response reader uses), so the citation survives the hop instead of being dropped.
+
 #[test]
 fn responses_request_output_text_annotations_survive() {
     let body = serde_json::json!({
@@ -447,8 +427,6 @@ fn responses_request_output_text_annotations_survive() {
     );
 }
 
-// ─────────────────────────── request: flat input items ───────────────────────────
-
 /// responses/request/input[].type={function_call.*,function_call_output.*}
 #[test]
 fn responses_request_function_call_items_survive_roundtrip() {
@@ -472,7 +450,7 @@ fn responses_request_function_call_items_survive_roundtrip() {
     let fc = part_of_type(&out, "function_call").expect("function_call item must survive");
     assert_eq!(fc["call_id"], "call_abc", "function_call.call_id: {out}");
     assert_eq!(fc["name"], "get_weather", "function_call.name: {out}");
-    // arguments survive as a JSON string carrying the same object.
+
     assert_eq!(
         fc["arguments"].as_str().map(|s| s.contains("Paris")),
         Some(true),
@@ -503,17 +481,9 @@ fn responses_request_reasoning_items_survive_roundtrip() {
             "encrypted_content": "ENC_BLOB_MARK"
         }]
     });
-    // Driven through `with_warns` NOT because this test asserts on a warn, but for HERMETICITY: the
-    // fixture carries a reasoning-item `id`, so the read hits the same drop-warn callsite
-    // `responses_request_reasoning_id_dropped_with_warn` asserts on. `tracing` caches callsite
-    // interest PROCESS-GLOBALLY, so executing that callsite from a parallel test that holds no
-    // capture can leave it cached "disabled" under the sibling's thread-local subscriber and hand
-    // that sibling an empty capture — an order-dependent flake. Taking the capture fixture's
-    // reentrant gate here serialises the two, so neither ordering can produce it.
+
     let (out, _cap) = with_warns(|| roundtrip_req(&body));
 
-    // A reasoning item is a top-level `input` entry (a sibling of the message), not nested in a
-    // message's content — find it directly rather than via the content-flattening helper.
     let rs = out["input"]
         .as_array()
         .and_then(|arr| {
@@ -522,13 +492,13 @@ fn responses_request_reasoning_items_survive_roundtrip() {
         })
         .cloned()
         .expect("reasoning item must survive");
-    // The reasoning-text content survives (content array holds the reasoning_text part).
+
     let content_text = rs["content"][0]["text"].as_str().unwrap_or("");
     assert!(
         content_text.contains("CONTENT_MARK"),
         "reasoning.content text must survive: {out}"
     );
-    // Summary text is folded into the reasoning text on the neutral hop, so it survives too.
+
     assert!(
         content_text.contains("SUMMARY_MARK"),
         "reasoning.summary text must survive the hop: {out}"
@@ -540,7 +510,7 @@ fn responses_request_reasoning_items_survive_roundtrip() {
 }
 
 /// responses/request/input[].type=reasoning.id — the opaque reasoning-item id has no IR slot and no
-/// cross-protocol analog, so it is a DOCUMENTED DROP+WARN (the reasoning text/blob still survive).
+
 #[test]
 fn responses_request_reasoning_id_dropped_with_warn() {
     let body = serde_json::json!({
@@ -568,8 +538,6 @@ fn responses_request_reasoning_id_dropped_with_warn() {
     );
 }
 
-// ─────────────────────────── response: top-level fields ───────────────────────────
-
 /// responses/response/{id,object,created_at,model,status}
 #[test]
 fn responses_response_identity_fields_emitted() {
@@ -592,10 +560,7 @@ fn responses_response_identity_fields_emitted() {
 }
 
 /// E8 (tracker): the pinned spec's `Response` schema REQUIRES `temperature`/`top_p`/`instructions`/
-/// `metadata`/`tool_choice`/`parallel_tool_calls`/`tools` on every response object, and they must
-/// MIRROR the client's actual request values on a cross-dialect hop — not the spec's bare defaults.
-/// `write_response` (the BUFFERED path) reads them straight off `IrResponse::request_echo`, which the
-/// cross-protocol seam populates from the ORIGINAL ingress wire body before this writer ever runs.
+
 #[test]
 fn responses_response_request_echo_members_mirror_the_client_request_buffered() {
     let mut resp = mk_response(
@@ -648,8 +613,7 @@ fn responses_response_request_echo_members_mirror_the_client_request_buffered() 
 }
 
 /// E8: absent `request_echo` (no parsed ingress body was available to thread) falls back to the
-/// spec's own documented defaults, exactly as before this change — never a panic, never an omitted
-/// required member.
+
 #[test]
 fn responses_response_request_echo_absent_falls_back_to_spec_defaults() {
     let out = write_response(&mk_response(
@@ -677,9 +641,7 @@ fn responses_response_request_echo_absent_falls_back_to_spec_defaults() {
 }
 
 /// E8: a `null` echoed member (the client's wire body carried the key as JSON `null`, distinct from
-/// "absent") still falls back to the spec default rather than emitting a bare `null` for a
-/// non-nullable member — `temperature`/`top_p` are typed numbers, not `anyOf null`, on the pinned
-/// schema.
+
 #[test]
 fn responses_response_request_echo_null_member_falls_back_to_default() {
     let mut resp = mk_response(
@@ -696,11 +658,7 @@ fn responses_response_request_echo_null_member_falls_back_to_default() {
 }
 
 /// E8 (tracker): the STREAMING twin — `set_request_echo` (called once by the cross-protocol stream
-/// seam before the first event) latches the ORIGINAL ingress request onto the writer's per-stream
-/// state, and `response.created`'s embedded `response` object answers with those values rather than
-/// the spec's bare defaults. Every terminal event shares the same writer instance for the life of the
-/// stream, so this must hold for `response.created` specifically (the earliest point a client can read
-/// these fields).
+
 #[test]
 fn responses_response_request_echo_members_mirror_the_client_request_streaming() {
     let w = ResponsesWriter;
@@ -752,12 +710,7 @@ fn responses_response_request_echo_members_mirror_the_client_request_streaming()
 }
 
 /// responses/response/{output,output_text}
-///
-/// `output` is emitted as native message items. `output_text` is the SDK-COMPUTED aggregate of the
-/// assistant text across `output[]` — NOT a raw wire field (a native `/v1/responses` body does not
-/// serialize it; emitting it would be a distinguishability tell), so its carry is that the underlying
-/// text survives in `output[]`, from which any SDK reconstructs `output_text`. This asserts that
-/// reconstruction: if the assistant text stops reaching `output[]`, the aggregate is lost.
+
 #[test]
 fn responses_response_output_and_output_text_emitted() {
     let out = write_response(&mk_response(
@@ -773,7 +726,6 @@ fn responses_response_output_and_output_text_emitted() {
         "output must carry message item(s): {out}"
     );
 
-    // Reconstruct `output_text` exactly as an SDK does — concatenate every message part's text.
     let reconstructed: String = output
         .iter()
         .filter(|it| it.get("type").and_then(|t| t.as_str()) == Some("message"))
@@ -785,7 +737,7 @@ fn responses_response_output_and_output_text_emitted() {
         reconstructed, "Hello world",
         "output_text (SDK aggregate of output[]) data must survive: {out}"
     );
-    // And the tell is NOT emitted: a native body carries no top-level `output_text`.
+
     assert!(
         out.get("output_text").is_none(),
         "output_text must NOT be a raw wire key (SDK-computed only): {out}"
@@ -795,7 +747,6 @@ fn responses_response_output_and_output_text_emitted() {
 /// responses/response/error
 #[test]
 fn responses_response_error_field_carried() {
-    // Success body: `error` is present-and-null (a REQUIRED nullable member).
     let ok = write_response(&mk_response(
         vec![text_block("hi")],
         Some(crate::codec::ir::IrStopReason::EndTurn),
@@ -805,7 +756,6 @@ fn responses_response_error_field_carried() {
         "a successful response must carry error:null: {ok}"
     );
 
-    // A failed BODY's `error` is READ back into the IR error signal, not masked as success.
     let failed = serde_json::json!({
         "status": "failed",
         "output": [],
@@ -824,7 +774,6 @@ fn responses_response_error_field_carried() {
 /// responses/response/incomplete_details
 #[test]
 fn responses_response_incomplete_details_carried() {
-    // Write side: a truncation stop reason renders status incomplete + incomplete_details.reason.
     let out = write_response(&mk_response(
         vec![text_block("partial")],
         Some(crate::codec::ir::IrStopReason::MaxTokens),
@@ -838,7 +787,6 @@ fn responses_response_incomplete_details_carried() {
         "incomplete_details.reason must be emitted: {out}"
     );
 
-    // Read side: incomplete_details.reason is decoded into the stop reason.
     let body = serde_json::json!({
         "status": "incomplete",
         "incomplete_details": { "reason": "max_output_tokens" },
@@ -882,7 +830,7 @@ fn responses_response_cached_tokens_survive_roundtrip() {
         out["usage"]["input_tokens_details"]["cached_tokens"], 40,
         "cached_tokens must re-emit: {out}"
     );
-    // And the cache-inclusive input_tokens total is reconstructed (uncached 60 + cached 40).
+
     assert_eq!(
         out["usage"]["input_tokens"], 100,
         "input_tokens total must include the cached prefix: {out}"
@@ -890,7 +838,7 @@ fn responses_response_cached_tokens_survive_roundtrip() {
 }
 
 /// responses/response/output[].type={message.id,message.status,message.content,reasoning.summary,
-/// reasoning.encrypted_content,function_call.call_id,function_call.name,function_call.arguments}
+
 #[test]
 fn responses_response_output_items_emitted() {
     let content = vec![
@@ -957,9 +905,7 @@ fn responses_response_output_items_emitted() {
 }
 
 /// responses/response/output[].type=file_search_call — a hosted-tool invocation record with no
-/// neutral IR form and no cross-protocol analog: DOCUMENTED DROP+WARN. A `web_search_call` is not
-/// dropped: DF-MAP item 2 reads it into the IR's hosted web-search record. The assistant's own
-/// message/tool/reasoning output is unaffected.
+
 #[test]
 fn responses_response_hosted_tool_item_dropped_with_warn() {
     let body = serde_json::json!({
@@ -972,8 +918,7 @@ fn responses_response_hosted_tool_item_dropped_with_warn() {
         ],
         "usage": { "input_tokens": 1, "output_tokens": 1 }
     });
-    // The drop is a TRANSLATE attempt's (design F3 "Drops"): read inside one, it is warned and
-    // named by its wire path; a same-dialect relay's tap says nothing.
+
     let seam = crate::codec::drops::Seam {
         direction: crate::codec::drops::Direction::Response,
         ingress: "openai",
@@ -1008,8 +953,7 @@ fn responses_response_hosted_tool_item_dropped_with_warn() {
 }
 
 /// responses/response/{instructions,metadata} — the request-echo members a native response carries
-/// have no IrResponse slot and no other-protocol analog: DOCUMENTED DROP+WARN on read (the request
-/// side of instructions/metadata is separately carried on the request hop).
+
 #[test]
 fn responses_response_instructions_metadata_dropped_with_warn() {
     let body = serde_json::json!({
@@ -1040,11 +984,8 @@ fn responses_response_instructions_metadata_dropped_with_warn() {
     );
 }
 
-// ─────────────────────────── response: streaming events ───────────────────────────
-
 /// responses/response/stream:{response.created,response.output_item.added,response.output_item.done,
-/// response.content_part.added,response.content_part.done,response.output_text.delta,
-/// response.output_text.done,response.function_call_arguments.delta,response.completed}
+
 #[test]
 fn responses_stream_events_emitted_by_writer() {
     let w = ResponsesWriter;
@@ -1060,7 +1001,7 @@ fn responses_stream_events_emitted_by_writer() {
             model: Some("gpt-s".to_string()),
         },
     ));
-    // A text part: BlockStart → delta → BlockStop drives the full content-part bracket.
+
     seen.extend(event_names(
         &w,
         crate::codec::ir::IrStreamEvent::BlockStart {
@@ -1080,7 +1021,7 @@ fn responses_stream_events_emitted_by_writer() {
         &w,
         crate::codec::ir::IrStreamEvent::BlockStop { index: 0 },
     ));
-    // A function-call part at a distinct index: added → args delta → done.
+
     seen.extend(event_names(
         &w,
         crate::codec::ir::IrStreamEvent::BlockStart {
@@ -1132,17 +1073,11 @@ fn responses_stream_events_emitted_by_writer() {
 }
 
 /// A duplicate `MessageStart` must not restart the stream. Five of the six readers gate
-/// `MessageStart` on `state.started`, but the Anthropic reader emits it 1:1 with the upstream
-/// `message_start` frame, so a responses-egress stream fed from an Anthropic ingress can see two.
-/// The second one must not rewind `sequence_number`, must not change `response.id` between
-/// `response.created` and `response.completed`, and must not drop the open text item.
+
 #[test]
 fn responses_duplicate_message_start_does_not_restart_stream() {
     let w = ResponsesWriter;
-    // TWO DISTINCT ids. Passing the same literal twice cannot see the defect: a duplicate that
-    // re-minted the identity would still produce the id the first event produced, so the test
-    // would pass while `response.created` and `response.completed` disagreed for every real
-    // duplicate. The stream's id is decided by its FIRST opening event; the second must be ignored.
+
     let start = |id: &str| crate::codec::ir::IrStreamEvent::MessageStart {
         role: crate::codec::ir::IrRole::Assistant,
         usage: None,
@@ -1168,8 +1103,7 @@ fn responses_duplicate_message_start_does_not_restart_stream() {
             delta: crate::codec::ir::IrDelta::TextDelta("hi".to_string()),
         },
     ));
-    // The duplicate, under a DIFFERENT id. Everything after it must continue the SAME stream, under
-    // the SAME identity.
+
     frames.extend(w.write_response_events(crate::codec::test_host::HOST, &start("resp_second")));
     frames.extend(w.write_response_events(
         crate::codec::test_host::HOST,
@@ -1213,8 +1147,7 @@ fn responses_duplicate_message_start_does_not_restart_stream() {
         created_id, completed_id,
         "the terminal event must replay the id response.created carried"
     );
-    // The duplicate's own `response.created` frame must state that same id — a client reading only
-    // the second frame must not be handed an identity nothing else in the stream mentions.
+
     for (_, d) in frames.iter().filter(|(n, _)| n == EVT_RESPONSE_CREATED) {
         assert_eq!(
             d["response"]["id"],
@@ -1231,13 +1164,11 @@ fn responses_duplicate_message_start_does_not_restart_stream() {
 }
 
 /// The per-stream reset clears every accumulator a reused or cloned writer could otherwise leak
-/// into the next stream — including the citation and logprob buffers, which it used to skip. A
-/// stale entry under an index the new stream reuses would attach a previous stream's sources and
-/// token logprobs to this stream's text part.
+
 #[test]
 fn responses_reset_clears_citation_and_logprob_accumulators() {
     let w = ResponsesWriter;
-    // State left over from a previous stream, under the index the new stream will reuse.
+
     w.append_citations(
         0,
         &[crate::codec::ir::IrCitation {
@@ -1265,7 +1196,6 @@ fn responses_reset_clears_citation_and_logprob_accumulators() {
         }],
     );
 
-    // The new stream opens, which is what performs the reset.
     let mut frames: Vec<(String, serde_json::Value)> = w.write_response_events(
         crate::codec::test_host::HOST,
         &crate::codec::ir::IrStreamEvent::MessageStart {
@@ -1357,7 +1287,7 @@ fn responses_stream_failed_event_emitted() {
 }
 
 /// responses/response/stream:response.in_progress — the reader CONSUMES the in-progress lifecycle
-/// event (aliased with response.created) to open the translated message.
+
 #[test]
 fn responses_stream_in_progress_consumed_by_reader() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -1379,7 +1309,7 @@ fn responses_stream_in_progress_consumed_by_reader() {
 }
 
 /// responses/response/stream:response.reasoning_summary_text.delta — the reader CONSUMES the
-/// reasoning-summary delta event, routing it to the reasoning block as a ThinkingDelta.
+
 #[test]
 fn responses_stream_reasoning_summary_delta_consumed_by_reader() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -1402,15 +1332,10 @@ fn responses_stream_reasoning_summary_delta_consumed_by_reader() {
     );
 }
 
-// Chat#3: a Responses request `top_logprobs` must SURVIVE — both a same-protocol round-trip and a
-// cross-protocol hop to the OpenAI Chat dialect (where it forces the enabling `logprobs` flag).
-// Pre-fix the reader hardcoded it `None` and it was absent from `responses_modeled_keys`, so it was
-// cleared at the seam with no drop-warn — total loss for a Responses caller who set it.
 #[test]
 fn top_logprobs_carries_responses_roundtrip_and_cross_to_openai() {
     let body = serde_json::json!({"model": "x", "input": "hi", "top_logprobs": 5});
 
-    // (a) same-protocol Responses→Responses re-emits `top_logprobs` verbatim.
     let rt = roundtrip_req(&body);
     assert_eq!(
         rt.get("top_logprobs"),
@@ -1418,8 +1343,6 @@ fn top_logprobs_carries_responses_roundtrip_and_cross_to_openai() {
         "top_logprobs must round-trip on the Responses surface: {rt}"
     );
 
-    // (b) cross-protocol Responses→OpenAI-Chat: the ask reaches the OpenAI writer, which emits
-    //     `top_logprobs` AND forces `logprobs: true` (OpenAI requires the enabling flag).
     let ir = read_req(&body);
     assert_eq!(
         ir.top_logprobs,
@@ -1440,9 +1363,6 @@ fn top_logprobs_carries_responses_roundtrip_and_cross_to_openai() {
     );
 }
 
-// Chat#4: the Responses create API models none of `frequency_penalty`/`presence_penalty`/`seed`/`n`.
-// A cross-protocol source carrying them must have each dropped OBSERVABLY — a per-control `warn!` and
-// a `dropped_egress_controls` entry — not silently as before.
 #[test]
 fn responses_drops_penalties_seed_n_observably() {
     let ir = crate::codec::ir::IrRequest {
@@ -1460,8 +1380,7 @@ fn responses_drops_penalties_seed_n_observably() {
             cap.messages()
         );
     }
-    // …and each is reported to the cross-protocol seam for audit. Bind the interior-mutable const to a
-    // local before borrowing (clippy::borrow_interior_mutable_const), matching `write_req`.
+
     let w = ResponsesWriter;
     let dropped = w.dropped_egress_controls(&ir);
     for field in ["frequency_penalty", "presence_penalty", "seed", "n"] {
@@ -1472,13 +1391,8 @@ fn responses_drops_penalties_seed_n_observably() {
     }
 }
 
-// ─────────────────────── T3 stateful Responses: previous_response_id / store ───────────────────────
-
 /// responses/request/{previous_response_id,store} — the server-side conversation-state knobs a proxy
-/// must carry LOSSLESSLY. Both ride `extra` (busbar is a translator; the upstream owns the state), so a
-/// same-protocol Responses→Responses hop re-emits them byte-for-byte. `previous_response_id` threads
-/// this turn onto an upstream-stored prior response; `store: true` asks the upstream to persist this
-/// response for a later `previous_response_id`.
+
 #[test]
 fn responses_stateful_previous_response_id_and_store_survive_same_protocol() {
     let body = serde_json::json!({
@@ -1494,7 +1408,6 @@ fn responses_stateful_previous_response_id_and_store_survive_same_protocol() {
     );
     assert_eq!(out["store"], true, "store:true must round-trip: {out}");
 
-    // `store: false` is a DISTINCT intent (do not persist) and must not collapse to absent/true.
     let body_false = serde_json::json!({
         "model": "gpt-4o",
         "input": "x",
@@ -1508,9 +1421,7 @@ fn responses_stateful_previous_response_id_and_store_survive_same_protocol() {
 }
 
 /// responses/response/id — the STORED-RESPONSE id echo / `response.id` correlation. When a client uses
-/// server-side conversation state, THIS response's `id` becomes the NEXT request's
-/// `previous_response_id`, so the id must survive a read→IR→write hop unchanged. A native upstream id is
-/// carried verbatim (never re-synthesized) so the client's stored linkage is not broken.
+
 #[test]
 fn responses_stateful_response_id_correlation_round_trips() {
     let upstream = serde_json::json!({

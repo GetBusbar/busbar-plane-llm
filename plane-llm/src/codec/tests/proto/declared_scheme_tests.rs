@@ -2,18 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE DECLARED EGRESS SCHEMES, AS THIS PLANE DECLARES THEM. All six
-//! dialects state their egress credential as DECLARED DATA — a credential-family table, or a SigV4
-//! signature whose region is a pure function of the host — and carry no builder, so the lane key is
-//! presented by the host's egress-auth unit and never passes through this plane. The one
-//! non-credential header a dialect always sends (a version header) is declared beside its scheme,
-//! in `static_headers`.
-//!
-//! The codec proves its own seam here and reaches no host: every declaration's scheme data and the
-//! signing dialect's host-to-region answers are held to the shared fixture
-//! `testing/plane-copies/declared-credentials.json` — the headers each dialect's own builder wrote,
-//! per credential, mode and request. The host's suite holds its egress-auth unit to the same file:
-//! presented under schemes carrying exactly this data, it writes exactly those headers. Together the
-//! two suites are the byte-identity proof of the switch.
 
 use busbar_contract::protocol::{CredentialHeader, EgressScheme, ProtocolDecl};
 
@@ -37,7 +25,7 @@ fn presentation(h: &CredentialHeader) -> serde_json::Value {
 }
 
 /// A declared scheme's DATA, in the fixture's spelling (the region function is compared by its
-/// answers, below).
+
 fn describe(scheme: &EgressScheme) -> serde_json::Value {
     match scheme {
         EgressScheme::Static {
@@ -77,8 +65,7 @@ const DECLARED: [&ProtocolDecl; 6] = [
 ];
 
 /// Every dialect in this plane's declaration table declares its egress scheme, and the fixture
-/// carries a scheme for every one of them, so a dialect added without either fails this suite instead
-/// of passing it by omission.
+
 #[test]
 fn every_dialect_declaring_a_credential_builder_has_a_declared_twin() {
     let doc = fixture();
@@ -98,7 +85,7 @@ fn every_dialect_declaring_a_credential_builder_has_a_declared_twin() {
 }
 
 /// #83a S2-a: every dialect DECLARES its scheme and carries no builder, so no credential ever passes
-/// through this plane — and the scheme each declares is exactly the data the host's suite presents.
+
 #[test]
 fn the_declared_dialects_carry_a_scheme_and_no_builder() {
     let doc = fixture();
@@ -122,7 +109,7 @@ fn the_declared_dialects_carry_a_scheme_and_no_builder() {
 }
 
 /// The signing dialect's region is a declared pure function of the host: it answers every host in the
-/// fixture as recorded, and a host that names no region leaves the declared `us-east-1` default.
+
 #[test]
 fn the_declared_region_answers_every_fixture_host() {
     let Some(EgressScheme::SigV4 { region_of_host, .. }) =
@@ -141,8 +128,7 @@ fn the_declared_region_answers_every_fixture_host() {
 }
 
 /// THE STATIC HEADERS: the one dialect whose every request carries a version header declares it —
-/// exactly that pair, beside its scheme — and no other dialect declares any, so the host writes no
-/// header this plane did not declare.
+
 #[test]
 fn only_the_versioned_dialect_declares_a_static_header() {
     for decl in DECLARED {

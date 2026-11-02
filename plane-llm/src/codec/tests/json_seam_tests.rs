@@ -7,8 +7,6 @@ use super::*;
 
 #[test]
 fn rejects_pathologically_nested_input_without_overflow() {
-    // A ~2 MB body 1,000,000 arrays deep would abort the process on re-serialize/drop if it reached
-    // `from_slice`. The guard rejects it on the raw bytes first, so this returns Err cleanly.
     let depth = 1_000_000usize;
     let s = format!("{}{}", "[".repeat(depth), "]".repeat(depth));
     assert!(

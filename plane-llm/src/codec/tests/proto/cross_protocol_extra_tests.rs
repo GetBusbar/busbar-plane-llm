@@ -2,21 +2,11 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! CROSS-PROTOCOL extra-key round-trip tests, RELOCATED here from `busbar-core`'s `proxy/tests/`
-//! They drive the witnessed codec directly (`Protocol::{openai,
-//! anthropic,gemini}().reader()/.writer()` over a concrete `IrRequest`), which a neutral crate's
-//! tests must not name — so they live beside the codecs they exercise. Every assertion is
-//! BYTE-IDENTICAL to the pre-relocation suite; they mirror the `forward_with_pool` reader→clear→
-//! writer sequence on a value.
 
 use super::*;
 
 /// Structural class fix: on a CROSS-protocol request hop the source-protocol-only passthrough
-/// keys swept into `IrRequest.extra` (e.g. OpenAI `logit_bias`) must NOT reach the foreign
-/// egress backend body. The seam in `forward_with_pool` clears `ir.extra` before the egress
-/// `write_request`; this mirrors that exact sequence (reader → clear → writer).
-/// (`logprobs`/`top_logprobs` are now FIRST-CLASS IR fields — carried to protocols that model
-/// them (Gemini) and never emitted by ones that don't (Anthropic) — so this test asserts both
-/// halves of the new contract too.)
+
 #[test]
 fn cross_protocol_strips_source_only_extra_keys() {
     let body = serde_json::json!({
@@ -29,17 +19,15 @@ fn cross_protocol_strips_source_only_extra_keys() {
     });
     let openai = Protocol::openai();
     let mut ir = openai.reader().read_request(&body).expect("read");
-    // logit_bias (token IDs are tokenizer-specific, unmappable) still rides extra;
-    // logprobs/top_logprobs are promoted out of it.
+
     assert!(ir.extra.contains_key("logit_bias"));
     assert!(!ir.extra.contains_key("logprobs"));
     assert!(!ir.extra.contains_key("top_logprobs"));
     assert_eq!(ir.logprobs, Some(true));
     assert_eq!(ir.top_logprobs, Some(5));
 
-    // The cross-protocol seam clears extra before handing to the foreign writer.
     ir.extra.clear();
-    // Anthropic has no logprobs concept: its writer must not emit any spelling of it.
+
     let anthropic = Protocol::anthropic();
     let out = anthropic
         .writer()
@@ -53,7 +41,6 @@ fn cross_protocol_strips_source_only_extra_keys() {
     assert!(!obj.contains_key("logit_bias"));
     assert!(obj.contains_key("messages"));
 
-    // Gemini DOES model it: the ask arrives in Gemini's native generationConfig spellings.
     let gemini = Protocol::gemini();
     let gout = gemini
         .writer()
@@ -67,7 +54,7 @@ fn cross_protocol_strips_source_only_extra_keys() {
 }
 
 /// SAME-protocol openai→openai must still carry `logprobs` (now via the first-class IR field
-/// rather than `extra`) and the genuinely-unmapped `logit_bias` (still via `extra`).
+
 #[test]
 fn same_protocol_passthrough_preserves_extra_keys() {
     let body = serde_json::json!({
@@ -79,7 +66,7 @@ fn same_protocol_passthrough_preserves_extra_keys() {
     });
     let openai = Protocol::openai();
     let ir = openai.reader().read_request(&body).expect("read");
-    // No clear() here — same-protocol passthrough never hits the cross-protocol seam.
+
     let out = openai
         .writer()
         .write_request(crate::codec::test_host::HOST, &ir);

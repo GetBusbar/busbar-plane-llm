@@ -161,8 +161,7 @@ fn a_recovered_start_backfills_the_next_real_terminal_event() {
         assert_eq!(usage.cache_read_input_tokens, Some(42));
         assert_eq!(usage.cache_creation_input_tokens, Some(17));
         assert_eq!(usage.detail.cache_creation_5m_input_tokens, Some(17));
-        // The foreign wire's prompt total includes the cache tiers; compare against the
-        // existing valid-start writer path rather than confusing it with uncached IR input.
+
         let mut ordinary = stream(ingress);
         ordinary.feed(&Host, &frame("message_start", &start(Some(json!("assistant")), json!({
             "input_tokens":5000, "cache_read_input_tokens":42,
@@ -580,7 +579,7 @@ fn finish_reply(ingress: &'static str, frames: &[Vec<u8>]) -> (Piece<'static>, V
         let piece = reply.feed(&Host, &ctx, bytes, false, At::default());
         output.extend_from_slice(&piece.bytes);
     }
-    // EOF has no borrowed payload, so its returned piece can outlive this local frame list.
+
     let piece = reply.feed(&Host, &ctx, b"", true, At::default());
     output.extend_from_slice(&piece.bytes);
     (piece, output)

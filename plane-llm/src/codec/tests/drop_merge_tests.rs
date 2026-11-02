@@ -66,7 +66,6 @@ fn drop_index_merge_preserves_exact_prefix_semantics_and_encounter_order() {
 
 #[test]
 fn drop_index_merge_matches_original_predicate_for_exhaustive_short_sequences() {
-    // Empty keys, arbitrary '=' positions, lexical siblings and Unicode are intentional.
     const PATHS: &[&str] = &["", "x", "x=", "x=a", "x=a=b", "x.a", "x>a", "=x", "é=文"];
     for control in PATHS {
         for first in PATHS {

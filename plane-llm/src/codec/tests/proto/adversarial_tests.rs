@@ -42,14 +42,11 @@ const DIALECTS: [&str; 6] = [
 ];
 
 /// The bounded cap every reader clamps an attacker-controlled block index to
-/// (`bedrock::MAX_CONTENT_BLOCK_INDEX`, restated here because it is private to its module; the
-/// Anthropic and OpenAI readers clamp to the same 1023 — see `anthropic/mod.rs:544`).
+
 const MAX_BLOCK_INDEX: usize = 1023;
 
 /// A MINIMAL, genuinely-VALID request body in `dialect`'s native shape carrying `text` as the sole
-/// user turn. Used by the two "must not panic" cases below, which previously discarded their result
-/// (`let _ = …`): with a body that is valid for the dialect being read, the outcome is knowable, so
-/// those cases now assert `Ok` and that the text SURVIVED, not merely the absence of a panic.
+
 fn valid_request_body(dialect: &str, text: &str) -> serde_json::Value {
     use serde_json::json;
     match dialect {
@@ -65,7 +62,7 @@ fn valid_request_body(dialect: &str, text: &str) -> serde_json::Value {
 }
 
 /// The concatenated text of the first user turn in `ir` — the payload a reader that silently
-/// dropped, truncated or re-encoded the body would fail to reproduce.
+
 fn first_user_text(ir: &crate::codec::ir::IrRequest) -> String {
     ir.messages
         .iter()
@@ -83,9 +80,7 @@ fn first_user_text(ir: &crate::codec::ir::IrRequest) -> String {
 }
 
 /// Assert `res` is the canonical structural-parse rejection: `Err` with a client 400 carrying the
-/// `ir_parse` signal — the shape busbar renders into the ingress dialect's native 400 envelope.
-/// (Same predicate the dialect-local `input_hardening_tests` assert, restated here so this file is
-/// self-contained; written without a `T: Debug` bound so it works over `IrRequest`/`IrResponse`.)
+
 fn expect_ir_parse<T>(res: Result<T, IrError>, ctx: &str) {
     match res {
         Ok(_) => panic!("{ctx}: expected a clean ir_parse rejection, got Ok"),
@@ -99,11 +94,6 @@ fn expect_ir_parse<T>(res: Result<T, IrError>, ctx: &str) {
         }
     }
 }
-
-// ── 1. NON-OBJECT TOP-LEVEL BODY ─────────────────────────────────────────────
-// Every reader dereferences the body as a JSON object up front. A non-object top-level value
-// (string / number / bool / array / null) is structurally impossible for any dialect and MUST be
-// refused as a typed 400 — never indexed into, never panicked on.
 
 /// The five non-object JSON shapes an attacker can put at the top level.
 fn non_object_bodies() -> Vec<serde_json::Value> {
@@ -144,11 +134,8 @@ fn non_object_top_level_response_body_rejects_every_dialect() {
     }
 }
 
-// ── 2. WRONG-TYPED STRUCTURAL RESPONSE ARRAY ─────────────────────────────────
-
 /// OpenAI Chat's `choices` is a REQUIRED array; a present-but-wrong-typed (or empty) `choices`
-/// cannot yield a `choices[0]`, so the reader refuses with a typed 400 rather than index-panic or
-/// invent a choice. (The exact class the old lenient tree would have `[0]`-indexed into.)
+
 #[test]
 fn openai_wrong_typed_or_empty_choices_response_rejects() {
     let proto = protocol_for("openai").expect("openai");
@@ -157,7 +144,7 @@ fn openai_wrong_typed_or_empty_choices_response_rejects() {
         serde_json::json!({"id": "c", "object": "chat.completion", "choices": 7}),
         serde_json::json!({"id": "c", "object": "chat.completion", "choices": {"a": 1}}),
         serde_json::json!({"id": "c", "object": "chat.completion", "choices": []}),
-        serde_json::json!({"id": "c", "object": "chat.completion"}), // absent
+        serde_json::json!({"id": "c", "object": "chat.completion"}),
     ] {
         expect_ir_parse(
             proto
@@ -169,9 +156,7 @@ fn openai_wrong_typed_or_empty_choices_response_rejects() {
 }
 
 /// The Responses reader's terminal is `output`: a `status:"completed"` body whose `output` is
-/// present-but-wrong-typed can produce no assistant content, so the reader REFUSES it with a typed
-/// `ir_parse` 400 (the same clean-refusal class as OpenAI's `choices`) rather than emit a 200 with
-/// silently-empty content that an SDK would read as `output[0]` and index-panic on.
+
 #[test]
 fn responses_wrong_typed_output_response_rejects() {
     let proto = protocol_for("responses").expect("responses");
@@ -188,11 +173,6 @@ fn responses_wrong_typed_output_response_rejects() {
         );
     }
 }
-
-// ── 3. UNKNOWN ENUM VALUE (finish_reason / stop_reason) ──────────────────────
-// Every dialect's stop-reason map has a `_ => Other` arm. An unknown/invalid terminal enum must
-// DEGRADE to `Other` (or, for the Responses `status` vocabulary, to `None`) — never reject a
-// valid 200, never carry the raw token forward, and (below) never leak it back onto a foreign wire.
 
 /// Minimal valid assistant response body for `dialect` carrying `stop` as the terminal enum token.
 fn native_response_with_stop(dialect: &str, stop: &str) -> serde_json::Value {
@@ -229,8 +209,7 @@ fn native_response_with_stop(dialect: &str, stop: &str) -> serde_json::Value {
 }
 
 /// Unknown terminal enum on the five dialects whose terminal is a stop-reason token degrades to
-/// `IrStopReason::Other` — a valid 200 body is preserved, the bogus token is normalized, nothing
-/// panics.
+
 #[test]
 fn unknown_stop_reason_degrades_to_other_not_reject() {
     for dialect in ["anthropic", "openai", "gemini", "bedrock", "cohere"] {
@@ -252,8 +231,7 @@ fn unknown_stop_reason_degrades_to_other_not_reject() {
 }
 
 /// The Responses API's terminal vocabulary is `status`, not a stop-reason token. An unknown status
-/// is not a completion signal, so it degrades to `stop_reason: None` (still a clean, valid IR — no
-/// reject, no panic).
+
 #[test]
 fn responses_unknown_status_degrades_to_none() {
     let proto = protocol_for("responses").expect("responses");
@@ -274,10 +252,7 @@ fn responses_unknown_status_degrades_to_none() {
 }
 
 /// NO-LEAK across the seam: an unknown upstream stop token, degraded to `Other`, must be written
-/// back as a STRICT native enum value for the ingress dialect — never the raw off-enum token a
-/// strict client SDK would reject. Drive the real cross-protocol path: anthropic response with a
-/// bogus `stop_reason` → IR (`Other`) → OpenAI writer → `finish_reason` is the SDK-safe `stop`, and
-/// the bogus token appears NOWHERE in the emitted body.
+
 #[test]
 fn unknown_stop_reason_does_not_leak_across_writer() {
     let anth = protocol_for("anthropic").expect("anthropic");
@@ -302,16 +277,8 @@ fn unknown_stop_reason_does_not_leak_across_writer() {
     );
 }
 
-// ── 4. HOSTILE STREAM EVENTS ─────────────────────────────────────────────────
-// `read_response_events` is the live translation seam. It must be TOTAL on adversarial frames:
-// return a (possibly empty) Vec for any hostile (event_type, data) — never panic, never allocate
-// against an attacker-controlled index.
-
 /// The minimal VALID frame sequence that makes `dialect`'s reader emit one `TextDelta("ok")` —
-/// the positive control for the hostile battery below. Without it, a reader rewritten as
-/// `fn read_response_events(..) -> Vec::new()` (one that dropped every *valid* frame) passes the
-/// hostile sweep on all six dialects, because the returned Vec is always empty and the inner match
-/// never fires.
+
 fn valid_text_delta_frames(dialect: &str) -> Vec<(&'static str, serde_json::Value)> {
     use serde_json::json;
     match dialect {
@@ -363,11 +330,7 @@ fn valid_text_delta_frames(dialect: &str) -> Vec<(&'static str, serde_json::Valu
 }
 
 /// A battery of hostile de-framed stream events: non-object payloads, wrong-typed deltas/usage, an
-/// empty-type frame, and a pathological `u64::MAX` block index. Each is fed through EVERY dialect's
-/// `read_response_events` over a fresh decode state: the call must return (no panic), nothing may
-/// degrade into a text delta at a pathological index, and — the positive control — the SAME reader
-/// must still decode a healthy frame into its text delta, so "no events" can never stand in for
-/// "no defect".
+
 #[test]
 fn hostile_stream_events_are_total_no_panic_no_bad_index() {
     let hostile: Vec<(&str, serde_json::Value)> = vec![
@@ -406,8 +369,6 @@ fn hostile_stream_events_are_total_no_panic_no_bad_index() {
         let proto = protocol_for(name).expect("dialect");
         let mut state = crate::codec::ir::StreamDecodeState::default();
         for (et, data) in &hostile {
-            // Simulate the production event-stream decoder folding `:event-type` into `data["type"]`
-            // for the eventstream (bedrock) transport, matching the sibling stream tests.
             let mut data = data.clone();
             if !et.is_empty() {
                 if let Some(obj) = data.as_object_mut() {
@@ -415,14 +376,14 @@ fn hostile_stream_events_are_total_no_panic_no_bad_index() {
                         .or_insert_with(|| serde_json::Value::String((*et).to_string()));
                 }
             }
-            // The call itself is the assertion: a panic here fails the test.
+
             let events = proto.reader().read_response_events(
                 crate::codec::test_host::HOST,
                 et,
                 &data,
                 &mut state,
             );
-            // No hostile frame may surface a text delta at a pathological (unclamped) index.
+
             for ev in &events {
                 if let crate::codec::ir::IrStreamEvent::BlockDelta {
                     index,
@@ -438,8 +399,6 @@ fn hostile_stream_events_are_total_no_panic_no_bad_index() {
             }
         }
 
-        // POSITIVE CONTROL, same reader, fresh state: a healthy frame sequence must still decode
-        // into its text delta. Without this, an empty return for every input passes the sweep.
         let mut ok_state = crate::codec::ir::StreamDecodeState::default();
         let mut healthy: Vec<crate::codec::ir::IrStreamEvent> = Vec::new();
         for (et, data) in valid_text_delta_frames(name) {
@@ -470,14 +429,12 @@ fn hostile_stream_events_are_total_no_panic_no_bad_index() {
 }
 
 /// Precise clamp proof for Bedrock: a `contentBlockStart` carrying `contentBlockIndex: u64::MAX`
-/// (after a `messageStart`) must have its IR `BlockStart` index CLAMPED to the bounded cap
-/// (`MAX_CONTENT_BLOCK_INDEX = 1023`), so a downstream per-index writer can never be driven to
-/// allocate against `u64::MAX`.
+
 #[test]
 fn bedrock_huge_content_block_index_is_clamped() {
     let proto = protocol_for("bedrock").expect("bedrock");
     let mut state = crate::codec::ir::StreamDecodeState::default();
-    // Open the message first (BlockStart is guarded behind MessageStart).
+
     let start = serde_json::json!({"type": "messageStart", "role": "assistant"});
     let _ = proto.reader().read_response_events(
         crate::codec::test_host::HOST,
@@ -500,10 +457,7 @@ fn bedrock_huge_content_block_index_is_clamped() {
         crate::codec::ir::IrStreamEvent::BlockStart { index, .. } => Some(*index),
         _ => None,
     });
-    // Require the BlockStart to EXIST, and pin the clamped index EXACTLY. Guarded (`if let`), a
-    // Bedrock reader that stopped emitting `BlockStart` for `contentBlockStart` — a silent
-    // tool-use-stream regression — ran no assertion at all; and `<= 1023` was also satisfied by a
-    // clamp changed to `.min(512)`, which would silently renumber every block past 512.
+
     let idx = block_start_idx
         .expect("bedrock must emit a BlockStart for a contentBlockStart carrying a toolUse");
     assert_eq!(
@@ -512,15 +466,8 @@ fn bedrock_huge_content_block_index_is_clamped() {
     );
 }
 
-// ── 5. OVER-DEEP NESTED BODY ─────────────────────────────────────────────────
-
 /// The MAX_JSON_DEPTH floor rejects a pathologically-nested body at the PARSE boundary
-/// (`crate::codec::json::parse`) — the single seam every ingress body crosses before a
-/// `serde_json::Value` (and therefore any reader recursion, re-serialize, or recursive drop) can be
-/// built. A ~10k-deep body (well under the body cap) would otherwise overflow the worker stack and
-/// abort the process; here it returns a clean parse `Err` and no `Value` is ever constructed, so no
-/// reader is ever handed a deep tree. (Complements `json.rs`'s own guard tests from the reader's
-/// vantage: the floor sits BEFORE the reader, not inside it.)
+
 #[test]
 fn overdeep_nested_body_rejected_at_parse_before_any_reader() {
     let depth = 10_000usize;
@@ -538,8 +485,7 @@ fn overdeep_nested_body_rejected_at_parse_before_any_reader() {
         parsed.is_err(),
         "a body nested past MAX_JSON_DEPTH must be rejected at the parse boundary, before any Value/reader"
     );
-    // A realistically-shallow request body still parses AND reads on every dialect (the floor does
-    // not over-reject normal traffic).
+
     let ok_body =
         br#"{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#;
     let value =
@@ -549,10 +495,6 @@ fn overdeep_nested_body_rejected_at_parse_before_any_reader() {
         "the shallow control body must parse into an object"
     );
     for name in DIALECTS {
-        // Each dialect is handed a body in ITS OWN native shape, so the outcome is knowable: the
-        // read must SUCCEED and the turn text must survive. Discarding the result (`let _ = …`)
-        // meant an over-eager depth/size guard that started rejecting normal traffic — the exact
-        // over-rejection this half exists to rule out — passed unnoticed.
         let body_bytes = serde_json::to_vec(&valid_request_body(name, "hi")).expect("serialize");
         let native = crate::codec::json::parse::<serde_json::Value>(&body_bytes)
             .unwrap_or_else(|e| panic!("{name}: a shallow native body must parse: {e:?}"));
@@ -571,18 +513,12 @@ fn overdeep_nested_body_rejected_at_parse_before_any_reader() {
     }
 }
 
-// ── 6. TRUNCATED SSE STREAM ──────────────────────────────────────────────────
-
 /// A truncated SSE egress stream (a `data:` frame that never receives its blank-line terminator)
-/// must let `StreamTranslate::finish()` TERMINATE — it returns bytes and does not hang or loop.
-/// The buffered partial is small (well under `MAX_BUF`), so the translator is not forced to abort;
-/// the test COMPLETING is itself the no-hang proof.
+
 #[test]
 fn truncated_sse_stream_finish_terminates_no_hang() {
-    // openai egress → anthropic ingress: an all-SSE cross-protocol pair that genuinely engages the
-    // translate reassembly buffer.
     let mut st = StreamTranslate::new("anthropic", "openai").expect("translator");
-    // A well-formed first frame, then a second frame that is cut off mid-JSON with no terminator.
+
     let mut out = st.feed(
         crate::codec::test_host::HOST,
         b"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\n",
@@ -591,11 +527,9 @@ fn truncated_sse_stream_finish_terminates_no_hang() {
         crate::codec::test_host::HOST,
         b"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"never-term",
     ));
-    // Must return (no hang) — the partial is small so the stream is not aborted for overflow.
+
     out.extend_from_slice(&st.finish(crate::codec::test_host::HOST));
-    // The healthy FIRST frame must still reach the client. Discarding the output (`let _ = tail;`)
-    // meant a translator that dropped the complete `"hi"` delta along with the truncated tail —
-    // silent content loss on every truncated upstream — passed this case.
+
     let wire = String::from_utf8_lossy(&out);
     assert!(
         wire.contains(r#""text":"hi""#),
@@ -612,12 +546,8 @@ fn truncated_sse_stream_finish_terminates_no_hang() {
     );
 }
 
-// ── 7. GARBAGE / NON-JSON SSE FRAMES ─────────────────────────────────────────
-
 /// Complete-but-garbage SSE frames (non-JSON `data:` payloads, comment/keepalive lines) must be
-/// SKIPPED, not treated as a stream abort: a real upstream interleaves `: keep-alive` comments and
-/// the occasional malformed chunk, and a false abort would corrupt an otherwise healthy stream.
-/// Assert the translator does NOT abort and `finish()` still terminates cleanly.
+
 #[test]
 fn garbage_non_json_sse_frames_skipped_no_false_abort() {
     let mut st = StreamTranslate::new("anthropic", "openai").expect("translator");
@@ -632,10 +562,7 @@ fn garbage_non_json_sse_frames_skipped_no_false_abort() {
         b"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n",
     ));
     out.extend_from_slice(&st.finish(crate::codec::test_host::HOST));
-    // The healthy frame interleaved among the garbage must still reach the client. Discarding the
-    // output (`let _ = out;`) meant a translator that dropped the `"ok"` delta together with the
-    // garbage — precisely the "corrupt an otherwise healthy stream" outcome this case names —
-    // passed on the strength of `!aborted()` alone.
+
     let wire = String::from_utf8_lossy(&out);
     assert!(
         wire.contains(r#""text":"ok""#),
@@ -652,20 +579,14 @@ fn garbage_non_json_sse_frames_skipped_no_false_abort() {
     );
 }
 
-// ── 8. OVERSIZED-BUT-VALID BODY ──────────────────────────────────────────────
-
 /// A large-but-well-formed request body (a multi-megabyte text content string, well under the
-/// ingress byte cap) must read on every dialect without panic. Guards against an accidental
-/// quadratic/recursive blow-up or an over-eager size assertion inside a reader — the reader is
-/// linear in body size, so a big valid body is merely big, not hostile.
+
 #[test]
 fn oversized_but_valid_body_reads_without_panic() {
-    let big = "x".repeat(5 * 1024 * 1024); // 5 MiB of text
+    let big = "x".repeat(5 * 1024 * 1024);
     for name in DIALECTS {
         let body = valid_request_body(name, &big);
-        // The body is valid FOR THIS DIALECT, so "Ok or a typed reject are both fine" was slack, not
-        // tolerance: accepting a reject made this case pass under exactly the over-eager size guard
-        // its doc says it guards against. The read must succeed and the 5 MiB must arrive whole.
+
         let ir = protocol_for(name)
             .expect("dialect")
             .reader()

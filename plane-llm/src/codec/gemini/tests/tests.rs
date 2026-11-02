@@ -164,8 +164,7 @@ fn collect_stream(chunks: &[serde_json::Value]) -> Vec<IrStreamEvent> {
 }
 
 /// Regression: a streamed functionCall MUST produce a matching BlockStop for its tool block.
-/// Previously the tool index was never recorded in `state.open_tools`, so the finishReason
-/// drain (which is the only thing that closes tool blocks) left an orphaned BlockStart.
+
 #[test]
 fn test_stream_tool_block_is_closed() {
     let events = collect_stream(&[serde_json::json!({
@@ -178,7 +177,6 @@ fn test_stream_tool_block_is_closed() {
         }]
     })]);
 
-    // Find the tool BlockStart and capture its index.
     let tool_start_idx = events.iter().find_map(|e| match e {
         IrStreamEvent::BlockStart {
             index,
@@ -189,7 +187,6 @@ fn test_stream_tool_block_is_closed() {
     });
     let idx = tool_start_idx.expect("tool BlockStart must be emitted");
 
-    // The same index MUST be closed by a BlockStop.
     let closed = events
         .iter()
         .any(|e| matches!(e, IrStreamEvent::BlockStop { index } if *index == idx));
@@ -198,7 +195,6 @@ fn test_stream_tool_block_is_closed() {
         "tool block {idx} was opened but never closed: {events:?}"
     );
 
-    // Balance check: every BlockStart has a matching BlockStop.
     let starts = events
         .iter()
         .filter(|e| matches!(e, IrStreamEvent::BlockStart { .. }))
@@ -210,10 +206,6 @@ fn test_stream_tool_block_is_closed() {
     assert_eq!(starts, stops, "unbalanced block events: {events:?}");
 }
 
-// carryable-flatten #7 (gemini twin): a preamble-text-then-functionCall stream must close the open
-// TEXT block before opening the tool block. The functionCall arm closed a still-open thinking block
-// but never the text block, leaving two content blocks open at once. Fails pre-fix: no BlockStop
-// closing the text block appears before the tool BlockStart.
 #[test]
 fn gemini_text_then_tool_closes_text_block_before_opening_tool() {
     let events = collect_stream(&[
@@ -250,10 +242,7 @@ fn gemini_text_then_tool_closes_text_block_before_opening_tool() {
 }
 
 /// The `functionCall` arm is the one block-opening arm in this reader that does not close an
-/// open thinking block first (its three siblings — text, citations, logprobs — all do). A
-/// `{thought:true}` part followed by a `functionCall` part in the same turn must therefore close
-/// the thinking block (index 0) BEFORE opening the tool block, not after — Anthropic's documented
-/// stream never has two content blocks open simultaneously.
+
 #[test]
 fn test_stream_function_call_closes_open_thinking_block() {
     let events = collect_stream(&[serde_json::json!({
@@ -293,12 +282,7 @@ fn test_stream_function_call_closes_open_thinking_block() {
 }
 
 /// The gemini reader's index allocator had the SAME post-terminal defect as the openai_chat reader
-/// before its fix: `offset + text_base + open_tools.len()` recomputes at EVERY call, so after a
-/// terminal path clears `text_index` (`.take()`) and drains `open_tools` (`mem::take`), a tool_calls
-/// chunk arriving AFTER the finish restarts the formula at 0 and re-claims a slot the client
-/// already has content in. Converted to the same monotone `claim_ir_index()` counter as
-/// openai_chat's fix: a post-finish tool must claim a genuinely FRESH index, colliding with
-/// neither the pre-finish tool nor the text block.
+
 #[test]
 fn gemini_tool_after_finish_chunk_claims_a_fresh_index() {
     let events = collect_stream(&[
@@ -309,7 +293,6 @@ fn gemini_tool_after_finish_chunk_claims_a_fresh_index() {
             {"text": "hi"}
         ]}}]}),
         serde_json::json!({"candidates":[{"finishReason": GEMINI_FINISH_STOP}]}),
-        // Arrives AFTER the finish chunk.
         serde_json::json!({"candidates":[{"content":{"role":"model","parts":[
             {"functionCall": {"name": "get_time", "args": {}}}
         ]}}]}),
@@ -355,12 +338,7 @@ fn gemini_tool_after_finish_chunk_claims_a_fresh_index() {
 }
 
 /// Regression: a Gemini stream chunk with `candidateCount > 1` (multiple candidates each
-/// carrying their own `finishReason`) MUST still produce EXACTLY ONE terminal sequence —
-/// one MessageDelta and one MessageStop — not one per candidate. The reader previously looped
-/// over every candidate and emitted a full close+MessageDelta+MessageStop sequence per
-/// candidate, so a downstream ingress writer saw duplicate `message_stop`/`message_delta`
-/// frames on a single stream (a protocol violation). The reader now mirrors the non-streaming
-/// `read_response`, which reads `candidates[0]` only.
+
 #[test]
 fn test_stream_multiple_candidates_emit_single_terminal_sequence() {
     let events = collect_stream(&[serde_json::json!({
@@ -398,7 +376,6 @@ fn test_stream_multiple_candidates_emit_single_terminal_sequence() {
         "exactly one MessageDelta expected regardless of candidateCount: {events:?}"
     );
 
-    // Only the first candidate's text is surfaced; the others are ignored entirely.
     let text: String = events
         .iter()
         .filter_map(|e| match e {
@@ -411,13 +388,11 @@ fn test_stream_multiple_candidates_emit_single_terminal_sequence() {
         .collect();
     assert_eq!(text, "first", "only candidates[0] text should be emitted");
 
-    // The single MessageStop must be the LAST event in the stream.
     assert!(
         matches!(events.last(), Some(IrStreamEvent::MessageStop)),
         "MessageStop must terminate the stream: {events:?}"
     );
 
-    // Block events stay balanced (no per-candidate index churn).
     let starts = events
         .iter()
         .filter(|e| matches!(e, IrStreamEvent::BlockStart { .. }))
@@ -430,7 +405,7 @@ fn test_stream_multiple_candidates_emit_single_terminal_sequence() {
 }
 
 /// Regression: text + tool in the same response use distinct, stable indices (text=0, tool=1)
-/// and BOTH are closed.
+
 #[test]
 fn test_stream_text_and_tool_indices_stable_and_closed() {
     let events = collect_stream(&[serde_json::json!({
@@ -485,14 +460,9 @@ fn test_stream_text_and_tool_indices_stable_and_closed() {
 }
 
 /// A functionCall part BEFORE the first text part
-/// must NOT collide on IR index 0. The fix keyed the tool base on the live `text_block_open` flag,
-/// which is false at tool time in this ordering, so the tool took 0 AND text later took 0 — two
-/// BlockStart frames at index 0 (a protocol violation a strict Anthropic SDK rejects). Index-by-
-/// first-appearance: the tool takes 0, text takes the next free slot (1); each index opened and
-/// closed exactly once.
+
 #[test]
 fn test_stream_tool_before_text_no_index_collision() {
-    // Both intra-chunk (functionCall before text in the same parts array) AND inter-chunk.
     for chunks in [
         vec![serde_json::json!({
             "candidates": [{
@@ -509,7 +479,7 @@ fn test_stream_tool_before_text_no_index_collision() {
         ],
     ] {
         let events = collect_stream(&chunks);
-        // Exactly one BlockStart per index; no two BlockStarts share an index.
+
         let mut start_indices: Vec<usize> = events
             .iter()
             .filter_map(|e| match e {
@@ -525,7 +495,7 @@ fn test_stream_tool_before_text_no_index_collision() {
             n,
             "no two BlockStart frames may share an index; got duplicate in {events:?}"
         );
-        // Tool took index 0 (it appeared first); text took index 1.
+
         assert!(
             events.iter().any(|e| matches!(
                 e,
@@ -548,7 +518,7 @@ fn test_stream_tool_before_text_no_index_collision() {
             )),
             "text (after the tool) must take index 1: {events:?}"
         );
-        // Both blocks are closed at their own index.
+
         assert!(events
             .iter()
             .any(|e| matches!(e, IrStreamEvent::BlockStop { index: 0 })));
@@ -559,7 +529,7 @@ fn test_stream_tool_before_text_no_index_collision() {
 }
 
 /// Regression: tool block indices stay stable when the functionCall arrives in a different
-/// chunk than the finishReason (per-chunk local reset previously corrupted this).
+
 #[test]
 fn test_stream_tool_index_stable_across_chunks() {
     let events = collect_stream(&[
@@ -585,8 +555,7 @@ fn test_stream_tool_index_stable_across_chunks() {
         _ => None,
     });
     let idx = start_idx.expect("tool BlockStart must be emitted");
-    // No text block opened this stream, so the tool owns index 0 (contiguous from 0);
-    // reserving 0 for an absent text block would leave a permanent hole.
+
     assert_eq!(idx, 0, "tool-only stream: tool block must take index 0");
     assert!(
         events
@@ -597,11 +566,7 @@ fn test_stream_tool_index_stable_across_chunks() {
 }
 
 /// Regression: two functionCalls in a tool-only response get distinct, contiguous indices
-/// (0 and 1 — no text block opened, so nothing reserves index 0) and both close. Previously the
-/// first tool index was `1 + open_tools.len()`, which reserved index 0 for a text block that never
-/// opened — leaving IR index 0 permanently empty and content indices non-contiguous (0 hole, then
-/// 1..n). Now the base is keyed on whether a text block actually opened
-/// (`usize::from(state.text_block_open)`), so a tool-only stream starts at 0.
+
 #[test]
 fn test_stream_two_tools_distinct_indices() {
     let events = collect_stream(&[serde_json::json!({
@@ -617,7 +582,6 @@ fn test_stream_two_tools_distinct_indices() {
         }]
     })]);
 
-    // No text block must open: a tool-only response carries no text part.
     assert!(
         !events.iter().any(|e| matches!(
             e,
@@ -658,7 +622,7 @@ fn test_stream_two_tools_distinct_indices() {
 }
 
 /// Interleaving regression: when a text block DOES open, the reserved index 0
-/// must still hold, and tool blocks follow at 1..n — the fix must not regress text+tool order.
+
 #[test]
 fn test_stream_text_then_tool_keeps_text_at_zero() {
     let events = collect_stream(&[serde_json::json!({
@@ -707,8 +671,7 @@ fn test_stream_text_then_tool_keeps_text_at_zero() {
 }
 
 /// Regression: the tool BlockStart now BUFFERS the name and emits NO frame; a native Gemini
-/// stream carries a tool call as a single `functionCall` part, so the name must NOT appear in a
-/// separate opening frame (that produced a two-part split a native client never sees).
+
 #[test]
 fn test_writer_tool_blockstart_emits_no_frame() {
     let writer = GeminiWriter;
@@ -743,9 +706,7 @@ fn test_writer_text_blockstart_is_none() {
 }
 
 /// HIGH (asymmetric twin of the file_id leak): a Bedrock S3-source image (IMAGE_S3_SENTINEL
-/// media_type, `data` = serialized s3Location JSON) reaching the Gemini egress must be SKIPPED,
-/// NOT emitted as a corrupt `inlineData{mimeType:"image_s3"}` part that leaks the s3Location JSON
-/// + a busbar fingerprint onto the Gemini wire.
+
 #[test]
 fn test_write_request_image_s3_dropped_not_corrupted() {
     let writer = GeminiWriter;
@@ -786,8 +747,7 @@ fn test_write_request_image_s3_dropped_not_corrupted() {
 }
 
 /// Helper: drive a sequence of IR events through ONE GeminiWriter (preserving its per-stream
-/// tool buffer) and return only the emitted `functionCall` parts (the `{name, args}` objects),
-/// in wire order. This is the shape a native google-genai client decodes off the stream.
+
 fn collect_function_calls(events: &[IrStreamEvent]) -> Vec<serde_json::Value> {
     let writer = GeminiWriter;
     let mut calls = Vec::new();
@@ -890,8 +850,7 @@ fn streamed_citation_anchor_stays_a_prefix_after_overflow() {
 }
 
 /// Regression: a tool BlockStart + one whole-JSON InputJsonDelta + BlockStop emits EXACTLY ONE
-/// native `functionCall` part carrying BOTH the buffered name and the args. The part is written
-/// on BlockStop (the flush point), not on the BlockStart or the delta.
+
 #[test]
 fn test_writer_tool_call_emits_single_name_and_args_part() {
     let calls = collect_function_calls(&[
@@ -927,11 +886,7 @@ fn test_writer_tool_call_emits_single_name_and_args_part() {
 }
 
 /// Regression: the `arguments` JSON arrives SPLIT across MULTIPLE partial-
-/// JSON InputJsonDelta fragments (the normal OpenAI/Anthropic streaming behavior — the reader
-/// emits one InputJsonDelta per upstream `arguments` fragment, none coalesced). The fragments
-/// individually do NOT parse (`{"lo`, `c":"SF","u":1}`); the writer MUST reassemble them and emit
-/// EXACTLY ONE functionCall part whose `args` is the fully reassembled object — not one (empty-
-/// args) part per fragment.
+
 #[test]
 fn test_writer_tool_call_reassembles_split_json_args() {
     let calls = collect_function_calls(&[
@@ -980,12 +935,7 @@ fn test_writer_tool_call_reassembles_split_json_args() {
 }
 
 /// Regression: a tool call's `arguments` accumulated JSON string must not grow WITHOUT BOUND
-/// across the life of a stream. Feed enough `InputJsonDelta` fragments to exceed
-/// `busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT` (the cap this accumulator enforces
-/// until the plane hands its own — the same
-/// operator-tunable limit that already bounds a buffered cross-protocol non-stream completion body
-/// elsewhere). Overflow keeps the buffer bounded and returns a protocol-shaped error, never a
-/// runnable call with substituted arguments.
+
 #[test]
 fn test_writer_tool_call_args_capped_at_max_len() {
     let cap = busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
@@ -1002,10 +952,8 @@ fn test_writer_tool_call_args_capped_at_max_len() {
         },
     );
 
-    // Feed fragments that sum to well past the cap. Each fragment is a run of `'a'` bytes inside a
-    // JSON string value, so a successful (unfixed) accumulation would be syntactically valid JSON.
-    let fragment = "a".repeat(1024 * 1024); // 1 MiB per fragment
-    let total_fragments = (cap / fragment.len()) + 8; // overshoot the cap
+    let fragment = "a".repeat(1024 * 1024);
+    let total_fragments = (cap / fragment.len()) + 8;
     writer.write_response_event(
         crate::codec::test_host::HOST,
         &IrStreamEvent::BlockDelta {
@@ -1023,7 +971,6 @@ fn test_writer_tool_call_args_capped_at_max_len() {
         );
     }
 
-    // Inspect the accumulator directly (before BlockStop consumes it) to prove the byte cap held.
     {
         let stream = writer.stream.lock();
         let args = &stream
@@ -1045,8 +992,6 @@ fn test_writer_tool_call_args_capped_at_max_len() {
         );
     }
 
-    // Flush on the SAME writer instance (preserving its accumulated buffer) — collect_function_calls
-    // would construct a fresh GeminiWriter with an empty buffer, losing all the state built above.
     let (_, chunk) = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -1074,9 +1019,7 @@ fn test_writer_tool_call_args_capped_at_max_len() {
 }
 
 /// Happy-path regression: a NORMAL-sized tool call's arguments (well under
-/// `busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`) must still round-trip correctly —
-/// the cap must not
-/// false-positive on legitimate multi-fragment argument streams.
+
 #[test]
 fn test_writer_tool_call_args_under_cap_round_trips() {
     let calls = collect_function_calls(&[
@@ -1098,8 +1041,7 @@ fn test_writer_tool_call_args_under_cap_round_trips() {
         },
         IrStreamEvent::BlockDelta {
             index: 1,
-            // A realistically large (but well under the default 32 MiB cap) embedded text payload —
-            // e.g. a tool argument carrying a document excerpt.
+
             delta: IrDelta::InputJsonDelta("x".repeat(64 * 1024)),
         },
         IrStreamEvent::BlockDelta {
@@ -1136,10 +1078,7 @@ fn test_writer_tool_call_args_under_cap_round_trips() {
 }
 
 /// Regression: TWO parallel tool blocks in one stream, with their
-/// BlockStarts NOT strictly interleaved with their own BlockStops (the OpenAI reader emits
-/// BlockStart(1), BlockStart(2), then their deltas, then BlockStop(1), BlockStop(2)). The
-/// single-slot buffer this replaced would clobber tool 1 when tool 2's BlockStart arrived. Each
-/// tool must flush its OWN name + args as a distinct functionCall part.
+
 #[test]
 fn test_writer_parallel_tool_calls_keep_distinct_names_and_args() {
     let calls = collect_function_calls(&[
@@ -1179,7 +1118,7 @@ fn test_writer_parallel_tool_calls_keep_distinct_names_and_args() {
         2,
         "two parallel tool calls must emit two functionCall parts: {calls:?}"
     );
-    // Tool 1 flushed on its BlockStop (emitted first).
+
     assert_eq!(
         calls[0].pointer("/name").and_then(|n| n.as_str()),
         Some("get_weather"),
@@ -1203,7 +1142,7 @@ fn test_writer_parallel_tool_calls_keep_distinct_names_and_args() {
 }
 
 /// Regression: a zero-argument tool call (BlockStart then BlockStop with NO InputJsonDelta) must
-/// still emit one `{name, args:{}}` part on the BlockStop flush — the call is never lost.
+
 #[test]
 fn test_writer_tool_call_empty_args_flushed_on_stop() {
     let writer = GeminiWriter;
@@ -1241,7 +1180,7 @@ fn test_writer_tool_call_empty_args_flushed_on_stop() {
 }
 
 /// Regression: neither the BlockStart nor the args delta emits a frame — the functionCall part
-/// is written ONCE, on BlockStop. Guards against re-introducing a per-fragment emit.
+
 #[test]
 fn test_writer_tool_call_no_frame_before_block_stop() {
     let writer = GeminiWriter;
@@ -1285,8 +1224,7 @@ fn test_writer_tool_call_no_frame_before_block_stop() {
 }
 
 /// extract_error parses the body once and derives both the provider code and structured type.
-/// The real Gemini API returns `error.code` as a JSON INTEGER (google.rpc.Status), so the
-/// fixture uses `429` (not `"429"`); `provider_code` must be the stringified integer.
+
 #[test]
 fn test_extract_error_single_parse_fields() {
     let reader = GeminiReader;
@@ -1298,14 +1236,12 @@ fn test_extract_error_single_parse_fields() {
         raw.structured_type.as_deref(),
         Some(GRPC_RESOURCE_EXHAUSTED)
     );
-    // classify()/extract_error do not see headers, so retry_after is sourced elsewhere.
+
     assert_eq!(raw.retry_after_secs, None);
 }
 
 /// An integer `error.code` (the real Gemini shape) must be stringified into
-/// `provider_code` — NOT silently dropped to the gRPC status name. Previously `code` was read
-/// via `.as_str()`, which returns None on a number, so a real 429 surfaced as
-/// "RESOURCE_EXHAUSTED" and broke breaker/metrics comparisons against numeric strings.
+
 #[test]
 fn test_extract_error_integer_code_is_stringified() {
     let reader = GeminiReader;
@@ -1339,16 +1275,11 @@ fn test_extract_error_status_fallback() {
 }
 
 /// A real Gemini oversized-context error is a
-/// 400 `INVALID_ARGUMENT` whose MESSAGE carries the token-overflow text — there is no distinct
-/// google.rpc.Code for it. `extract_error` (the PRODUCTION path; `classify` is `#[cfg(test)]`
-/// only) must synthesize the canonical `context_length_exceeded` provider code so the breaker
-/// (breaker.rs) maps it to StatusClass::ContextLength and fails over WITHOUT penalty,
-/// instead of treating the bare `"400"` code as a lane-penalizing ClientError. Before the fix
-/// `provider_code` was the bare HTTP-status int and this assertion failed.
+
 #[test]
 fn test_extract_error_oversized_context_yields_canonical_code() {
     let reader = GeminiReader;
-    // Native Gemini token-overflow envelope (google.rpc.Status, INVALID_ARGUMENT 400).
+
     let body = br#"{"error":{"code":400,"message":"The input token count (1050000) exceeds the maximum number of tokens allowed (1048576).","status":"INVALID_ARGUMENT"}}"#;
     let raw = reader.extract_error(StatusCode::BAD_REQUEST, body);
     assert_eq!(raw.http_status, 400);
@@ -1357,12 +1288,12 @@ fn test_extract_error_oversized_context_yields_canonical_code() {
         Some("context_length_exceeded"),
         "oversized-context 400 must synthesize the canonical code so the breaker fails over"
     );
-    // The structured google.rpc.Code name is preserved unchanged.
+
     assert_eq!(raw.structured_type.as_deref(), Some(GRPC_INVALID_ARGUMENT));
 }
 
 /// A second real-world phrasing the official API emits ("input is longer than the maximum number
-/// of tokens") must also synthesize the canonical code — mirroring the `classify()` substring set.
+
 #[test]
 fn test_extract_error_oversized_context_alternate_phrasing() {
     let reader = GeminiReader;
@@ -1375,9 +1306,7 @@ fn test_extract_error_oversized_context_alternate_phrasing() {
 }
 
 /// A NON-context-length 400 (e.g. a malformed field) must NOT be misclassified as context-length:
-/// the canonical override fires only on the token-overflow text, so an unrelated INVALID_ARGUMENT
-/// keeps its bare status code (here `"400"`) and stays a lane-penalizing ClientError. Guards the
-/// override against over-broad matching.
+
 #[test]
 fn test_extract_error_unrelated_invalid_argument_keeps_status_code() {
     let reader = GeminiReader;
@@ -1391,15 +1320,14 @@ fn test_extract_error_unrelated_invalid_argument_keeps_status_code() {
 }
 
 /// Explicit bad-key ErrorInfo is preserved as an authentication signal in the raw contract.
-/// This fixture tests the contract consumer's classification; production Reply uses its received
-/// HTTP status by default and consults provider codes through the configured error map.
+
 #[test]
 fn test_extract_error_bad_api_key_classifies_as_auth_harddown() {
     let reader = GeminiReader;
-    // Native Gemini bad-key envelope: 400 INVALID_ARGUMENT, ErrorInfo reason API_KEY_INVALID.
+
     let body = br#"{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_INVALID","domain":"googleapis.com"}]}}"#;
     let raw = reader.extract_error(StatusCode::BAD_REQUEST, body);
-    // Re-shaped to the canonical Auth-classifying HTTP status so the breaker benches the lane.
+
     assert_eq!(
         raw.http_status, 401,
         "a dead Gemini key must re-shape to the Auth-classifying status, not relay 400"
@@ -1409,7 +1337,7 @@ fn test_extract_error_bad_api_key_classifies_as_auth_harddown() {
         Some("auth"),
         "bad-key 400 must synthesize the canonical auth provider_code"
     );
-    // The shared raw-contract consumer recognizes the authentication status.
+
     let sig = crate::codec::test_host::classified(&raw);
     assert!(
         matches!(sig.class, StatusClass::Auth),
@@ -1426,7 +1354,7 @@ fn test_extract_error_bad_api_key_classifies_as_auth_harddown() {
 }
 
 /// The documented machine-readable `API_KEY_INVALID` reason can also accompany a 403
-/// `PERMISSION_DENIED` (a key lacking access). It must classify the same way.
+
 #[test]
 fn test_extract_error_bad_api_key_permission_denied_is_auth() {
     let reader = GeminiReader;
@@ -1439,16 +1367,11 @@ fn test_extract_error_bad_api_key_permission_denied_is_auth() {
 }
 
 /// PRECISION GUARD: the bad-key reason is read from the ErrorInfo field it is documented to live
-/// in, never from the body at large.
-///
-/// Gemini→Gemini is a byte-verbatim relay, so a client's own request text reaches Google unchanged,
-/// and Google's proto-JSON transcoder echoes offending field names into validator prose.
-/// Such a name must not create an authentication signal in the raw contract. Production Reply
-/// coverage separately checks the default and explicitly configured auth mappings.
+
 #[test]
 fn test_extract_error_echoed_api_key_invalid_token_does_not_park_the_lane() {
     let reader = GeminiReader;
-    // A field-validation 400 whose message quotes the caller's own offending field name.
+
     let body = br#"{"error":{"code":400,"message":"Invalid JSON payload received. Unknown name \"api_key_invalid\" at 'contents[0]': Cannot find field.","status":"INVALID_ARGUMENT"}}"#;
     let raw = reader.extract_error(StatusCode::BAD_REQUEST, body);
     assert_eq!(
@@ -1477,15 +1400,13 @@ fn test_extract_error_echoed_api_key_invalid_token_does_not_park_the_lane() {
 }
 
 /// PRECISION GUARD: a GENERIC `INVALID_ARGUMENT` 400 (a real field-validation error, no api-key
-/// signal) must NOT be misclassified as auth — it stays a lane-healthy ClientFault that records
-/// nothing and relays verbatim. Without a precise heuristic the override would bench healthy lanes
-/// on every malformed caller request.
+
 #[test]
 fn test_extract_error_generic_invalid_argument_stays_client_fault() {
     let reader = GeminiReader;
     let body = br#"{"error":{"code":400,"message":"Invalid value at 'contents[0].role' (TYPE_ENUM), \"banana\"","status":"INVALID_ARGUMENT"}}"#;
     let raw = reader.extract_error(StatusCode::BAD_REQUEST, body);
-    // Untouched: real 400, bare status code, no auth synthesis.
+
     assert_eq!(
         raw.http_status, 400,
         "a generic validation 400 must NOT be re-shaped to the auth status"
@@ -1511,15 +1432,13 @@ fn test_extract_error_generic_invalid_argument_stays_client_fault() {
 }
 
 /// PRECISION GUARD: a bare `PERMISSION_DENIED` with NO api-key text (e.g. the existing
-/// status-fallback fixture shape) must NOT be re-shaped — the prose heuristic requires an explicit
-/// "api key" + invalid/expired signal, so a permission error without that text stays as-is and is
-/// classified by HTTP status alone.
+
 #[test]
 fn test_extract_error_bare_permission_denied_not_treated_as_bad_key() {
     let reader = GeminiReader;
     let body = br#"{"error":{"status":"PERMISSION_DENIED"}}"#;
     let raw = reader.extract_error(StatusCode::FORBIDDEN, body);
-    // http_status is the real 403, provider_code falls back to the status name — unchanged.
+
     assert_eq!(raw.http_status, 403);
     assert_eq!(raw.provider_code.as_deref(), Some(GRPC_PERMISSION_DENIED));
 }
@@ -1535,9 +1454,7 @@ fn test_extract_error_non_json_body() {
 }
 
 /// The native Gemini error envelope is google.rpc.Status-shaped:
-/// `{"error":{"code":<int>,"message":<msg>,"status":<UPPER_SNAKE>}}`. `code` is the HTTP status
-/// int, `status` is the canonical google.rpc.Code name. A known `kind` maps to the matching
-/// name; the body is valid JSON the official SDK can decode into `APIError.code`/`.status`.
+
 #[test]
 fn test_write_error_native_gemini_envelope() {
     let writer = GeminiWriter;
@@ -1547,7 +1464,7 @@ fn test_write_error_native_gemini_envelope() {
         "not_found",
         "model 'x' not found",
     );
-    // Round-trips as JSON (no panic).
+
     let serialized = serde_json::to_string(&v).expect("write_error must serialize");
     let reparsed: serde_json::Value =
         serde_json::from_str(&serialized).expect("write_error must be valid JSON");
@@ -1557,7 +1474,7 @@ fn test_write_error_native_gemini_envelope() {
         serde_json::json!("model 'x' not found")
     );
     assert_eq!(reparsed["error"]["status"], serde_json::json!("NOT_FOUND"));
-    // The generic envelope's `type` field must NOT appear (this is the native shape).
+
     assert!(
         reparsed["error"].get("type").is_none(),
         "native gemini envelope must not carry an OpenAI-style `type`: {v}"
@@ -1587,11 +1504,10 @@ fn test_write_error_kind_maps_to_status_vocabulary() {
         "bad",
     );
     assert_eq!(v["error"]["status"], serde_json::json!("INVALID_ARGUMENT"));
-    // golden wire-contract literal (kept bare on purpose)
 }
 
 /// An unrecognized `kind` falls back to the HTTP-status-derived google.rpc.Code name (never a
-/// non-canonical `status` string a native SDK would choke on). Exercises the no-catch-all path.
+
 #[test]
 fn test_write_error_unknown_kind_falls_back_to_http_status() {
     let writer = GeminiWriter;
@@ -1601,29 +1517,23 @@ fn test_write_error_unknown_kind_falls_back_to_http_status() {
         "totally_made_up_kind",
         "nope",
     );
-    assert_eq!(v["error"]["status"], serde_json::json!("PERMISSION_DENIED")); // golden wire-contract literal (kept bare on purpose)
-                                                                              // A 5xx with an unknown kind maps to INTERNAL.
+    assert_eq!(v["error"]["status"], serde_json::json!("PERMISSION_DENIED"));
+
     let v = writer.write_error(
         crate::codec::test_host::HOST,
         502,
         "totally_made_up_kind",
         "bad gateway",
     );
-    assert_eq!(v["error"]["status"], serde_json::json!("INTERNAL")); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(v["error"]["status"], serde_json::json!("INTERNAL"));
 }
 
 /// The emitted `code`/`status` pair must always be an INTERNALLY CONSISTENT
-/// google.rpc.Status pairing — the real Generative Language API never emits `code:503` with
-/// `status:INTERNAL`. On a cross-protocol upstream 503 the relay collapses the subtype onto a
-/// generic 5xx `kind` (`api_error`→INTERNAL); when that kind-derived name's canonical HTTP status
-/// disagrees with the actual `code`, the HTTP status drives the pairing (503→UNAVAILABLE) so the
-/// two stay consistent. The bare `overloaded` alias `cross_protocol_error_kind` emits for a 503
-/// also resolves to UNAVAILABLE.
+
 #[test]
 fn test_write_error_code_status_pair_stays_consistent() {
     let writer = GeminiWriter;
 
-    // 503 relayed as the generic `api_error` kind (would have been INTERNAL) → HTTP status wins.
     let v = writer.write_error(
         crate::codec::test_host::HOST,
         503,
@@ -1637,34 +1547,28 @@ fn test_write_error_code_status_pair_stays_consistent() {
         "code:503 must pair with UNAVAILABLE, never INTERNAL: {v}"
     );
 
-    // The bare `overloaded` alias (cross_protocol_error_kind's 503 kind) maps to UNAVAILABLE.
     let v = writer.write_error(
         crate::codec::test_host::HOST,
         503,
         "overloaded",
         "upstream overloaded",
     );
-    assert_eq!(v["error"]["status"], serde_json::json!("UNAVAILABLE")); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(v["error"]["status"], serde_json::json!("UNAVAILABLE"));
 
-    // A genuine 500 with `api_error` stays INTERNAL (consistent: INTERNAL pairs with 500).
     let v = writer.write_error(crate::codec::test_host::HOST, 500, "api_error", "boom");
     assert_eq!(v["error"]["code"], serde_json::json!(500));
-    assert_eq!(v["error"]["status"], serde_json::json!("INTERNAL")); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(v["error"]["status"], serde_json::json!("INTERNAL"));
 
-    // A 504 relayed as `timeout` stays DEADLINE_EXCEEDED (canonical 504 == 504).
     let v = writer.write_error(crate::codec::test_host::HOST, 504, "timeout", "slow");
-    assert_eq!(v["error"]["status"], serde_json::json!("DEADLINE_EXCEEDED")); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(v["error"]["status"], serde_json::json!("DEADLINE_EXCEEDED"));
 
-    // A kind whose canonical status disagrees with the code (auth→401 vs code 403) lets the HTTP
-    // status drive so the pair stays a real google.rpc pairing (403→PERMISSION_DENIED).
     let v = writer.write_error(crate::codec::test_host::HOST, 403, "auth", "denied");
     assert_eq!(v["error"]["code"], serde_json::json!(403));
     assert_eq!(v["error"]["status"], serde_json::json!("PERMISSION_DENIED"));
-    // golden wire-contract literal (kept bare on purpose)
 }
 
 /// Same-protocol (Gemini→Gemini) passthrough preserves the upstream `responseId` and
-/// `modelVersion` exactly: read_response captures them, write_response emits them verbatim.
+
 #[test]
 fn test_response_identity_roundtrip_preserves_id_and_model() {
     let reader = GeminiReader;
@@ -1695,7 +1599,7 @@ fn test_response_identity_roundtrip_preserves_id_and_model() {
         serde_json::json!("gemini-1.5-pro-002"),
         "modelVersion must be preserved verbatim: {wire}"
     );
-    // Gemini bodies carry no `created`; we must not fabricate one.
+
     assert!(
         wire.get("created").is_none(),
         "must not synthesize a `created` field Gemini never emits: {wire}"
@@ -1703,11 +1607,7 @@ fn test_response_identity_roundtrip_preserves_id_and_model() {
 }
 
 /// F2 conformance: a foreign / novel IR stop_reason (`refusal` from Responses, `error` from
-/// Cohere) must NOT upper-case-leak into `finishReason` (e.g. "REFUSAL"/"ERROR" are outside
-/// Gemini's `FinishReason` enum and a strict google-genai client rejects them). `error`/`other` map
-/// to the native `OTHER` member, and so does a `refusal` (Gemini has no refusal stop; 1.5.5 wrote
-/// `OTHER`, v1.5.5 `crates/busbar/src/proto/gemini/mod.rs:771`), on both the whole-body and streamed
-/// paths.
+
 #[test]
 fn foreign_stop_reason_maps_to_other_not_verbatim() {
     use crate::codec::ir::IrStopReason as S;
@@ -1757,9 +1657,7 @@ fn foreign_stop_reason_maps_to_other_not_verbatim() {
 }
 
 /// Cross-protocol write where a non-Gemini backend reader DID set a response id (the normal
-/// cross-protocol case — OpenAI `chatcmpl-…`, Anthropic `msg_…`) emits it as `responseId`, so a
-/// native `google-genai` SDK reading `GenerateContentResponse.response_id` always sees a value.
-/// No panic; the emitted value matches the IR id verbatim.
+
 #[test]
 fn test_response_identity_cross_protocol_emits_foreign_id() {
     let writer = GeminiWriter;
@@ -1783,9 +1681,7 @@ fn test_response_identity_cross_protocol_emits_foreign_id() {
 }
 
 /// Fidelity guard: when the IR carries NO id (a native Gemini body that omitted `responseId`, or
-/// a backend with no identity at all), `write_response` must NOT fabricate one — emitting a
-/// `responseId` would make a native passthrough distinguishable from the real response. The
-/// field is optional in the Gemini schema, so omission is SDK-valid. No panic.
+
 #[test]
 fn test_response_identity_none_id_is_omitted_not_fabricated() {
     let writer = GeminiWriter;
@@ -1807,7 +1703,7 @@ fn test_response_identity_none_id_is_omitted_not_fabricated() {
 }
 
 /// The streaming reader captures the stream identity from the first chunk into MessageStart,
-/// and the streaming writer emits it back (synthesizing when absent) — same-protocol fidelity.
+
 #[test]
 fn test_stream_message_start_captures_and_emits_identity() {
     let events = collect_stream(&[serde_json::json!({
@@ -1827,7 +1723,6 @@ fn test_stream_message_start_captures_and_emits_identity() {
     assert_eq!(start.0.as_deref(), Some("stream-abc-1"));
     assert_eq!(start.1.as_deref(), Some("gemini-1.5-flash"));
 
-    // The writer emits a leading identity frame carrying the captured responseId.
     let writer = GeminiWriter;
     let frame = writer
         .write_response_event(
@@ -1850,12 +1745,7 @@ fn test_stream_message_start_captures_and_emits_identity() {
 }
 
 /// Cross-protocol fidelity (stream): a MessageStart with NO identity (the post-strip state on a
-/// cross-protocol Gemini-ingress stream — `StreamTranslate` clears the foreign id/model) must
-/// still SYNTHESIZE a `responseId`, because a native google-genai SDK reads `chunk.response_id`
-/// off the first chunk. Emitting no frame (the old behavior) left the client with no responseId on
-/// any cross-protocol Gemini stream — a detectable fidelity gap. Mirrors the non-stream
-/// `write_response` synthesis. (Same-protocol Gemini streams never reach this writer — they pass
-/// through byte-for-byte — so this only affects the cross-protocol path.)
+
 #[test]
 fn test_stream_message_start_no_identity_synthesizes_response_id() {
     let writer = GeminiWriter;
@@ -1883,17 +1773,16 @@ fn test_stream_message_start_no_identity_synthesizes_response_id() {
 }
 
 /// Regression: a NATIVE request (which never carries `stream`) must produce a body with no
-/// `stream` member — i.e. the writer no longer injects one unconditionally. The streaming
-/// intent (`IrRequest.stream == true`) must NOT leak into the body even when set.
+
 #[test]
 fn test_native_request_without_stream_stays_streamless() {
     let reader = GeminiReader;
-    // Native Gemini request — no `stream` field.
+
     let body = serde_json::json!({
         "contents": [{"role": "user", "parts": [{"text": "hi"}]}]
     });
     let mut ir = reader.read_request(&body).expect("read_request");
-    // Caller wants streaming (URL-selected), but it must not reach the body.
+
     ir.stream = true;
     assert!(
         !ir.extra.contains_key("stream"),
@@ -1909,14 +1798,11 @@ fn test_native_request_without_stream_stays_streamless() {
 }
 
 /// An `INVALID_ARGUMENT` 400 whose
-/// prose contains the bare word "invalid" AND names an "api key" but is NOT a bad-key error
-/// (a field-validation message that references an api-key-shaped field) must stay a lane-healthy
-/// ClientFault. The earlier heuristic accepted a bare "invalid" token, so it would have benched a
-/// HEALTHY lane on this. The refined heuristic requires a SPECIFIC bad-key phrase.
+
 #[test]
 fn test_extract_error_invalid_word_near_api_key_stays_client_fault() {
     let reader = GeminiReader;
-    // A generic validation 400: "invalid" + "api key" both present, but no bad-key phrase.
+
     let body = br#"{"error":{"code":400,"message":"Invalid value at 'request.api key field' (TYPE_STRING)","status":"INVALID_ARGUMENT"}}"#;
     let raw = reader.extract_error(StatusCode::BAD_REQUEST, body);
     assert_eq!(
@@ -1944,7 +1830,7 @@ fn test_extract_error_invalid_word_near_api_key_stays_client_fault() {
 }
 
 /// Companion to the refinement: an EXPIRED-key prose message ("API key expired") with no
-/// machine-readable reason must STILL be detected as auth — the refined phrase set covers it.
+
 #[test]
 fn test_extract_error_expired_api_key_prose_is_auth() {
     let reader = GeminiReader;
@@ -1958,11 +1844,7 @@ fn test_extract_error_expired_api_key_prose_is_auth() {
 }
 
 /// A thinking-only assistant turn must NOT vanish from
-/// `contents` — dropping it would collapse user/model alternation (two user turns adjacent) and
-/// 400 the real Gemini API. The Thinking block is now emitted as a native `thought:true`
-/// part (reasoning is no longer dropped), so the model turn survives by carrying that thought part
-/// rather than the old empty-text placeholder. The alternation invariant (3 surviving turns) is
-/// what this guards.
+
 #[test]
 fn test_write_request_thinking_only_turn_survives_with_placeholder() {
     let writer = GeminiWriter;
@@ -1995,7 +1877,7 @@ fn test_write_request_thinking_only_turn_survives_with_placeholder() {
         .get("contents")
         .and_then(|v| v.as_array())
         .expect("contents array must exist");
-    // All THREE turns must survive — the thinking-only model turn must not be dropped.
+
     assert_eq!(
         contents.len(),
         3,
@@ -2016,7 +1898,7 @@ fn test_write_request_thinking_only_turn_survives_with_placeholder() {
         1,
         "thinking-only turn carries exactly one part: {model_turn}"
     );
-    // The Thinking block emits a native thought part (not dropped → not a placeholder).
+
     assert_eq!(
         parts[0].get("text").and_then(|v| v.as_str()),
         Some("internal reasoning"),
@@ -2030,9 +1912,7 @@ fn test_write_request_thinking_only_turn_survives_with_placeholder() {
 }
 
 /// A tool result that parses to JSON `null` (the upstream omitted the
-/// response object) must NOT be emitted as `functionResponse.response: null`. Gemini's
-/// `response` is a protobuf Struct and requires a JSON OBJECT; a null is rejected (400). The
-/// writer must coerce a null parse result to an empty Struct `{}`.
+
 #[test]
 fn test_write_request_null_tool_result_coerced_to_struct() {
     let writer = GeminiWriter;
@@ -2071,7 +1951,7 @@ fn test_write_request_null_tool_result_coerced_to_struct() {
 }
 
 /// A bare-scalar tool result ("42") must likewise be coerced to a Struct — wrapped under
-/// `{"output": <value>}` so the content survives — never emitted as a raw scalar.
+
 #[test]
 fn test_write_request_scalar_tool_result_coerced_to_struct() {
     let writer = GeminiWriter;
@@ -2110,10 +1990,7 @@ fn test_write_request_scalar_tool_result_coerced_to_struct() {
 }
 
 /// Regression: Gemini's `Content.role` is OPTIONAL. A single-turn request that omits `role`
-/// (a common native shape, accepted by the real API and the official SDK as an implicit user
-/// turn) must NOT be hard-rejected. Previously `read_request` mapped any non-`user`/`model`
-/// role (including absent/empty) to a `ClientError`, 400ing a request the real API serves —
-/// and diverging from the streaming reader, which already treats an empty role as a model turn.
+
 #[test]
 fn test_read_request_absent_role_defaults_to_user() {
     let reader = GeminiReader;
@@ -2132,7 +2009,7 @@ fn test_read_request_absent_role_defaults_to_user() {
 }
 
 /// An explicitly EMPTY role string (`"role": ""`) is likewise treated as a user turn, matching
-/// the absent-role case and the streaming reader's `role_val.is_empty()` leniency.
+
 #[test]
 fn test_read_request_empty_role_defaults_to_user() {
     let reader = GeminiReader;
@@ -2150,8 +2027,7 @@ fn test_read_request_empty_role_defaults_to_user() {
 }
 
 /// A genuinely unexpected NON-EMPTY role string is still a hard client error — the leniency is
-/// scoped to the absent/empty case (the real API's optional-role default), not to arbitrary
-/// role values.
+
 #[test]
 fn test_read_request_unknown_nonempty_role_still_rejected() {
     let reader = GeminiReader;
@@ -2165,7 +2041,7 @@ fn test_read_request_unknown_nonempty_role_still_rejected() {
 }
 
 /// Regression: `model` is preserved in `extra` exactly once (no duplicate insert) and survives
-/// the read path because it is excluded from the loop via `modeled_keys`.
+
 #[test]
 fn test_read_request_model_preserved_in_extra_once() {
     let reader = GeminiReader;
@@ -2183,7 +2059,7 @@ fn test_read_request_model_preserved_in_extra_once() {
 }
 
 /// Regression: a ToolResult whose content is multi-part PLAIN TEXT (not JSON) must be wrapped in
-/// `{"output": <text>}` rather than silently discarded as an empty `{}` object.
+
 #[test]
 fn test_write_request_tool_result_plaintext_wrapped_not_dropped() {
     let writer = GeminiWriter;
@@ -2242,8 +2118,7 @@ fn test_write_request_tool_result_json_passthrough() {
 }
 
 /// Regression: a cross-protocol response with NO foreign id but a populated `created` (the
-/// boundary signal `proxy engine` leaves intact after stripping `id`) must SYNTHESIZE a
-/// Gemini-shaped `responseId` so a native SDK always sees a value. Previously omitted entirely.
+
 #[test]
 fn test_response_identity_cross_protocol_synthesizes_id_when_created_set() {
     let writer = GeminiWriter;
@@ -2270,8 +2145,7 @@ fn test_response_identity_cross_protocol_synthesizes_id_when_created_set() {
 }
 
 /// Regression: the in-stream Error frame emits the FULL google.rpc.Status envelope
-/// (`code` int + UPPER_SNAKE `status` + message), not a message-only object, so a Gemini SDK
-/// can branch on `error.status`/`error.code`. Class → code/status is exhaustive (no catch-all).
+
 #[test]
 fn test_stream_error_emits_full_google_rpc_status() {
     let writer = GeminiWriter;
@@ -2317,7 +2191,7 @@ fn test_stream_error_server_error_maps_internal() {
         frame.pointer("/error/status").and_then(|s| s.as_str()),
         Some("INTERNAL") // golden wire-contract literal (kept bare on purpose)
     );
-    // No provider_signal → default message, no panic.
+
     assert_eq!(
         frame.pointer("/error/message").and_then(|m| m.as_str()),
         Some("error")
@@ -2325,8 +2199,7 @@ fn test_stream_error_server_error_maps_internal() {
 }
 
 /// A cross-protocol stream that carries only a model (no id) surfaces `modelVersion` AND a
-/// synthesized `responseId` on the leading frame — a native SDK reads both `chunk.model_version`
-/// and `chunk.response_id` off the first chunk.
+
 #[test]
 fn test_stream_message_start_model_only_emits_model_version() {
     let writer = GeminiWriter;
@@ -2359,11 +2232,8 @@ fn test_stream_message_start_model_only_emits_model_version() {
     );
 }
 
-// --- functionCall ToolUse blocks must carry a non-empty, stable id ---
-
 /// Regression: a Gemini `functionCall` in `read_request` must produce a NON-EMPTY tool-use id
-/// (Gemini carries none). Previously `id: String::new()` made cross-protocol Anthropic/OpenAI
-/// egress emit an empty `id`/`tool_use_id`, which those APIs reject / mis-correlate.
+
 #[test]
 fn test_read_request_functioncall_gets_nonempty_id() {
     let reader = GeminiReader;
@@ -2383,8 +2253,7 @@ fn test_read_request_functioncall_gets_nonempty_id() {
 }
 
 /// Regression: two `functionCall`s sharing the SAME function name in one request must get
-/// DISTINCT non-empty ids (the call index disambiguates) so `tool_result` routing cannot
-/// collapse them on cross-protocol egress.
+
 #[test]
 fn test_read_request_same_name_tool_calls_get_distinct_ids() {
     let reader = GeminiReader;
@@ -2415,7 +2284,7 @@ fn test_read_request_same_name_tool_calls_get_distinct_ids() {
 }
 
 /// Regression: the synthesized id is DETERMINISTIC for a given (index, name) — two reads of the
-/// same request body produce the same ids (stable within a request lifetime).
+
 #[test]
 fn test_read_request_tool_call_id_is_deterministic() {
     let reader = GeminiReader;
@@ -2439,8 +2308,7 @@ fn test_read_request_tool_call_id_is_deterministic() {
 }
 
 /// Regression: the same-protocol ToolResult correlation key stays the function NAME (the writer
-/// round-trips it into `functionResponse.name`), NOT the synthetic ToolUse id. Guards against a
-/// regression where the synth id leaks onto the result name and breaks Gemini→Gemini passthrough.
+
 #[test]
 fn test_read_request_functionresponse_tool_use_id_is_name() {
     let reader = GeminiReader;
@@ -2490,9 +2358,7 @@ fn test_read_response_functioncall_gets_nonempty_id() {
 }
 
 /// A SAFETY-filtered Gemini candidate carries only
-/// `finishReason` + `safetyRatings` and NO `content` field. `read_response` must decode it as an
-/// empty-content response with the mapped stop reason, NOT hard-fail (which proxy engine turned into
-/// a spurious 500). Mirrors the streaming reader's `if let Some(content)` tolerance.
+
 #[test]
 fn test_read_response_safety_filtered_candidate_no_content_is_ok() {
     let reader = GeminiReader;
@@ -2518,10 +2384,7 @@ fn test_read_response_safety_filtered_candidate_no_content_is_ok() {
 }
 
 /// A PROMPT-blocked Gemini stream chunk carries a top-level
-/// `promptFeedback.blockReason`, NO `candidates`, and NO `error`. The reader must surface it as a
-/// PROPER TERMINAL SEQUENCE — MessageStart, then a `safety` MessageDelta + MessageStop — not a
-/// bare MessageStart followed by EOF (which left the downstream client on a hung, non-terminated
-/// stream with an empty response). Old code emitted only MessageStart and never terminated.
+
 #[test]
 fn test_stream_prompt_block_emits_terminal_sequence() {
     let events = collect_stream(&[serde_json::json!({
@@ -2529,7 +2392,6 @@ fn test_stream_prompt_block_emits_terminal_sequence() {
         "usageMetadata": {"promptTokenCount": 7, "candidatesTokenCount": 0}
     })]);
 
-    // Exactly one MessageStart, one MessageDelta, one MessageStop — a complete terminal stream.
     assert_eq!(
         events
             .iter()
@@ -2551,7 +2413,7 @@ fn test_stream_prompt_block_emits_terminal_sequence() {
         matches!(events.last(), Some(IrStreamEvent::MessageStop)),
         "the stream must terminate with MessageStop: {events:?}"
     );
-    // No stray content blocks for a blocked prompt.
+
     assert!(
         !events
             .iter()
@@ -2561,7 +2423,7 @@ fn test_stream_prompt_block_emits_terminal_sequence() {
 }
 
 /// A prompt-level RECITATION block must classify as `safety` (matching the candidate-level
-/// mapping and RECITATION's own doc), not `Other`. Same terminal shape as the SAFETY case above.
+
 #[test]
 fn test_stream_prompt_block_recitation_maps_to_safety() {
     let events = collect_stream(&[serde_json::json!({
@@ -2580,18 +2442,12 @@ fn test_stream_prompt_block_recitation_maps_to_safety() {
 }
 
 /// A MID-STREAM prompt-block arm must close any blocks opened by
-/// earlier chunks before emitting its terminal MessageDelta/MessageStop. A normal text chunk
-/// opens a content block (BlockStart{0}); a following `promptFeedback.blockReason` SAFETY chunk
-/// (NO candidates) previously emitted the terminal MessageDelta/MessageStop WITHOUT closing that
-/// open block, leaving an unbalanced IR stream (orphaned BlockStart). The fixed arm mirrors the
-/// finishReason path: the second chunk must emit exactly [BlockStop{0}, MessageDelta{safety},
-/// MessageStop].
+
 #[test]
 fn test_stream_mid_stream_prompt_block_closes_open_text_block() {
     let reader = GeminiReader;
     let mut state = StreamDecodeState::default();
 
-    // Chunk 1: a normal text chunk opens a content block.
     let first = reader.read_response_events(
         crate::codec::test_host::HOST,
         "",
@@ -2613,7 +2469,6 @@ fn test_stream_mid_stream_prompt_block_closes_open_text_block() {
         "text block must remain open after the first chunk: {first:?}"
     );
 
-    // Chunk 2: a mid-stream prompt-block (NO candidates) must close block 0, then terminate.
     let second = reader.read_response_events(
         crate::codec::test_host::HOST,
         "",
@@ -2651,9 +2506,7 @@ fn test_stream_mid_stream_prompt_block_closes_open_text_block() {
 }
 
 /// A PROMPT-blocked NON-STREAMING Gemini body (top-level
-/// `promptFeedback.blockReason`, NO `candidates`, NO `error`) must decode to an empty-content
-/// response with a `safety` stop reason, NOT hard-fail with `ir_parse` (which the old
-/// absent-candidates arm did → a spurious client error with no surfaced reason).
+
 #[test]
 fn test_read_response_prompt_block_is_safety_stop_not_error() {
     let reader = GeminiReader;
@@ -2681,7 +2534,7 @@ fn test_read_response_prompt_block_is_safety_stop_not_error() {
 }
 
 /// Regression: a candidates-absent body with NEITHER an error NOR a promptFeedback.blockReason is
-/// still a malformed envelope and MUST hard-fail — the prompt-block arm must not swallow it.
+
 #[test]
 fn test_read_response_candidates_absent_without_block_still_errors() {
     let reader = GeminiReader;
@@ -2695,8 +2548,7 @@ fn test_read_response_candidates_absent_without_block_still_errors() {
 }
 
 /// A STREAMING zero-arg `functionCall` (no `args` field) must emit an
-/// empty JSON OBJECT `{}` as its InputJsonDelta, NOT `null`. Serializing `null` produced an
-/// invalid tool-input shape on cross-protocol egress.
+
 #[test]
 fn test_stream_zero_arg_function_call_emits_empty_object_not_null() {
     let events = collect_stream(&[serde_json::json!({
@@ -2720,7 +2572,7 @@ fn test_stream_zero_arg_function_call_emits_empty_object_not_null() {
 }
 
 /// A NON-STREAMING zero-arg `functionCall` (no `args` field) must decode
-/// to an empty-object `input` (`{}`), NOT `null`.
+
 #[test]
 fn test_read_response_zero_arg_function_call_input_is_empty_object_not_null() {
     let reader = GeminiReader;
@@ -2746,7 +2598,7 @@ fn test_read_response_zero_arg_function_call_input_is_empty_object_not_null() {
 }
 
 /// Regression: the streaming `BlockStart` for a tool block must carry a non-empty synthesized
-/// id (Gemini streams carry none) so the Anthropic/OpenAI stream writers emit a usable id.
+
 #[test]
 fn test_stream_tool_blockstart_id_is_nonempty() {
     let events = collect_stream(&[serde_json::json!({
@@ -2771,12 +2623,8 @@ fn test_stream_tool_blockstart_id_is_nonempty() {
     );
 }
 
-// --- `stream` round-trip semantics ---
-
 /// A source `stream` is captured into the typed `IrRequest.stream` (used only by path selection)
-/// AND preserved in `extra` for byte-identical round-trip (exactly like `model`), so the writer
-/// echoes it back. This is the behavior `src/proto/mod.rs::test_gemini_roundtrip_identity`
-/// enforces: dropping `stream` from `extra` would break that byte-identity invariant.
+
 #[test]
 fn test_read_request_source_stream_round_trips_via_extra() {
     let reader = GeminiReader;
@@ -2802,10 +2650,7 @@ fn test_read_request_source_stream_round_trips_via_extra() {
 }
 
 /// A `maxOutputTokens` above `u32::MAX`
-/// must NOT silently truncate (wrap) into a tiny token cap. The bounds-checked `u32::try_from`
-/// drops an out-of-range value to `None`, so the request carries no cap and the backend applies
-/// its default — never a mangled one. A bare `as u32` would have wrapped `5_000_000_000` to
-/// `705_032_704`, a cap the caller never asked for.
+
 #[test]
 fn test_read_request_max_output_tokens_overflow_drops_to_none() {
     let reader = GeminiReader;
@@ -2819,7 +2664,6 @@ fn test_read_request_max_output_tokens_overflow_drops_to_none() {
         "an out-of-u32-range maxOutputTokens must drop to None, not truncate"
     );
 
-    // An in-range value still round-trips faithfully.
     let body_ok = serde_json::json!({
         "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
         "generationConfig": {"maxOutputTokens": 1024}
@@ -2832,11 +2676,8 @@ fn test_read_request_max_output_tokens_overflow_drops_to_none() {
     );
 }
 
-// --- bogus snake_case `tool_config` removed; native `toolConfig` round-trips ---
-
 /// Regression: native Gemini `toolConfig` (camelCase) is NOT in `modeled_keys`, so it
-/// round-trips through `extra` and back onto the wire unchanged. The old bogus snake_case
-/// `tool_config` modeled-key entry (which matched no real field) has been removed.
+
 #[test]
 fn test_read_request_native_tool_config_round_trips_via_extra() {
     let reader = GeminiReader;
@@ -2864,10 +2705,7 @@ fn test_read_request_native_tool_config_round_trips_via_extra() {
 }
 
 /// Unmodeled `generationConfig` sub-fields (`responseMimeType` for JSON mode,
-/// `thinkingConfig` for extended thinking, `candidateCount`, `seed`, …) MUST survive read→write
-/// instead of being silently dropped. The reader keeps the raw `generationConfig` in `extra`; the
-/// writer overlays the 5 typed fields onto it. Both the typed fields AND every unmodeled sub-field
-/// must appear on the re-emitted body.
+
 #[test]
 fn test_generation_config_unmodeled_subfields_survive_roundtrip() {
     let reader = GeminiReader;
@@ -2885,13 +2723,13 @@ fn test_generation_config_unmodeled_subfields_survive_roundtrip() {
     });
 
     let ir = reader.read_request(&body).expect("read_request");
-    // The raw generationConfig is preserved in extra (not modeled-out).
+
     assert!(
         ir.extra.contains_key("generationConfig"),
         "raw generationConfig must be preserved in extra: {:?}",
         ir.extra
     );
-    // The 5 typed sub-fields are still promoted.
+
     assert_eq!(ir.max_tokens, Some(256));
     assert_eq!(ir.temperature, Some(0.3));
 
@@ -2900,10 +2738,10 @@ fn test_generation_config_unmodeled_subfields_survive_roundtrip() {
         .get("generationConfig")
         .and_then(|g| g.as_object())
         .expect("generationConfig must be emitted");
-    // Typed overlays present.
+
     assert_eq!(gc.get("maxOutputTokens"), Some(&serde_json::json!(256)));
     assert_eq!(gc.get("temperature"), Some(&serde_json::json!(0.3)));
-    // Unmodeled sub-fields preserved (the defect was silently dropping these).
+
     assert_eq!(
         gc.get(FIELD_RESPONSE_MIME_TYPE),
         Some(&serde_json::json!(MIME_APPLICATION_JSON)),
@@ -2916,8 +2754,7 @@ fn test_generation_config_unmodeled_subfields_survive_roundtrip() {
     );
     assert_eq!(gc.get("candidateCount"), Some(&serde_json::json!(2)));
     assert_eq!(gc.get("seed"), Some(&serde_json::json!(42)));
-    // The raw generationConfig must NOT also appear as a duplicate top-level extra echo (the
-    // writer skips it in the extra merge loop).
+
     assert_eq!(
         wire.as_object()
             .map(|o| o.keys().filter(|k| *k == "generationConfig").count()),
@@ -2927,8 +2764,7 @@ fn test_generation_config_unmodeled_subfields_survive_roundtrip() {
 }
 
 /// The typed IR fields OVERLAY the raw extra copy — if the IR's typed
-/// `max_tokens` differs from the raw `generationConfig.maxOutputTokens` (e.g. a cross-protocol
-/// edit), the typed value wins, mirroring BedrockWriter's inferenceConfig overlay.
+
 #[test]
 fn test_generation_config_typed_fields_override_raw_extra() {
     let writer = GeminiWriter;
@@ -2963,10 +2799,8 @@ fn test_generation_config_typed_fields_override_raw_extra() {
     );
 }
 
-// --- streamed and whole-body usageMetadata include totalTokenCount ---
-
 /// Regression: the streamed `MessageDelta` usage frame must include `totalTokenCount`
-/// (= prompt + candidates), matching the native final-chunk shape.
+
 #[test]
 fn test_stream_message_delta_includes_total_token_count() {
     let writer = GeminiWriter;
@@ -3001,7 +2835,7 @@ fn test_stream_message_delta_includes_total_token_count() {
 }
 
 /// The streamed total saturates (never overflow-panics) on pathological counts — guards the
-/// `saturating_add` on the request path.
+
 #[test]
 fn test_stream_message_delta_total_token_count_saturates() {
     let writer = GeminiWriter;
@@ -3028,11 +2862,7 @@ fn test_stream_message_delta_total_token_count_saturates() {
 }
 
 /// On the CROSS-protocol egress path (signalled by a populated `created` — the
-/// boundary marker a non-Gemini backend reader leaves, since Gemini bodies carry no timestamp)
-/// the whole-body `write_response` usageMetadata MUST include `totalTokenCount` (= prompt +
-/// candidates). A native Gemini `generateContent` body always carries the sum, and the value is a
-/// faithfully derived total (not a fabricated field). Earlier it was omitted, leaving the
-/// google-genai SDK's `total_token_count` at None/0 for cross-protocol callers.
+
 #[test]
 fn test_write_response_includes_total_token_count_cross_protocol() {
     let writer = GeminiWriter;
@@ -3045,7 +2875,7 @@ fn test_write_response_includes_total_token_count_cross_protocol() {
             ..Default::default()
         },
         created: Some(1_700_000_000),
-        // cross-protocol boundary signal
+
         system_fingerprint: None,
         ..Default::default()
     };
@@ -3066,10 +2896,7 @@ fn test_write_response_includes_total_token_count_cross_protocol() {
 }
 
 /// Fidelity guard: a SAME-protocol read→write (no `created` — native Gemini bodies carry no
-/// timestamp) must NOT inject `totalTokenCount` the upstream omitted, so the round-trip stays
-/// byte-identical. (Production same-protocol passthrough bypasses the writer entirely; this
-/// guards the in-IR read→write identity invariant `test_gemini_read_write_response_roundtrip`
-/// in mod.rs depends on.)
+
 #[test]
 fn test_write_response_omits_total_token_count_same_protocol() {
     let writer = GeminiWriter;
@@ -3081,7 +2908,7 @@ fn test_write_response_omits_total_token_count_same_protocol() {
             output_tokens: 3,
             ..Default::default()
         },
-        // same-protocol: no boundary signal
+
         system_fingerprint: None,
         ..Default::default()
     };
@@ -3104,7 +2931,7 @@ fn test_write_response_total_token_count_saturates() {
             ..Default::default()
         },
         created: Some(1_700_000_000),
-        // cross-protocol
+
         system_fingerprint: None,
         ..Default::default()
     };
@@ -3116,15 +2943,8 @@ fn test_write_response_total_token_count_saturates() {
     );
 }
 
-// --- totalTokenCount also emits when the boundary signal is `model`
-//     (not just `created`), so Anthropic/Cohere backends — whose readers return `created: None`
-//     but DO populate `model` — do not drop the total for a Gemini client. ---
-
 /// A cross-protocol response from a backend whose reader sets `created: None`
-/// but `model: Some(..)` (the Anthropic and Cohere shape) MUST still carry
-/// `usageMetadata.totalTokenCount`. A gate keyed on `created` alone left these three-
-/// of-five backends produced a usageMetadata block lacking the total, leaving the google-genai
-/// SDK's `total_token_count` at None and breaking client-side billing.
+
 #[test]
 fn test_write_response_includes_total_token_count_when_only_model_present() {
     let writer = GeminiWriter;
@@ -3136,7 +2956,7 @@ fn test_write_response_includes_total_token_count_when_only_model_present() {
             output_tokens: 4,
             ..Default::default()
         },
-        // Anthropic/Cohere cross-protocol shape: model survives, created/id are None.
+
         model: Some("claude-opus-4-8".to_string()),
         ..Default::default()
     };
@@ -3157,7 +2977,7 @@ fn test_write_response_includes_total_token_count_when_only_model_present() {
 }
 
 /// The model-only cross-protocol total saturates (never overflow-panics) on pathological counts,
-/// guarding the `saturating_add` on this newly-reachable branch of the request path.
+
 #[test]
 fn test_write_response_model_only_total_token_count_saturates() {
     let writer = GeminiWriter;
@@ -3179,10 +2999,8 @@ fn test_write_response_model_only_total_token_count_saturates() {
     );
 }
 
-// --- modeled_keys is hoisted to a process-global OnceLock. ---
-
 /// The modelled keys are the mapping file's top-level rows, so unmodelled keys still flow to
-/// `extra`.
+
 #[test]
 fn test_modeled_request_keys_are_the_mapping_rows() {
     let a = |k: &str| crate::codec::carry::models(super::map::REQUEST, k);
@@ -3195,10 +3013,9 @@ fn test_modeled_request_keys_are_the_mapping_rows() {
     ] {
         assert!(a(k), "modeled key set must contain {k}");
     }
-    // An arbitrary caller field is NOT modeled, so the reader sweeps it into `extra`.
+
     assert!(!a("toolConfig"), "toolConfig must not be modeled");
-    // `generationConfig` is INTENTIONALLY not modeled-out of `extra`: the reader keeps the raw
-    // object so the writer can overlay the 5 typed fields and preserve unmodeled sub-fields.
+
     assert!(
         !a("generationConfig"),
         "generationConfig must NOT be modeled-out of extra (raw object is preserved for overlay)"
@@ -3206,7 +3023,7 @@ fn test_modeled_request_keys_are_the_mapping_rows() {
 }
 
 /// Hoisting the set must not change read behavior — an unmodeled top-level key
-/// still round-trips through `extra`, and the modeled `model` key is preserved exactly once.
+
 #[test]
 fn test_read_request_unmodeled_key_still_flows_to_extra_after_hoist() {
     let reader = GeminiReader;
@@ -3234,11 +3051,8 @@ fn test_read_request_unmodeled_key_still_flows_to_extra_after_hoist() {
     );
 }
 
-// --- tool_use stop reason maps to STOP (Gemini has no TOOL_USE enum member) ---
-
 /// Regression: a buffered `write_response` with stop_reason=tool_use (the canonical value every
-/// other protocol's reader emits for a tool-call turn) must emit finishReason "STOP", NOT the
-/// invalid "TOOL_USE" the old upper-casing fallback produced.
+
 #[test]
 fn test_write_response_tool_use_maps_to_stop() {
     let writer = GeminiWriter;
@@ -3268,7 +3082,7 @@ fn test_write_response_tool_use_maps_to_stop() {
 }
 
 /// Regression: the streamed `MessageDelta` with stop_reason=tool_use also emits finishReason
-/// "STOP" (matching native Gemini, whose FinishReason enum has no TOOL_USE member).
+
 #[test]
 fn test_stream_message_delta_tool_use_maps_to_stop() {
     let writer = GeminiWriter;
@@ -3296,12 +3110,8 @@ fn test_stream_message_delta_tool_use_maps_to_stop() {
     );
 }
 
-// --- image_url sentinel emitted as native fileData URI, not corrupt base64 ---
-
 /// Regression: an IR Image carrying the `"image_url"` media_type SENTINEL (a remote https URL
-/// stored verbatim by the OpenAI/Responses readers) must be emitted as Gemini `fileData{fileUri}`
-/// — the native URL reference — NOT as `inlineData` with the URL stuffed into the base64 `data`
-/// field and a bogus `mimeType: "image_url"`.
+
 #[test]
 fn test_write_request_image_url_sentinel_emits_file_data() {
     let writer = GeminiWriter;
@@ -3332,7 +3142,7 @@ fn test_write_request_image_url_sentinel_emits_file_data() {
 }
 
 /// A real base64 image (a genuine mimeType) still emits as `inlineData` — the sentinel branch
-/// must not divert legitimate base64 payloads.
+
 #[test]
 fn test_write_request_base64_image_still_inline_data() {
     let writer = GeminiWriter;
@@ -3365,7 +3175,7 @@ fn test_write_request_base64_image_still_inline_data() {
 }
 
 /// Round-trip: a native Gemini `fileData{fileUri}` part reads into the typed `Url` image source
-/// and the writer re-emits it as `fileData{fileUri}` verbatim (same-protocol fidelity).
+
 #[test]
 fn test_file_data_image_round_trips_via_url() {
     let reader = GeminiReader;
@@ -3398,13 +3208,8 @@ fn test_file_data_image_round_trips_via_url() {
     );
 }
 
-// --- synth_response_id is an opaque CSPRNG token of native Gemini shape ---
-
 /// A synthesized `responseId` must be a native-shaped opaque
-/// token — mixed-case alphanumeric base62 of native length, with NO hyphen separator and NO
-/// lowercase-hex-only restriction. The old `format!("{:x}-{:x}", unix_now_secs(), seq)` form was
-/// structurally distinguishable (the `-` plus `[0-9a-f]`-only class is a shape no native id has)
-/// AND leaked the proxy host clock in its leading hex segment. Assert the shape never regresses.
+
 #[test]
 fn test_synth_response_id_is_opaque_native_shape() {
     let id = synth_response_id(crate::codec::test_host::HOST).expect("test entropy");
@@ -3421,9 +3226,7 @@ fn test_synth_response_id_is_opaque_native_shape() {
         id.chars().all(|c| c.is_ascii_alphanumeric()),
         "synthesized responseId must be mixed-case alphanumeric (no `-`/`_`): {id}"
     );
-    // A lowercase-hex-only token (`[0-9a-f]*`) is the old timestamp-hex tell. Across a batch the
-    // synthesized ids must NOT be confinable to that class — at least one carries an uppercase
-    // letter or a digit/letter outside `[0-9a-f]`, proving the wider base62 character class.
+
     let saw_non_hex = (0..64)
         .map(|_| synth_response_id(crate::codec::test_host::HOST).expect("test entropy"))
         .any(|s| {
@@ -3437,8 +3240,7 @@ fn test_synth_response_id_is_opaque_native_shape() {
 }
 
 /// The synthesized id must embed NO unix-second prefix: the old form's leading segment WAS the
-/// server clock. Mint two ids and assert neither equals the hex of the current unix second (the
-/// old leading segment), and that they are not hyphen-delimited time+counter pairs.
+
 #[test]
 fn test_synth_response_id_leaks_no_timestamp() {
     let now_hex = format!(
@@ -3462,17 +3264,11 @@ fn test_synth_response_id_leaks_no_timestamp() {
 }
 
 /// The base62 reduction must be UNBIASED. The old body mapped each
-/// random byte with a bare `byte % 62`; because `256 % 62 != 0`, the 8 symbols reachable from the
-/// partial final block (bytes `248..=255` → residues `0..=7`) were drawn at 5/256 while the other
-/// 54 symbols were drawn at 4/256 — a ~25% over-representation of those 8 symbols. Rejection
-/// sampling (reject bytes `>= 248`) flattens that. Draw a large burst, tally per-symbol frequency,
-/// and assert the over-represented class is NOT systematically inflated: the mean frequency of the
-/// 8 formerly-hot symbols must stay close to the mean of the other 54. Under the OLD biased code
-/// the hot/cold ratio is ~1.25 and this assertion fails; under rejection sampling it is ~1.0.
+
 #[test]
 fn test_synth_response_id_base62_is_unbiased() {
     use std::collections::HashMap;
-    // Symbols reachable from residues 0..=7 (the formerly over-represented class).
+
     let hot: Vec<char> = RESPONSE_ID_ALPHABET[..8]
         .iter()
         .map(|&b| b as char)
@@ -3497,14 +3293,13 @@ fn test_synth_response_id_base62_is_unbiased() {
         .filter(|(c, _)| !hot.contains(c))
         .map(|(_, n)| *n)
         .sum();
-    // Per-symbol means: 8 hot symbols vs 54 cold symbols.
+
     let hot_mean = hot_sum as f64 / hot.len() as f64;
     let cold_count = 62 - hot.len();
     let cold_mean = cold_sum as f64 / cold_count as f64;
     assert!(cold_mean > 0.0, "no cold-symbol samples observed");
     let ratio = hot_mean / cold_mean;
-    // Unbiased ≈ 1.0; old biased code ≈ 1.25. A generous window catches the bias while tolerating
-    // ordinary sampling noise over ~640k symbols.
+
     assert!(
         (0.90..=1.10).contains(&ratio),
         "base62 reduction is biased: hot/cold per-symbol frequency ratio {ratio:.4} \
@@ -3514,7 +3309,7 @@ fn test_synth_response_id_base62_is_unbiased() {
 }
 
 /// Uniqueness burst: a large run of synthesized ids must be collision-free in practice (each
-/// is ~95 bits). Mint a burst and assert every id is distinct and native-shaped.
+
 #[test]
 fn test_synth_response_id_uniqueness_burst() {
     use std::collections::HashSet;
@@ -3534,16 +3329,12 @@ fn test_synth_response_id_uniqueness_burst() {
 }
 
 /// `state.open_tools` is only drained on a `finishReason` chunk,
-/// so an upstream that streams an unbounded run of `functionCall` parts WITHOUT a finishReason
-/// must not grow it without bound. Past `MAX_GEMINI_TOOL_FRAMES` new tool frames stop being
-/// recorded (and their events suppressed), keeping the set capped while every realistic stream
-/// (a handful of tools) is unaffected. Mirrors the Cohere reader's cap regression.
+
 #[test]
 fn test_stream_open_tools_growth_is_capped() {
     let reader = GeminiReader;
     let mut state = StreamDecodeState::default();
-    // Feed many functionCall parts across many chunks, never sending a finishReason so the
-    // drain path never runs — the only thing that can keep the set bounded is the cap.
+
     for n in 0..(MAX_GEMINI_TOOL_FRAMES + 200) {
         reader.read_response_events(
             crate::codec::test_host::HOST,
@@ -3567,15 +3358,12 @@ fn test_stream_open_tools_growth_is_capped() {
 }
 
 /// Past `MAX_GEMINI_TOOL_FRAMES` the drop must be OBSERVABLE, not silent: the first frame that
-/// hits the cap latches `state.tool_frame_cap_warned` (which also gates a `tracing::warn!`
-/// with the cap value). Under the cap the latch must stay false — this is a genuine drop signal,
-/// not noise on every ordinary stream.
+
 #[test]
 fn test_stream_tool_frame_cap_drop_is_observable() {
     let reader = GeminiReader;
     let mut state = StreamDecodeState::default();
 
-    // Under the cap: no warning latch yet.
     for n in 0..10 {
         reader.read_response_events(
             crate::codec::test_host::HOST,
@@ -3596,7 +3384,6 @@ fn test_stream_tool_frame_cap_drop_is_observable() {
         "cap-drop latch must not fire while under MAX_GEMINI_TOOL_FRAMES"
     );
 
-    // Push past the cap; the drop must now be latched as observed.
     for n in 0..(MAX_GEMINI_TOOL_FRAMES + 200) {
         reader.read_response_events(
             crate::codec::test_host::HOST,
@@ -3619,7 +3406,7 @@ fn test_stream_tool_frame_cap_drop_is_observable() {
 }
 
 /// The cap must NOT perturb a realistic stream: a small number of tool calls are all recorded
-/// and each gets a matching BlockStart it can close on finishReason.
+
 #[test]
 fn test_stream_open_tools_under_cap_records_all() {
     let reader = GeminiReader;
@@ -3651,10 +3438,6 @@ fn test_stream_open_tools_under_cap_records_all() {
 /// A well-formed credential yields exactly one `x-goog-api-key` header carrying the verbatim key.
 #[test]
 fn test_auth_headers_valid_key_emits_x_goog_api_key() {
-    // #83a S2-a: the dialect DECLARES its credential scheme and the host presents it — the raw key
-    // in the custom `x-goog-api-key` header for every credential and mode, no Bearer. The bytes the host writes
-    // for a valid key, and the omission of a key whose bytes no header value may carry, are pinned in
-    // the host's suite over the shared fixture `testing/plane-copies/declared-credentials.json`.
     let raw = busbar_contract::protocol::CredentialHeader::Raw {
         header: "x-goog-api-key",
         trim_start: false,
@@ -3677,12 +3460,7 @@ fn test_auth_headers_valid_key_emits_x_goog_api_key() {
 }
 
 /// HIGH/correctness regression: a Tool-role IR message carries `ToolResult` blocks, which the
-/// writer emits as Gemini `functionResponse` parts. In the native GenerateContentRequest schema
-/// a `functionResponse` turn MUST be sent under `role:"user"` — the `model` role is exclusively
-/// the assistant turn (which produces `functionCall`s). Mapping Tool → "model" emits a
-/// non-native shape the real Gemini API / google-genai SDK rejects (400 INVALID_ARGUMENT). The
-/// turn carrying the `functionResponse` must therefore have `role == "user"`, matching the
-/// Bedrock writer's `toolResult` handling.
+
 #[test]
 fn test_tool_role_maps_to_user_for_function_response() {
     let writer = GeminiWriter;
@@ -3707,7 +3485,7 @@ fn test_tool_role_maps_to_user_for_function_response() {
         "a Tool-role message carrying a functionResponse must be emitted under role:\"user\", \
              never \"model\": {wire}"
     );
-    // The functionResponse part must still be present and correctly shaped under that turn.
+
     let fr = &content["parts"][0]["functionResponse"];
     assert_eq!(
         fr["name"], "get_weather",
@@ -3720,8 +3498,7 @@ fn test_tool_role_maps_to_user_for_function_response() {
 }
 
 /// HIGH/correctness regression: an Assistant-role message carrying a `functionCall` (ToolUse)
-/// must still be emitted under `role:"model"` — the fix to the Tool role must NOT regress the
-/// assistant mapping, since `functionCall`s are exclusively a model-turn shape.
+
 #[test]
 fn test_assistant_tool_use_stays_model_role() {
     let writer = GeminiWriter;
@@ -3752,10 +3529,7 @@ fn test_assistant_tool_use_stays_model_role() {
 }
 
 /// An inline `{"error":{...}}` google.rpc.Status object
-/// delivered as a 200-status SSE data chunk mid-stream MUST surface as a single
-/// `IrStreamEvent::Error` (mapped from `error.status`) rather than being silently swallowed.
-/// Before the fix the reader emitted a bare MessageStart and then nothing — a hung,
-/// non-terminated stream — because the chunk carried no `candidates`.
+
 #[test]
 fn test_stream_inline_error_envelope_surfaces_ir_error() {
     let events = collect_stream(&[serde_json::json!({
@@ -3766,8 +3540,6 @@ fn test_stream_inline_error_envelope_surfaces_ir_error() {
         }
     })]);
 
-    // Exactly one event, an Error mapped to RateLimit, carrying the upstream message. NO
-    // MessageStart precedes it (an error-only chunk must not emit a stray start frame).
     match events.as_slice() {
         [IrStreamEvent::Error(err)] => {
             assert_eq!(err.class, StatusClass::RateLimit, "events: {events:?}");
@@ -3782,10 +3554,9 @@ fn test_stream_inline_error_envelope_surfaces_ir_error() {
 }
 
 /// An inline error whose `status` is absent falls back to the numeric `code` mapping (503 →
-/// Overloaded), and a missing/unknown code defaults to ServerError — never silently dropped.
+
 #[test]
 fn test_stream_inline_error_code_fallback_and_default() {
-    // status absent → 503 maps to Overloaded.
     let by_code = collect_stream(&[serde_json::json!({
         "error": { "code": 503, "message": "backend overloaded" }
     })]);
@@ -3796,7 +3567,6 @@ fn test_stream_inline_error_code_fallback_and_default() {
         other => panic!("expected one Error, got {other:?}"),
     }
 
-    // Neither status nor a recognized code → ServerError default (safe, breaker-tripping).
     let bare = collect_stream(&[serde_json::json!({
         "error": { "message": "something failed" }
     })]);
@@ -3814,7 +3584,7 @@ fn test_stream_inline_error_code_fallback_and_default() {
 }
 
 /// `gemini_error_status_class` prefers the UPPER_SNAKE `status` over the numeric `code`, and an
-/// unrecognized status string falls through to the code mapping.
+
 #[test]
 fn test_gemini_error_status_class_mapping() {
     assert_eq!(
@@ -3837,12 +3607,12 @@ fn test_gemini_error_status_class_mapping() {
         gemini_error_status_class(Some(GRPC_INVALID_ARGUMENT), Some(400)),
         StatusClass::ClientError
     );
-    // status wins over code: an INTERNAL status with a (nonsensical) 429 code is ServerError.
+
     assert_eq!(
         gemini_error_status_class(Some(GRPC_INTERNAL), Some(429)),
         StatusClass::ServerError
     );
-    // Unknown status string → fall through to the numeric code (429 → RateLimit).
+
     assert_eq!(
         gemini_error_status_class(Some("SOME_FUTURE_CODE"), Some(429)),
         StatusClass::RateLimit
@@ -3850,11 +3620,7 @@ fn test_gemini_error_status_class_mapping() {
 }
 
 /// The Gemini bad-key auth-failure envelope MUST carry the
-/// canonical `error.details[]` array with a google.rpc.ErrorInfo whose `reason` is
-/// `API_KEY_INVALID`. The `google-genai` SDK keys auth handling off `details[].reason`, so the
-/// real Generative Language API always populates it on the bad-key 400. The triple of (status
-/// 400, INVALID_ARGUMENT, the canonical bad-key message) is exactly what
-/// `auth.rs::unauthorized_response` produces for a Gemini-inferred path.
+
 #[test]
 fn test_write_error_bad_key_carries_api_key_invalid_details() {
     let writer = GeminiWriter;
@@ -3901,8 +3667,7 @@ fn test_write_error_bad_key_carries_api_key_invalid_details() {
 }
 
 /// A NON-auth 400/INVALID_ARGUMENT (e.g. a generic malformed-request body) must NOT grow the
-/// API_KEY_INVALID details array — real Google does not carry that reason on a non-key 400, so
-/// over-filling it would itself be a tell. Only the canonical bad-key message triggers details.
+
 #[test]
 fn test_write_error_generic_invalid_argument_has_no_details() {
     let writer = GeminiWriter;
@@ -3924,13 +3689,7 @@ fn test_write_error_generic_invalid_argument_has_no_details() {
 }
 
 /// HIGH/correctness regression: on a CROSS-protocol multi-turn tool call (Anthropic/OpenAI
-/// ingress → Gemini egress) the IR's ToolUse carries a SYNTHETIC `call_<hash>` id and the matching
-/// ToolResult's `tool_use_id` carries that SAME synthetic id — NOT the real function name. Gemini
-/// correlates a `functionResponse` to its `functionCall` strictly BY NAME (no ids), so the emitted
-/// `functionResponse.name` MUST equal the `functionCall.name` (`get_weather`), NOT the hash.
-/// Before the fix the writer emitted the hash verbatim, so the backend could not correlate and
-/// every cross-protocol→Gemini multi-turn tool call broke. The writer resolves the real name from
-/// an id→name map built across all request messages.
+
 #[test]
 fn test_write_request_cross_protocol_function_response_name_matches_call() {
     let writer = GeminiWriter;
@@ -3988,9 +3747,7 @@ fn test_write_request_cross_protocol_function_response_name_matches_call() {
 }
 
 /// Same-protocol (Gemini→Gemini) regression guard for the fix above: when the ToolResult's
-/// `tool_use_id` is ALREADY the function name (the reader's same-protocol behavior) and there is no
-/// matching ToolUse id in the request, the writer must FALL BACK to that name verbatim — the
-/// id→name map lookup must not blank it out.
+
 #[test]
 fn test_write_request_same_protocol_function_response_name_falls_back_to_id() {
     let writer = GeminiWriter;
@@ -4016,10 +3773,7 @@ fn test_write_request_same_protocol_function_response_name_falls_back_to_id() {
 }
 
 /// LOW/completeness regression: a STREAMING chunk with an EMPTY `candidates: []` array (rather than
-/// an absent array) alongside a top-level `promptFeedback.blockReason` must still route into the
-/// prompt-block terminal arm — MessageStart, then a `safety` MessageDelta + MessageStop. Before the
-/// fix `candidates_absent` keyed only on array-PRESENCE, so `[]` slipped past the arm and the
-/// stream emitted a bare un-terminated frame.
+
 #[test]
 fn test_stream_empty_candidates_array_prompt_block_terminates() {
     let events = collect_stream(&[serde_json::json!({
@@ -4043,9 +3797,7 @@ fn test_stream_empty_candidates_array_prompt_block_terminates() {
 }
 
 /// LOW/completeness regression: a NON-STREAMING body with an EMPTY `candidates: []` array plus a
-/// top-level `promptFeedback.blockReason` must decode to an empty-content `safety` response, NOT
-/// hard-fail `candidates.is_empty()` into a spurious `ir_parse` error (the old behavior, since
-/// `candidates_absent` treated `[]` as present and skipped the prompt-block arm).
+
 #[test]
 fn test_read_response_empty_candidates_array_prompt_block_is_safety_stop() {
     let reader = GeminiReader;
@@ -4070,8 +3822,7 @@ fn test_read_response_empty_candidates_array_prompt_block_is_safety_stop() {
 }
 
 /// Guard: an EMPTY `candidates: []` with NO block reason and NO error is still a malformed
-/// envelope and MUST hard-fail (the broadened `candidates_absent` routes it into the prompt-block
-/// arm, which finds no reason and falls through to the existing empty-array hard-fail below).
+
 #[test]
 fn test_read_response_empty_candidates_array_without_block_still_errors() {
     let reader = GeminiReader;
@@ -4085,10 +3836,7 @@ fn test_read_response_empty_candidates_array_without_block_still_errors() {
 }
 
 /// Gemini has no TOOL_USE finishReason — a tool-call turn ends with STOP.
-/// `read_response` mapped STOP → `end_turn` unconditionally, so the IR carried `end_turn` next to
-/// a `ToolUse` block, which leaked on cross-protocol egress (Anthropic relays `end_turn`; OpenAI
-/// maps it to `"stop"`). When a `ToolUse` block is present, the buffered reader MUST promote
-/// `end_turn` → `tool_use`. Fails against the old unconditional mapping.
+
 #[test]
 fn test_read_response_stop_with_function_call_is_tool_use() {
     let reader = GeminiReader;
@@ -4119,7 +3867,7 @@ fn test_read_response_stop_with_function_call_is_tool_use() {
 }
 
 /// Companion guard: a plain STOP with NO tool block must stay `end_turn`. The promotion
-/// must be gated on a ToolUse block being present, not applied to every STOP.
+
 #[test]
 fn test_read_response_plain_stop_stays_end_turn() {
     let reader = GeminiReader;
@@ -4140,9 +3888,7 @@ fn test_read_response_plain_stop_stays_end_turn() {
 }
 
 /// The streaming reader mapped STOP → `end_turn` on the
-/// terminal MessageDelta unconditionally, leaking `end_turn` for a tool-call turn on the streamed
-/// cross-protocol path. When tool blocks were opened this run (`state.open_tools` non-empty at the
-/// finishReason handler), the terminal stop_reason MUST be `tool_use`. Fails against old code.
+
 #[test]
 fn test_stream_stop_with_function_call_terminal_is_tool_use() {
     let events = collect_stream(&[serde_json::json!({
@@ -4166,7 +3912,7 @@ fn test_stream_stop_with_function_call_terminal_is_tool_use() {
 }
 
 /// Companion guard (streaming): a plain STOP stream with no tool block must terminate
-/// with `end_turn` (no spurious promotion when `state.open_tools` is empty).
+
 #[test]
 fn test_stream_plain_stop_terminal_stays_end_turn() {
     let events = collect_stream(&[serde_json::json!({
@@ -4187,9 +3933,7 @@ fn test_stream_plain_stop_terminal_stays_end_turn() {
 }
 
 /// A `ToolUse.input` that is a JSON ARRAY must be coerced to a valid Gemini
-/// `functionCall.args` OBJECT (Gemini `args` is a protobuf Struct). The old code passed an array
-/// through verbatim (`input.is_array()` branch), producing a backend-rejected request. After the
-/// fix the array is wrapped under `{"args": <value>}`. Asserts BOTH writers (request + response).
+
 #[test]
 fn test_tool_use_array_input_coerced_to_object_args() {
     let block = crate::codec::ir::IrBlock::ToolUse {
@@ -4200,7 +3944,6 @@ fn test_tool_use_array_input_coerced_to_object_args() {
         cache_control: None,
     };
 
-    // write_request path
     let writer = GeminiWriter;
     let req = crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
@@ -4223,7 +3966,6 @@ fn test_tool_use_array_input_coerced_to_object_args() {
         "array input must be wrapped under `args`: {args}"
     );
 
-    // write_response path
     let resp = crate::codec::ir::IrResponse {
         content: vec![block],
         stop_reason: Some(crate::codec::ir::IrStopReason::ToolUse),
@@ -4245,7 +3987,7 @@ fn test_tool_use_array_input_coerced_to_object_args() {
 }
 
 /// Companion guard: an OBJECT `ToolUse.input` must pass through byte-identical so the
-/// same-protocol Gemini→Gemini round-trip stays lossless (no `{"args": ...}` wrapping).
+
 #[test]
 fn test_tool_use_object_input_passes_through_unchanged() {
     let writer = GeminiWriter;
@@ -4270,8 +4012,6 @@ fn test_tool_use_object_input_passes_through_unchanged() {
         "object input must pass through unchanged (no `args` wrapper): {rargs}"
     );
 }
-
-// ---- Gemini tool_choice (functionCallingConfig) round-trips ----
 
 fn gemini_read(body: serde_json::Value) -> crate::codec::ir::IrRequest {
     GeminiReader
@@ -4319,9 +4059,7 @@ fn tool_choice_specific_tool_roundtrips() {
 }
 
 /// Fidelity: `ANY` + `allowedFunctionNames` with N>1 names cannot be expressed by the
-/// IR's single-tool `Tool` variant. Rather than fabricating `Tool{name: first}` (inventing a
-/// stricter constraint the request never made), it must degrade to `Required` (call SOME tool) —
-/// a true superset of the allow-list. A SINGLE name still maps to `Tool{name}` (unchanged).
+
 #[test]
 fn tool_choice_multi_name_allowlist_relaxes_to_required() {
     let ir = gemini_read(serde_json::json!({
@@ -4335,7 +4073,6 @@ fn tool_choice_multi_name_allowlist_relaxes_to_required() {
         "a multi-name allow-list must relax to Required, not Tool{{name: first}}"
     );
 
-    // A single-name allow-list is still representable and must stay a targeted Tool.
     let ir_one = gemini_read(serde_json::json!({
         "contents": [],
         "toolConfig": {"functionCallingConfig":
@@ -4382,9 +4119,6 @@ fn tool_choice_absent_emits_no_function_calling_config() {
 
 #[test]
 fn tool_choice_no_duplicate_function_calling_config() {
-    // Same-protocol passthrough: the raw toolConfig is preserved in `extra` AND the writer
-    // overlays a fresh functionCallingConfig — there must be exactly ONE in the output (the
-    // overlay replaces, never duplicates).
     let ir = gemini_read(serde_json::json!({
         "contents": [],
         "toolConfig": {"functionCallingConfig": {"mode": "ANY"}}
@@ -4400,14 +4134,7 @@ fn tool_choice_no_duplicate_function_calling_config() {
 }
 
 /// The raw `toolConfig` the reader preserves in `req.extra` (for
-/// same-protocol byte-identity) must NOT clobber the freshly-overlaid `functionCallingConfig` the
-/// writer builds from the TYPED `req.tool_choice`. `generationConfig` gets this treatment
-/// explicitly (skipped in the final `req.extra` merge loop, with a comment explaining why); before
-/// this fix `toolConfig` did not, so any caller that changes `IrRequest.tool_choice` WITHOUT also
-/// updating `IrRequest.extra["toolConfig"]` (e.g. a governance/routing hook that forces a tool
-/// choice post-read) got its typed override silently reverted by the raw extra copy re-inserted at
-/// the bottom of `write_request`. Uses `base_ir_request()` with a tool present (the writer's own
-/// "no tools" guard would otherwise swallow the overlay for an unrelated reason).
+
 #[test]
 fn tool_choice_overlay_survives_stale_raw_toolconfig_in_extra() {
     let mut req = base_ir_request();
@@ -4419,12 +4146,11 @@ fn tool_choice_overlay_survives_stale_raw_toolconfig_in_extra() {
         hosted: None,
         strict: None,
     });
-    // Typed field says: force this ONE specific tool.
+
     req.tool_choice = Some(crate::codec::ir::IrToolChoice::Tool {
         name: "get_weather".to_string(),
     });
-    // `extra` carries a STALE raw toolConfig disagreeing with the typed field (as it would after a
-    // post-read hook mutates `tool_choice` without touching `extra`).
+
     req.extra.insert(
         "toolConfig".to_string(),
         serde_json::json!({"functionCallingConfig": {"mode": "AUTO"}}),
@@ -4441,22 +4167,7 @@ fn tool_choice_overlay_survives_stale_raw_toolconfig_in_extra() {
 }
 
 /// `synth_tool_call_id` (used by `read_response`, one call per Gemini
-/// response/turn) hashes only `(call_index, function_name)`. Both are RESPONSE-LOCAL — `call_index`
-/// restarts at 0 on every `read_response` call, and `DefaultHasher::new()` seeds from FIXED
-/// constants (not per-process random) — so two DIFFERENT LLM turns in the SAME growing conversation
-/// that each open with a call to the same-named tool (a common pattern: the model calls
-/// `get_weather` again for a different city on a later turn) synthesize the IDENTICAL tool_use id.
-/// On a cross-protocol egress (e.g. an Anthropic-speaking client talking to a Gemini backend), the
-/// client's visible conversation transcript then carries TWO DIFFERENT tool_use blocks (different
-/// turns, different arguments) sharing one id — a real protocol-conformance violation (Anthropic
-/// documents tool_use ids as unique per message) and exactly the ambiguity `synth_tool_call_id`'s
-/// own doc comment says it exists to prevent ("two tool calls sharing a function name could not be
-/// told apart"). Each Gemini response carries its own opaque `responseId` (present on essentially
-/// every real backend response — the writer even synthesizes one when absent, for exactly this
-/// "native responses always carry one" reason) which naturally distinguishes one turn's calls from
-/// another's; folding it into the hash fixes the cross-turn collision without touching the
-/// within-request determinism `read_request` (already collision-free: its `tool_call_index` is
-/// global across the WHOLE `contents` array, not per-turn) relies on.
+
 #[test]
 fn response_tool_call_ids_do_not_collide_across_conversation_turns() {
     let reader = GeminiReader;
@@ -4511,28 +4222,25 @@ fn response_tool_call_ids_do_not_collide_across_conversation_turns() {
     );
 }
 
-// ---- Gemini finishReason mapping ----
-
 #[test]
 fn finish_reason_maps_gemini_only_reasons_to_canonical() {
     use crate::codec::ir::IrStopReason as S;
-    // The Gemini-only reasons map to canonical IR stop reasons (NOT a verbatim lowercase token).
+
     assert_eq!(
         map_gemini_finish_reason(GEMINI_FINISH_RECITATION),
         S::Safety
     );
     assert_eq!(map_gemini_finish_reason("IMAGE_SAFETY"), S::Safety);
     assert_eq!(map_gemini_finish_reason("SPII"), S::Safety);
-    // A malformed function call is a FAILED generation with no runnable tool call — it maps to
-    // `error`, NOT `tool_use` (which would tell the client to execute a call that doesn't exist).
+
     assert_eq!(
         map_gemini_finish_reason(GEMINI_FINISH_MALFORMED_FUNCTION_CALL),
         S::Error
     );
-    // Unenumerated reasons map to `Other` (the writer projects it to the native OTHER member).
+
     assert_eq!(map_gemini_finish_reason(GEMINI_FINISH_OTHER), S::Other);
     assert_eq!(map_gemini_finish_reason("LANGUAGE"), S::Other);
-    // The direct ones still map.
+
     assert_eq!(map_gemini_finish_reason(GEMINI_FINISH_STOP), S::EndTurn);
     assert_eq!(
         map_gemini_finish_reason(GEMINI_FINISH_MAX_TOKENS),
@@ -4543,8 +4251,6 @@ fn finish_reason_maps_gemini_only_reasons_to_canonical() {
 
 #[test]
 fn finish_reason_recitation_in_response_is_safety() {
-    // End-to-end through read_response: a RECITATION finishReason surfaces as the canonical
-    // `safety` stop_reason, which the Anthropic/OpenAI writers recognize.
     let body = serde_json::json!({
         "candidates": [{
             "content": {"parts": [{"text": "x"}], "role": "model"},
@@ -4562,9 +4268,7 @@ fn finish_reason_recitation_in_response_is_safety() {
 }
 
 /// End-to-end through read_response: a MALFORMED_FUNCTION_CALL finishReason surfaces as the
-/// canonical `error` stop_reason (a failed generation with no runnable tool call) — NOT `tool_use`.
-/// Guards that the read_response path actually routes through `map_gemini_finish_reason` (the unit
-/// test alone would not catch a read_response site that bypassed the mapping).
+
 #[test]
 fn finish_reason_malformed_function_call_in_response_is_error() {
     let body = serde_json::json!({
@@ -4584,14 +4288,7 @@ fn finish_reason_malformed_function_call_in_response_is_error() {
 }
 
 /// The STREAMING reader (read_response_events) routes finishReason through the SAME
-/// `map_gemini_finish_reason`, so a MALFORMED_FUNCTION_CALL terminal chunk must surface
-/// stop_reason=Error on the MessageDelta — guarding the stream call site, not just the unit fn.
-///
-/// OWNER RULING Q31: a failed generation ENDS AS AN ERROR. The terminal chunk also pushes an
-/// `IrStreamEvent::Error` (the shape Cohere's generic `ERROR` already has), ahead of the
-/// MessageDelta/MessageStop — so the translator's `terminal_error()` is set (the breaker records a
-/// fault, a cross-protocol client gets an error frame), and the MessageDelta still carries the
-/// streamed usage the charge is read from (#62).
+
 #[test]
 fn finish_reason_malformed_function_call_stream_is_error() {
     let chunks = vec![serde_json::json!({
@@ -4653,8 +4350,7 @@ fn finish_reason_malformed_function_call_stream_is_error() {
 }
 
 /// `raw_stop_reason` reads the FIRST candidate's `finishReason` off the RAW bytes and maps it
-/// exactly as `read_response` does (owner ruling Q31 follow-up: the same-protocol relay's breaker
-/// fault), with bounded work after locating the key.
+
 #[test]
 fn raw_stop_reason_agrees_with_read_response() {
     for token in [
@@ -4680,7 +4376,7 @@ fn raw_stop_reason_agrees_with_read_response() {
             "{token}"
         );
     }
-    // A value too long to be a stop token is not read at all.
+
     let long = format!(
         "{{\"candidates\":[{{\"finishReason\":\"{}\"}}]}}",
         "A".repeat(4096)
@@ -4696,10 +4392,7 @@ fn raw_stop_reason_agrees_with_read_response() {
 }
 
 /// The relay's INCREMENTAL scan answers the same wherever the body is split — the key, the colon,
-/// the quotes or the token cut at any byte (owner ruling Q31 follow-up: the ungoverned
-/// same-protocol relay keeps no copy of the body) — and it reads only a candidate's own
-/// `finishReason` member: the name spelled inside delivered text, or as a key of a model-written
-/// tool `args` object, is content.
+
 #[test]
 fn stop_key_scanner_reads_the_candidate_member_at_every_split() {
     use crate::codec::usage_tail::StopKeyScanner;
@@ -4737,7 +4430,7 @@ fn stop_key_scanner_reads_the_candidate_member_at_every_split() {
             }
         }
     }
-    // A token longer than the bound is never read, however it arrives.
+
     let long = format!(
         "{{\"candidates\":[{{\"finishReason\":\"{}\"}}]}}",
         "A".repeat(200)
@@ -4750,10 +4443,7 @@ fn stop_key_scanner_reads_the_candidate_member_at_every_split() {
 }
 
 /// A MODEL-WRITTEN TOOL ARGUMENT NEVER FAULTS THE LANE. A Gemini answer writes `content` before
-/// `finishReason`, so a `functionCall.args` object holding `"finishReason":"MALFORMED_FUNCTION_CALL"`
-/// was the FIRST `finishReason` in the body: the same-protocol relay read it as a failed generation
-/// and raised a transient fault on a lane other tenants share. The stop reason is the candidate's
-/// own member, as `read_response` reads it. RED while the scanner took the first key anywhere.
+
 #[test]
 fn a_finish_reason_inside_tool_args_is_not_the_stop_reason() {
     let body = serde_json::json!({
@@ -4766,9 +4456,7 @@ fn a_finish_reason_inside_tool_args_is_not_the_stop_reason() {
         }],
         "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5}
     });
-    // The raw scan reads the CANDIDATE's own token (`STOP`), never the args' copy, which would map
-    // to a failed generation. `read_response` then promotes a tool-call `STOP` to `ToolUse` from
-    // the content, which a token-only scan cannot see and the fault check does not need.
+
     assert_eq!(
         crate::codec::test_host::raw_stop_reason(&GeminiReader, body.to_string().as_bytes()),
         Some(crate::codec::ir::IrStopReason::EndTurn)
@@ -4788,7 +4476,7 @@ fn a_finish_reason_inside_tool_args_is_not_the_stop_reason() {
 }
 
 /// The Error event is scoped to the failed-generation reason: a SAFETY stop is a correctly-served
-/// refusal and a MAX_TOKENS stop a truncation, neither a lane fault.
+
 #[test]
 fn finish_reason_non_error_stops_push_no_error_event() {
     for reason in ["STOP", "MAX_TOKENS", "SAFETY", "OTHER"] {
@@ -4806,21 +4494,18 @@ fn finish_reason_non_error_stops_push_no_error_event() {
     }
 }
 
-// ---- context-length override is status-gated ----
-
 #[test]
 fn context_length_override_only_fires_on_400_or_413() {
     let token_body =
         br#"{"error":{"code":429,"message":"input is longer than the maximum number of tokens"}}"#;
-    // A 429 with token-phrased body must NOT be reclassified to context_length_exceeded — the
-    // breaker must still record the rate-limit fault.
+
     let err = GeminiReader.extract_error(StatusCode::TOO_MANY_REQUESTS, token_body);
     assert_ne!(
         err.provider_code.as_deref(),
         Some("context_length_exceeded"),
         "a 429 with token-phrased body must NOT be mis-dispositioned as ContextLength"
     );
-    // The same body on a real 400 IS the canonical context-length signal.
+
     let body_400 =
         br#"{"error":{"code":400,"message":"input is longer than the maximum number of tokens"}}"#;
     let err = GeminiReader.extract_error(StatusCode::BAD_REQUEST, body_400);
@@ -4829,7 +4514,7 @@ fn context_length_override_only_fires_on_400_or_413() {
         Some("context_length_exceeded"),
         "a 400 with the token-overflow message must classify as context_length_exceeded"
     );
-    // ...and on a 413 as well.
+
     let err = GeminiReader.extract_error(StatusCode::PAYLOAD_TOO_LARGE, token_body);
     assert_eq!(
         err.provider_code.as_deref(),
@@ -4837,14 +4522,8 @@ fn context_length_override_only_fires_on_400_or_413() {
     );
 }
 
-// ===================================================================================
-// Integration gaps — sampling / response_format / reasoning / cache / image / schema
-// (cross-protocol survival). Each test proves a read+write site round-trips a control
-// that previously degraded to the target default on the cross-protocol seam.
-// ===================================================================================
-
 /// Minimal IR request with a single user "hi" turn and all controls defaulted. Tests mutate the
-/// field(s) under test so the assertion targets exactly one gap.
+
 fn base_ir_request() -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
         block_origins: Default::default(),
@@ -4888,10 +4567,8 @@ fn base_ir_request() -> crate::codec::ir::IrRequest {
     }
 }
 
-// --- Gap 1: sampling controls via generationConfig ---
-
 /// OpenAI→Gemini: an IR carrying frequency/presence penalties, seed, and n MUST emit them in
-/// Gemini's native generationConfig shape (frequencyPenalty/presencePenalty/seed/candidateCount).
+
 #[test]
 fn test_write_request_sampling_controls_emit_generation_config() {
     let mut req = base_ir_request();
@@ -4932,7 +4609,7 @@ fn test_write_request_sampling_controls_omitted_when_none() {
 }
 
 /// Gemini→IR: native generationConfig sampling controls promote into the typed IR fields, and a
-/// read→write round-trips them (same-protocol fidelity).
+
 #[test]
 fn test_read_request_sampling_controls_promote_and_round_trip() {
     let body = serde_json::json!({
@@ -4961,10 +4638,8 @@ fn test_read_request_sampling_controls_promote_and_round_trip() {
     assert_eq!(gc.get("candidateCount"), Some(&serde_json::json!(2)));
 }
 
-// --- response_format ↔ responseSchema/responseMimeType ---
-
 /// Gemini→IR→Gemini: native responseMimeType + responseSchema read into the normalized IR
-/// response_format object and round-trip back into generationConfig.
+
 #[test]
 fn test_response_format_round_trips_native_gemini() {
     let body = serde_json::json!({
@@ -5002,8 +4677,7 @@ fn test_response_format_round_trips_native_gemini() {
 }
 
 /// A JSON structured-output directive (from any source protocol — here a typed IR carrying a
-/// schema) maps onto Gemini responseMimeType + responseSchema, with JSON-Schema keywords Gemini
-/// rejects (e.g. `$schema`) stripped by `sanitize_gemini_schema`.
+
 #[test]
 fn test_response_format_maps_to_gemini_and_sanitizes_schema() {
     let mut req = base_ir_request();
@@ -5037,11 +4711,8 @@ fn test_response_format_maps_to_gemini_and_sanitizes_schema() {
     );
 }
 
-// --- reasoning thought parts ↔ IrBlock::Thinking ---
-
 /// A Gemini response `thought:true` part with a `thoughtSignature` reads into IrBlock::Thinking
-/// (text + signature), and write_response re-emits it as a `{text, thought:true,
-/// thoughtSignature}` part — full round-trip with the signature preserved.
+
 #[test]
 fn test_thought_part_round_trips_through_ir_thinking() {
     let body = serde_json::json!({
@@ -5057,7 +4728,7 @@ fn test_thought_part_round_trips_through_ir_thinking() {
     let resp = GeminiReader
         .read_response(crate::codec::test_host::HOST, &body)
         .expect("read_response");
-    // First block is Thinking with text + signature; second is plain Text.
+
     match &resp.content[0] {
         crate::codec::ir::IrBlock::Thinking {
             text, signature, ..
@@ -5089,7 +4760,7 @@ fn test_thought_part_round_trips_through_ir_thinking() {
 }
 
 /// A Thinking block in a REQUEST assistant turn round-trips through write_request as a thought
-/// part with its signature (cross-protocol reasoning survives into a Gemini request).
+
 #[test]
 fn test_thinking_block_round_trips_in_write_request() {
     let mut req = base_ir_request();
@@ -5108,7 +4779,7 @@ fn test_thinking_block_round_trips_in_write_request() {
         let __w = GeminiWriter;
         __w.write_request(crate::codec::test_host::HOST, &req)
     };
-    // Assistant turn is the 2nd contents entry (role "model").
+
     let parts = wire
         .pointer("/contents/1/parts")
         .and_then(|p| p.as_array())
@@ -5123,10 +4794,8 @@ fn test_thinking_block_round_trips_in_write_request() {
     );
 }
 
-// --- cachedContentTokenCount → cache_read_input_tokens ---
-
 /// Gemini usageMetadata.cachedContentTokenCount maps into the IR cache_read_input_tokens field
-/// (the same field Bedrock/Anthropic cache-read map to), surviving the cross-protocol seam.
+
 #[test]
 fn test_cached_content_token_count_reads_into_cache_read() {
     let body = serde_json::json!({
@@ -5148,7 +4817,7 @@ fn test_cached_content_token_count_reads_into_cache_read() {
         Some(80),
         "cachedContentTokenCount must map to cache_read_input_tokens"
     );
-    // Absent cache count stays None.
+
     let body_no_cache = serde_json::json!({
         "candidates": [{"content": {"role": "model", "parts": [{"text": "hi"}]}, "finishReason": GEMINI_FINISH_STOP}],
         "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1}
@@ -5159,12 +4828,8 @@ fn test_cached_content_token_count_reads_into_cache_read() {
     assert_eq!(resp2.usage.cache_read_input_tokens, None);
 }
 
-// --- fileData reads into the typed Url source ---
-
 /// A Gemini `fileData` part (with or without a mimeType) is a remote URL reference → reads into
-/// the typed `Url` source and re-emits as `fileData{fileUri}`. The optional `mimeType` hint is not
-/// carried on this path; that is operationally lossless — Gemini's `fileData.mimeType` is optional
-/// (inferred from the URI), so the backend accepts the part and a native client is unaffected.
+
 #[test]
 fn test_file_data_reads_into_url_source_and_round_trips() {
     let body = serde_json::json!({
@@ -5192,11 +4857,7 @@ fn test_file_data_reads_into_url_source_and_round_trips() {
 }
 
 /// Regression guard: a fileData WITHOUT a mimeType (bare remote URI) reads back as an image_url
-/// sentinel and re-emits as `fileData{fileUri, mimeType}`. Corrected to spec: the arm now
-/// SUPPLIES a `mimeType` — Gemini's `fileData` REQUIRES one to decode the referenced file (the
-/// writer's own invariant, and the Media-URL arm already supplied one), so a mimeless `fileData` is
-/// a part the backend rejects, not the faithful shape. The mime is derived from the URL extension
-/// (`.jpg` → `image/jpeg`); it is a WRITE-side default, not a claim about the referenced bytes.
+
 #[test]
 fn test_file_data_url_reemits_with_derived_mime_type() {
     let body = serde_json::json!({
@@ -5227,11 +4888,8 @@ fn test_file_data_url_reemits_with_derived_mime_type() {
     );
 }
 
-// --- tool input_schema strips Gemini-rejected JSON-Schema keywords ---
-
 /// A cross-protocol tool def carrying JSON-Schema keywords Gemini 400-rejects ($schema,
-/// additionalProperties, $ref, …) must be stripped on write so the tool def survives instead of
-/// hard-failing — recursively, including nested object/array schemas.
+
 #[test]
 fn test_write_request_strips_rejected_schema_keywords() {
     let mut req = base_ir_request();
@@ -5269,21 +4927,20 @@ fn test_write_request_strips_rejected_schema_keywords() {
         params.get("$schema").is_none(),
         "$schema must be stripped: {wire}"
     );
-    // additionalProperties is a BOOLEAN here (`false`) -- the live Gemini API genuinely accepts
-    // that form (google-gemini/gemini-cli#13694), so it must survive, not be stripped.
+
     assert_eq!(
         params.get("additionalProperties"),
         Some(&serde_json::json!(false)),
         "boolean additionalProperties is accepted by Gemini and must survive: {wire}"
     );
-    // Survivors preserved.
+
     assert_eq!(params.get("type"), Some(&serde_json::json!("object")));
     assert_eq!(params.get("required"), Some(&serde_json::json!(["loc"])));
     assert_eq!(
         params.pointer("/properties/loc/type"),
         Some(&serde_json::json!("string"))
     );
-    // Recursion: nested BOOLEAN additionalProperties also survives.
+
     assert_eq!(
         params.pointer("/properties/nested/additionalProperties"),
         Some(&serde_json::json!(true)),
@@ -5319,12 +4976,7 @@ fn test_sanitize_gemini_schema_preserves_clean_and_walks_arrays() {
 }
 
 /// The keyword filter is POSITIONAL. Inside a `properties` map the keys
-/// are FIELD NAMES THE CALLER CHOSE, not JSON-Schema keywords, so a tool schema with a property
-/// named `examples` / `const` / `definitions` / `$ref` must survive intact. Before the fix the
-/// walker matched keys at every object level, deleted those properties, and left `required` — which
-/// it never inspects — still naming them: Gemini 400s a `required` entry with no matching property,
-/// so a legal cross-protocol tool definition became a hard request failure. An optional one merely
-/// vanished from the model's view.
+
 #[test]
 fn test_sanitize_gemini_schema_keeps_user_properties_named_like_keywords() {
     let schema = serde_json::json!({
@@ -5341,12 +4993,11 @@ fn test_sanitize_gemini_schema_keeps_user_properties_named_like_keywords() {
     });
     let out = sanitize_gemini_schema(&schema);
 
-    // The schema-level keyword IS still stripped — the filter did not simply stop working.
     assert!(
         out.get("$schema").is_none(),
         "a real schema-level keyword must still be stripped: {out}"
     );
-    // Every user property survives, so no `required` entry is left dangling.
+
     for name in ["examples", "const", "definitions", "$ref", "query"] {
         assert!(
             out.pointer(&format!(
@@ -5362,7 +5013,7 @@ fn test_sanitize_gemini_schema_keeps_user_properties_named_like_keywords() {
         schema.get("required"),
         "`required` is never rewritten, so every name in it must still be a property"
     );
-    // …and INSIDE a user property the keys are keywords again, so the filter applies there.
+
     assert!(
         out.pointer("/properties/examples/const").is_none(),
         "a keyword inside a property's own schema must still be stripped: {out}"
@@ -5379,13 +5030,7 @@ fn test_sanitize_gemini_schema_keeps_user_properties_named_like_keywords() {
 }
 
 /// A realistic Pydantic/Zod-generated nested-model schema: a top-level `address` property is a
-/// `$ref` into a `$defs` entry, and that entry is itself an object with its own typed properties
-/// and `required` list -- exactly the shape every JSON-Schema-emitting SDK produces for a nested
-/// model. Before the fix, `$ref` and `$defs` were both in `GEMINI_SCHEMA_REJECTED_KEYS` and simply
-/// deleted, so `address` collapsed to a bare `{}` with no `type` at all -- the model received an
-/// untyped opaque parameter (or Gemini 400s the request outright, depending on what else is in the
-/// schema). The fix resolves `$ref` against `$defs` and inlines the real subschema, so the nested
-/// structure survives.
+
 #[test]
 fn test_sanitize_gemini_schema_inlines_nested_ref_against_defs() {
     let schema = serde_json::json!({
@@ -5408,7 +5053,6 @@ fn test_sanitize_gemini_schema_inlines_nested_ref_against_defs() {
     });
     let out = sanitize_gemini_schema(&resolve_gemini_schema_refs(&schema));
 
-    // The nested property must be real, typed structure -- not a bare `{}`.
     assert_eq!(
         out.pointer("/properties/address/type"),
         Some(&serde_json::json!("object")),
@@ -5428,16 +5072,13 @@ fn test_sanitize_gemini_schema_inlines_nested_ref_against_defs() {
         Some(&serde_json::json!(["street", "zip"])),
         "the referenced model's own `required` list must survive inlining: {out}"
     );
-    // No leftover $ref/$defs/definitions anywhere in the sanitized output.
+
     assert!(out.get("$defs").is_none());
     assert!(out.pointer("/properties/address/$ref").is_none());
 }
 
 /// `additionalProperties` is only rejected by the live Gemini API when it carries a SCHEMA (the
-/// `dict[str, Model]` shape Pydantic/Zod emit as `{"additionalProperties": {"$ref": ...}}`) --
-/// google-gemini/gemini-cli#13694 shows the backend 400ing with "Expected boolean, received
-/// object" on exactly that shape. The boolean form (`true`/`false`) is genuinely accepted, so it
-/// must survive sanitization instead of being stripped.
+
 #[test]
 fn test_sanitize_gemini_schema_keeps_boolean_additional_properties_strips_schema_form() {
     let schema = serde_json::json!({
@@ -5471,14 +5112,9 @@ fn test_sanitize_gemini_schema_keeps_boolean_additional_properties_strips_schema
 }
 
 /// Gemini's THINKING tokens are billed and must be ledgered.
-/// `usageMetadata.thoughtsTokenCount` is a separate ADDITIVE term (Google's own `totalTokenCount` is
-/// prompt + candidates + thoughts), and the reader used to read only `candidatesTokenCount` — so
-/// every reasoning token the 2.5-series models generate (which they do BY DEFAULT, with no
-/// `thinkingConfig` in the request) was billed by Google at the output rate and ledgered by busbar
-/// as zero.
+
 #[test]
 fn test_gemini_usage_counts_thinking_tokens_as_output() {
-    // The shape a 2.5 model returns: 11 visible answer tokens plus 512 thinking tokens.
     let with_thoughts = serde_json::json!({
         "usageMetadata": {
             "promptTokenCount": 100,
@@ -5493,7 +5129,7 @@ fn test_gemini_usage_counts_thinking_tokens_as_output() {
         u.output_tokens, 523,
         "thinking tokens are GENERATED tokens: they belong in output_tokens with the visible answer"
     );
-    // The IR total now reconciles with the total Google itself reported.
+
     assert_eq!(
         u.billable_tokens(),
         with_thoughts["usageMetadata"]["totalTokenCount"]
@@ -5502,14 +5138,11 @@ fn test_gemini_usage_counts_thinking_tokens_as_output() {
         "IR billable total must equal Gemini's own totalTokenCount"
     );
 
-    // A non-thinking response is unchanged (the field is absent, not zero).
     let no_thoughts = serde_json::json!({
         "usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 11, "totalTokenCount": 111}
     });
     assert_eq!(gemini_usage(&no_thoughts).output_tokens, 11);
 
-    // Cache normalization still holds alongside the new term: promptTokenCount is a TOTAL that
-    // includes the cached prefix, so input_tokens is the UNCACHED remainder.
     let cached = serde_json::json!({
         "usageMetadata": {
             "promptTokenCount": 100,
@@ -5525,14 +5158,11 @@ fn test_gemini_usage_counts_thinking_tokens_as_output() {
 }
 
 /// The Gemini stream WRITE path must emit a streamed reasoning part for a `ThinkingDelta`
-/// (`{text, thought:true}`) and carry the signature for a `SignatureDelta`
-/// (`{thought:true, thoughtSignature}`), mirroring the non-stream `write_response` thinking shape.
-/// Previously both returned None, silently dropping a cross-protocol reasoning stream.
+
 #[test]
 fn test_stream_thinking_and_signature_deltas_emit_thought_parts() {
     let writer = GeminiWriter;
 
-    // ThinkingDelta → a `thought:true` text part on a candidates chunk.
     let think = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -5557,7 +5187,6 @@ fn test_stream_thinking_and_signature_deltas_emit_thought_parts() {
         "streamed thought part must be flagged thought:true: {think_part}"
     );
 
-    // SignatureDelta → a `thought:true` part bearing the opaque `thoughtSignature`.
     let sig = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -5586,9 +5215,7 @@ fn test_stream_thinking_and_signature_deltas_emit_thought_parts() {
 }
 
 /// A Gemini response carrying `candidates[].citationMetadata.citationSources[]` must read
-/// into IrCitation(s) on the answer's Text block (url/title/indices preserved), and a CROSS-
-/// protocol Cohere egress must re-emit citations carrying
-/// the url/title — closing the grounding-citation gap that previously dropped them entirely.
+
 #[test]
 fn gemini_citation_metadata_reads_and_projects_to_cohere() {
     let reader = GeminiReader;
@@ -5620,7 +5247,7 @@ fn gemini_citation_metadata_reads_and_projects_to_cohere() {
     let ir = reader
         .read_response(crate::codec::test_host::HOST, &body)
         .expect("read_response");
-    // Citations land on the Text block with neutral fields populated.
+
     let citations = ir
         .content
         .iter()
@@ -5637,7 +5264,6 @@ fn gemini_citation_metadata_reads_and_projects_to_cohere() {
     assert_eq!(citations[0].start_index, Some(0));
     assert_eq!(citations[0].end_index, Some(15));
 
-    // Cohere can represent these sources without an opaque Anthropic encrypted_index.
     let wire = Protocol::cohere()
         .writer()
         .write_response(crate::codec::test_host::HOST, &ir);
@@ -5657,8 +5283,7 @@ fn gemini_citation_metadata_reads_and_projects_to_cohere() {
 }
 
 /// Same-protocol Gemini→IR→Gemini citation round-trip re-emits candidate-level
-/// citationMetadata (verbatim source via `raw`), and a response WITHOUT citations stays free of a
-/// `citationMetadata` key.
+
 #[test]
 fn gemini_citations_roundtrip_and_absent_unaffected() {
     let reader = GeminiReader;
@@ -5678,7 +5303,7 @@ fn gemini_citations_roundtrip_and_absent_unaffected() {
     let mut ir = reader
         .read_response(crate::codec::test_host::HOST, &body)
         .expect("read_response");
-    // Force the cross-protocol boundary signal so the Gemini writer runs the full egress path.
+
     ir.created = Some(1);
     let wire = writer.write_response(crate::codec::test_host::HOST, &ir);
     let src = wire
@@ -5690,7 +5315,6 @@ fn gemini_citations_roundtrip_and_absent_unaffected() {
     );
     assert_eq!(src.get("startIndex").and_then(|v| v.as_i64()), Some(1));
 
-    // No citations → no citationMetadata key.
     let plain_body = serde_json::json!({
         "candidates": [{
             "content": {"role": "model", "parts": [{"text": "Plain."}]},
@@ -5712,20 +5336,11 @@ fn gemini_citations_roundtrip_and_absent_unaffected() {
 }
 
 /// A Gemini candidate whose content splits its output across MULTIPLE text
-/// parts. Google's `citationSources[].startIndex/endIndex` are candidate-relative byte offsets into
-/// the FULL concatenation of the candidate's text parts, not offsets into any single part. The
-/// reader must (a) convert the byte offset against the FULL concatenated text, not just the first
-/// part's text, and (b) attach the citation to the Text block whose span it actually falls in, with
-/// indices re-expressed relative to THAT block's own text (matching the Anthropic `char_location`
-/// per-block contract IrCitation follows). Before the fix, `read_response` anchored the byte->char
-/// conversion against only the FIRST Text block's text and always attached every citation there,
-/// so a citation whose span lands in a later part got a garbage (clamped-to-first-block-length)
-/// index and was attached to the wrong block.
+
 #[test]
 fn gemini_citation_offsets_correct_across_multiple_text_parts() {
     let reader = GeminiReader;
-    // Full candidate text: "Hello world. Paris is great." (all ASCII, so byte offset == char
-    // offset). "Paris" sits at byte 13..18 of the FULL text, inside the SECOND part.
+
     let first_part = "Hello world. ";
     let second_part = "Paris is great.";
     assert_eq!(first_part.len(), 13);
@@ -5764,15 +5379,12 @@ fn gemini_citation_offsets_correct_across_multiple_text_parts() {
         "both text parts must survive as blocks"
     );
 
-    // The FIRST block ("Hello world. ") must carry NO citation — the span does not fall in it.
     assert!(
         text_blocks[0].1.is_empty(),
         "citation must not attach to the first text block when its span lands in the second: {:?}",
         text_blocks[0].1
     );
 
-    // The SECOND block ("Paris is great.") must carry the citation, with indices relative to
-    // *this block's own text* (0..5, spanning "Paris"), not the candidate-wide 13..18.
     assert_eq!(
         text_blocks[1].1.len(),
         1,
@@ -5793,9 +5405,7 @@ fn gemini_citation_offsets_correct_across_multiple_text_parts() {
 }
 
 /// Gemini's candidate-level `citationSources[]` is CUMULATIVE: each chunk restates every source
-/// seen so far. Reading the whole list per chunk therefore re-emitted the earlier sources as fresh
-/// deltas, so a client assembling the stream saw the first citation N times. Only the sources this
-/// chunk ADDED belong in a delta.
+
 #[test]
 fn stream_gemini_cumulative_citation_sources_emit_only_the_new_ones() {
     let source_a = serde_json::json!({
@@ -5817,7 +5427,6 @@ fn stream_gemini_cumulative_citation_sources_emit_only_the_new_ones() {
                 "citationMetadata": {"citationSources": [source_a]}
             }]
         }),
-        // The SAME source restated, plus one new one.
         serde_json::json!({
             "candidates": [{
                 "content": {"role": "model", "parts": [{"text": " beta"}]},
@@ -5850,12 +5459,9 @@ fn stream_gemini_cumulative_citation_sources_emit_only_the_new_ones() {
 }
 
 /// STREAMING citations, cross-protocol: a Gemini stream chunk carrying candidate-level
-/// `citationMetadata.citationSources[]` must read into an `IrDelta::CitationsDelta` on the answer
-/// text block, and a cross-protocol Cohere egress must re-emit its url/title — closing the streaming
-/// grounding-citation gap that previously dropped the citation entirely.
+
 #[test]
 fn stream_gemini_citation_metadata_projects_to_cohere_citation_start() {
-    // Gemini delivers citations on a (late) chunk, here alongside the finishReason.
     let events = collect_stream(&[
         serde_json::json!({
             "candidates": [{
@@ -5880,7 +5486,6 @@ fn stream_gemini_citation_metadata_projects_to_cohere_citation_start() {
         }),
     ]);
 
-    // A CitationsDelta lands on the answer text block, neutral fields populated.
     let (cite_idx, citations) = events
         .iter()
         .find_map(|e| match e {
@@ -5897,8 +5502,6 @@ fn stream_gemini_citation_metadata_projects_to_cohere_citation_start() {
     assert_eq!(citations[0].start_index, Some(0));
     assert_eq!(citations[0].end_index, Some(15));
 
-    // The citation block index must be opened by a BlockStart and closed by a BlockStop —
-    // the stream stays balanced.
     assert!(
         events.iter().any(|e| matches!(
             e,
@@ -5940,16 +5543,11 @@ fn stream_gemini_citation_metadata_projects_to_cohere_citation_start() {
 }
 
 /// STREAMING citations, reverse direction: an `IrDelta::CitationsDelta` (as an Anthropic
-/// stream reader would produce) must project onto a native Gemini `citationMetadata.citationSources`
-/// chunk when written by the Gemini writer — and the shape-gate must REBUILD the Gemini source from
-/// the neutral fields rather than leak the foreign Anthropic `raw` through.
+
 #[test]
 fn stream_anthropic_citation_projects_to_gemini_citation_metadata() {
     let writer = GeminiWriter;
-    // A CitationsDelta whose `raw` is an ANTHROPIC-shaped object (a Gemini→Anthropic would never
-    // produce this; here we model the Anthropic→Gemini direction). The Gemini writer must NOT
-    // emit the Anthropic `raw` verbatim — it has no Gemini uri/index keys — and must synthesize
-    // a Gemini source from the neutral fields instead.
+
     writer.write_response_event(
         crate::codec::test_host::HOST,
         &IrStreamEvent::BlockDelta {
@@ -5985,7 +5583,7 @@ fn stream_anthropic_citation_projects_to_gemini_citation_metadata() {
     let src = body
         .pointer("/candidates/0/citationMetadata/citationSources/0")
         .expect("chunk must carry candidate-level citationSources");
-    // Synthesized from neutral fields — NOT the Anthropic raw (which has no `uri`).
+
     assert_eq!(
         src.get("uri").and_then(|v| v.as_str()),
         Some("https://anthropic.example/doc")
@@ -5993,7 +5591,7 @@ fn stream_anthropic_citation_projects_to_gemini_citation_metadata() {
     assert_eq!(src.get("title").and_then(|v| v.as_str()), Some("Doc Title"));
     assert_eq!(src.get("startIndex").and_then(|v| v.as_i64()), Some(3));
     assert_eq!(src.get("endIndex").and_then(|v| v.as_i64()), Some(9));
-    // The foreign Anthropic `type` tag must NOT leak into the Gemini source.
+
     assert!(
         src.get("type").is_none(),
         "Anthropic `raw` must not leak through the Gemini writer: {src}"
@@ -6001,7 +5599,7 @@ fn stream_anthropic_citation_projects_to_gemini_citation_metadata() {
 }
 
 /// A Gemini stream with NO citations must be unaffected — no `CitationsDelta` is produced,
-/// and the block balance is unchanged.
+
 #[test]
 fn stream_gemini_no_citations_unaffected() {
     let events = collect_stream(&[serde_json::json!({
@@ -6033,10 +5631,7 @@ fn stream_gemini_no_citations_unaffected() {
 }
 
 /// Each `IrToolChoice` variant must round-trip through Gemini's native
-/// `toolConfig.functionCallingConfig` shape (the tool-selection directive is a headline
-/// cross-protocol control — ir.rs:82): AUTO↔Auto, NONE↔None, ANY↔Required, and
-/// ANY+allowedFunctionNames:[n]↔Tool{n}. A dropped/degraded directive silently reverts forced tool
-/// use to the target's default on the seam.
+
 #[test]
 fn tool_choice_variants_round_trip_via_function_calling_config() {
     let cases = [
@@ -6052,7 +5647,6 @@ fn tool_choice_variants_round_trip_via_function_calling_config() {
         ),
     ];
     for (variant, expect_mode, expect_name) in cases {
-        // WRITE: the union projects to the native functionCallingConfig object.
         let wire = write_gemini_tool_choice(&variant);
         assert_eq!(
             wire.pointer("/mode").and_then(|m| m.as_str()),
@@ -6071,7 +5665,7 @@ fn tool_choice_variants_round_trip_via_function_calling_config() {
                 "no allowedFunctionNames expected for {variant:?}"
             );
         }
-        // READ back through the native toolConfig shape reproduces the same union.
+
         let tool_config = serde_json::json!({"functionCallingConfig": wire});
         assert_eq!(
             read_gemini_tool_choice(Some(&tool_config)),
@@ -6082,20 +5676,19 @@ fn tool_choice_variants_round_trip_via_function_calling_config() {
 }
 
 /// An UNKNOWN native `finishReason` (a future/novel Gemini token) maps to `IrStopReason::Other`
-/// (ir.rs:186 — no String payload), and on egress `Other` degrades to the honest native `OTHER`
-/// enum member, never an off-spec upper-cased token a strict client rejects.
+
 #[test]
 fn unknown_finish_reason_maps_to_other_and_writes_native_other() {
     assert_eq!(
         map_gemini_finish_reason("SOME_FUTURE_REASON"),
         crate::codec::ir::IrStopReason::Other
     );
-    // Egress: Other -> the valid native OTHER member.
+
     assert_eq!(
         write_gemini_stop_reason(crate::codec::ir::IrStopReason::Other),
         GEMINI_FINISH_OTHER
     );
-    // MALFORMED_FUNCTION_CALL is a modeled abnormal stop -> Error (not Other).
+
     assert_eq!(
         map_gemini_finish_reason(GEMINI_FINISH_MALFORMED_FUNCTION_CALL),
         crate::codec::ir::IrStopReason::Error
@@ -6103,9 +5696,7 @@ fn unknown_finish_reason_maps_to_other_and_writes_native_other() {
 }
 
 /// cachedContentTokenCount NORMALIZATION, WRITE side (the read side is covered by
-/// `test_cached_content_token_count_reads_into_cache_read`): the IR stores UNCACHED input, so the
-/// writer must ADD the cached prefix BACK to re-derive Gemini's TOTAL `promptTokenCount` and
-/// re-emit `cachedContentTokenCount`. Pins the inverse of the read normalization (ir.rs:457).
+
 #[test]
 fn write_response_reconstructs_prompt_token_count_with_cached() {
     let resp = crate::codec::ir::IrResponse {
@@ -6138,7 +5729,7 @@ fn write_response_reconstructs_prompt_token_count_with_cached() {
         um.get(FIELD_CANDIDATES_TOKEN_COUNT),
         Some(&serde_json::json!(5))
     );
-    // totalTokenCount is emitted (model present -> cross-protocol boundary signal): 100 + 5.
+
     assert_eq!(
         um.get(FIELD_TOTAL_TOKEN_COUNT),
         Some(&serde_json::json!(105))
@@ -6146,8 +5737,7 @@ fn write_response_reconstructs_prompt_token_count_with_cached() {
 }
 
 /// A system prompt must survive read→IR→write: Gemini's `systemInstruction.parts[]` reads into
-/// `IrRequest.system` and writes back to the same native container (the system prompt is a headline
-/// cross-protocol feature).
+
 #[test]
 fn system_instruction_round_trips_through_ir_system() {
     let body = serde_json::json!({
@@ -6164,7 +5754,7 @@ fn system_instruction_round_trips_through_ir_system() {
         crate::codec::ir::IrBlock::Text { text, .. } => assert_eq!(text, "You are terse."),
         other => panic!("expected a Text system block, got {other:?}"),
     }
-    // WRITE re-emits the native systemInstruction.parts[] container.
+
     let out = {
         let w = GeminiWriter;
         w.write_request(crate::codec::test_host::HOST, &ir)
@@ -6177,18 +5767,8 @@ fn system_instruction_round_trips_through_ir_system() {
     );
 }
 
-// --- Gemini 3 thoughtSignature on functionCall parts (H-thoughtsig) ---
-//
-// Gemini 3 attaches an opaque `thoughtSignature` string to a `functionCall` PART (a sibling key,
-// NOT nested inside the `functionCall` object) and REQUIRES it echoed back verbatim on the next
-// turn's request, or the backend 400s ("Function call ... is missing a thought_signature"). These
-// tests cover the reader capture (both request and response), the writer re-emission, and the
-// cross-protocol sentinel-fill path that is the actual production fix (a foreign-protocol
-// `ToolUse` block never has a real signature to echo, so `IrReq::prepare_for_egress` injects
-// Google's documented dummy value for a Gemini AI-Studio egress lane).
-
 /// `read_response` captures a part-level `thoughtSignature` sibling of `functionCall` into
-/// `IrBlock::ToolUse.thought_signature`.
+
 #[test]
 fn test_read_response_captures_function_call_thought_signature() {
     let reader = GeminiReader;
@@ -6220,8 +5800,7 @@ fn test_read_response_captures_function_call_thought_signature() {
 }
 
 /// `read_request` captures a part-level `thoughtSignature` from a `role:"model"` history turn
-/// (a prior assistant turn replayed back on the next request, exactly Gemini's own multi-turn
-/// tool-calling shape).
+
 #[test]
 fn test_read_request_captures_function_call_thought_signature_from_history() {
     let reader = GeminiReader;
@@ -6249,13 +5828,7 @@ fn test_read_request_captures_function_call_thought_signature_from_history() {
 }
 
 /// THE OUTAGE TEST. An OpenAI-shaped `ToolUse` block (no `thought_signature` — the OpenAI wire
-/// format has no such concept) is what busbar's cross-protocol seam actually produces when an
-/// OpenAI client's tool-call history is replayed against a Gemini backend. Before the fix, the
-/// Gemini writer emitted a bare `{"functionCall": {...}}` with no signature, and a Gemini 3
-/// backend 400s on it. `prepare_for_egress` with `thought_signature_fill: true` (the gate a
-/// Gemini AI-Studio egress lane resolves) must inject Google's documented sentinel so the emitted
-/// wire part carries `"thoughtSignature": "skip_thought_signature_validator"` as a literal,
-/// non-base64, non-wrapped JSON string.
+
 #[test]
 fn test_outage_cross_protocol_tool_use_gets_sentinel_thought_signature() {
     let mut ir_req = crate::codec::ir::IrRequest {
@@ -6298,8 +5871,7 @@ fn test_outage_cross_protocol_tool_use_gets_sentinel_thought_signature() {
         "a cross-protocol functionCall with no real signature must get Google's documented \
          sentinel injected as a literal JSON string, not omitted, not base64: {wire}"
     );
-    // The functionCall itself must still be well-formed and NOT carry the signature nested
-    // inside it (it is a sibling of functionCall on the Part object).
+
     assert_eq!(
         wire.pointer("/contents/0/parts/0/functionCall/name")
             .and_then(|s| s.as_str()),
@@ -6313,7 +5885,7 @@ fn test_outage_cross_protocol_tool_use_gets_sentinel_thought_signature() {
 }
 
 /// A real signature already present on the IR is NOT overwritten by `prepare_for_egress`'s fill
-/// step — the real value always wins over the sentinel.
+
 #[test]
 fn test_prepare_for_egress_does_not_overwrite_real_thought_signature() {
     let mut ir_req = crate::codec::ir::IrRequest {
@@ -6358,9 +5930,7 @@ fn test_prepare_for_egress_does_not_overwrite_real_thought_signature() {
 }
 
 /// VERTEX EXCLUSION: same outage scenario, but `thought_signature_fill: false` (simulating a
-/// Vertex/path_base lane, which is NOT confirmed to honor the sentinel bypass). The emitted part
-/// must carry NO `thoughtSignature` key at all — not the sentinel, and not a silently-emitted
-/// empty string.
+
 #[test]
 fn test_vertex_lane_gets_no_sentinel_thought_signature() {
     let mut ir_req = crate::codec::ir::IrRequest {
@@ -6403,9 +5973,7 @@ fn test_vertex_lane_gets_no_sentinel_thought_signature() {
 }
 
 /// MIXED PARALLEL CALLS: Google only signs the FIRST of N parallel function calls in a real
-/// Gemini turn. Two `ToolUse` blocks in one turn, only the first has a real signature — after
-/// `prepare_for_egress` with fill=true, the first must keep its real value and the second must
-/// get the sentinel (both end up `Some`, with different values).
+
 #[test]
 fn test_prepare_for_egress_fills_only_missing_signatures_in_parallel_calls() {
     let mut ir_req = crate::codec::ir::IrRequest {
@@ -6470,8 +6038,7 @@ fn test_prepare_for_egress_fills_only_missing_signatures_in_parallel_calls() {
 }
 
 /// `write_response` emits a real signature when present, never a sentinel (response-side is never
-/// touched by `prepare_for_egress`, which is request-side only), and omits the key entirely when
-/// absent rather than emitting an empty string.
+
 #[test]
 fn test_write_response_emits_real_signature_never_sentinel() {
     let writer = GeminiWriter;
@@ -6519,8 +6086,7 @@ fn test_write_response_emits_real_signature_never_sentinel() {
 }
 
 /// An empty-string `thoughtSignature` on the wire is treated as absent — it normalizes to `None`
-/// on read (matching the existing `Thinking` block's empty-string handling convention elsewhere
-/// in this reader), not `Some("")`.
+
 #[test]
 fn test_empty_string_thought_signature_normalizes_to_none() {
     let reader = GeminiReader;
@@ -6570,17 +6136,11 @@ fn test_empty_string_thought_signature_normalizes_to_none() {
 }
 
 /// Regression: the truncated-usage recovery path must count Gemini thinking tokens as
-/// OUTPUT, exactly as the main `gemini_usage` path does. `candidatesTokenCount` counts only the
-/// visible answer; the 2.5-series reasoning tokens arrive in the separate, ADDITIVE
-/// `thoughtsTokenCount`. On a HEAD-truncated response (large thinking overflows the reassembly cap),
-/// billing runs through `recover_truncated_usage`; reading only `candidatesTokenCount` there
-/// ledgered every thinking token as ZERO — under-billing and under-capping. Output must be the SUM
-/// (candidates + thoughts), and input must have the cached tokens subtracted.
+
 #[test]
 fn recover_truncated_usage_counts_thinking_as_output() {
     let reader = GeminiReader;
-    // A HEAD-truncated tail: the opening document structure is gone, but the trailing
-    // `usageMetadata` object is intact and self-contained.
+
     let tail = br#"{"usageMetadata":{"promptTokenCount":1000,"candidatesTokenCount":50,"thoughtsTokenCount":4000,"cachedContentTokenCount":200,"totalTokenCount":5050}}"#;
     let usage = reader
         .recover_truncated_usage(tail)
@@ -6597,7 +6157,7 @@ fn recover_truncated_usage_counts_thinking_as_output() {
 }
 
 /// Measure the nesting depth of a `Value` iteratively. A recursive walk would itself overflow the
-/// stack on the very input this test exists to bound, so the measurement must not recurse.
+
 fn value_depth(v: &serde_json::Value) -> usize {
     let mut max = 0usize;
     let mut stack = vec![(v, 1usize)];
@@ -6621,9 +6181,7 @@ fn value_depth(v: &serde_json::Value) -> usize {
 }
 
 /// A cycle-free "diamond" of chained `$defs` — each level references the next TWICE — has no cycle
-/// for the `active` stack to catch, so an unbudgeted inliner expands it into 2^N nodes and never
-/// returns. The inliner must spend a bounded node budget and degrade to the same untyped `{}` the
-/// cycle arm already returns.
+
 #[test]
 fn gemini_schema_ref_diamond_stays_within_budget() {
     const LEVELS: usize = 40;
@@ -6653,8 +6211,7 @@ fn gemini_schema_ref_diamond_stays_within_budget() {
 }
 
 /// Thousands of shallow sibling `$defs` chained singly are also cycle-free, but inline into one
-/// N-deep `Value` — deep enough that the recursive walk (and the recursive drop that follows)
-/// overflows the worker stack. The result's depth must be capped.
+
 #[test]
 fn gemini_schema_ref_flat_chain_depth_is_capped() {
     const LINKS: usize = 5_000;
@@ -6680,19 +6237,14 @@ fn gemini_schema_ref_flat_chain_depth_is_capped() {
 }
 
 /// The byte→char offset INDEX must answer every offset exactly as converting that offset on its own
-/// does — including the two degradations the contract promises: a mid-codepoint offset resolves to
-/// the nearest earlier boundary, and a past-the-end (or negative) offset clamps. Driven over a
-/// multibyte text with the offsets SHUFFLED, since the index is built in ascending order and a
-/// lookup must not depend on the order the citations happen to arrive in.
+
 #[test]
 fn gemini_char_index_matches_per_offset_conversion() {
-    // ASCII, 2-byte, 3-byte and 4-byte codepoints, so most offsets land mid-character.
     let text = "abc é ✓ 𝄞 déjà vu ✓✓ 𝄞𝄞 end";
     let index = GeminiCharIndex::build(text);
 
-    // Every byte position, a couple past the end, and a negative — visited out of order.
     let mut offsets: Vec<i64> = (-3..=(text.len() as i64 + 5)).collect();
-    // A deterministic shuffle: walk the range with a stride coprime to its length.
+
     let n = offsets.len();
     let shuffled: Vec<i64> = (0..n).map(|i| offsets[(i * 7 + 3) % n]).collect();
     offsets = shuffled;
@@ -6705,7 +6257,6 @@ fn gemini_char_index_matches_per_offset_conversion() {
         );
     }
 
-    // An empty text is the degenerate case: every offset resolves to 0.
     let empty = GeminiCharIndex::build("");
     for b in [-1, 0, 1, 99] {
         assert_eq!(empty.char_offset(b), gemini_byte_offset_to_char("", b));
@@ -6713,10 +6264,7 @@ fn gemini_char_index_matches_per_offset_conversion() {
 }
 
 /// The writer's `open_tools` accumulator grows one entry per distinct tool-block index a backend
-/// opens, and lives for the whole stream. The per-block byte cap bounds how LARGE one entry grows;
-/// nothing bounded how MANY there were, so an upstream streaming an unbounded run of distinct tool
-/// indices could grow the Vec until the process is OOM-killed. It must hold the same
-/// `MAX_GEMINI_TOOL_FRAMES` line the reader's `open_tools` does.
+
 #[test]
 fn test_writer_open_tools_capped_in_entry_count() {
     let writer = GeminiWriter;
@@ -6740,9 +6288,6 @@ fn test_writer_open_tools_capped_in_entry_count() {
     );
 }
 
-// ── GOLDEN PARITY CELL: the (class -> (status code, google.rpc.Code word)) pair this dialect
-//    renders, pinned as bytes; the nine classes are spelled by hand so the cell says the same thing
-//    whichever crate owns the enum.
 #[test]
 fn status_word_golden() {
     let golden: [(StatusClass, u16, &str); 9] = [
@@ -6766,11 +6311,7 @@ fn status_word_golden() {
 }
 
 /// STREAMED AND BUFFERED ANSWERS NAME A CALL ALIKE, AS IN 1.5.5. For parts `[text, call, call]` the
-/// second call is tool position 1: a text part before it counts once whether its block is still open
-/// or already closed (v1.5.5 `crates/busbar/src/proto/gemini/reader.rs:895`,
-/// `state.text_index.is_some()`). RED while the stream counted only a still-open text block (closed
-/// before the first call opened), so the second call hashed position 2 and its synthesized `call_…`
-/// id differed from 1.5.5's and from the buffered answer's.
+
 #[test]
 fn streamed_tool_ids_after_text_match_the_buffered_ids() {
     let body = serde_json::json!({
@@ -6822,7 +6363,7 @@ fn grounding_repeated_chunk_index_is_cloned_once() {
 }
 
 /// Supports that between them name more chunk bytes than the per-candidate budget stop adding
-/// citations rather than cloning the body many times over.
+
 #[test]
 fn grounding_clone_budget_bounds_total_cloned_bytes() {
     let big = "u".repeat(1024 * 1024);
@@ -6844,7 +6385,7 @@ fn grounding_clone_budget_bounds_total_cloned_bytes() {
 }
 
 /// The CHARACTER to BYTE direction of the index answers as the per-offset walk does, and marks kept
-/// fragment by fragment (as a stream keeps them) are the marks one pass over the whole text builds.
+
 #[test]
 fn gemini_char_index_byte_offsets_and_streamed_marks_match_the_walk() {
     let fragments: Vec<String> = (0..97)
@@ -6875,9 +6416,7 @@ fn gemini_char_index_byte_offsets_and_streamed_marks_match_the_walk() {
 }
 
 /// LLM3#3 (reader): a stream whose every chunk carries answer text AND the candidate's citation
-/// metadata converts each chunk's offsets against the answer kept indexed as it grew. Rebuilding the
-/// index (or recounting the answer) per chunk walks the whole answer once per chunk, quadratic in the
-/// stream; the walk here stays within a small multiple of the answer's own size.
+
 #[test]
 fn streamed_citation_chunks_do_not_rewalk_the_answer() {
     let mut state = StreamDecodeState::default();
@@ -6913,7 +6452,7 @@ fn streamed_citation_chunks_do_not_rewalk_the_answer() {
 }
 
 /// LLM3#3 (reader): the answer copy a stream keeps to anchor citation offsets is bounded by the
-/// translate cap; text past it is still delivered, only not copied.
+
 #[test]
 fn streamed_answer_copy_is_bounded_by_the_translate_cap() {
     let cap = busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
@@ -6962,7 +6501,7 @@ fn writer_stream_text_copy_is_bounded_by_the_translate_cap() {
 }
 
 /// LLM3#3 (writer): many streamed citation frames against one long text block convert through the
-/// index the writer kept as the text grew, not a walk of the block per offset.
+
 #[test]
 fn writer_streamed_citations_do_not_rewalk_the_block() {
     let writer = GeminiWriter;
@@ -7009,19 +6548,11 @@ fn writer_streamed_citations_do_not_rewalk_the_block() {
 }
 
 /// Convert a Gemini `startIndex`/`endIndex` BYTE offset (Google's `CitationSource` is documented
-/// measured in bytes) into a CHARACTER offset — the IR's `IrCitation::start_index`/`end_index`
-/// contract (`ir/mod.rs`). `byte_idx` is clamped to `text.len()` so an
-/// out-of-range upstream value degrades to "end of text" rather than panicking on a non-boundary
-/// slice.
-///
-/// The straightforward per-offset conversion, kept as the REFERENCE the `GeminiCharIndex`
-/// equivalence test measures against. Production reads go through the index, which answers the same
-/// question for a whole candidate in one pass over the text.
+
 fn gemini_byte_offset_to_char(text: &str, byte_idx: i64) -> i64 {
     let clamped = byte_idx.max(0) as usize;
     let boundary = clamped.min(text.len());
-    // A byte index that lands mid-codepoint (a malformed/adversarial upstream value) has no valid
-    // char count at that exact point; fall back to the nearest earlier boundary rather than panic.
+
     let safe_boundary = (0..=boundary)
         .rev()
         .find(|&b| text.is_char_boundary(b))
@@ -7030,10 +6561,7 @@ fn gemini_byte_offset_to_char(text: &str, byte_idx: i64) -> i64 {
 }
 
 /// The inverse of `gemini_byte_offset_to_char`: a CHARACTER offset (the IR contract) back to the
-/// BYTE offset Gemini's wire format expects. `char_idx` is clamped to the text's char count.
-///
-/// Kept as the REFERENCE `GeminiCharIndex::byte_offset` is measured against; production writes go
-/// through the index, so a text with many citations is not walked once per offset.
+
 fn gemini_char_offset_to_byte(text: &str, char_idx: i64) -> i64 {
     let clamped = char_idx.max(0) as usize;
     match text.char_indices().nth(clamped) {

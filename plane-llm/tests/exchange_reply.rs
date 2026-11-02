@@ -2,7 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The far end's answer, sans I/O: a far-end error judged, a whole answer translated, a relayed
-//! answer, and the reply that drives them, through the public API.
 
 use std::collections::HashMap;
 
@@ -15,10 +14,7 @@ use busbar_plane_llm::exchange::reply::wire::head_field;
 use serde_json::Value;
 
 /// The codec host these tests hand the plane: a FIXED entropy source and the system clock in whole
-/// seconds. Fixed, because the twin proofs here (one answer judged or relayed twice, compared byte
-/// for byte) need a minted id (a request id, a `chatcmpl-` id) to be the same in both: the plane
-/// draws every id from its host, and a CSPRNG would answer two different ids. A source that
-/// answers is still a source: every dialect mints its id as it does in production.
+
 struct TestHost;
 
 impl busbar_contract::codec::CodecHost for TestHost {
@@ -28,8 +24,7 @@ impl busbar_contract::codec::CodecHost for TestHost {
     }
 
     /// A FIXED wall clock: a relay stamps `created` from it, and the piece-boundary test compares two
-    /// relays of one stream byte for byte, so a running clock answered different bytes whenever the
-    /// two straddled a second (openai<-gemini, coverage run 40137430891).
+
     fn wall_clock_now(&self) -> Option<u64> {
         Some(1_700_000_000)
     }
@@ -69,7 +64,7 @@ fn field<'a>(fields: &'a [(String, Vec<u8>)], name: &str) -> Option<&'a [u8]> {
 }
 
 /// A dialect may declare a relayed head field the way its vendor spells it; the caller reads the
-/// wire (lower-case) form, and a name that is no legal field name is dropped, never fatal.
+
 #[test]
 fn a_declared_head_field_name_is_lowered_and_an_illegal_one_dropped() {
     let (name, value) = head_field("x-amzn-RequestId", b"req-1").expect("a legal name");
@@ -85,7 +80,7 @@ fn a_declared_head_field_name_is_lowered_and_an_illegal_one_dropped() {
 }
 
 /// The class of a far-end error: a mapped code, the built-in context-length code on a request-size
-/// status only, a mapped structured type, and the status; `context_length` never masks a 5xx.
+
 #[test]
 fn a_far_end_error_is_placed_in_its_class() {
     let em = map(&[
@@ -136,11 +131,11 @@ fn a_far_end_error_is_placed_in_its_class() {
     }
     let sig = normalize(400, &raw(400, Some("1302"), None), &em);
     assert_eq!(sig.provider_signal.as_deref(), Some("1302"));
-    // A mapped structured type with no provider code states the type as the signal.
+
     let sig = normalize(400, &raw(400, None, Some("overloaded_error")), &em);
     assert_eq!(sig.class, StatusClass::Overloaded);
     assert_eq!(sig.provider_signal.as_deref(), Some("overloaded_error"));
-    // The built-in context-length code states itself as the signal.
+
     let sig = normalize(
         400,
         &raw(400, Some("context_length_exceeded"), None),
@@ -156,9 +151,7 @@ fn a_far_end_error_is_placed_in_its_class() {
 const JSON_HEAD: &[(&[u8], &[u8])] = &[(b"content-type", b"application/json")];
 
 /// A far-end error judged, for every dialect: a caller's own credential failing is relayed
-/// unjudged; a client fault within one dialect is the far end's bytes, across dialects the
-/// caller's envelope; the deployment's refused credential is the caller's own refusal; a transient
-/// carries the relay the walk ends on.
+
 #[test]
 fn a_far_end_error_is_judged_for_every_pair() {
     let head = JSON_HEAD;
@@ -235,7 +228,7 @@ fn a_far_end_error_is_judged_for_every_pair() {
 }
 
 /// A caller that relays the far end's `x-amzn-*` fields reads them verbatim on a same-dialect
-/// relay; any other caller reads the far end's own request id.
+
 #[test]
 fn a_verbatim_relay_carries_the_native_head_fields() {
     let head: &[(&[u8], &[u8])] = &[
@@ -273,8 +266,7 @@ fn a_verbatim_relay_carries_the_native_head_fields() {
 }
 
 /// BUSBAR IS INVISIBLE ON A SAME-DIALECT ANSWER: every far head field reaches the caller in order,
-/// except what busbar governs (the far end's echo of the operator's tenant, and the operator's
-/// account-wide rate-limit state); nothing is invented.
+
 #[test]
 fn a_verbatim_relay_carries_every_far_field_but_the_governed_ones() {
     let head: &[(&[u8], &[u8])] = &[
@@ -323,8 +315,6 @@ fn a_verbatim_relay_carries_every_far_field_but_the_governed_ones() {
     }
 }
 
-// ── a whole answer ──────────────────────────────────────────────────────────────────────────────
-
 use busbar_plane_llm::exchange::reply::whole::{self, WholeCtx, WholeEnd};
 
 /// The letter the codec's golden corpus names each dialect by.
@@ -341,7 +331,7 @@ fn letter(dialect: &str) -> char {
 }
 
 /// Every native answer of `dialect` the codec's golden corpus holds: each `resp_X2Y_*.json` is a
-/// body written in dialect Y, so it is also a far end of dialect Y answering.
+
 pub fn native_answers(dialect: &str) -> Vec<(String, Vec<u8>)> {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/codec/tests/proto/golden");
     let infix = format!("2{}_", letter(dialect));
@@ -380,7 +370,7 @@ fn ctx<'a>(
 }
 
 /// Every far end's native answer, for a caller of every other dialect, is delivered in the
-/// caller's own dialect under `application/json`, with the usage the far end reported.
+
 #[test]
 fn a_whole_answer_is_delivered_in_the_callers_dialect() {
     let mut checked = 0;
@@ -425,7 +415,7 @@ fn a_failed_generation_is_a_502_that_keeps_its_usage() {
 }
 
 /// An answer the caller's dialect cannot be written from is a 500 in the caller's envelope; the
-/// cap and the cut are the 500 and the 502 of the same envelope.
+
 #[test]
 fn an_untranslatable_answer_is_the_callers_500() {
     for ingress in SIX {
@@ -446,7 +436,7 @@ fn an_untranslatable_answer_is_the_callers_500() {
 }
 
 /// A caller that asked for a JSON-array stream from a far end that answered one body reads a
-/// one-element array under `application/json`, and no request id.
+
 #[test]
 fn a_json_array_caller_reads_a_one_element_array() {
     let (_, body) = native_answers("openai")
@@ -459,8 +449,6 @@ fn a_json_array_caller_reads_a_one_element_array() {
     assert_eq!(v.as_array().map(Vec::len), Some(1), "{v}");
     assert_eq!(w.answer.fields.len(), 1, "{:?}", w.answer.fields);
 }
-
-// ── a relayed answer ────────────────────────────────────────────────────────────────────────────
 
 use busbar_plane_llm::exchange::reply::relay::{self, ContentType, Fed, Relay, RelayCtx};
 
@@ -516,7 +504,7 @@ fn relay_all(r: &mut Relay, far: &[u8], step: usize) -> Vec<u8> {
 }
 
 /// A far end's native stream of `dialect`: the OpenAI stream above as the translator writes it for
-/// a caller of that dialect.
+
 fn native_stream(dialect: &str) -> Vec<u8> {
     let mut ctx = relay_ctx(dialect, "openai", true);
     ctx.client_include_usage = true;
@@ -525,7 +513,7 @@ fn native_stream(dialect: &str) -> Vec<u8> {
 }
 
 /// A same-dialect whole body relays untouched (the far end's own bytes, borrowed) and its usage is
-/// read at the end — in every dialect, Bedrock included (no busbar-measured `metrics` is added).
+
 #[test]
 fn a_same_dialect_whole_body_relays_untouched_and_meters() {
     for dialect in SIX {
@@ -562,9 +550,7 @@ fn with_unknown_member(json: &[u8]) -> Vec<u8> {
 }
 
 /// SAME-DIALECT IDENTITY, the answer side (DIALECT FIDELITY; DIALECT-FIDELITY-DESIGN F4): in
-/// every dialect a buffered answer and a stream that carry a member busbar has never heard of reach
-/// the caller byte-identical, and are still metered. The RED arm is any reserialize or rebuild on
-/// the relay (a parse-and-write drops the member, sorts the keys, prints `1.50` as `1.5`).
+
 #[test]
 fn a_same_dialect_answer_carrying_an_unknown_member_reaches_the_caller_byte_identical() {
     for dialect in SIX {
@@ -613,14 +599,7 @@ fn a_same_dialect_answer_carrying_an_unknown_member_reaches_the_caller_byte_iden
 }
 
 /// A stream from a far end of every dialect reaches a caller of every dialect whole, whatever the
-/// piece boundaries, and its usage is read at the end.
-///
-/// ONE CLOCK FOR BOTH RELAYS. A Bedrock caller's `metadata` frame reports the stream's real elapsed
-/// `metrics.latencyMs` (1.5.5 bytes), read off the HOST's monotonic clock, so two relays of one
-/// stream on a running clock answer different bytes whenever they straddle a millisecond
-/// (bedrock<-responses, latencyMs 1 vs 0, on a loaded runner: merge-queue run 37136423381). The
-/// byte equality below is the piece-boundary claim, not a race against the clock, so both relays
-/// are fed by [`HOST`], which holds no monotonic clock.
+
 #[test]
 fn a_stream_relays_for_every_pair_whatever_the_piece_boundaries() {
     let mut checked = 0;
@@ -637,8 +616,6 @@ fn a_stream_relays_for_every_pair_whatever_the_piece_boundaries() {
             let pieces = relay_all(&mut r, &far, 7);
             assert!(!whole.is_empty(), "{ingress}<-{egress}");
             if ingress != "responses" && ingress != "anthropic" && ingress != "cohere" {
-                // Dialects that mint ids per stream answer different bytes run to run; the rest
-                // answer the same bytes whatever the boundaries.
                 assert_eq!(pieces, whole, "{ingress}<-{egress}");
             }
             let mut r = Relay::new(relay_ctx(ingress, egress, true));
@@ -655,7 +632,7 @@ fn a_stream_relays_for_every_pair_whatever_the_piece_boundaries() {
 }
 
 /// A stream cut after its first byte ends on the caller's own in-band error; one cut before any
-/// byte ends with no bytes and reports the far end's transfer as failed.
+
 #[test]
 fn a_cut_stream_ends_on_the_callers_error_frame() {
     for ingress in SIX {
@@ -693,8 +670,6 @@ fn a_json_array_caller_reads_its_stream_as_one_array() {
     assert!(!relay::takes_whole("openai", "anthropic", true, false));
     assert!(!relay::takes_whole("openai", "openai", true, true));
 }
-
-// ── the reply ───────────────────────────────────────────────────────────────────────────────────
 
 use busbar_plane_llm::exchange::arrive::Arrived;
 use busbar_plane_llm::exchange::attempt::stream_intent;
@@ -743,7 +718,7 @@ const AT: At = At {
 };
 
 /// A relayed stream: the caller's head on the first piece with an `Ok`, the bytes as frames
-/// complete, the usage cumulative, and the end on the last piece.
+
 #[test]
 fn a_reply_relays_a_stream_piece_by_piece() {
     let arrived = arrival("openai", true);
@@ -790,7 +765,7 @@ fn a_reply_relays_a_stream_piece_by_piece() {
 }
 
 /// A whole answer: nothing for the caller until the last piece, then the head, the translated
-/// body, the usage and `Ok`; over the cap, the caller's 500 at once.
+
 #[test]
 fn a_reply_takes_a_whole_answer_whole() {
     let arrived = arrival("openai", false);
@@ -822,11 +797,7 @@ fn a_reply_takes_a_whole_answer_whole() {
 }
 
 /// A TRANSLATED WHOLE ANSWER BILLS ON AN EARLY LEAVE. The door writes a
-/// whole answer to the caller in windows; a caller that leaves before the last one is a cancel, and
-/// the cancel bills the units the answer stated only when the reply says the caller had a usable
-/// part of it. 1.5.5 billed a buffered translated answer before writing a byte of it, so a delivered
-/// whole answer is that part from the moment it is handed over. An end that delivers nothing (here
-/// a body over the cap) is not.
+
 #[test]
 fn a_whole_answer_handed_to_the_caller_bills_when_the_caller_leaves_early() {
     let arrived = arrival("openai", false);
@@ -867,7 +838,7 @@ fn a_whole_answer_handed_to_the_caller_bills_when_the_caller_leaves_early() {
 }
 
 /// A far-end error: a client fault is `Hard` with the caller's answer; a transient is `Retry`
-/// with the relay the walk ends on; the fault names the disposition and the class.
+
 #[test]
 fn a_reply_judges_a_far_end_error() {
     let arrived = arrival("openai", false);
@@ -900,10 +871,7 @@ fn a_reply_judges_a_far_end_error() {
 }
 
 /// THE BREAKER'S READING beside the walk's verdict:
-/// a request too large for the window fails over with nothing recorded (RETRY, FAULT_NONE); an
-/// `error_map` entry naming `rate_limit` fails over and counts toward the trip (RETRY,
-/// FAULT_TRANSIENT); the caller's own bad input records nothing (HARD, FAULT_CALLER); a refused
-/// credential trips every cell (HARD, FAULT_HARD) — 1.5.5's per-disposition records.
+
 #[test]
 fn a_judged_far_end_error_carries_the_breakers_reading_apart_from_its_verdict() {
     use busbar_contract::abi::transport::{FAULT_CALLER, FAULT_HARD, FAULT_NONE, FAULT_TRANSIENT};
@@ -939,8 +907,7 @@ fn a_judged_far_end_error_carries_the_breakers_reading_apart_from_its_verdict() 
             "{status} {code}"
         );
     }
-    // RED: a 2xx that failed after its head is the compensating transient 1.5.5 recorded; an
-    // answer with no fault is no reading at all.
+
     assert_eq!(
         breaker_fault(Some(&Fault::Transient("upstream-generation-failed"))),
         FAULT_TRANSIENT
@@ -949,7 +916,7 @@ fn a_judged_far_end_error_carries_the_breakers_reading_apart_from_its_verdict() 
 }
 
 /// A cut: a stream after its first byte ends on the caller's error frame, `Hard`, the far end's
-/// transfer at fault; a whole answer cut is the caller's 502.
+
 #[test]
 fn a_reply_that_is_cut_says_so() {
     let arrived = arrival("openai", true);
@@ -985,8 +952,6 @@ fn a_reply_that_is_cut_says_so() {
     assert_eq!(cut.fault, Some(Fault::Transient("transport")));
 }
 
-// ── the stream's one drop path ─────────────────────
-
 /// A far end's stream of `far`, relayed to a caller of `caller`: the paths the relay dropped.
 fn stream_drops(caller: &str, far: &str, bytes: &[u8]) -> Vec<String> {
     let mut ctx = relay_ctx(caller, far, true);
@@ -999,7 +964,7 @@ fn stream_drops(caller: &str, far: &str, bytes: &[u8]) -> Vec<String> {
 }
 
 /// The far end's spec-shaped stream of `dialect` (the OpenAI stream itself, or as busbar writes it
-/// for that dialect).
+
 fn far_stream(dialect: &str) -> Vec<u8> {
     if dialect == "openai" {
         openai_stream()
@@ -1009,8 +974,7 @@ fn far_stream(dialect: &str) -> Vec<u8> {
 }
 
 /// RED ARM of the stream walk: a stream of members every dialect's map or code carries drops
-/// nothing, for every translated pair. A walk that named a carried member (a chunk's `id`, a
-/// keepalive, a block index) would fail here.
+
 #[test]
 fn a_translated_stream_of_carried_members_drops_nothing() {
     for far in SIX {
@@ -1026,8 +990,7 @@ fn a_translated_stream_of_carried_members_drops_nothing() {
 }
 
 /// A member the caller's dialect has no form for is dropped on the one drop path, named by its wire
-/// path ONCE for the whole stream however many frames carry it. RED before: a stream dropped it
-/// silently (no warn, no path, no audit row).
+
 #[test]
 fn a_translated_stream_names_each_unmapped_path_once() {
     let far = String::from_utf8(openai_stream())
@@ -1038,7 +1001,6 @@ fn a_translated_stream_names_each_unmapped_path_once() {
         vec!["obfuscation".to_string()]
     );
 
-    // An event of a kind the far end's reader does not carry: Anthropic's frame is a union on `type`.
     let mut far = far_stream("anthropic");
     for _ in 0..2 {
         far.extend_from_slice(b"event: zz_future\ndata: {\"type\":\"zz_future\",\"x\":1}\n\n");
@@ -1048,8 +1010,6 @@ fn a_translated_stream_names_each_unmapped_path_once() {
         vec!["type=zz_future".to_string()]
     );
 
-    // A genuinely unknown Responses event remains a once-only wire-path drop. Refusal events
-    // are mapped by the Responses reader and have their own positive relay witness below.
     let mut far = Vec::new();
     for _ in 0..2 {
         far.extend_from_slice(
@@ -1062,7 +1022,6 @@ fn a_translated_stream_names_each_unmapped_path_once() {
         vec!["type=response.zz_future".to_string()]
     );
 
-    // Bedrock's frames are keyed by their event name.
     let mut far =
         busbar_plane_llm::codec::eventstream::encode_frame("zzNeverHeardOf", br#"{"zz":{"b":1}}"#);
     far.extend_from_slice(&far_stream("bedrock"));
@@ -1073,7 +1032,7 @@ fn a_translated_stream_names_each_unmapped_path_once() {
 }
 
 /// Responses refusal events are mapped content: the actual relay carries each text delta into
-/// Chat's refusal field, without treating it as plain content or an unmapped wire-path loss.
+
 #[test]
 fn a_translated_responses_refusal_keeps_its_text_usage_and_has_no_drop() {
     let events = [
@@ -1161,10 +1120,8 @@ fn a_same_dialect_stream_drops_nothing() {
     assert!(stream_drops("openai", "openai", far.as_bytes()).is_empty());
 }
 
-// ── rehomed: the engine's answer tests on the served reply ──────────
-
 /// The legacy engine's answer tests (`crates/busbar-llm/src/engine/**`), rehomed onto the served
-/// reply. Each test names the legacy test it replaces, the 1.5.5 behaviour it pins, and its RED.
+
 mod rehomed_answers {
     use super::*;
     use std::borrow::Cow;
@@ -1182,7 +1139,7 @@ mod rehomed_answers {
     const EVENTSTREAM: &str = "application/vnd.amazon.eventstream";
 
     /// The host's entropy, so a dialect that mints an id (a request id, a message id) mints one:
-    /// a fixed fill (so an answer rendered twice reads the same twice), and no clock.
+
     struct SevensHost;
 
     impl busbar_contract::codec::CodecHost for SevensHost {
@@ -1197,7 +1154,7 @@ mod rehomed_answers {
     }
 
     /// The handle every exchange and codec call in this module is handed (it shadows the file's
-    /// OS-random host: these answers are compared byte for byte).
+
     const HOST: &dyn busbar_contract::codec::CodecHost = &SevensHost;
 
     /// A chat request in `dialect`'s own shape.
@@ -1216,7 +1173,7 @@ mod rehomed_answers {
     }
 
     /// The caller's arrival of `request` in `dialect`: a path-model dialect's URL names the model
-    /// and the stream, and `json_array` is a stream asked without the event-stream switch.
+
     fn arrived(dialect: &'static str, request: Value, json_array: bool) -> Arrived {
         let stream = request["stream"].as_bool().unwrap_or(false);
         Arrived {
@@ -1319,7 +1276,7 @@ mod rehomed_answers {
     }
 
     /// One answer through the served reply: the far end's `status` and `head`, its body in
-    /// `pieces`, then a transport cut when `cut`.
+
     fn answer(
         ctx: &ReplyCtx<'_>,
         status: u16,
@@ -1451,8 +1408,6 @@ mod rehomed_answers {
         envelope
     }
 
-    // ── a same-dialect failed generation, ungoverned (failed_generation.rs) ────────────────────────
-
     const SPLIT_HEAD: &[u8] = br#"{"id":"c-1","finish_re"#;
 
     /// The second half of a split same-dialect body whose stop reason is `finish`.
@@ -1464,7 +1419,7 @@ mod rehomed_answers {
     }
 
     /// A same-dialect whole body in two pieces through a relay that meters nothing (the ungoverned
-    /// relay): the caller's bytes and the end.
+
     fn ungoverned_relay(first: &[u8], second: &[u8]) -> (Vec<u8>, relay::End) {
         let mut ctx = relay_ctx("cohere", "cohere", false);
         ctx.meter = false;
@@ -1481,11 +1436,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::ungoverned_same_protocol_cohere_error_split_key_faults_the_breaker`
-    /// 1.5.5: an ungoverned same-dialect body whose stop-reason key
-    /// arrives split across two pieces (`"finish_re` | `ason":"ERROR"`) still ends as an error and
-    /// faults the far end, and the caller reads the far end's bytes unchanged.
-    /// RED: a stop-reason scan that keeps no state across pieces (or that runs only when metering)
-    /// reads the generation as a success, and the breaker records no fault.
+
     #[test]
     fn ungoverned_same_protocol_cohere_error_split_key_faults_the_breaker() {
         let tail = split_tail("ERROR");
@@ -1511,9 +1462,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::ungoverned_same_protocol_cohere_complete_split_key_is_no_fault`
-    /// 1.5.5: the same split body ending `COMPLETE` is a clean success, no fault.
-    /// RED: a scan that reads a split key as a failure (or any token as one) faults a healthy far
-    /// end.
+
     #[test]
     fn ungoverned_same_protocol_cohere_complete_split_key_is_no_fault() {
         let tail = split_tail("COMPLETE");
@@ -1528,8 +1477,6 @@ mod rehomed_answers {
         assert_eq!(read.end().fault, None);
     }
 
-    // ── the answer's head (client_header_forwarding_tests.rs) ──────────────────────────────────
-
     const FAR_ANSWER_HEAD: &[(&[u8], &[u8])] = &[
         (b"content-type", b"application/json"),
         (b"x-ratelimit-remaining-tokens", b"99"),
@@ -1539,10 +1486,7 @@ mod rehomed_answers {
     ];
 
     /// DIALECT-FIDELITY F2: a same-dialect 2xx answer carries the far head
-    /// (`openai-processing-ms: 12`) but the far end's echo of the operator's tenant
-    /// (`openai-organization`, `openai-project`) and the operator's account-wide rate-limit state
-    /// (`x-ratelimit-remaining-tokens`): one tenant never reads the operator's quota.
-    /// RED: a success relay that drops the far head, or one that leaks the operator's tenant or quota.
+
     #[test]
     fn a_same_dialect_answer_relays_the_upstream_head() {
         let (arrived, lane) = ask("openai", "openai", false);
@@ -1563,10 +1507,7 @@ mod rehomed_answers {
     }
 
     /// A same-dialect 400 `invalid_request_error` reaches the caller with the far head's values
-    /// (`retry-after: 7`) and without `openai-organization` or the operator's
-    /// `x-ratelimit-remaining-tokens`.
-    /// RED: a client-fault relay that keeps only the names, rewrites a value, or leaks the tenant or
-    /// the operator's quota.
+
     #[test]
     fn a_same_dialect_error_relays_the_upstream_head() {
         let (arrived, lane) = ask("openai", "openai", false);
@@ -1589,9 +1530,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/client_header_forwarding_tests.rs::a_translated_answer_relays_no_upstream_head`
-    /// 1.5.5: a translated answer is busbar's own answer in the caller's dialect and
-    /// carries none of the far end's head fields.
-    /// RED: a translated whole answer that relays the far head (`x-ratelimit-*`, `openai-*`).
+
     #[test]
     fn a_translated_answer_relays_no_upstream_head() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -1610,10 +1549,7 @@ mod rehomed_answers {
     }
 
     /// OWNER 2026-10-27 (busbar answers in the caller's dialect AND mode): a caller that asked for a
-    /// stream, served by a far end that answered one whole body, reads a stream synthesised from
-    /// that body, marked `synthesized` (the door writes its `egress.stream_synthesized` audit row),
-    /// and billed the body's own reported usage (7 in, 3 out).
-    /// RED: a synthesised stream left unmarked, or billed anything but the far end's report.
+
     #[test]
     fn a_stream_synthesised_from_a_whole_answer_is_marked_and_billed_from_the_body() {
         let body = chat_completion("hi");
@@ -1634,7 +1570,7 @@ mod rehomed_answers {
             (7, 3),
             "billed from the far end's whole body"
         );
-        // a caller that asked for no stream reads the whole answer, unmarked, billed the same
+
         let (arrived, lane) = ask("anthropic", "openai", false);
         let ctx = reply_ctx(&arrived, &lane, false);
         let read = answer(&ctx, 200, JSON_HEAD, &[&body], false);
@@ -1646,10 +1582,7 @@ mod rehomed_answers {
     }
 
     /// OWNER 2026-10-27 (busbar answers in the caller's dialect AND mode) holds within one dialect
-    /// too: a caller that asked for a stream, served by a far end of its own dialect that answered
-    /// one whole body, reads its dialect's stream synthesised from that body, marked and billed from
-    /// the body, never the far end's `application/json` body under `stream: true`.
-    /// RED: a same-dialect stream-asked, body-answered reply relayed as `application/json`.
+
     #[test]
     fn a_same_dialect_whole_answer_to_a_stream_ask_is_the_callers_stream() {
         let response = serde_json::to_vec(&json!({
@@ -1692,11 +1625,8 @@ mod rehomed_answers {
         }
     }
 
-    // ── the relayed stream (forward_pool_integration_tests.rs) ─────────────────────────────────
-
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_sse_events_single_data_prefix`
-    /// 1.5.5: each relayed event carries exactly one `data: ` prefix.
-    /// RED: a relay that re-prefixes a relayed frame (`data: data: event-0`).
+
     #[test]
     fn test_sse_events_single_data_prefix() {
         let (arrived, lane) = ask("anthropic", "anthropic", true);
@@ -1713,9 +1643,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_stream_inspection_tap_usage_parsing`
-    /// 1.5.5: a same-dialect stream reaches the caller byte-identical, its `[DONE]`
-    /// frame included, while its usage is read as it goes by.
-    /// RED: a usage tap that rewrites, drops or reorders a frame on the relay.
+
     #[test]
     fn test_stream_inspection_tap_usage_parsing() {
         let (arrived, lane) = ask("anthropic", "anthropic", true);
@@ -1734,11 +1662,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_forward_once_cross_protocol_auth_kinds_match_main_path`
-    /// 1.5.5: a far end of another dialect refusing the deployment's own credential
-    /// with a 401 OR a 403 reaches an anthropic caller as its own refusal (status 401, `type:
-    /// "error"`, `error.type: "authentication_error"`), records a hard fault, and never relays the
-    /// far end's body; the last-resort attempt runs the same judge.
-    /// RED: a 403 shaped as `permission_error` or `invalid_request_error`, or the far body relayed.
+
     #[test]
     fn test_forward_once_cross_protocol_auth_kinds_match_main_path() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -1767,10 +1691,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_cross_protocol_stream_openai_lane_to_anthropic_client`
-    /// 1.5.5: a chat-dialect stream reaches an anthropic caller as anthropic events
-    /// (`message_start`, `content_block_delta` with a `text_delta` of "hi", `message_stop`) and no
-    /// `chat.completion.chunk` leaks.
-    /// RED: a translated stream relaying the far end's frames, or missing the event sequence.
+
     #[test]
     fn test_cross_protocol_stream_openai_lane_to_anthropic_client() {
         let (arrived, lane) = ask("anthropic", "openai", true);
@@ -1795,13 +1716,8 @@ mod rehomed_answers {
         assert!(!text.contains("chat.completion.chunk"), "{text}");
     }
 
-    // ── the error shape across dialects (ingress_indistinguishability_tests.rs) ────────────────
-
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_error_kind_mapping`
-    /// 1.5.5: the kind a far status is reshaped into across dialects: 401
-    /// `authentication_error`, 403 `permission_error`, 429 `rate_limit_error`, 500 and 502
-    /// `api_error`, 503 `overloaded`, 504 `timeout`, 400 and 404 `invalid_request_error`.
-    /// RED: a 401/403 collapsed into `invalid_request_error`, or a 503 into `api_error`.
+
     #[test]
     fn test_cross_protocol_error_kind_mapping() {
         for (status, kind) in [
@@ -1820,11 +1736,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_shape_cross_protocol_error_auth_kinds`
-    /// 1.5.5: a far 401 / 403 `{"error":{"message":"nope"}}` relayed across
-    /// dialects to an anthropic caller keeps its status, wears `authentication_error` /
-    /// `permission_error`, and carries the far end's message `nope`.
-    /// RED: the kind of a 403 taken from the 401 arm, the message dropped for the generic one, or
-    /// the status changed.
+
     #[test]
     fn test_shape_cross_protocol_error_auth_kinds() {
         let body = br#"{"error":{"message":"nope"}}"#;
@@ -1854,10 +1766,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_ingress_stream_content_type_by_protocol`
-    /// 1.5.5: a caller's stream wears its own dialect's content type:
-    /// `text/event-stream` for the five event-stream dialects, `application/vnd.amazon.eventstream`
-    /// for bedrock, none for a dialect the plane does not hold.
-    /// RED: the far end's content type kept on a translated stream, or bedrock served as SSE.
+
     #[test]
     fn test_ingress_stream_content_type_by_protocol() {
         for dialect in ["openai", "anthropic", "gemini", "cohere", "responses"] {
@@ -1883,10 +1792,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_response_carries_ingress_ct_and_native_id`
-    /// 1.5.5: a chat-dialect answer with id `chatcmpl-LEAK123` and fingerprint
-    /// `fp_backend` reaches an anthropic caller as 200 `application/json`, `type: "message"`, an id
-    /// minted `msg_`, and neither foreign value anywhere in the body.
-    /// RED: the far end's id or fingerprint carried across, or the far content type kept.
+
     #[test]
     fn test_cross_protocol_response_carries_ingress_ct_and_native_id() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -1917,9 +1823,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_bedrock_ingress_success_carries_amzn_request_id`
-    /// 1.5.5: a bedrock caller's translated 2xx carries `x-amzn-requestid`, a
-    /// 36-character UUID, exactly once.
-    /// RED: a success head with no request id, or the id attached twice.
+
     #[test]
     fn test_bedrock_ingress_success_carries_amzn_request_id() {
         let (arrived, lane) = ask("bedrock", "openai", false);
@@ -1933,9 +1837,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_ingress_success_carries_request_id_header`
-    /// 1.5.5: an anthropic caller's translated 2xx carries a minted `request-id`
-    /// in the native `req_` shape, exactly once.
-    /// RED: no request id on a translated success, or a duplicate from a double attach.
+
     #[test]
     fn test_anthropic_ingress_success_carries_request_id_header() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -1949,9 +1851,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_ingress_stream_carries_request_id_header`
-    /// 1.5.5: an anthropic caller's streamed 2xx from a far end that sent no id
-    /// carries a minted `request-id` in the `req_` shape.
-    /// RED: the stream head built without the request id the buffered head carries.
+
     #[test]
     fn test_anthropic_ingress_stream_carries_request_id_header() {
         let (arrived, lane) = ask("anthropic", "anthropic", true);
@@ -1964,10 +1864,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_client_fault_reshapes_error_envelope`
-    /// 1.5.5: a chat-dialect 400 (`param`, `code`) reaches an anthropic caller as a
-    /// 400 `application/json` anthropic envelope (`type: "error"`, `error.type:
-    /// "invalid_request_error"`) carrying the far message, with no `param` or `code` member.
-    /// RED: the far end's own envelope relayed across dialects.
+
     #[test]
     fn test_cross_protocol_client_fault_reshapes_error_envelope() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -2000,9 +1897,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_same_proto_error_relays_upstream_request_id_verbatim_once`
-    /// 1.5.5: a same-dialect anthropic 400 carrying `request-id:
-    /// upstream-anthropic-rid-0001` reaches the caller as 400 with that `request-id` EXACTLY once.
-    /// RED: a minted id in place of the far one, or a second `request-id` appended beside it.
+
     #[test]
     fn test_anthropic_same_proto_error_relays_upstream_request_id_verbatim_once() {
         let (arrived, lane) = ask("anthropic", "anthropic", false);
@@ -2023,11 +1918,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_same_proto_passthrough_401_relays_request_id_verbatim_once`
-    /// 1.5.5: the caller's own credential refused by a same-dialect far end (a
-    /// passthrough 401 carrying `request-id: upstream-rid-passthrough`) is relayed as 401, the far
-    /// body as it was, unjudged, and that `request-id` exactly once.
-    /// RED: a passthrough 401 judged as the deployment's refusal, or its request id minted or
-    /// doubled.
+
     #[test]
     fn test_anthropic_same_proto_passthrough_401_relays_request_id_verbatim_once() {
         let (arrived, lane) = ask("anthropic", "anthropic", false);
@@ -2055,10 +1946,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_bedrock_converse_stream_buffered_cross_protocol_emits_binary_eventstream`
-    /// 1.5.5: a bedrock caller that asked to stream, answered one chat-dialect body,
-    /// reads `application/vnd.amazon.eventstream` frames (`messageStart` first, then
-    /// `contentBlockDelta`, `messageStop`, `metadata`) under a UUID `x-amzn-requestid`.
-    /// RED: the buffered answer written as JSON for a stream caller, or as SSE text.
+
     #[test]
     fn test_bedrock_converse_stream_buffered_cross_protocol_emits_binary_eventstream() {
         let (arrived, lane) = ask("bedrock", "openai", true);
@@ -2085,10 +1973,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_gemini_json_array_buffered_cross_protocol_emits_one_element_array`
-    /// 1.5.5: a gemini caller that asked for a JSON-array stream, answered one
-    /// chat-dialect body, reads 200 under exactly `application/json` a one-element array whose
-    /// element carries `candidates` and no `choices`.
-    /// RED: a bare object, SSE frames, or the far end's `choices` inside the array.
+
     #[test]
     fn test_gemini_json_array_buffered_cross_protocol_emits_one_element_array() {
         let body = chat_completion("Hi");
@@ -2107,9 +1992,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_gemini_json_array_buffered_via_forward_once_matches_primary`
-    /// 1.5.5: the last-resort attempt delivers the same one-element array under
-    /// `application/json` as the primary path; the served reply runs one translate for both.
-    /// RED: the attempt's reply answering anything but the one-element `candidates` array.
+
     #[test]
     fn test_gemini_json_array_buffered_via_forward_once_matches_primary() {
         let arrived = arrived("gemini", chat_request("gemini", true), true);
@@ -2130,10 +2013,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_non_gemini_stream_buffered_cross_protocol_stays_a_plain_object_not_an_array`
-    /// 1.5.5: a chat caller that asked to stream, answered one anthropic body, reads
-    /// its own `text/event-stream` chunks, each `data:` a JSON object, one carrying `choices`, and
-    /// never a JSON array.
-    /// RED: the array wrap applied to a caller that did not ask for one.
+
     #[test]
     fn test_non_gemini_stream_buffered_cross_protocol_stays_a_plain_object_not_an_array() {
         let (arrived, lane) = ask("openai", "anthropic", true);
@@ -2157,13 +2037,8 @@ mod rehomed_answers {
         );
     }
 
-    // ── a bedrock caller (ingress_integration_tests.rs) ────────────────────────────────────────
-
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_converse_routes_and_returns_json`
-    /// 1.5.5: a bedrock caller's non-stream answer from a chat-dialect far end is
-    /// Converse JSON (`output`/`usage`) under `application/json`, with an `x-amzn-requestid` shaped
-    /// 8-4-4-4-12 lowercase hex.
-    /// RED: no request id, or one that is not UUID-shaped.
+
     #[test]
     fn test_bedrock_converse_routes_and_returns_json() {
         let (arrived, lane) = ask("bedrock", "openai", false);
@@ -2185,11 +2060,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_converse_stream_returns_binary_eventstream`
-    /// 1.5.5: a bedrock caller's stream from a chat-dialect far end is
-    /// `application/vnd.amazon.eventstream`, a whole sequence of frames (`messageStart`,
-    /// `contentBlockDelta`, `messageStop`) with nothing left over, under a UUID-shaped
-    /// `x-amzn-requestid`.
-    /// RED: SSE text in a binary body, a partial trailing frame, or no request id on the stream.
+
     #[test]
     fn test_bedrock_converse_stream_returns_binary_eventstream() {
         let (arrived, lane) = ask("bedrock", "openai", true);
@@ -2219,10 +2090,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_same_protocol_stream_passthrough_forwards_upstream_request_id`
-    /// 1.5.5: a same-dialect bedrock stream keeps the far content type, relays the
-    /// far frames in order (`messageStart`, `contentBlockDelta`, `messageStop`, `metadata`), and
-    /// forwards the far `x-amzn-requestid` (`fixed-upstream-amzn-req-id-0001`) once, never minted.
-    /// RED: a minted UUID in place of the far id, or a re-encoded or reordered frame sequence.
+
     #[test]
     fn test_bedrock_same_protocol_stream_passthrough_forwards_upstream_request_id() {
         let (arrived, lane) = ask("bedrock", "bedrock", true);
@@ -2270,10 +2138,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_same_protocol_converse_non_stream_forwards_upstream_request_id`
-    /// 1.5.5: a same-dialect bedrock Converse answer relays under the far
-    /// `application/json`, its bytes unchanged, with the far `x-amzn-requestid`
-    /// (`fixed-upstream-amzn-req-id-nonstream-0001`) once.
-    /// RED: the far request id dropped or replaced by a minted one on the non-stream relay.
+
     #[test]
     fn test_bedrock_same_protocol_converse_non_stream_forwards_upstream_request_id() {
         let (arrived, lane) = ask("bedrock", "bedrock", false);
@@ -2301,7 +2166,7 @@ mod rehomed_answers {
     }
 
     /// The checks every bedrock caller's cut stream answers to: pure binary frames, nothing left
-    /// over, and a trailing `InternalServerException` exception frame.
+
     fn assert_binary_exception_tail(read: &Read) {
         let body = &read.body;
         assert!(
@@ -2318,10 +2183,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_same_protocol_stream_mid_stream_transport_error_appends_binary_exception`
-    /// 1.5.5: a same-dialect bedrock stream cut after its first frame keeps the
-    /// eventstream content type and ends on a CRC-valid binary `InternalServerException` frame,
-    /// never SSE text.
-    /// RED: an SSE error frame spliced into the binary body, or the cut ending with no frame.
+
     #[test]
     fn test_bedrock_same_protocol_stream_mid_stream_transport_error_appends_binary_exception() {
         let (arrived, lane) = ask("bedrock", "bedrock", true);
@@ -2342,9 +2204,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_ingress_mid_stream_transport_error_appends_binary_exception`
-    /// 1.5.5: a bedrock caller's translated stream cut after its first far event
-    /// ends on a binary `InternalServerException` frame, the body pure frames.
-    /// RED: the caller's error written as SSE text over a binary stream.
+
     #[test]
     fn test_bedrock_ingress_mid_stream_transport_error_appends_binary_exception() {
         let (arrived, lane) = ask("bedrock", "openai", true);
@@ -2363,9 +2223,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_openai_ingress_mid_stream_transport_error_appends_native_sse`
-    /// 1.5.5: a chat caller's stream cut mid-way ends on a bare `data:` frame (no
-    /// `event:` line) carrying the native `error` envelope.
-    /// RED: a named event on a chat stream, or a trailing frame with no `error` member.
+
     #[test]
     fn test_openai_ingress_mid_stream_transport_error_appends_native_sse() {
         let (arrived, lane) = ask("openai", "openai", true);
@@ -2378,13 +2236,8 @@ mod rehomed_answers {
         assert!(last_payload(&text).get("error").is_some(), "{text}");
     }
 
-    // ── a gemini caller ────────────────────────────────────────────────────────────────────────
-
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_stream_generate_content_alt_sse_is_event_stream`
-    /// 1.5.5: a gemini caller streaming with the event-stream switch reads
-    /// `text/event-stream` frames that are native `GenerateContentResponse`s (`candidates`), none
-    /// carrying the far end's `choices`.
-    /// RED: the far chunks relayed under the right content type.
+
     #[test]
     fn test_gemini_stream_generate_content_alt_sse_is_event_stream() {
         let (arrived, lane) = ask("gemini", "openai", true);
@@ -2405,10 +2258,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_alt_sse_mid_stream_transport_error_appends_native_sse_frame`
-    /// 1.5.5: a gemini event-stream caller's cut stream stays `text/event-stream`,
-    /// carries no `event:` line, no `choices` and no `chat.completion.chunk`, and ends on a
-    /// `google.rpc.Status`-shaped frame (`error.status`).
-    /// RED: a named error event, a JSON-array close, or a chat-dialect error envelope.
+
     #[test]
     fn test_gemini_alt_sse_mid_stream_transport_error_appends_native_sse_frame() {
         let (arrived, lane) = ask("gemini", "openai", true);
@@ -2430,9 +2280,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_json_array_mid_stream_error_closes_array_no_sse`
-    /// 1.5.5: a gemini JSON-array caller's cut stream is `application/json`, still
-    /// one valid JSON array, with no `event:`/`data:` text, closing on an `error.status` element.
-    /// RED: an unclosed array, or an SSE error frame inside an array body.
+
     #[test]
     fn test_gemini_json_array_mid_stream_error_closes_array_no_sse() {
         let arrived = arrived("gemini", chat_request("gemini", true), true);
@@ -2460,13 +2308,8 @@ mod rehomed_answers {
         );
     }
 
-    // ── an anthropic caller ────────────────────────────────────────────────────────────────────
-
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_anthropic_cross_protocol_message_start_full_skeleton`
-    /// 1.5.5: a translated stream's `message_start` carries the full skeleton: an
-    /// id minted `msg_`, `type: "message"`, `content: []`, `stop_reason: null`, `stop_sequence:
-    /// null`.
-    /// RED: a `message_start` missing a skeleton member an SDK reads.
+
     #[test]
     fn test_anthropic_cross_protocol_message_start_full_skeleton() {
         let (arrived, lane) = ask("anthropic", "openai", true);
@@ -2500,10 +2343,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_passthrough_401_cross_protocol_reshaped_to_ingress`
-    /// 1.5.5: the caller's own credential refused by a far end of another dialect
-    /// keeps its 401 and is reshaped into the caller's envelope (`type: "error"`, `error.type:
-    /// "authentication_error"`), unjudged.
-    /// RED: the far end's foreign envelope relayed verbatim across dialects.
+
     #[test]
     fn test_passthrough_401_cross_protocol_reshaped_to_ingress() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -2526,13 +2366,8 @@ mod rehomed_answers {
         );
     }
 
-    // ── each caller's own stream vocabulary ────────────────────────────────────────────────────
-
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_openai_ingress_stream_emits_native_openai_frames`
-    /// 1.5.5: a same-dialect chat stream is `text/event-stream`, bare `data:` frames
-    /// (no `event:` line), every JSON chunk's `object` is `chat.completion.chunk`, and it ends on
-    /// `[DONE]`.
-    /// RED: a dropped `[DONE]`, a mangled object tag, or a named event injected.
+
     #[test]
     fn test_openai_ingress_stream_emits_native_openai_frames() {
         let (arrived, lane) = ask("openai", "openai", true);
@@ -2563,10 +2398,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_cohere_ingress_stream_emits_native_cohere_frames`
-    /// 1.5.5: a cohere caller's translated stream is `text/event-stream` whose
-    /// frames walk `message-start` before `message-end` with a `content-delta`, and no
-    /// `chat.completion.chunk` leaks.
-    /// RED: the far chunks relayed, or the cohere vocabulary out of order.
+
     #[test]
     fn test_cohere_ingress_stream_emits_native_cohere_frames() {
         let (arrived, lane) = ask("cohere", "openai", true);
@@ -2597,10 +2429,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_responses_ingress_stream_emits_native_responses_events`
-    /// 1.5.5: a responses caller's translated stream is `text/event-stream` with
-    /// `response.created` before `response.completed` and a `response.output_text.delta`, and no
-    /// `chat.completion.chunk` leaks.
-    /// RED: the far chunks relayed, or the responses events out of order.
+
     #[test]
     fn test_responses_ingress_stream_emits_native_responses_events() {
         let (arrived, lane) = ask("responses", "openai", true);
@@ -2635,10 +2464,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_cohere_ingress_mid_stream_transport_error_appends_native_sse`
-    /// 1.5.5: a cohere caller's cut stream ends on a bare `data:` `message-end`
-    /// frame whose `delta.finish_reason` is `ERROR`, with no top-level `message`, no `event:` line
-    /// and no `chat.completion.chunk`.
-    /// RED: a chat-dialect `{"error":…}` frame, or a free-text detail on a cohere wire.
+
     #[test]
     fn test_cohere_ingress_mid_stream_transport_error_appends_native_sse() {
         let (arrived, lane) = ask("cohere", "openai", true);
@@ -2661,10 +2487,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_responses_ingress_mid_stream_transport_error_appends_response_failed`
-    /// 1.5.5: a responses caller's cut stream ends on `event: response.failed`
-    /// whose data is the stream shape (`response.status: "failed"`, `response.error.message`), with
-    /// no top-level `error`.
-    /// RED: the non-stream `{"error":…}` envelope written into a responses stream.
+
     #[test]
     fn test_responses_ingress_mid_stream_transport_error_appends_response_failed() {
         let (arrived, lane) = ask("responses", "openai", true);
@@ -2687,13 +2510,8 @@ mod rehomed_answers {
         assert!(failed.get("error").is_none(), "{failed}");
     }
 
-    // ── the cut stream's frame (mid_stream_error_tests.rs, wire_tests.rs) ─────────────────────
-
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_mid_stream_generic_detail_has_no_leak_markers`
-    /// 1.5.5: every client-facing fallback detail is free of transport and proxy
-    /// vocabulary; the gemini array close and the four detail-carrying stream errors carry the
-    /// generic detail; cohere's `message-end` `ERROR` frame carries no detail at all.
-    /// RED: a fallback string naming `upstream`, `proxy`, a URL or a transport library.
+
     #[test]
     fn test_mid_stream_generic_detail_has_no_leak_markers() {
         const LEAK_MARKERS: &[&str] = &[
@@ -2768,11 +2586,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_bedrock_ingress_mid_stream_error_is_binary_exception_frame`
-    /// 1.5.5: a bedrock caller's cut-stream error is one CRC-valid binary frame
-    /// (total length, prelude CRC and message CRC all true) whose headers name an `exception`
-    /// `:message-type` of `InternalServerException`, and whose JSON payload `message` is the
-    /// detail.
-    /// RED: SSE text over a binary stream, a bad CRC, or the detail lost from the payload.
+
     #[test]
     fn test_bedrock_ingress_mid_stream_error_is_binary_exception_frame() {
         let crc = crc32fast::hash;
@@ -2803,11 +2617,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_sse_ingress_mid_stream_error_uses_native_framing`
-    /// 1.5.5: the cut-stream frame is each dialect's own streaming error: a bare
-    /// `data:` frame for openai, cohere and gemini (cohere's a `message-end` `ERROR`); `event:
-    /// error` with `error.message` for anthropic; `event: response.failed` with the stream shape
-    /// (`response.status: "failed"`, `response.error.message`, no top-level `error`) for responses.
-    /// RED: one dialect's framing (an `event:` line, the HTTP envelope) written for another.
+
     #[test]
     fn test_sse_ingress_mid_stream_error_uses_native_framing() {
         for dialect in ["openai", "cohere", "gemini"] {
@@ -2867,9 +2677,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_client_fault_kind_mapping`
-    /// 1.5.5: a client fault is reshaped with `context_length_exceeded` for the
-    /// context-length class and `invalid_request_error` for a client error.
-    /// RED: the context-length kind lost to the generic one.
+
     #[test]
     fn test_client_fault_kind_mapping() {
         assert_eq!(
@@ -2883,9 +2691,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_extract_error_message`
-    /// 1.5.5: the far message is `error.message`, else a top-level `message`, and
-    /// none for a body that is not JSON or names neither.
-    /// RED: a foreign body's text lifted when it names no message.
+
     #[test]
     fn test_extract_error_message() {
         assert_eq!(
@@ -2901,9 +2707,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/mid_stream_error_tests.rs::test_is_stream_content_type`
-    /// 1.5.5: `text/event-stream` (with parameters too) and
-    /// `application/vnd.amazon.eventstream` stream; `application/json` and an empty type do not.
-    /// RED: a parameterized SSE type read as a whole body, or JSON read as a stream.
+
     #[test]
     fn test_is_stream_content_type() {
         assert!(wire::is_stream_content_type("text/event-stream"));
@@ -2916,10 +2720,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/wire_tests.rs::unknown_ingress_mid_stream_error_is_a_bare_data_frame_from_core`
-    /// 1.5.5: a caller of a dialect the plane does not hold gets a bare `data:`
-    /// frame (no `event:` line) of the agnostic envelope: `error.type: "api_error"`,
-    /// `error.message` the detail.
-    /// RED: some dialect's framing or vocabulary claimed for an unknown caller.
+
     #[test]
     fn unknown_ingress_mid_stream_error_is_a_bare_data_frame_from_core() {
         let text = String::from_utf8(wire::mid_stream_error_bytes(
@@ -2947,9 +2748,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/wire_tests.rs::status_word_golden_engine_client_fault_kind`
-    /// 1.5.5's golden column: every class but context length is reshaped as
-    /// `invalid_request_error`; context length as `context_length_exceeded`.
-    /// RED: any class's kind word moved (a rate limit shaped `rate_limit_error` on a client fault).
+
     #[test]
     fn status_word_golden_engine_client_fault_kind() {
         let golden: [(StatusClass, &str); 9] = [
@@ -2968,11 +2767,8 @@ mod rehomed_answers {
         }
     }
 
-    // ── the plane's class rule and error relay against 1.5.5's (plane_reply_parity_tests.rs) ─
-
     /// The breaker's class rule (`busbar-kernel-breaker` `classify::normalize_raw_error`, 1.5.5's),
-    /// transcribed: a mapped code (never `context_length` over a 5xx), the built-in context-length
-    /// code on 400/413 only, a mapped structured type (same guard), then the status.
+
     fn breaker_rule(
         raw: &RawUpstreamError,
         error_map: &HashMap<String, String>,
@@ -3021,18 +2817,14 @@ mod rehomed_answers {
             529 => StatusClass::Overloaded,
             500..=599 => StatusClass::ServerError,
             0 => StatusClass::Network,
-            // A true 4xx, and a 2xx/3xx reaching the error path: the caller's side.
+
             _ => StatusClass::ClientError,
         };
         signal(class, provider_signal)
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/plane_reply_parity_tests.rs::the_planes_class_rule_is_the_breakers`
-    /// 1.5.5: over 2 error maps x 8 provider codes x 8 structured types x 15
-    /// statuses x 2 retry-afters = 3840 raw errors, the plane's `failure::normalize` places each
-    /// in the class, provider signal and retry-after the breaker's rule does.
-    /// RED: any cell where the plane's copy of the rule drifts from the breaker's (a mapped
-    /// `context_length` masking a 5xx, the retry-after dropped, a type winning over a code).
+
     #[test]
     fn the_planes_class_rule_is_the_breakers() {
         let maps: Vec<HashMap<String, String>> = vec![
@@ -3104,15 +2896,7 @@ mod rehomed_answers {
     ];
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/plane_reply_parity_tests.rs::a_far_end_error_reads_the_same_through_the_plane`
-    /// 1.5.5, for every dialect pair and each legacy fixture (400
-    /// `invalid_request_error`, 422 `{"message":"bad field"}`, 401 `authentication_error`):
-    /// within one dialect a client fault is the far status, every far head field and the far bytes
-    /// exactly; across dialects it is the far status in the caller's own envelope (kind
-    /// `invalid_request_error`, the far message), its head no far field; a refused deployment
-    /// credential is the caller dialect's own refusal (its status, kind and sentence), never the
-    /// far message.
-    /// RED: a foreign body relayed across dialects, a far id leaked into a reshaped head, a
-    /// same-dialect fault rewritten, or a far 401 answered with the far message.
+
     #[test]
     fn a_far_end_error_reads_the_same_through_the_plane() {
         let fixtures: [(u16, &[u8], Option<&str>); 3] = [
@@ -3192,10 +2976,7 @@ mod rehomed_answers {
                                 )),
                                 "{what}"
                             );
-                            // Never the far body; and never the far sentence, except where the
-                            // caller's own refusal sentence IS that sentence (the anthropic
-                            // dialect's 1.5.5 words), which the envelope equality above already
-                            // pins as the caller's own.
+
                             assert_ne!(read.body, body, "{what}: never the far body");
                             if decl.auth_failure_message != "invalid x-api-key" {
                                 assert!(!read.text().contains("invalid x-api-key"), "{what}");
@@ -3210,12 +2991,7 @@ mod rehomed_answers {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/plane_reply_parity_tests.rs::a_far_end_errors_relay_is_the_engines`
-    /// 1.5.5, for 5 far statuses (429, 500, 503, 504, 529) x 36 dialect pairs (180
-    /// cases): the relay the walk ends on keeps the far status; within one dialect its body is the
-    /// far body byte for byte; across dialects it is the caller's own envelope with the kind 1.5.5
-    /// gave that status (429 `rate_limit_error`, 500 and 529 `api_error`, 503 `overloaded`, 504
-    /// `timeout`) and the far message `slow down`, under `application/json`.
-    /// RED: a foreign body relayed across dialects, a status rewritten, or a kind moved.
+
     #[test]
     fn a_far_end_errors_relay_is_the_engines() {
         let body = br#"{"error":{"message":"slow down"}}"#;
@@ -3259,19 +3035,12 @@ mod rehomed_answers {
     }
 }
 
-// ── an upstream cut after the first byte, in 1.5.5's bytes ─────────────────────────────────────────
-
 /// The far end's one content chunk before its connection dropped (an OpenAI chat stream), as the
-/// recordings below were taken.
+
 const CUT_FIRST: &[u8] = b"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"},\"finish_reason\":null}]}\n\n";
 
 /// THE BYTES 1.5.5 ENDED A CUT STREAM WITH, per caller dialect: recorded 2026-10-13 from the
-/// published 1.5.5 binary (`busbar 1.5.5`, the oracle cache's aarch64-apple-darwin build) in front
-/// of an OpenAI far end that sent [`CUT_FIRST`] and then dropped its connection with no terminating
-/// chunk, one fresh process per caller (v1.5.5 `crates/busbar/src/proxy/response_body.rs:279-345`,
-/// the `had_first && is_sse` arm and its JSON-array twin). What follows the caller's own copy of
-/// the delivered chunk, verbatim; the Responses frame's response id and `created_at` are the run's
-/// own and are compared with both removed.
+
 const CUT_1_5_5: &[(&str, bool, &[u8])] = &[
     ("openai", false, b"data: {\"error\":{\"code\":null,\"message\":\"The response stream was interrupted.\",\"param\":null,\"type\":\"server_error\"}}\n\n"),
     ("anthropic", false, b"event: error\ndata: {\"error\":{\"message\":\"The response stream was interrupted.\",\"type\":\"api_error\"},\"type\":\"error\"}\n\n"),
@@ -3285,7 +3054,7 @@ const CUT_1_5_5: &[(&str, bool, &[u8])] = &[
 const CUT_1_5_5_BEDROCK: &str = "000000a7000000659afd09380f3a657863657074696f6e2d74797065070017696e7465726e616c536572766572457863657074696f6e0d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d74797065070009657863657074696f6e7b226d657373616765223a2254686520726573706f6e73652073747265616d2077617320696e7465727275707465642e227de769a380";
 
 /// The members of a Response object signed register entry S-6 adds to 1.5.5's (the spec's required
-/// members, emitted with their defaults or carried values).
+
 const S6_RESPONSE_MEMBERS: &[&str] = &[
     "incomplete_details",
     "instructions",
@@ -3298,11 +3067,7 @@ const S6_RESPONSE_MEMBERS: &[&str] = &[
 ];
 
 /// A Responses `response.failed` frame as 1.5.5's recording is compared to it: its event name and
-/// its data with the run's own values taken out — the response `id` and `created_at` (the run's),
-/// the `model` (1.5.5 wrote a fresh writer's fallback; the stream's own carried model is the one
-/// identity a stream keeps, S-15), the top-level `sequence_number` (contiguous with the frames the
-/// stream already carried, signed entry S-2; 1.5.5 restarted it at 0) — and the S-6 members. Each of
-/// those is checked present on the candidate first.
+
 fn without_run_ids(frame: &[u8]) -> (Vec<u8>, Value) {
     let text = std::str::from_utf8(frame).expect("text");
     let (event, data) = text.split_once("\ndata: ").expect("an event and its data");
@@ -3340,9 +3105,7 @@ fn assert_run_ids(frame: &[u8]) {
 }
 
 /// A STREAM CUT AFTER ITS FIRST BYTE ENDS IN 1.5.5'S BYTES, for every caller dialect: the in-band error 1.5.5 wrote, in
-/// the caller's own framing (an SSE event, a JSON-array element and its `]`, an eventstream
-/// exception frame). RED: a cut written as a clean end (the caller's terminator) or in another
-/// dialect's framing.
+
 #[test]
 fn a_stream_cut_after_its_first_byte_ends_in_1_5_5s_bytes_for_every_caller_dialect() {
     let hex = |s: &str| -> Vec<u8> {
@@ -3365,9 +3128,6 @@ fn a_stream_cut_after_its_first_byte_ends_in_1_5_5s_bytes_for_every_caller_diale
         assert_eq!(cut.reason, "mid-stream", "{ingress}");
         let mut got = cut.bytes.expect("the caller's in-band error");
         if ingress == "anthropic" {
-            // A translated Anthropic stream's `error` event carries a
-            // minted `request_id`, the one member 1.6.0 adds to 1.5.5's frame. It is checked here
-            // and cut out; every other byte, `error.type` included, is 1.5.5's.
             let text = String::from_utf8(got).expect("text");
             let at = text
                 .find(r#""request_id":"req_"#)
@@ -3390,12 +3150,7 @@ fn a_stream_cut_after_its_first_byte_ends_in_1_5_5s_bytes_for_every_caller_diale
 }
 
 /// A RESPONSES STREAM THE FAR END ENDS AS FAILED BILLS NO TOKENS (`$`: 1.5.5 billed nothing for a stream with a terminal error, v1.5.5
-/// proxy/response_body.rs:550-575): its `response.failed` event carries usage, and the answer
-/// still reports 0 in and 0 out, as the buffered `status: "failed"` answer does. This is not a cut: a failure
-/// the far end reports itself is not a cut busbar or the caller made,
-/// unlike a translation that aborts after the first byte, which bills what streamed
-/// (`rehomed_streaming_translate_abort_trips_breaker_and_skips_billing`). RED: the stream's failed
-/// usage (5 in, 2 out) reported as billable.
+
 #[test]
 fn a_responses_stream_that_fails_bills_no_tokens_and_agrees_with_its_buffered_twin() {
     let mut arrived = arrival("responses", true);
@@ -3457,7 +3212,7 @@ fn a_responses_stream_that_fails_bills_no_tokens_and_agrees_with_its_buffered_tw
 }
 
 /// A top-level upstream error keeps native frames byte-identical while marking the exchange
-/// failed. A later completed frame does not turn that failed exchange into a billable success.
+
 #[test]
 fn a_responses_streams_top_level_error_event_fails_the_exchange_without_changing_native_bytes() {
     let mut arrived = arrival("responses", true);
@@ -3493,12 +3248,8 @@ fn a_responses_streams_top_level_error_event_fails_the_exchange_without_changing
     assert_eq!((end.units.tokens_in, end.units.tokens_out), (0, 0));
 }
 
-// ── rehomed: the engine's metered-answer tests on the served reply ──
-
 /// The legacy engine's tests that pin what an answer bills (`crates/busbar-llm/src/engine/**`),
-/// rehomed onto the served reply: the far end's reported units each piece carries, and the
-/// verdict and fault that decide whether the request's fee stands. Each test names the legacy test
-/// it replaces, the 1.5.5 figure it pins, and its RED.
+
 mod rehomed_metering {
     use super::*;
     use std::borrow::Cow;
@@ -3529,7 +3280,7 @@ mod rehomed_metering {
     }
 
     /// The caller's arrival of `request` for `operation` in `dialect` (`None`: a body that is not
-    /// JSON); `json_array` is a stream asked without the event-stream switch.
+
     fn arrived_for(
         dialect: &'static str,
         operation: OpVerb,
@@ -3663,7 +3414,7 @@ mod rehomed_metering {
     }
 
     /// One answer through the served reply: the far end's `status` and `head`, its body in
-    /// `pieces`, then a transport cut when `cut`.
+
     fn answer(
         ctx: &ReplyCtx<'_>,
         status: u16,
@@ -3709,8 +3460,6 @@ mod rehomed_metering {
             .into_bytes()
     }
 
-    // ── a failed generation (failed_generation.rs) ─────────────────────────────────────────────
-
     /// A cohere whole chat body with `finish_reason`, reporting 10 in / 5 out.
     fn cohere_body(finish_reason: &str) -> Vec<u8> {
         serde_json::to_vec(&json!({
@@ -3723,7 +3472,7 @@ mod rehomed_metering {
     }
 
     /// A gemini event stream: a text chunk, then the terminal chunk with `finish_reason`,
-    /// reporting 10 prompt / 5 candidate tokens.
+
     fn gemini_stream(finish_reason: &str) -> Vec<u8> {
         let first = json!({"candidates": [{"index": 0,
             "content": {"role": "model", "parts": [{"text": "x"}]}}]});
@@ -3736,11 +3485,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::buffered_cohere_error_is_an_error_a_breaker_fault_and_charges_10_5`
-    /// 1.5.5: a whole cohere `finish_reason: "ERROR"` to a chat
-    /// caller is a 502 with no `finish_reason` in the body, a transient fault on the far end, an
-    /// error end, and the far end's reported 10 in / 5 out (15 tokens) still billed.
-    /// RED: a failed generation delivered as a 200 success, no breaker fault, or its usage dropped
-    /// (0 billed) or changed.
+
     #[test]
     fn buffered_cohere_error_is_an_error_a_breaker_fault_and_charges_10_5() {
         let (arrived, lane) = ask("openai", "cohere", false);
@@ -3764,9 +3509,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::buffered_cohere_complete_is_a_success_and_charges_10_5`
-    /// 1.5.5: the same body ending `COMPLETE` is a 200 success, no fault, 10 / 5
-    /// (15 tokens) billed.
-    /// RED: a completed generation faulted, or its usage anything but 10 / 5.
+
     #[test]
     fn buffered_cohere_complete_is_a_success_and_charges_10_5() {
         let (arrived, lane) = ask("openai", "cohere", false);
@@ -3782,9 +3525,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::same_protocol_cohere_error_relays_verbatim_faults_the_breaker_and_charges_10_5`
-    /// 1.5.5: a same-dialect cohere `ERROR` relays the far bytes
-    /// unchanged under the far 200, yet ends as an error, faults the far end, and bills 10 / 5.
-    /// RED: the relay counted a success (no fault), or its usage not billed.
+
     #[test]
     fn same_protocol_cohere_error_relays_verbatim_faults_the_breaker_and_charges_10_5() {
         let (arrived, lane) = ask("cohere", "cohere", false);
@@ -3803,9 +3544,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::same_protocol_cohere_complete_is_a_success_and_charges_10_5`
-    /// 1.5.5: the same-dialect `COMPLETE` relay is a 200 success, no fault, exactly
-    /// 10 / 5 (15 tokens) billed.
-    /// RED: a same-dialect relay billing presence but not the far figures.
+
     #[test]
     fn same_protocol_cohere_complete_is_a_success_and_charges_10_5() {
         let (arrived, lane) = ask("cohere", "cohere", false);
@@ -3820,11 +3559,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::streamed_gemini_malformed_function_call_is_an_error_frame_a_breaker_fault_and_charges`
-    /// 1.5.5: a gemini stream ending `MALFORMED_FUNCTION_CALL`, to a
-    /// chat caller, is served 200 on its head, ends in an `"error"` frame, faults the far end, and
-    /// bills the 10 / 5 it streamed.
-    /// RED: a failed generation ending as a normal `stop`, no fault, or its streamed usage not
-    /// billed.
+
     #[test]
     fn streamed_gemini_malformed_function_call_is_an_error_frame_a_breaker_fault_and_charges() {
         let (arrived, lane) = ask("openai", "gemini", true);
@@ -3840,9 +3575,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/attempt/tests/failed_generation.rs::streamed_gemini_stop_is_a_success_and_charges`
-    /// 1.5.5: the same stream ending `STOP` is 200 with no `"error"` frame, no
-    /// fault, a complete end, and exactly 10 / 5 (15 tokens) billed.
-    /// RED: a clean stream framed or faulted as an error, or billed anything but 10 / 5.
+
     #[test]
     fn streamed_gemini_stop_is_a_success_and_charges() {
         let (arrived, lane) = ask("openai", "gemini", true);
@@ -3857,13 +3590,8 @@ mod rehomed_metering {
         assert_eq!(read.tokens().0 + read.tokens().1, 15);
     }
 
-    // ── a delivered or undelivered whole answer (crossproto_delivery_billing_tests.rs) ─────────
-
     /// REHOMES `crates/busbar-llm/src/engine/engine_tests/crossproto_delivery_billing_tests.rs::delivered_cross_protocol_response_bills_once`
-    /// 1.5.5: a chat-dialect completion (13 + 9) delivered to an anthropic caller is
-    /// a 200 that bills exactly 22 tokens once and keeps the request's fee (a success status, no
-    /// fault).
-    /// RED: a delivered answer billed twice, billed short, or its fee refunded.
+
     #[test]
     fn delivered_cross_protocol_response_bills_once() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -3885,10 +3613,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/engine_tests/crossproto_delivery_billing_tests.rs::ingress_unsupported_404_does_not_charge`
-    /// 1.5.5: a chat-dialect embeddings answer (42 prompt tokens) to an anthropic
-    /// caller, whose dialect serves no embeddings, is a 404 that bills none of the 42 tokens and
-    /// refunds the request's fee (a non-success status with no units).
-    /// RED: the 42 far tokens billed for an answer the caller never received.
+
     #[test]
     fn ingress_unsupported_404_does_not_charge() {
         let body = br#"{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2,0.3]}],"model":"text-embedding-3-small","usage":{"prompt_tokens":42}}"#;
@@ -3909,10 +3634,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/engine_tests/crossproto_delivery_billing_tests.rs::untranslatable_500_does_not_charge`
-    /// 1.5.5: a chat-dialect SPEECH answer (opaque audio bytes) to an anthropic
-    /// caller, whose dialect serves no speech, is the caller's 500 that bills nothing and refunds
-    /// the request's fee.
-    /// RED: the opaque answer metered (a flat or token charge) though nothing was delivered.
+
     #[test]
     fn untranslatable_500_does_not_charge() {
         let body: &[u8] = &[
@@ -3931,10 +3653,7 @@ mod rehomed_metering {
     const EMPTY_CHOICES: &[u8] = br#"{"id":"chatcmpl-EMPTY","object":"chat.completion","created":1234567890,"model":"glm-4.5","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}"#;
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_once_pool_cell_tests.rs::test_forward_once_untranslatable_2xx_refunds_budget_and_trips_breaker`
-    /// 1.5.5: on the last-resort attempt, an untranslatable 2xx (empty `choices`)
-    /// to an anthropic caller is the caller's 500, a HARD verdict with a transient fault (the
-    /// breaker penalised), and no units (the request's fee refunded, the 7 / 3 not billed).
-    /// RED: the untranslatable 2xx recorded as a success, or its usage billed.
+
     #[test]
     fn test_forward_once_untranslatable_2xx_refunds_budget_and_trips_breaker() {
         let (arrived, lane) = ask("anthropic", "openai", false);
@@ -3951,10 +3670,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_untranslatable_2xx_refunds_budget_and_trips_breaker`
-    /// 1.5.5: on the main path the same untranslatable 2xx records a breaker
-    /// transient and returns the request's fee: the whole translate refuses it (no usage), and the
-    /// reply is a 500 with a transient fault and no units.
-    /// RED: a lane answering undecodable 200s forever never trips, or the 500 bills.
+
     #[test]
     fn test_untranslatable_2xx_refunds_budget_and_trips_breaker() {
         let answered = whole::translate(
@@ -3975,11 +3691,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_openai_ingress_single_model_anthropic_response_translated`
-    /// 1.5.5: an anthropic answer (`hi there`, `end_turn`, 9 in / 3 out) to a chat
-    /// caller is 200, `object: "chat.completion"`, `choices[0].message.content: "hi there"`,
-    /// `finish_reason: "stop"`, `usage.prompt_tokens: 9`, `usage.completion_tokens: 3`, no
-    /// `stop_reason`, and 9 / 3 billed.
-    /// RED: the far body relayed raw, or the usage figures moved in translation.
+
     #[test]
     fn test_openai_ingress_single_model_anthropic_response_translated() {
         let (arrived, lane) = ask("openai", "anthropic", false);
@@ -3997,12 +3709,8 @@ mod rehomed_metering {
         assert_eq!(read.tokens(), (9, 3));
     }
 
-    // ── a same-dialect whole body's usage (ingress_indistinguishability_tests.rs) ──────────────
-
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_same_protocol_nonstream_multichunk_counts_usage`
-    /// 1.5.5: a same-dialect whole body split before its trailing `usage` (600 in +
-    /// 400 out) reaches the caller byte-identical and bills exactly 1000 tokens.
-    /// RED: a per-piece usage read that keeps no state across pieces bills 0.
+
     #[test]
     fn test_same_protocol_nonstream_multichunk_counts_usage() {
         let (arrived, lane) = ask("openai", "openai", false);
@@ -4023,7 +3731,7 @@ mod rehomed_metering {
     }
 
     /// How many times the usage tap's copy of a same-dialect chat body, fed in 512-byte pieces under
-    /// `cap`, overflowed: the plane's `busbar_billing_truncated_total` signal, once per response.
+
     fn truncations(body: &[u8], cap: usize) -> usize {
         let mut ctx = super::relay_ctx("openai", "openai", false);
         ctx.translate_cap = cap;
@@ -4034,14 +3742,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_same_protocol_nonstream_over_cap_body_bills_no_trailing_usage_as_in_1_5_5`
-    /// HELD TO 1.5.5 (the legacy test pinned a
-    /// post-1.5.5 tail copy). v1.5.5 `crates/busbar/src/proxy/response_body.rs:229-262` kept a copy
-    /// of a same-dialect body capped at `MAX_TRANSLATED_BODY_BYTES`, dropped the overflow, counted
-    /// it once on `BILLING_TRUNCATED_TOTAL` and warned that the tokens were undercounted; a `usage`
-    /// past the cap was never read. Under a 4096-byte cap, a body three caps long whose `usage`
-    /// (600 + 400) trails it reaches the caller whole, bills 0 tokens, and the overflow is counted
-    /// once.
-    /// RED: the trailing usage billed (1000), a floor billed, or the overflow not counted.
+
     #[test]
     fn a_same_dialect_body_past_the_cap_bills_no_trailing_usage_as_in_1_5_5() {
         const CAP: usize = 4096;
@@ -4065,13 +3766,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_truncated_beyond_recovery_bills_no_floor_as_in_1_5_5`
-    /// HELD TO 1.5.5 (the legacy test pinned a
-    /// post-1.5.5 floor). v1.5.5 `crates/busbar/src/proxy/response_body.rs:229-262`: a same-dialect
-    /// body past the usage tap's cap is counted once on `BILLING_TRUNCATED_TOTAL` and its tokens go
-    /// unbilled; 1.5.5 billed no floor for it. Under a 4096-byte cap, a body whose `usage` sits at
-    /// its front, three caps long, reaches the caller whole, bills 0 tokens (never the 1024-token
-    /// floor over the kept bytes), and the overflow is counted once.
-    /// RED: a floor (or the stated 600 / 400) billed, or the overflow not counted.
+
     #[test]
     fn a_same_dialect_body_truncated_past_the_cap_bills_no_floor_as_in_1_5_5() {
         const CAP: usize = 4096;
@@ -4094,10 +3789,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_stream_delivers_trailing_usage_gemini_json_array`
-    /// 1.5.5: a chat-dialect stream whose usage (600 / 400) arrives in its own
-    /// trailing chunk, to a gemini JSON-array caller, is one JSON array whose terminal
-    /// `usageMetadata.promptTokenCount` is 600, and 600 / 400 bill.
-    /// RED: the trailing usage chunk dropped by the array close (0 or absent), or not billed.
+
     #[test]
     fn test_cross_protocol_stream_delivers_trailing_usage_gemini_json_array() {
         let arrived = arrived_for(
@@ -4128,10 +3820,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_stream_delivers_trailing_usage_anthropic_sse`.
-    /// 1.5.5: the plain-SSE sibling of the JSON-array cell above. A chat-dialect stream whose
-    /// usage (600 / 400) arrives in its own trailing chunk, to an anthropic caller, reports the
-    /// real `output_tokens` (400) on its terminal `message_delta`, and 600 / 400 bill.
-    /// RED: the trailing usage dropped from the terminal `message_delta` (0 or absent).
+
     #[test]
     fn a_chat_streams_trailing_usage_reaches_an_anthropic_callers_terminal_message_delta() {
         let (arrived, lane) = ask("anthropic", "openai", true);
@@ -4156,9 +3845,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_mid_stream_transport_error_does_not_bill_partial_usage`
-    /// 1.5.5: an anthropic stream to a chat caller, cut after it reported 100
-    /// input (`message_start`) and 50 output (`message_delta`), bills exactly those 150 tokens.
-    /// RED: a cut stream refunded to 0 tokens, or billed more than streamed.
+
     #[test]
     fn rehomed_mid_stream_transport_error_does_not_bill_partial_usage() {
         let (arrived, lane) = ask("openai", "anthropic", true);
@@ -4183,11 +3870,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_bedrock_to_gemini_carries_total_tokens_and_response_id`
-    /// 1.5.5: a Converse answer (no body identity; 7 in / 3 out) to a gemini
-    /// caller is 200 `application/json` with `usageMetadata` 7 / 3 / total 10, a minted
-    /// `responseId`, no foreign id, and 7 / 3 billed.
-    /// RED: an identity-empty far answer read as same-dialect, dropping `totalTokenCount` and
-    /// `responseId`.
+
     #[test]
     fn test_cross_protocol_bedrock_to_gemini_carries_total_tokens_and_response_id() {
         let (arrived, lane) = ask("gemini", "bedrock", false);
@@ -4228,11 +3911,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_nonstream_over_cap_body_returns_500_uncharged`
-    /// 1.5.5: under a 4096-byte cap, a chat-dialect body over the cap (5 / 999999
-    /// reported) to an anthropic caller is the caller's 500 at once, no units billed, and no fault
-    /// on the far end (the cap is ours).
-    /// RED: an over-cap answer translated and delivered (its 999999 tokens billed), or the far end
-    /// faulted for our limit.
+
     #[test]
     fn rehomed_cross_protocol_nonstream_over_cap_body_returns_500_uncharged() {
         const CAP: usize = 4096;
@@ -4263,8 +3942,6 @@ mod rehomed_metering {
         );
     }
 
-    // ── a stream that ends early (ingress_indistinguishability_tests.rs) ──────────────────────
-
     /// A chat-dialect trailing usage chunk: 600 prompt / 400 completion.
     const USAGE_CHUNK: &[u8] =
         b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":600,\"completion_tokens\":400}}\n\n";
@@ -4275,12 +3952,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_streaming_translate_abort_trips_breaker_and_skips_billing`
-    /// A mid-stream cut is not a refund; the caller pays for what streamed (logged in the
-    /// accepted-differences register as a 1.6.0 difference from 1.5.5's zero). A
-    /// translated stream whose reframing gives up after its first byte records a transient on the
-    /// far end (the optimistic success reversed, the breaker cell trips Open) and bills the 600 /
-    /// 400 the far end reported before the abort, as its two drop siblings below bill them.
-    /// RED: an abort that records no fault, or one that bills less than the far end reported.
+
     #[test]
     fn rehomed_streaming_translate_abort_trips_breaker_and_skips_billing() {
         let (arrived, lane) = ask("anthropic", "openai", true);
@@ -4305,10 +3977,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cancel_drop_bills_partial_tokens`
-    /// 1.5.5: a caller that leaves mid-stream, after the usage chunk was read, bills
-    /// the 600 / 400 (1000 tokens) captured so far: the piece it last read states them, and the
-    /// answer is a usable partial.
-    /// RED: a cancel that bills 0 because the stream never reached its end.
+
     #[test]
     fn rehomed_cancel_drop_bills_partial_tokens() {
         let (arrived, lane) = ask("anthropic", "openai", true);
@@ -4322,9 +3991,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cancel_drop_bills_streamed_tokens_on_aborted_translate`
-    /// 1.5.5: a caller that leaves after the reframing gave up still bills the
-    /// 600 / 400 (1000 tokens) streamed before the abort.
-    /// RED: an aborted translate's captured usage dropped on the cancel.
+
     #[test]
     fn test_cancel_drop_bills_streamed_tokens_on_aborted_translate() {
         let (arrived, lane) = ask("anthropic", "openai", true);
@@ -4339,19 +4006,8 @@ mod rehomed_metering {
         assert_eq!(after.units.tokens_in + after.units.tokens_out, 1000);
     }
 
-    // ── a cut stream, every caller (plane_reply_parity_tests.rs) ─────────────────────────────
-
     /// REHOMES `crates/busbar-llm/src/engine/tests/plane_reply_parity_tests.rs::a_cut_stream_reads_the_same_through_the_plane`
-    /// 1.5.5, for far ends of the chat, anthropic and bedrock dialects x all six
-    /// callers, a stream cut halfway: the head is 200 under the caller's stream content type, the
-    /// cut is HARD with the transient `mid-stream` fault, its bytes are exactly one error frame in
-    /// the caller's own framing (bedrock: one binary `InternalServerException` frame, byte-equal to
-    /// the dialect's; chat and gemini: a bare `data:` `error` frame; cohere: a `message-end`
-    /// `ERROR`; anthropic: `event: error`; responses: `event: response.failed`), and the units it
-    /// settles are exactly the units the stream had reported before the cut (the chat stream's
-    /// usage rides its last chunk, so 0 / 0 there).
-    /// RED: a cut ending in another dialect's frame, no frame, or settling units other than what
-    /// streamed (a refund to zero, or a guess).
+
     #[test]
     fn a_cut_stream_reads_the_same_through_the_plane() {
         use busbar_plane_llm::exchange::reply::wire;
@@ -4456,8 +4112,6 @@ mod rehomed_metering {
         assert_eq!(checked, 3 * 6);
     }
 
-    // ── a responses caller that asked to stream (responses_ingress_stream_tests.rs) ───────────
-
     const MARKER: &str = "hi";
     const IN_TOK: u64 = 11;
     const OUT_TOK: u64 = 7;
@@ -4472,8 +4126,7 @@ mod rehomed_metering {
     }
 
     /// The far end's answer, in `far`'s dialect, to a stream request: its content type and bytes,
-    /// a native stream when `stream`, else one whole body. One text block of `MARKER`, 11 in / 7
-    /// out (the legacy fixtures, byte for byte).
+
     fn upstream_answer(far: &str, stream: bool) -> (&'static str, Vec<u8>) {
         let usage_chat = json!({"prompt_tokens": IN_TOK, "completion_tokens": OUT_TOK,
             "total_tokens": IN_TOK + OUT_TOK});
@@ -4680,9 +4333,7 @@ mod rehomed_metering {
     }
 
     /// One `stream: true` responses request answered by a far end of `far` (a native stream when
-    /// `stream`, else one whole body): the caller reads a responses event stream (within one
-    /// dialect too: a whole body is synthesised into the caller's stream, OWNER 2026-10-27), and
-    /// the answer bills exactly 11 / 7 once.
+
     fn responses_case(far: &'static str, stream: bool) {
         let label = format!("responses<-{far} (stream: {stream})");
         let (content_type, body) = upstream_answer(far, stream);
@@ -4759,109 +4410,88 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_anthropic_stream`
-    /// 1.5.5: a responses stream over an anthropic stream opens `response.created`,
-    /// has no `[DONE]`, ends `response.completed` (a u64 `sequence_number`, `object: "response"`,
-    /// `status: "completed"`, a `resp_` id, the text, usage 11 / 7 / 18), and bills 11 / 7 once.
-    /// RED: the event sequence broken, the usage figures moved, or the answer billed twice or not
-    /// at all.
+
     #[test]
     fn responses_stream_over_anthropic_stream() {
         responses_case("anthropic", true);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_anthropic_buffered`
-    /// 1.5.5: a responses caller that asked to stream, answered one anthropic body,
-    /// reads the same responses event stream and bills 11 / 7 once.
-    /// RED: the buffered answer delivered as JSON to a stream caller, or not billed.
+
     #[test]
     fn responses_stream_over_anthropic_buffered() {
         responses_case("anthropic", false);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_openai_stream`
-    /// 1.5.5: as the anthropic stream test above, over a chat-dialect stream; 11 / 7 billed once.
-    /// RED: the event sequence broken, the usage figures moved, or the answer billed twice.
+
     #[test]
     fn responses_stream_over_openai_stream() {
         responses_case("openai", true);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_openai_buffered`
-    /// 1.5.5: as the anthropic body test above, over one chat-dialect body; 11 / 7 billed once.
-    /// RED: the buffered answer delivered as JSON to a stream caller, or not billed.
+
     #[test]
     fn responses_stream_over_openai_buffered() {
         responses_case("openai", false);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_cohere_stream`
-    /// 1.5.5: as the anthropic stream test above, over a cohere stream; 11 / 7 billed once.
-    /// RED: the event sequence broken, the usage figures moved, or the answer billed twice.
+
     #[test]
     fn responses_stream_over_cohere_stream() {
         responses_case("cohere", true);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_cohere_buffered`
-    /// 1.5.5: as the anthropic body test above, over one cohere body; 11 / 7 billed once.
-    /// RED: the buffered answer delivered as JSON to a stream caller, or not billed.
+
     #[test]
     fn responses_stream_over_cohere_buffered() {
         responses_case("cohere", false);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_gemini_stream`
-    /// 1.5.5: as the anthropic stream test above, over a gemini stream; 11 / 7 billed once.
-    /// RED: the event sequence broken, the usage figures moved, or the answer billed twice.
+
     #[test]
     fn responses_stream_over_gemini_stream() {
         responses_case("gemini", true);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_gemini_buffered`
-    /// 1.5.5: as the anthropic body test above, over one gemini body; 11 / 7 billed once.
-    /// RED: the buffered answer delivered as JSON to a stream caller, or not billed.
+
     #[test]
     fn responses_stream_over_gemini_buffered() {
         responses_case("gemini", false);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_bedrock_stream`
-    /// 1.5.5: as the anthropic stream test above, over a bedrock binary event stream; 11 / 7 billed once.
-    /// RED: the event sequence broken, the usage figures moved, or the answer billed twice.
+
     #[test]
     fn responses_stream_over_bedrock_stream() {
         responses_case("bedrock", true);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_bedrock_buffered`
-    /// 1.5.5: as the anthropic body test above, over one Converse body; 11 / 7 billed once.
-    /// RED: the buffered answer delivered as JSON to a stream caller, or not billed.
+
     #[test]
     fn responses_stream_over_bedrock_buffered() {
         responses_case("bedrock", false);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_responses_stream`
-    /// 1.5.5: as the anthropic stream test above, over a responses stream (relayed within one dialect);
-    /// 11 / 7 billed once.
-    /// RED: the same-dialect stream rewritten, or its usage billed twice or not at all.
+
     #[test]
     fn responses_stream_over_responses_stream() {
         responses_case("responses", true);
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/responses_ingress_stream_tests.rs::responses_stream_over_responses_buffered`
-    /// 1.5.5 (DIALECT FIDELITY): a responses far end that answered one body to a
-    /// stream request is relayed under its own content type, bytes unchanged, and bills 11 / 7
-    /// once.
-    /// RED: the same-dialect body reframed as a stream, or its usage not billed.
+
     #[test]
     fn responses_stream_over_responses_buffered() {
         responses_case("responses", false);
     }
-
-    // ── an unreadable usage after delivery (unreadable_usage_floor_tests.rs) ──────────────────
 
     fn message_with_usage(usage: &str) -> String {
         format!(
@@ -4870,12 +4500,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/unreadable_usage_floor_tests.rs::buffered_relay_refused_usage_bills_the_floor_not_zero`
-    /// A same-dialect anthropic body relays verbatim; a readable usage bills exactly
-    /// 1500 + 9 = 1509; a count the reader refuses (`"1500"`) is REFUSED ON ITS OWN: it bills
-    /// nothing, and the readable `output_tokens` bills as stated: (0, 9), v1.5.5's figure for that
-    /// body. Each usage field is judged on its own, no floor stands in
-    /// for a refused one, and the refusal is loud.
-    /// RED: the refused count billed as anything, a floor billed, or the readable count dropped.
+
     #[test]
     fn buffered_relay_refused_usage_bills_only_the_readable_counts() {
         let (arrived, lane) = ask("anthropic", "anthropic", false);
@@ -4897,12 +4522,7 @@ mod rehomed_metering {
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/unreadable_usage_floor_tests.rs::stream_refused_usage_bills_the_floor_not_zero`
-    /// A same-dialect chat stream whose usage chunk carries a count the reader
-    /// refuses (`"prompt_tokens":"1500"`) is served 200; the refused count bills nothing and the
-    /// readable `completion_tokens` bills as stated: (0, 9), v1.5.5's figure for that stream
-    /// (v1.5.5 `proto/openai_chat/reader.rs:678`). Each usage field
-    /// is judged on its own; neither a floor (bytes / 4) nor (0, 0) is right here.
-    /// RED: the refused count billed as anything, a floor billed, or the stream billed nothing.
+
     #[test]
     fn stream_refused_usage_bills_only_the_readable_counts() {
         let (arrived, lane) = ask("openai", "openai", true);
@@ -4928,8 +4548,6 @@ mod rehomed_metering {
         );
     }
 
-    // ── a caller that leaves while a relayed end's last window is written ────
-
     #[test]
     fn local_entropy_failure_keeps_actual_reply_units_and_late_cancel_accounting() {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -4951,7 +4569,7 @@ mod rehomed_metering {
             b"data: {\"error\":{\"type\":\"server_error\",\"code\":\"upstream-failure\"}}\n\n";
         let (arrived, lane) = ask("responses", "openai", true);
         let ctx = reply_ctx(&arrived, &lane);
-        // Zero draws fails the response id; one draw fails the first item after its response id.
+
         for draws in [0, 1] {
             for upstream_failed in [false, true] {
                 let host = LimitedEntropy(AtomicUsize::new(draws));
@@ -5014,8 +4632,6 @@ mod rehomed_metering {
         assert!(body.contains("error"), "{body}");
         assert!(!body.contains("response.completed"), "{body}");
 
-        // The host's separate mid-stream-error path uses this same live writer API. Its original
-        // failure must survive even when there is no correlation id and no entropy to mint one.
         let protocol = busbar_plane_llm::codec::proto_codec::protocol_for("responses").unwrap();
         let original = busbar_contract::protocol::IrError {
             class: StatusClass::ServerError,
@@ -5032,7 +4648,7 @@ mod rehomed_metering {
     }
 
     /// One answer read to its end in one far-end piece: the reply (for its cancel reading) and
-    /// the end.
+
     fn ended(ctx: &ReplyCtx<'_>, head: &[(&[u8], &[u8])], far: &[u8]) -> (Reply, Piece<'static>) {
         let mut reply = Reply::new(HOST, ctx, 200, head);
         let end = owned(reply.feed(HOST, ctx, far, true, AT));
@@ -5041,19 +4657,9 @@ mod rehomed_metering {
     }
 
     /// A RELAYED END THAT BILLS ITS UNITS BILLS THEM WHEN THE CALLER LEAVES DURING ITS LAST WINDOW
-    /// The door writes
-    /// a relayed end to the caller in windows; a caller that leaves before the last one is a
-    /// cancel, which bills the units the end stated only when the reply reads as PARTIAL. A
-    /// relayed body or stream whose generation FAILED bills its far-end-reported units on
-    /// completion, and a translation that
-    /// aborted after the first byte bills what streamed: each is that partial too. A stream
-    /// the far end itself ended as FAILED bills nothing on completion, and nothing on a cancel.
-    /// RED on dev: `ended_partial = partial && fault.is_none()`, so every failed end read as
-    /// nothing usable, and the cancel billed 0 tokens and no fee for an answer that bills 10 / 5
-    /// (or 600 / 400) when the caller stays.
+
     #[test]
     fn a_relayed_end_that_bills_bills_when_the_caller_leaves_during_its_last_window() {
-        // A same-dialect whole body whose stop reason is a failed generation.
         let (arrived, lane) = ask("cohere", "cohere", false);
         let ctx = reply_ctx(&arrived, &lane);
         let (reply, end) = ended(&ctx, JSON_HEAD, &cohere_body("ERROR"));
@@ -5067,7 +4673,6 @@ mod rehomed_metering {
             "a same-dialect failed generation bills its 10 / 5 on a cancel in its last window"
         );
 
-        // A translated stream that ends in a failed generation.
         let (arrived, lane) = ask("openai", "gemini", true);
         let ctx = reply_ctx(&arrived, &lane);
         let (reply, end) = ended(&ctx, SSE_HEAD, &gemini_stream("MALFORMED_FUNCTION_CALL"));
@@ -5078,7 +4683,6 @@ mod rehomed_metering {
             "a streamed failed generation bills its 10 / 5 on a cancel in its last window"
         );
 
-        // A translated stream whose reframing gave up after its first byte.
         let (arrived, lane) = ask("anthropic", "openai", true);
         let ctx = reply_ctx(&arrived, &lane);
         let mut reply = Reply::new(HOST, &ctx, 200, SSE_HEAD);
@@ -5092,8 +4696,6 @@ mod rehomed_metering {
             "an aborted translation bills what streamed on a cancel in its last window (#62)"
         );
 
-        // THE CONTROLS: a clean end bills on a late cancel; a stream the far end itself ended as
-        // FAILED (its in-band terminal error, not a failed generation) bills nothing either way.
         let (arrived, lane) = ask("openai", "gemini", true);
         let ctx = reply_ctx(&arrived, &lane);
         let (reply, end) = ended(&ctx, SSE_HEAD, &gemini_stream("STOP"));
@@ -5129,10 +4731,7 @@ mod rehomed_metering {
     }
 
     /// ZERO HOST CALLS PER CHUNK (`on_piece`). The door reads the host's
-    /// clock for a far-end piece only when the reply says the piece states the time: the last
-    /// piece of an answer taken whole (its creation stamp and elapsed milliseconds). A relayed
-    /// answer's pieces, and a whole answer's earlier ones, read none. RED: the door read the clock
-    /// on every far-end and kernel piece.
+
     #[test]
     fn only_the_last_piece_of_a_whole_answer_reads_the_time() {
         let (arrived, lane) = ask("openai", "cohere", false);
@@ -5165,10 +4764,7 @@ mod rehomed_metering {
 }
 
 /// A TRANSLATED STREAM IS TIMED ON THE HOST'S ONE CLOCK. A Bedrock caller's
-/// `metadata` frame reports `metrics.latencyMs` as the host's monotonic time between the stream's
-/// first byte and that frame, so a host whose clock moved 250 ms reports 250 whatever the process
-/// clock did. RED: the relay read `std::time::Instant::now`, the plane's own clock, and reported the
-/// process time the test took (0).
+
 #[test]
 fn a_translated_stream_is_timed_on_the_hosts_clock() {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -5206,10 +4802,7 @@ fn a_translated_stream_is_timed_on_the_hosts_clock() {
 }
 
 /// AN OPENAI FAR END'S WHOLE ANSWER READS AS AN ANTHROPIC MESSAGE: an anthropic caller served by an
-/// openai member gets `type: message`, a `text` content block carrying the answer, `end_turn` for
-/// `stop`, and the serving model the far end named; never the raw openai body. Rehomes
-/// crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_cross_protocol_nonstream_openai_lane_to_anthropic_client
-/// and ::test_cross_protocol_nonstream_preserves_model.
+
 #[test]
 fn an_openai_whole_answer_reads_as_an_anthropic_message_naming_the_serving_model() {
     let far = br#"{"object":"chat.completion","model":"glm-4.5","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":3}}"#;
@@ -5349,7 +4942,7 @@ fn malformed_rerank_retains_full_billing_variants_and_units() {
 type Banners = Vec<(String, Option<String>)>;
 
 /// Every `diag` banner, and every uncoded line carrying an `error_map_value` (by its message), with
-/// that field, from a closure's tracing events.
+
 fn banners_of(f: impl FnOnce()) -> Banners {
     use std::sync::{Arc, Mutex};
     use tracing::field::{Field, Visit};
@@ -5383,7 +4976,7 @@ fn banners_of(f: impl FnOnce()) -> Banners {
         fn event(&self, event: &tracing::Event<'_>) {
             let mut fields = Fields::default();
             event.record(&mut fields);
-            // A coded line by its banner; the uncoded error_map line (1.5.5's) by its message.
+
             let line = fields
                 .diag
                 .or_else(|| fields.value.as_ref().and(fields.message));
@@ -5401,8 +4994,7 @@ fn banners_of(f: impl FnOnce()) -> Banners {
 }
 
 /// A provider `error_map` entry that names no status class is ignored, and the operator is told so
-/// with 1.5.5's uncoded warning, once per distinct value for the life of the process, whichever of the two keys
-/// (a provider code or a structured type) the entry sits under. A recognized entry says nothing.
+
 #[test]
 fn an_error_map_class_that_names_no_class_is_reported_once() {
     let em = map(&[
@@ -5410,19 +5002,18 @@ fn an_error_map_class_that_names_no_class_is_reported_once() {
         ("overloaded_error", "overloaded_by_type"),
         ("quota", "billing"),
     ]);
-    // 1.5.5's line, uncoded (crates/busbar/src/breaker.rs warn_unrecognized_error_map_value).
+
     let code = "error_map maps an error to an unrecognized status class; the mapping is IGNORED and \
                 classification falls through to HTTP status. Valid classes: rate_limit, overloaded, \
                 server_error, timeout, network, auth, billing, client_error, context_length"
         .to_string();
     let seen = banners_of(|| {
-        // The typo'd code mapping is ignored: the status places the error.
         let sig = normalize(400, &raw(400, Some("1302"), None), &em);
         assert_eq!(sig.class, StatusClass::ClientError);
-        // The same value again, and the typo'd structured-type mapping.
+
         let _ = normalize(400, &raw(400, Some("1302"), None), &em);
         let _ = normalize(500, &raw(500, None, Some("overloaded_error")), &em);
-        // A recognized mapping reports nothing.
+
         let _ = normalize(402, &raw(402, Some("quota"), None), &em);
     });
     let want: Banners = vec![
@@ -5475,7 +5066,7 @@ fn failed_responses_usage_is_observed_while_same_and_cross_dialect_refunds_stay_
             );
         }
     }
-    // The cross-dialect whole-body fallback must not reinterpret diagnostic recovery as billing.
+
     let cross = whole::translate(HOST, &ctx("openai", "responses", false, false), 200, far);
     assert_eq!(cross.end, WholeEnd::NotTranslatable);
     assert!(cross.refused.is_some());

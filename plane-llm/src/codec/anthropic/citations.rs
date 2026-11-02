@@ -7,9 +7,7 @@ use super::*;
 use crate::codec::keys;
 
 /// Map one raw citation object to a neutral [`crate::codec::ir::IrCitation`], keeping the source
-/// verbatim in `raw` so the Anthropic writer re-emits it byte-exact while a cross-protocol writer
-/// has the neutral coordinates. The `type` variants name start/end differently (char/page/block
-/// index, web-search `encrypted_index`); each is read into the shared neutral slots by `type`.
+
 pub(super) fn read_citation(val: &serde_json::Value) -> crate::codec::ir::IrCitation {
     let kind = val
         .get(keys::TYPE)
@@ -19,25 +17,24 @@ pub(super) fn read_citation(val: &serde_json::Value) -> crate::codec::ir::IrCita
         .get(super::CITED_TEXT)
         .and_then(|v| v.as_str())
         .map(str::to_string);
-    // `document_title` (document-location variants) OR `title` (web_search_result_location).
+
     let title = val
         .get(super::DOCUMENT_TITLE)
         .or_else(|| val.get(keys::TITLE))
         .and_then(|v| v.as_str())
         .map(str::to_string);
-    // `url` (web_search_result_location) OR `source` (search_result_location, the caller-supplied
-    // URI); reading only `url` loses a search-result citation's provenance on a foreign egress.
+
     let url = val
         .get(keys::URL)
         .or_else(|| val.get(keys::SOURCE))
         .and_then(|v| v.as_str())
         .map(str::to_string);
-    // `document_index` (document-location variants) OR `search_result_index`.
+
     let document_index = val
         .get(super::DOCUMENT_INDEX)
         .or_else(|| val.get(super::SEARCH_RESULT_INDEX))
         .and_then(|v| v.as_i64());
-    // Per-variant start/end field names collapse into the shared neutral slots.
+
     let start_index = val
         .get(super::START_CHAR_INDEX)
         .or_else(|| val.get(super::START_PAGE_NUMBER))
@@ -62,15 +59,14 @@ pub(super) fn read_citation(val: &serde_json::Value) -> crate::codec::ir::IrCita
         start_index,
         end_index,
         encrypted_index,
-        // VERBATIM source object → byte-exact same-protocol re-emission.
+
         raw: Some(val.clone()),
         ..Default::default()
     }
 }
 
 /// True when `raw` is an Anthropic citation object (its `type` is a known variant). Gates the
-/// byte-exact passthrough so a foreign `raw` (Gemini `citationSources[]`) is rebuilt from neutral
-/// fields.
+
 pub(super) fn is_anthropic_citation_shape(raw: &serde_json::Value) -> bool {
     matches!(
         raw.get(keys::TYPE).and_then(|v| v.as_str()),
@@ -85,9 +81,7 @@ pub(super) fn is_anthropic_citation_shape(raw: &serde_json::Value) -> bool {
 }
 
 /// Map a neutral [`crate::codec::ir::IrCitation`] to an Anthropic citation object. A present `raw`
-/// is emitted verbatim, so Anthropic to IR to Anthropic is byte-exact; only when it is absent
-/// (a citation synthesized on a cross-protocol hop) is the object built from the neutral fields,
-/// with `kind` choosing the variant and its field names.
+
 pub(super) fn write_citation(c: &crate::codec::ir::IrCitation) -> Option<serde_json::Value> {
     write_citation_in_context(c, false)
 }
@@ -112,8 +106,7 @@ pub(super) fn write_response_citation(
     c: &crate::codec::ir::IrCitation,
 ) -> Option<serde_json::Value> {
     let mut written = write_citation_in_context(c, true)?;
-    // Native raw citations keep the relay's verbatim contract. Only a synthesized response
-    // needs the nullable member that is absent from the request citation schema.
+
     if !c.raw.as_ref().is_some_and(is_anthropic_citation_shape)
         && matches!(
             written.get(keys::TYPE).and_then(|v| v.as_str()),
@@ -132,8 +125,6 @@ fn representable_citation(
     c: &crate::codec::ir::IrCitation,
     response: bool,
 ) -> Option<serde_json::Value> {
-    // Re-emit `raw` verbatim only when it is an Anthropic citation (an Anthropic `type` tag); a
-    // foreign `raw` (e.g. Gemini `uri`/`startIndex`) falls through to the built shape.
     if let Some(raw) = &c.raw {
         if is_anthropic_citation_shape(raw) {
             return Some(raw.clone());
@@ -161,8 +152,7 @@ fn representable_citation(
             super::END_BLOCK_INDEX,
             response,
         )?,
-        // A search-result citation names its passage by `source` + `search_result_index` and its
-        // span by content-block indices; char-location names would not read as one.
+
         CITATION_TYPE_SEARCH_RESULT => {
             let index = c.document_index.filter(|index| *index >= 0)?;
             let start = c.start_index.filter(|index| *index >= 0)?;
@@ -210,7 +200,7 @@ fn representable_citation(
 }
 
 /// The members every Anthropic document-location variant shares — `document_index`,
-/// `document_title` — then its span under the variant's own start/end names (char, page or block).
+
 fn document_location(
     c: &crate::codec::ir::IrCitation,
     obj: &mut serde_json::Map<String, serde_json::Value>,

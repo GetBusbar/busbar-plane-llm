@@ -2,10 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE DIALECT-HELPER DRIFT GUARD (#83a SD-3): the plane's own copies of the shared wire helpers
-//! answer exactly what the shared fixture `testing/plane-copies/dialect-helpers.json` records — the
-//! same constants, error codes, SSE frame probes, parses and writes, and `usage` strips. The fixture is
-//! the host originals' answers, and the host's own suite holds its originals to the same file, so
-//! moving a dialect onto its own copy changes no byte it reads or writes.
 
 use super::*;
 

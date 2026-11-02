@@ -1,16 +1,4 @@
 //! The hook projection, sans I/O: what a hook is shown of an arrival, and a request-stage hook's
-//! rewrite applied to the arrival in its own dialect.
-//!
-//! One read through the operation's own reader: the size signals (turns, characters, tools), the end
-//! user the dialect spells, and the prompt view (the system field and one `(role, text)` entry per wire
-//! turn, an in-band system turn at its wire position, a turn with nothing readable still an entry). A
-//! body the reader refuses is projected off its raw JSON (`project_raw.rs`): the projection never fails
-//! and the request goes on. A body with no reader projects the zeroed shape.
-//!
-//! The output-cap signal (`max_tokens_for`) is the dialect's cap key off the caller's body, an
-//! out-of-range cap saturated to `u32::MAX`, never dropped; a Bedrock body's nested
-//! `inferenceConfig.maxTokens` is read where that key is absent. The IR's cap is the far end's and a
-//! reader drops a cap it cannot carry; the hook signal is the caller's ask.
 
 use busbar_contract::abi::plane::PROJECT_REWRITE_NOT_APPLICABLE;
 use busbar_contract::hooks::RewriteReply;
@@ -59,9 +47,7 @@ const BEDROCK: &str = "bedrock";
 const BEDROCK_CAP: &str = "/inferenceConfig/maxTokens";
 
 /// The output-cap signal: the dialect's cap key (`max_output_tokens` for responses, `max_tokens` for
-/// every other) off the caller's body, saturated. A Bedrock Converse body spells it
-/// `inferenceConfig.maxTokens` (pinned by driver proof `max_tokens_signal_reads_the_bedrock_inference_config`),
-/// read when the top-level key is absent.
+
 #[must_use]
 pub fn max_tokens_for(v: &Value, dialect: &str) -> Option<u32> {
     let key = if dialect == RESPONSES {
@@ -82,7 +68,7 @@ pub fn max_tokens_for(v: &Value, dialect: &str) -> Option<u32> {
 }
 
 /// The facts the operation's reader reads off `arrived`; `Ok(None)` when there is no reader or no
-/// body to read.
+
 fn facts(arrived: &Arrived) -> Result<Option<Box<dyn IrFacts + Send + Sync>>, Unreadable> {
     let Some(handler) = handler_of(arrived) else {
         return Ok(None);
@@ -90,7 +76,7 @@ fn facts(arrived: &Arrived) -> Result<Option<Box<dyn IrFacts + Send + Sync>>, Un
     let read = match &arrived.parsed {
         Some(v) if v.is_object() => handler.read_facts_value(v),
         _ if arrived.body.is_empty() => return Ok(None),
-        // A body that is not a JSON object (a multipart upload) is read by the byte reader.
+
         _ => handler.read_facts(&arrived.body, &arrived.content_type),
     };
     read.map(Some).map_err(|_| Unreadable)
@@ -146,8 +132,7 @@ pub fn project(arrived: &Arrived) -> HookView {
         .and_then(|v| max_tokens_for(v, arrived.dialect));
     let read = match facts(arrived) {
         Ok(read) => read,
-        // The reader refuses the body: the raw projection, which never fails. A same-dialect request goes on verbatim; a translation to another
-        // dialect still refuses it when the attempt is written.
+
         Err(Unreadable) => {
             let null = Value::Null;
             let v = arrived
@@ -209,13 +194,7 @@ fn read_rewrite(rewrite: &[u8]) -> Option<RewriteReply> {
 }
 
 /// Apply a request-stage hook's rewrite to `arrived` in its own dialect: the dialect frames the
-/// rewrite's messages (and tools) into its conversation container. Answers the rewritten body when it
-/// applied; `None` leaves the arrival unmodified.
-///
-/// The rewrite is spliced, never re-serialized ("hook `rw` edits, spliced per changed block. Never
-/// parse-edit-reserialize"): only the top-level members the dialect's framing changed are written into
-/// the caller's bytes ([`spans::apply_top`]); every untouched member reaches the far end byte for
-/// byte, in the caller's order, spacing and number spelling.
+
 pub fn apply_rewrite(arrived: &mut Arrived, rewrite: &[u8]) -> Option<Vec<u8>> {
     let reply = read_rewrite(rewrite)?;
     if reply.messages.is_empty() {
@@ -228,7 +207,7 @@ pub fn apply_rewrite(arrived: &mut Arrived, rewrite: &[u8]) -> Option<Vec<u8>> {
     if !dialect.apply_rewrite_to_ingress_body(obj, &reply.messages, &reply.tools) {
         return None;
     }
-    // The members the framing changed, set or removed; nothing else is touched.
+
     let mut set = Vec::new();
     for (key, value) in obj.iter() {
         if before.get(key) != Some(value) {
@@ -245,8 +224,7 @@ pub fn apply_rewrite(arrived: &mut Arrived, rewrite: &[u8]) -> Option<Vec<u8>> {
             .filter(|key| !obj.contains_key(key.as_str()))
             .map(|key| spans::Edit::Remove(key.as_str())),
     );
-    // `None` from the splice with edits to make is a body it cannot place them in: the request goes
-    // on unmodified. With none, the rewrite read the same as the body: its bytes stand.
+
     let bytes = if edits.is_empty() {
         arrived.body.clone()
     } else {
@@ -258,16 +236,7 @@ pub fn apply_rewrite(arrived: &mut Arrived, rewrite: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// The plane's word on a rewrite it did not apply, in the `project` answer's view flags:
-/// [`PROJECT_REWRITE_NOT_APPLICABLE`] when the call carried a rewrite (`rewrite` non-empty), none was
-/// applied (`applied` false), and the arrival's operation has no conversation to frame one into. Only
-/// a chat has a conversation container (`messages`, `contents`, the responses `input`) to splice a
-/// hook's messages into; rerank, embedding, moderation, image, speech and transcription inputs are
-/// projected for the gates to screen but a rewrite has nowhere to go (`apply_rewrite_to_ingress_body`
-/// finds no messages container). The kernel forwards such a unit unmodified and audits it.
-///
-/// Never for a chat, whatever kept its rewrite from applying (a body the splice cannot place it in,
-/// a missing container, an unreadable rewrite): the mark stays clear and the kernel refuses the unit
-/// rather than forward it un-rewritten. `0` when nothing was carried or the rewrite applied.
+
 #[must_use]
 pub fn rewrite_flags(arrived: &Arrived, rewrite: &[u8], applied: bool) -> u32 {
     if rewrite.is_empty() || applied || arrived.operation == OpVerb::CHAT {

@@ -178,8 +178,7 @@ fn response_failed_codes_obey_pinned_response_schema_and_keep_native_codes() {
             assert_eq!(response["error"]["message"], signal.unwrap_or("error"));
             assert_eq!(error.provider_signal, original_signal);
             assert_eq!(error.class, class);
-            // The ResponseError surface has no auth/billing/context-length subtype. Verify the
-            // classes represented by its canonical codes through both reader entry points.
+
             let represented = match expected {
                 "rate_limit_exceeded" => StatusClass::RateLimit,
                 "invalid_prompt" => StatusClass::ClientError,
@@ -244,9 +243,7 @@ fn responses_accumulator_refusal_ends_output_before_crossing_fragment() {
         bytes_null: false,
         top: Vec::new(),
     };
-    // Both byte limits and the terminal representation are observable through the existing
-    // writer API. Each path gets a crossing fragment followed by a smaller fragment that fits
-    // beside the retained prefix; accepting that suffix used to fabricate a successful answer.
+
     for case in [
         "text",
         "refusal",
@@ -313,7 +310,7 @@ fn responses_accumulator_refusal_ends_output_before_crossing_fragment() {
                     "logprob" => std::mem::size_of::<IrTokenLogprob>(),
                     _ => 0,
                 };
-                // This batch fits by itself; it crosses only when added to the held prefix.
+
                 "x".repeat(512 - carried_overhead)
             } else if case == "tool" {
                 "1".into()
@@ -341,7 +338,7 @@ fn responses_accumulator_refusal_ends_output_before_crossing_fragment() {
             } else {
                 assert!(!crossed.iter().any(|(name, _)| name == "error"), "{case}");
             }
-            // A clone must carry the failed state as well as the retained prefix.
+
             let writer = writer.clone();
             let later = writer.write_response_events(
                 host,
@@ -505,7 +502,7 @@ fn responses_writer_compacts_media_gaps_and_keeps_terminal_item_positions() {
     ] {
         frames.extend(writer.write_response_events(host, &event));
     }
-    // A mid-stream clone retains the mapping and earlier finalized item.
+
     let writer = writer.clone();
     for event in [
         IrStreamEvent::BlockDelta {
@@ -530,7 +527,6 @@ fn responses_writer_compacts_media_gaps_and_keeps_terminal_item_positions() {
             index: 4,
             delta: IrDelta::InputJsonDelta("{}".into()),
         },
-        // Close in reverse order: terminal output must still follow emitted item starts.
         IrStreamEvent::BlockStop { index: 4 },
         IrStreamEvent::BlockStop { index: 2 },
         IrStreamEvent::MessageDelta {
@@ -572,8 +568,7 @@ fn responses_writer_compacts_media_gaps_and_keeps_terminal_item_positions() {
     assert_eq!(terminal["output"][2]["arguments"], "{}");
     assert_eq!(terminal["usage"]["output_tokens"], 5);
     writer.write_response_events(host, &IrStreamEvent::MessageStop);
-    // Production resolves a fresh writer for each stream. A duplicate MessageStart on the same
-    // writer belongs to its current stream and must not clear this stream's mapping.
+
     let writer = ResponsesWriter;
     writer.write_response_events(
         host,
@@ -787,9 +782,7 @@ fn refusal_events_respect_existing_block_limit_and_tool_collision() {
 }
 
 /// An `input_file` content block (a legitimate Responses input shape) must not
-/// silently vanish. Before this fix, `responses_block`'s bare `_ => Err(..)` was swallowed by
-/// every caller's `filter_map(..ok())` with ZERO log at any level — not a 400, not a warn, just a
-/// disappeared block. It must now degrade to an empty placeholder AND warn, naming the type.
+
 #[test]
 fn responses_input_file_degrades_with_warn_not_silent_drop() {
     use busbar_test_kit::warn_capture::WarnCapture;
@@ -812,19 +805,13 @@ fn responses_input_file_degrades_with_warn_not_silent_drop() {
         ResponsesReader.read_request(&body).expect("read_request")
     });
 
-    // The turn survives with its position preserved: 3 content blocks, not 2 (a silent drop would
-    // collapse it to 2 — before/after with the file gone, indistinguishable from a well-formed
-    // 2-block message).
     assert_eq!(
         ir.messages[0].content.len(),
         3,
         "the unmodeled block must not vanish — it must degrade in place: {:?}",
         ir.messages[0].content
     );
-    // `input_file` is now MODELLED (`IrBlock::Media`) rather than degraded, so there is no drop to
-    // log — the attachment survives instead, which is strictly better than a well-logged
-    // destruction. The degrade-with-warn path it used to take is still asserted, on a block type
-    // that genuinely IS unmodeled.
+
     assert!(
         matches!(
             &ir.messages[0].content[1],
@@ -852,9 +839,7 @@ fn responses_input_file_degrades_with_warn_not_silent_drop() {
             }))
             .expect("read_request")
     });
-    // A genuinely unmodeled block is dropped, never substituted (design F3 "Drops"): the read keeps
-    // the two text blocks only. The read itself says nothing (a relay's tap drops nothing); a
-    // translate attempt names the dropped kind (`codec::tests::drops_tests`).
+
     assert_eq!(
         ir2.messages[0].content.len(),
         2,
@@ -869,9 +854,7 @@ fn responses_input_file_degrades_with_warn_not_silent_drop() {
 }
 
 /// LOW (lossless-by-target): the Responses create API models no `top_k`. A request carrying
-/// `top_k` must NOT emit a `top_k` field (it would 400 a real `/v1/responses` call) — it is
-/// dropped with a `warn!` (the drop-with-warn branch is exercised here). `top_p`, which the
-/// surface DOES model, still passes through.
+
 #[test]
 fn write_request_drops_top_k_with_warn() {
     let mk = |top_k: Option<u32>| crate::codec::ir::IrRequest {
@@ -886,16 +869,15 @@ fn write_request_drops_top_k_with_warn() {
     };
 
     let writer = ResponsesWriter;
-    // With top_k set: the warn-drop branch runs and NO `top_k` reaches the body.
+
     let with = writer.write_request(crate::codec::test_host::HOST, &mk(Some(40)));
     assert!(
         with.get("top_k").is_none(),
         "the Responses body must NOT carry top_k (lossy-by-target): {with}"
     );
-    // top_p (a modeled param) still passes through.
+
     assert_eq!(with.get("top_p").and_then(|v| v.as_f64()), Some(0.9));
 
-    // Without top_k: body shape is identical w.r.t. top_k absence (sanity baseline).
     let without = writer.write_request(crate::codec::test_host::HOST, &mk(None));
     assert!(without.get("top_k").is_none());
 }
@@ -979,7 +961,7 @@ fn test_write_request() {
 
     let func_call_item = input
         .iter()
-        .find(|item| item.get("type").and_then(|t| t.as_str()) == Some("function_call")) // golden wire-contract literal (kept bare on purpose)
+        .find(|item| item.get("type").and_then(|t| t.as_str()) == Some("function_call"))
         .expect("should have function_call item");
     assert_eq!(
         func_call_item.get("name").and_then(|n| n.as_str()),
@@ -1056,7 +1038,6 @@ fn test_read_request() {
         panic!("system should be Text block");
     }
 
-    // 2 role/content messages + function_call -> assistant + function_call_output -> tool
     assert_eq!(ir.messages.len(), 4);
 
     assert_eq!(ir.messages[0].role, crate::codec::ir::IrRole::User);
@@ -1074,11 +1055,6 @@ fn test_read_request() {
     assert_eq!(tool.name, "get_weather");
 }
 
-// A `message`-item `content` that is a BARE JSON STRING (the
-// Responses shorthand) must survive. The old array-only path returned `None` from
-// `as_array()` and silently dropped the whole turn, losing a user/assistant message on a
-// cross-protocol hop. Covers BOTH the typed `"type":"message"` arm and the untyped
-// role-keyed fallback.
 #[test]
 fn test_read_request_bare_string_content_survives() {
     let json = serde_json::json!({
@@ -1099,7 +1075,6 @@ fn test_read_request_bare_string_content_survives() {
         .read_request(&json)
         .expect("read_request should succeed");
 
-    // All four turns must survive (old code dropped every one).
     assert_eq!(ir.messages.len(), 4, "no turn may be dropped");
 
     let expect_text =
@@ -1185,10 +1160,6 @@ fn test_temperature_fidelity() {
 
 #[test]
 fn test_auth_headers() {
-    // #83a S2-a: the dialect DECLARES its credential scheme and the host presents it — a plain
-    // `authorization: Bearer <key>` for every credential and mode. The bytes the host writes for a
-    // valid key, and the omission of a key whose bytes no header value may carry, are pinned in the
-    // host's suite over the shared fixture `testing/plane-copies/declared-credentials.json`.
     let Some(busbar_contract::protocol::EgressScheme::Static {
         families,
         own,
@@ -1265,9 +1236,7 @@ fn test_read_response_decode() {
 }
 
 /// Lenience: a Responses `read_response` body with NO `usage` object must parse to a
-/// zero IrUsage rather than hard-erroring with a ClientError — mirroring all five sibling readers
-/// (openai_chat.rs, etc.). A missing `usage` on an otherwise valid 200 is an upstream format quirk,
-/// not a client mistake; erroring here would make proxy engine discard a valid body and 500.
+
 #[test]
 fn read_response_without_usage_zero_defaults_no_error() {
     let json = serde_json::json!({
@@ -1294,13 +1263,6 @@ fn read_response_without_usage_zero_defaults_no_error() {
 
 #[test]
 fn test_write_response_roundtrip_text_only() {
-    // The writer re-emits the SDK-required top-level identity (`id`/`created_at`/`model`/`status`/
-    // `error:null`) AND a CONFORMANT message output item: a native message item carries an
-    // item-level opaque `id` (`msg_…`), a `status`, and `annotations: []` on the `output_text`
-    // part — exactly what the streaming `output_item.done` emits. The non-stream writer must too,
-    // or a typed SDK reading `item.id`/`item.status`/`content[0].annotations` sees missing fields
-    // (a proxy tell). Because the synthesized item id is opaque/random (as native ids are), this
-    // asserts CONFORMANCE + field preservation rather than byte-equality.
     let json = serde_json::json!({
         "id": "resp_abc123",
         "object": OBJ_RESPONSE,
@@ -1326,31 +1288,28 @@ fn test_write_response_roundtrip_text_only() {
         .expect("read should succeed");
     let out = writer.write_response(crate::codec::test_host::HOST, &ir_resp);
 
-    // Top-level identity preserved verbatim.
     assert_eq!(out["id"], json["id"]);
-    assert_eq!(out["object"], "response"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(out["object"], "response");
     assert_eq!(out["created_at"], json["created_at"]);
-    assert_eq!(out["status"], "completed"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(out["status"], "completed");
     assert_eq!(out["model"], "gpt-4o");
-    // The emitted usage carries ALL SDK-required fields (total_tokens + the two detail
-    // objects), not just the two scalar counts the source body happened to carry.
+
     assert_eq!(out["usage"]["input_tokens"], 10);
     assert_eq!(out["usage"]["output_tokens"], 5);
     assert_eq!(out["usage"]["total_tokens"], 15);
     assert!(out["error"].is_null());
 
-    // The message output item is conformant: native opaque id, status, and annotations.
     let item = &out["output"][0];
-    assert_eq!(item["type"], "message"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(item["type"], "message");
     assert_eq!(item["role"], "assistant");
-    assert_eq!(item["status"], "completed"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(item["status"], "completed");
     let id = item["id"].as_str().expect("message item carries an id");
     assert!(
         id.starts_with("msg_") && id.len() > 4,
         "item id must be a native opaque msg_ token, got {id}"
-    ); // golden wire-contract literal (kept bare on purpose)
+    );
     let part = &item["content"][0];
-    assert_eq!(part["type"], "output_text"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(part["type"], "output_text");
     assert_eq!(part["text"], "Hello world");
     assert!(
         part["annotations"].as_array().is_some_and(|a| a.is_empty()),
@@ -1359,8 +1318,7 @@ fn test_write_response_roundtrip_text_only() {
 }
 
 /// The NON-streaming `write_response` function_call
-/// item must carry the item-level opaque `id` (`fc_…`, distinct from `call_id`) that the streaming
-/// `output_item.done` emits, or a typed SDK reading `item.id` sees a missing field.
+
 #[test]
 fn test_write_response_function_call_item_has_native_id() {
     let resp = crate::codec::ir::IrResponse {
@@ -1395,7 +1353,7 @@ fn test_write_response_function_call_item_has_native_id() {
     let out = writer.write_response(crate::codec::test_host::HOST, &resp);
     let fc = out["output"]
         .as_array()
-        .and_then(|a| a.iter().find(|i| i["type"] == "function_call")) // golden wire-contract literal (kept bare on purpose)
+        .and_then(|a| a.iter().find(|i| i["type"] == "function_call"))
         .expect("a function_call output item");
     assert_eq!(fc["call_id"], "call_abc", "call_id preserved");
     let id = fc["id"]
@@ -1404,16 +1362,11 @@ fn test_write_response_function_call_item_has_native_id() {
     assert!(
         id.starts_with("fc_") && id.len() > 3,
         "function_call item id must be a native opaque fc_ token, got {id}"
-    ); // golden wire-contract literal (kept bare on purpose)
+    );
 }
 
 /// The NON-streaming `read_response` tool-use override must NOT clobber a
-/// truncation reason. An `incomplete` body with `incomplete_details.reason=max_output_tokens` that
-/// also carries a (partial) `function_call` item was cut off mid-output — its stop_reason must stay
-/// `max_tokens`, NOT be promoted to `tool_use`. Before the fix the override fired unconditionally on
-/// any ToolUse block, clobbering `max_tokens` and telling the client the call was complete (and
-/// denying the truncation signal to the breaker). The override is now guarded on `end_turn` only,
-/// mirroring the streaming `response.completed` arm.
+
 #[test]
 fn test_read_response_incomplete_with_function_call_keeps_max_tokens() {
     let json = serde_json::json!({
@@ -1439,14 +1392,13 @@ fn test_read_response_incomplete_with_function_call_keeps_max_tokens() {
         .read_response(crate::codec::test_host::HOST, &json)
         .expect("read should succeed");
 
-    // The tool call survived as content...
     assert!(
         resp.content
             .iter()
             .any(|b| matches!(b, crate::codec::ir::IrBlock::ToolUse { .. })),
         "the partial function_call must still be present as a ToolUse block"
     );
-    // ...but the truncation reason must NOT have been clobbered to tool_use.
+
     assert_eq!(
         resp.stop_reason,
         Some(crate::codec::ir::IrStopReason::MaxTokens),
@@ -1456,10 +1408,7 @@ fn test_read_response_incomplete_with_function_call_keeps_max_tokens() {
 }
 
 /// A native Responses refusal rides on a
-/// `{type:"refusal", refusal:"..."}` content part with `status:"completed"`. The prior reader
-/// matched only `output_text`, so the refusal text was SILENTLY DROPPED and the turn looked like a
-/// clean empty end_turn. The refusal text must survive as assistant content AND the stop_reason
-/// must be promoted to `Refusal` (so a non-Responses client sees the refusal signal).
+
 #[test]
 fn read_response_refusal_part_survives_and_promotes_stop_reason() {
     let json = serde_json::json!({
@@ -1485,7 +1434,6 @@ fn read_response_refusal_part_survives_and_promotes_stop_reason() {
         .read_response(crate::codec::test_host::HOST, &json)
         .expect("read should succeed");
 
-    // The refusal text survived as assistant Text (not dropped).
     assert!(
         resp.content.iter().any(|b| matches!(
             b,
@@ -1494,7 +1442,7 @@ fn read_response_refusal_part_survives_and_promotes_stop_reason() {
         "the refusal text must survive as assistant content, not be silently dropped: {:?}",
         resp.content
     );
-    // The completed status was promoted to the typed Refusal stop_reason.
+
     assert_eq!(
         resp.stop_reason,
         Some(crate::codec::ir::IrStopReason::Refusal),
@@ -1503,10 +1451,7 @@ fn read_response_refusal_part_survives_and_promotes_stop_reason() {
 }
 
 /// `write_response` must build the `output` array in IR ENCOUNTER order so it
-/// mirrors the streaming `drain_output_items` order. A prior revision `insert(0)`'d the text message
-/// item at the FRONT, so a text-AFTER-tool response emitted [message, function_call] on the
-/// non-stream path while the stream emitted [function_call, message] — a client reassembling
-/// `response.output[]` saw the two paths disagree. Order must now follow the blocks: tool, then text.
+
 #[test]
 fn test_write_response_preserves_text_after_tool_order() {
     let resp = crate::codec::ir::IrResponse {
@@ -1544,7 +1489,7 @@ fn test_write_response_preserves_text_after_tool_order() {
     let out = writer.write_response(crate::codec::test_host::HOST, &resp);
     let arr = out["output"].as_array().expect("output is an array");
     assert_eq!(arr.len(), 2, "one item per non-empty block, in order");
-    // Encounter order: the tool block came first, the text block second.
+
     assert_eq!(
         arr[0]["type"],
         "function_call", // golden wire-contract literal (kept bare on purpose)
@@ -1560,7 +1505,7 @@ fn test_write_response_preserves_text_after_tool_order() {
 }
 
 /// The native Responses error envelope an official SDK decodes: a JSON object whose `error`
-/// carries `message`, a Responses-vocabulary `type`, and `code`/`param` keys (null here).
+
 #[test]
 fn test_write_error_native_responses_envelope() {
     let writer = ResponsesWriter;
@@ -1571,7 +1516,6 @@ fn test_write_error_native_responses_envelope() {
         "model 'x' not found",
     );
 
-    // Round-trips as JSON without panic.
     let serialized = serde_json::to_string(&v).expect("write_error output must serialize");
     let reparsed: serde_json::Value =
         serde_json::from_str(&serialized).expect("write_error output must be valid JSON");
@@ -1581,12 +1525,12 @@ fn test_write_error_native_responses_envelope() {
         err.get("message").and_then(|m| m.as_str()),
         Some("model 'x' not found")
     );
-    // Generic `not_found` maps to the Responses vocabulary `not_found_error`.
+
     assert_eq!(
         err.get("type").and_then(|t| t.as_str()),
         Some("not_found_error")
     );
-    // `code` and `param` keys are present and null (Responses/OpenAI always include them).
+
     assert!(err.get("code").is_some(), "code key must be present");
     assert!(err.get("param").is_some(), "param key must be present");
     assert!(err.get("code").unwrap().is_null());
@@ -1594,12 +1538,11 @@ fn test_write_error_native_responses_envelope() {
 }
 
 /// Each generic `kind` maps to the canonical Responses `error.type`; an unrecognized kind is
-/// passed through verbatim (no catch-all swallowing of a precise upstream type).
+
 #[test]
 fn test_write_error_kind_mapping() {
     let writer = ResponsesWriter;
-    // The `want` values are golden wire-contract literals (kept bare on purpose) — they are the
-    // exact `error.type` strings busbar emits for each input kind.
+
     for (kind, want) in [
         ("invalid_request", "invalid_request_error"),
         ("auth", "authentication_error"),
@@ -1608,7 +1551,6 @@ fn test_write_error_kind_mapping() {
         ("rate_limit", "rate_limit_error"),
         ("server_error", "server_error"),
         ("billing", "insufficient_quota"),
-        // Already-canonical and unknown types pass through unchanged.
         ("authentication_error", "authentication_error"),
         ("some_future_type", "some_future_type"),
     ] {
@@ -1624,7 +1566,7 @@ fn test_write_error_kind_mapping() {
 }
 
 /// Same-protocol passthrough: `read_response` captures the upstream `id`/`created_at`, and
-/// `write_response` emits them verbatim — identity is preserved exactly, not regenerated.
+
 #[test]
 fn test_same_protocol_roundtrip_preserves_identity() {
     let json = serde_json::json!({
@@ -1664,11 +1606,10 @@ fn test_same_protocol_roundtrip_preserves_identity() {
         "created_at must be preserved verbatim"
     );
     assert_eq!(out.get("object").and_then(|o| o.as_str()), Some("response"));
-    // golden wire-contract literal (kept bare on purpose)
 }
 
 /// The streaming start event captures the nested `response` identity for same-protocol
-/// passthrough.
+
 #[test]
 fn test_stream_message_start_captures_identity() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -1699,8 +1640,7 @@ fn test_stream_message_start_captures_identity() {
 }
 
 /// Cross-protocol: when the IR carries no identity (the backend supplied none), `write_response`
-/// synthesizes a valid `resp_`-prefixed id and a current `created_at` without panicking, and two
-/// successive synthesized ids are distinct.
+
 #[test]
 fn test_cross_protocol_write_synthesizes_valid_id() {
     let writer = ResponsesWriter;
@@ -1750,7 +1690,6 @@ fn test_cross_protocol_write_synthesizes_valid_id() {
 fn test_stream_fanout() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
 
-    // response.created → MessageStart only (first time)
     let events1 = reader_read_response_events(
         EVT_RESPONSE_CREATED,
         &serde_json::json!({"response": {"object": OBJ_RESPONSE, "status": STATUS_IN_PROGRESS}}),
@@ -1761,7 +1700,7 @@ fn test_stream_fanout() {
         events1[0],
         crate::codec::ir::IrStreamEvent::MessageStart { .. }
     ));
-    // response.output_item.added for function_call → BlockStart
+
     let events2 = reader_read_response_events(
         EVT_OUTPUT_ITEM_ADDED,
         &serde_json::json!({
@@ -1775,10 +1714,10 @@ fn test_stream_fanout() {
         events2[0],
         crate::codec::ir::IrStreamEvent::BlockStart { .. }
     ));
-    // response.output_text.delta ×3 → BlockStart (lazy) + BlockDelta ×3
+
     let delta_json = |d: &str| serde_json::json!({"output_index": 0, "delta": d});
     let events3a = reader_read_response_events(EVT_OUTPUT_TEXT_DELTA, &delta_json("H"), &mut state);
-    assert_eq!(events3a.len(), 2); // BlockStart + BlockDelta
+    assert_eq!(events3a.len(), 2);
     assert!(matches!(
         events3a[0],
         crate::codec::ir::IrStreamEvent::BlockStart { .. }
@@ -1788,15 +1727,14 @@ fn test_stream_fanout() {
         crate::codec::ir::IrStreamEvent::BlockDelta { .. }
     ));
     let events3b = reader_read_response_events(EVT_OUTPUT_TEXT_DELTA, &delta_json("i"), &mut state);
-    assert_eq!(events3b.len(), 1); // BlockDelta only
+    assert_eq!(events3b.len(), 1);
     assert!(matches!(
         events3b[0],
         crate::codec::ir::IrStreamEvent::BlockDelta { .. }
     ));
     let events3c = reader_read_response_events(EVT_OUTPUT_TEXT_DELTA, &delta_json("!"), &mut state);
-    assert_eq!(events3c.len(), 1); // BlockDelta only
+    assert_eq!(events3c.len(), 1);
 
-    // response.output_item.done → BlockStop
     let events4 = reader_read_response_events(
         EVT_OUTPUT_ITEM_DONE,
         &serde_json::json!({"output_index": 0}),
@@ -1807,10 +1745,7 @@ fn test_stream_fanout() {
         events4[0],
         crate::codec::ir::IrStreamEvent::BlockStop { .. }
     ));
-    // response.completed with usage. The function_call block opened at index 1 (events2) was
-    // never closed by an `output_item.done`, so it is STILL OPEN at the terminal event. The
-    // terminal arm must close it (BlockStop{index:1}) BEFORE MessageStop so the stream stays
-    // balanced, giving: BlockStop + MessageDelta + MessageStop.
+
     let completed_json = serde_json::json!({
         "response": {
             "status": STATUS_COMPLETED,
@@ -1835,7 +1770,7 @@ fn test_stream_fanout() {
         events5[2],
         crate::codec::ir::IrStreamEvent::MessageStop
     ));
-    // response.in_progress should not emit MessageStart again (state.started=true)
+
     let events6 = reader_read_response_events(
         "response.in_progress",
         &serde_json::json!({"response": {"object": OBJ_RESPONSE, "status": STATUS_IN_PROGRESS}}),
@@ -1843,7 +1778,6 @@ fn test_stream_fanout() {
     );
     assert_eq!(events6.len(), 0);
 
-    // Unknown event type → empty (no panic)
     let events7 = reader_read_response_events(
         "response.content_part.added",
         &serde_json::json!({}),
@@ -1853,12 +1787,12 @@ fn test_stream_fanout() {
 }
 
 /// A terminal-only Responses refusal still needs the buffered-body fallback when no
-/// refusal.delta or refusal.done events preceded response.completed.
+
 #[test]
 fn read_response_events_streamed_refusal_surfaces_text_and_refusal_stop_reason() {
     use crate::codec::ir::{IrDelta, IrStopReason, IrStreamEvent};
     let mut state = crate::codec::ir::StreamDecodeState::default();
-    // This fixture deliberately omits the refusal events and supplies only the terminal body.
+
     let events = reader_read_response_events(
         EVT_RESPONSE_COMPLETED,
         &serde_json::json!({
@@ -1876,7 +1810,6 @@ fn read_response_events_streamed_refusal_surfaces_text_and_refusal_stop_reason()
         &mut state,
     );
 
-    // The refusal text surfaced as a Text BlockDelta (not dropped).
     assert!(
             events.iter().any(|e| matches!(
                 e,
@@ -1884,7 +1817,7 @@ fn read_response_events_streamed_refusal_surfaces_text_and_refusal_stop_reason()
             )),
             "streamed refusal text must surface as a TextDelta; got {events:?}"
         );
-    // The terminal MessageDelta promoted stop_reason to Refusal (not end_turn).
+
     let stop = events.iter().find_map(|e| match e {
         IrStreamEvent::MessageDelta { stop_reason, .. } => Some(*stop_reason),
         _ => None,
@@ -1894,7 +1827,7 @@ fn read_response_events_streamed_refusal_surfaces_text_and_refusal_stop_reason()
         Some(Some(IrStopReason::Refusal)),
         "a streamed refusal must terminate with stop_reason=Refusal; got {events:?}"
     );
-    // Block open/close balance: exactly one BlockStart and one BlockStop for the refusal block.
+
     let starts = events
         .iter()
         .filter(|e| matches!(e, IrStreamEvent::BlockStart { .. }))
@@ -1914,7 +1847,6 @@ fn read_response_events_streamed_refusal_surfaces_text_and_refusal_stop_reason()
 fn test_write_response_event_blockdelta() {
     let writer = ResponsesWriter;
 
-    // BlockDelta TextDelta("hi") → ("response.output_text.delta", delta=="hi")
     let ev1 = crate::codec::ir::IrStreamEvent::BlockDelta {
         index: 0,
         delta: crate::codec::ir::IrDelta::TextDelta("hi".to_string()),
@@ -1922,10 +1854,9 @@ fn test_write_response_event_blockdelta() {
     let (etype1, payload1) = writer
         .write_response_event(crate::codec::test_host::HOST, &ev1)
         .expect("should emit");
-    assert_eq!(etype1, "response.output_text.delta"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype1, "response.output_text.delta");
     assert_eq!(payload1.get("delta").and_then(|d| d.as_str()), Some("hi"));
 
-    // MessageDelta{end_turn} → ("response.completed", status maps to completed)
     let ev2 = crate::codec::ir::IrStreamEvent::MessageDelta {
         stop_reason: Some(crate::codec::ir::IrStopReason::EndTurn),
         stop_sequence: None,
@@ -1941,7 +1872,7 @@ fn test_write_response_event_blockdelta() {
     let (etype2, payload2) = writer
         .write_response_event(crate::codec::test_host::HOST, &ev2)
         .expect("should emit");
-    assert_eq!(etype2, "response.completed"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype2, "response.completed");
     let resp_obj = payload2
         .get("response")
         .expect("payload should have response");
@@ -1961,8 +1892,7 @@ fn reader_read_response_events(
 }
 
 /// Regression: a text part arriving at a non-zero `output_index` must open AND write to the
-/// same block index. Previously BlockStart was hard-coded to index 0 while BlockDelta used the
-/// wire index, producing an unmatched open/write pair for downstream index-keyed consumers.
+
 #[test]
 fn test_text_delta_index_pairing_nonzero() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -1986,12 +1916,11 @@ fn test_text_delta_index_pairing_nonzero() {
 }
 
 /// Regression: an empty-delta keepalive chunk must produce no events, even when a text block is
-/// already open. Previously the guard `|| state.text_block_open` emitted a spurious zero-length
-/// TextDelta for every keepalive after the block opened.
+
 #[test]
 fn test_empty_delta_keepalive_emits_nothing() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
-    // Open a block with a real delta first.
+
     let opened = reader_read_response_events(
         EVT_OUTPUT_TEXT_DELTA,
         &serde_json::json!({"output_index": 0, "delta": "x"}),
@@ -1999,7 +1928,7 @@ fn test_empty_delta_keepalive_emits_nothing() {
     );
     assert_eq!(opened.len(), 2);
     assert!(state.open_tools.contains(&TEXT_INDEX_KEY_OFFSET));
-    // Now an empty keepalive while the block is open -> nothing.
+
     let keepalive = reader_read_response_events(
         EVT_OUTPUT_TEXT_DELTA,
         &serde_json::json!({"output_index": 0, "delta": ""}),
@@ -2009,7 +1938,7 @@ fn test_empty_delta_keepalive_emits_nothing() {
         keepalive.is_empty(),
         "empty keepalive delta must not emit events, got {keepalive:?}"
     );
-    // And an empty delta before any block is open also emits nothing.
+
     let mut fresh = crate::codec::ir::StreamDecodeState::default();
     let pre = reader_read_response_events(
         EVT_OUTPUT_TEXT_DELTA,
@@ -2021,7 +1950,7 @@ fn test_empty_delta_keepalive_emits_nothing() {
 }
 
 /// Regression: output_item.done must clear the open TEXT index so a subsequent text part can
-/// lazily re-open its own block instead of silently reusing stale open state.
+
 #[test]
 fn test_done_clears_text_block_open() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -2045,7 +1974,7 @@ fn test_done_clears_text_block_open() {
         !state.open_tools.contains(&TEXT_INDEX_KEY_OFFSET),
         "done must clear the open text index"
     );
-    // A new text part at index 1 re-opens lazily.
+
     let reopen = reader_read_response_events(
         EVT_OUTPUT_TEXT_DELTA,
         &serde_json::json!({"output_index": 1, "delta": "b"}),
@@ -2059,20 +1988,13 @@ fn test_done_clears_text_block_open() {
 }
 
 /// A bodyless `response.incomplete` terminal event (no nested `response`
-/// object) must NOT decode to a successful `end_turn`. With no `incomplete_details.reason`
-/// available there is no specific truncation reason, so the stop_reason must be None — masking
-/// a truncation as end_turn would lie to a downstream client. Previously the else branch
-/// hardcoded `Some("end_turn")` for every bodyless terminal regardless of event_type.
+
 #[test]
 fn test_bodyless_incomplete_is_not_end_turn() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
-    let events = reader_read_response_events(
-        EVT_RESPONSE_INCOMPLETE,
-        // No nested `response` object at all.
-        &serde_json::json!({}),
-        &mut state,
-    );
-    // Stream still terminates: MessageDelta + MessageStop.
+    let events =
+        reader_read_response_events(EVT_RESPONSE_INCOMPLETE, &serde_json::json!({}), &mut state);
+
     let delta_stop = events
         .iter()
         .find_map(|e| match e {
@@ -2091,7 +2013,6 @@ fn test_bodyless_incomplete_is_not_end_turn() {
         "stream must still terminate with MessageStop"
     );
 
-    // And a bodyless `completed` still maps to end_turn (the only successful terminal).
     let mut s2 = crate::codec::ir::StreamDecodeState::default();
     let completed =
         reader_read_response_events(EVT_RESPONSE_COMPLETED, &serde_json::json!({}), &mut s2);
@@ -2111,10 +2032,6 @@ fn test_bodyless_incomplete_is_not_end_turn() {
 
 #[test]
 fn test_stream_completed_with_function_call_is_tool_use_not_end_turn() {
-    // A STREAMED Responses tool call must terminate with stop_reason=tool_use, matching the
-    // non-streaming read_response (which flips a completed end_turn to tool_use when the output
-    // carries a function_call). Before the fix the stream said end_turn, so a cross-protocol
-    // client never saw the tool-call finish signal on the streaming path.
     let mut state = crate::codec::ir::StreamDecodeState::default();
     let events = reader_read_response_events(
         EVT_RESPONSE_COMPLETED,
@@ -2145,7 +2062,6 @@ fn test_stream_completed_with_function_call_is_tool_use_not_end_turn() {
 
 #[test]
 fn test_stream_completed_without_function_call_stays_end_turn() {
-    // No function_call in the output → still a plain end_turn (the override must not over-fire).
     let mut state = crate::codec::ir::StreamDecodeState::default();
     let events = reader_read_response_events(
         EVT_RESPONSE_COMPLETED,
@@ -2175,25 +2091,19 @@ fn test_stream_completed_without_function_call_stays_end_turn() {
 }
 
 /// A terminal event arriving while a content block is STILL OPEN must
-/// close that block (BlockStop) before MessageStop. Otherwise the translated stream emits a
-/// BlockStart with no matching BlockStop — an unbalanced sequence a strict SDK rejects. This
-/// covers every terminal sub-path: bodyless completed/incomplete, body-present
-/// completed/incomplete, the body-present `failed` early-return, and the bodyless `failed`
-/// arm — each with an open text block AND an open tool block to prove both key kinds drain.
+
 #[test]
 fn test_terminal_closes_open_blocks_balanced() {
-    // Helper: opens a text block at index 0 and a tool block at index 1, then fires `etype`
-    // with `data`, and asserts every BlockStart in the WHOLE stream has a matching BlockStop.
     fn assert_balanced(etype: &str, data: serde_json::Value) {
         let mut state = crate::codec::ir::StreamDecodeState::default();
         let mut all: Vec<crate::codec::ir::IrStreamEvent> = Vec::new();
-        // Open a text block at index 0.
+
         all.extend(reader_read_response_events(
             EVT_OUTPUT_TEXT_DELTA,
             &serde_json::json!({"output_index": 0, "delta": "partial"}),
             &mut state,
         ));
-        // Open a tool block at index 1.
+
         all.extend(reader_read_response_events(
             EVT_OUTPUT_ITEM_ADDED,
             &serde_json::json!({
@@ -2202,7 +2112,7 @@ fn test_terminal_closes_open_blocks_balanced() {
             }),
             &mut state,
         ));
-        // Sanity: both blocks are open before the terminal event.
+
         assert!(
             state.open_tools.contains(&TEXT_INDEX_KEY_OFFSET),
             "{etype}: text block should be open"
@@ -2211,11 +2121,9 @@ fn test_terminal_closes_open_blocks_balanced() {
             state.open_tools.contains(&1),
             "{etype}: tool block should be open"
         );
-        // Fire the terminal event.
+
         all.extend(reader_read_response_events(etype, &data, &mut state));
 
-        // Count BlockStart vs BlockStop per index — every open index must be closed exactly
-        // once and no stray closes.
         use std::collections::BTreeMap;
         let mut starts: BTreeMap<usize, usize> = BTreeMap::new();
         let mut stops: BTreeMap<usize, usize> = BTreeMap::new();
@@ -2234,7 +2142,7 @@ fn test_terminal_closes_open_blocks_balanced() {
                 starts, stops,
                 "{etype}: BlockStart/BlockStop counts must balance per index (starts={starts:?} stops={stops:?})"
             );
-        // Specifically index 0 (text) and index 1 (tool) were each opened once and closed once.
+
         assert_eq!(
             starts.get(&0).copied(),
             Some(1),
@@ -2247,13 +2155,12 @@ fn test_terminal_closes_open_blocks_balanced() {
             "{etype}: tool opened once"
         );
         assert_eq!(stops.get(&1).copied(), Some(1), "{etype}: tool closed once");
-        // The terminal arm must have drained the open set.
+
         assert!(
             state.open_tools.is_empty(),
             "{etype}: open_tools must be drained after the terminal event"
         );
-        // BlockStop for an index must precede MessageStop (a stop after the message-end is
-        // out of order). Verify the last BlockStop comes before MessageStop.
+
         let msg_stop_pos = all
             .iter()
             .position(|e| matches!(e, crate::codec::ir::IrStreamEvent::MessageStop))
@@ -2268,24 +2175,22 @@ fn test_terminal_closes_open_blocks_balanced() {
         );
     }
 
-    // Bodyless terminals (no nested `response`).
     assert_balanced(EVT_RESPONSE_COMPLETED, serde_json::json!({}));
     assert_balanced(EVT_RESPONSE_INCOMPLETE, serde_json::json!({}));
     assert_balanced(EVT_RESPONSE_FAILED, serde_json::json!({}));
 
-    // Body-present completed.
     assert_balanced(
         EVT_RESPONSE_COMPLETED,
         serde_json::json!({"response": {"status": STATUS_COMPLETED}}),
     );
-    // Body-present incomplete (truncated mid-block).
+
     assert_balanced(
         EVT_RESPONSE_INCOMPLETE,
         serde_json::json!({
             "response": {"status": STATUS_INCOMPLETE, "incomplete_details": {"reason": INCOMPLETE_REASON_MAX_OUTPUT}}
         }),
     );
-    // Body-present failed (the early-return path).
+
     assert_balanced(
         EVT_RESPONSE_FAILED,
         serde_json::json!({"response": {"status": STATUS_FAILED, "error": {"code": ERR_TYPE_SERVER_ERROR}}}),
@@ -2315,7 +2220,7 @@ fn test_content_part_done_closes_block() {
 }
 
 /// Regression: a minimal `response.completed` lacking a nested `response` object must still
-/// terminate the stream with MessageDelta + MessageStop, not leave it hanging.
+
 #[test]
 fn test_completed_without_response_object_terminates() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -2348,7 +2253,6 @@ fn test_incomplete_without_response_object_terminates() {
         crate::codec::ir::IrStreamEvent::MessageStop
     ));
 
-    // response.failed without object still works (pre-existing behavior preserved).
     let mut s2 = crate::codec::ir::StreamDecodeState::default();
     let failed = reader_read_response_events(EVT_RESPONSE_FAILED, &serde_json::json!({}), &mut s2);
     assert_eq!(failed.len(), 2);
@@ -2359,7 +2263,7 @@ fn test_incomplete_without_response_object_terminates() {
 }
 
 /// Regression: an input item carrying BOTH a `type` and a `role` must be processed exactly once
-/// (by the type arm), not duplicated by the role-keyed fallback.
+
 #[test]
 fn test_typed_item_with_role_not_duplicated() {
     let json = serde_json::json!({
@@ -2377,8 +2281,7 @@ fn test_typed_item_with_role_not_duplicated() {
     let ir = reader
         .read_request(&json)
         .expect("read_request should succeed");
-    // Exactly one message: the type arm produced the assistant text turn; the role fallback
-    // must NOT have added a second turn from the `content` array.
+
     assert_eq!(ir.messages.len(), 1, "typed+role item must not duplicate");
     assert_eq!(ir.messages[0].role, crate::codec::ir::IrRole::Assistant);
     match &ir.messages[0].content[0] {
@@ -2388,8 +2291,7 @@ fn test_typed_item_with_role_not_duplicated() {
 }
 
 /// Regression: an assistant turn that is PURELY a tool call must emit a flat `function_call`
-/// item and NO companion empty-content assistant `message` wrapper. The Responses API rejects
-/// assistant message items with `content: []`.
+
 #[test]
 fn test_tool_only_assistant_turn_no_empty_message_wrapper() {
     let ir = crate::codec::ir::IrRequest {
@@ -2411,7 +2313,7 @@ fn test_tool_only_assistant_turn_no_empty_message_wrapper() {
         .get("input")
         .and_then(|v| v.as_array())
         .expect("input should exist");
-    // Exactly one item: the function_call. No empty-content assistant message.
+
     assert_eq!(
         input.len(),
         1,
@@ -2421,7 +2323,7 @@ fn test_tool_only_assistant_turn_no_empty_message_wrapper() {
         input[0].get("type").and_then(|t| t.as_str()),
         Some("function_call") // golden wire-contract literal (kept bare on purpose)
     );
-    // No item should be a message with an empty content array.
+
     for item in input {
         if item.get("role").is_some() {
             let content = item.get("content").and_then(|c| c.as_array());
@@ -2434,8 +2336,7 @@ fn test_tool_only_assistant_turn_no_empty_message_wrapper() {
 }
 
 /// Regression: an assistant turn carrying BOTH text and a tool call must emit the assistant
-/// `message` (with the text) FIRST, then the flat `function_call` item AFTER it — preserving
-/// the conversation order the assistant produced.
+
 #[test]
 fn test_assistant_text_then_tool_call_order() {
     let ir = crate::codec::ir::IrRequest {
@@ -2465,7 +2366,7 @@ fn test_assistant_text_then_tool_call_order() {
         2,
         "expected message + function_call, got {input:?}"
     );
-    // Message first.
+
     assert_eq!(
         input[0].get("role").and_then(|r| r.as_str()),
         Some("assistant")
@@ -2478,7 +2379,7 @@ fn test_assistant_text_then_tool_call_order() {
         content[0].get("text").and_then(|t| t.as_str()),
         Some("Let me check.")
     );
-    // function_call after it.
+
     assert_eq!(
         input[1].get("type").and_then(|t| t.as_str()),
         Some("function_call") // golden wire-contract literal (kept bare on purpose)
@@ -2490,8 +2391,7 @@ fn test_assistant_text_then_tool_call_order() {
 }
 
 /// Regression: a streaming `response.failed` (status=="failed") must surface an
-/// IrStreamEvent::Error followed by MessageStop, NOT a successful end_turn MessageDelta that
-/// would mask the failure from a downstream client.
+
 #[test]
 fn test_stream_failed_status_emits_error_not_end_turn() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -2520,7 +2420,7 @@ fn test_stream_failed_status_emits_error_not_end_turn() {
         events[1],
         crate::codec::ir::IrStreamEvent::MessageStop
     ));
-    // Crucially, no MessageDelta with end_turn was emitted.
+
     assert!(
         !events
             .iter()
@@ -2530,10 +2430,7 @@ fn test_stream_failed_status_emits_error_not_end_turn() {
 }
 
 /// A streamed `response.failed` must classify the IrError by the captured
-/// provider signal, not a hardcoded ServerError. An `invalid_api_key` mid-stream failure is an
-/// Auth failure (HardDown breaker disposition), NOT a transient ServerError — hardcoding
-/// ServerError gave the wrong breaker disposition / failover. The provider_signal is preserved
-/// verbatim. Against the old code (class: ServerError) this asserts Auth and fails.
+
 #[test]
 fn test_stream_failed_invalid_api_key_classifies_as_auth() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -2554,13 +2451,12 @@ fn test_stream_failed_invalid_api_key_classifies_as_auth() {
                 StatusClass::Auth,
                 "invalid_api_key mid-stream must classify as Auth, not ServerError"
             );
-            // provider_signal is kept as-is (the captured error.code).
+
             assert_eq!(err.provider_signal.as_deref(), Some("invalid_api_key"));
         }
         other => panic!("expected Error, got {other:?}"),
     }
 
-    // The full mapping mirrors the non-stream HTTP classifier buckets.
     assert_eq!(
         class_for_response_failed("invalid_api_key"),
         StatusClass::Auth
@@ -2593,7 +2489,7 @@ fn test_stream_failed_invalid_api_key_classifies_as_auth() {
         class_for_response_failed(ERR_TYPE_OVERLOADED),
         StatusClass::ServerError
     );
-    // Unrecognized signal defaults to the transient ServerError bucket.
+
     assert_eq!(
         class_for_response_failed("response_failed"),
         StatusClass::ServerError
@@ -2601,10 +2497,7 @@ fn test_stream_failed_invalid_api_key_classifies_as_auth() {
 }
 
 /// The NON-streaming `read_response` `status:"failed"` path must
-/// also classify by the captured provider signal rather than hardcoding ServerError. A failed
-/// body carrying `code:"context_length_exceeded"` is a ContextLength failure (fail over without
-/// penalizing the lane), NOT a transient ServerError. Against the old code this asserts
-/// ContextLength and fails.
+
 #[test]
 fn test_read_response_failed_body_classifies_by_signal() {
     let reader = ResponsesReader;
@@ -2625,7 +2518,6 @@ fn test_read_response_failed_body_classifies_by_signal() {
         Some("context_length_exceeded") // golden wire-contract literal (kept bare on purpose)
     );
 
-    // An auth-failed body classifies as Auth.
     let err_auth = reader
         .read_response(
             crate::codec::test_host::HOST,
@@ -2640,7 +2532,7 @@ fn test_read_response_failed_body_classifies_by_signal() {
 }
 
 /// Regression: an unknown terminal status must not be decoded as a successful end_turn; its
-/// stop_reason is None (terminal, but no success claim).
+
 #[test]
 fn test_stream_unknown_status_not_end_turn() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -2663,12 +2555,9 @@ fn test_stream_unknown_status_not_end_turn() {
 }
 
 /// Regression: a streaming `incomplete` status with NO `incomplete_details` must NOT decode to
-/// `stop_reason = Some("end_turn")` — that masks the truncation as a clean completion. It must
-/// be `None`, mirroring the non-streaming `read_response` path. Two fallback branches: missing
-/// `incomplete_details` entirely, and present-but-without-a-`reason`.
+
 #[test]
 fn test_stream_incomplete_without_details_is_none() {
-    // Branch 1: no `incomplete_details` at all.
     let mut state = crate::codec::ir::StreamDecodeState::default();
     let events = reader_read_response_events(
         EVT_RESPONSE_INCOMPLETE,
@@ -2690,7 +2579,6 @@ fn test_stream_incomplete_without_details_is_none() {
         crate::codec::ir::IrStreamEvent::MessageStop
     ));
 
-    // Branch 2: `incomplete_details` present but carries no `reason`.
     let mut state = crate::codec::ir::StreamDecodeState::default();
     let events = reader_read_response_events(
         EVT_RESPONSE_INCOMPLETE,
@@ -2714,7 +2602,6 @@ fn test_stream_incomplete_without_details_is_none() {
         crate::codec::ir::IrStreamEvent::MessageStop
     ));
 
-    // Sanity: a known reason still maps (max_output_tokens -> max_tokens).
     let mut state = crate::codec::ir::StreamDecodeState::default();
     let events = reader_read_response_events(
         EVT_RESPONSE_INCOMPLETE,
@@ -2738,8 +2625,7 @@ fn test_stream_incomplete_without_details_is_none() {
 }
 
 /// a multi-block ToolResult must concatenate its text fragments with NO separator. A `.join(" ")`
-/// injects a spurious space that corrupts base64 / split-JSON payloads. Covers BOTH the
-/// Tool-role flat path AND the Assistant-role inline-tool_result path in `write_request`.
+
 #[test]
 fn write_request_tool_result_multi_text_concatenates_without_separator() {
     fn text_block(s: &str) -> crate::codec::ir::IrBlock {
@@ -2753,7 +2639,6 @@ fn write_request_tool_result_multi_text_concatenates_without_separator() {
         cache_control: None,
     };
 
-    // Tool-role path.
     let req = crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Tool,
@@ -2772,7 +2657,6 @@ fn write_request_tool_result_multi_text_concatenates_without_separator() {
         item["output"]
     );
 
-    // Assistant-role inline tool_result path.
     let req = crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::Assistant,
@@ -2793,10 +2677,7 @@ fn write_request_tool_result_multi_text_concatenates_without_separator() {
 }
 
 /// Regression: the streaming error event nests the error inside the `response` object the
-/// official SDK streaming decoder reads via `event.response`, and the error object is the
-/// Responses-native `ResponseError` shape `{code, message}` with a NON-NULL `code` enum — NOT
-/// the Chat-Completions `{message, type, code:null, param:null}` envelope. A null `code` (or an
-/// extra `type`/`param`) is impossible from real OpenAI and a distinguishability tell.
+
 #[test]
 fn test_write_error_stream_event_full_shape() {
     let writer = ResponsesWriter;
@@ -2808,17 +2689,17 @@ fn test_write_error_stream_event_full_shape() {
     let (etype, payload) = writer
         .write_response_event(crate::codec::test_host::HOST, &ev)
         .expect("error event should emit");
-    assert_eq!(etype, "response.failed"); // golden wire-contract literal (kept bare on purpose)
-                                          // The error is nested under `response` (SDK reads `event.response`), not top-level.
+    assert_eq!(etype, "response.failed");
+
     assert!(
         payload.get("error").is_none(),
         "error must not be top-level: {payload}"
     );
     let resp = payload.get("response").expect("response object present");
-    assert_eq!(resp.get("status").and_then(|s| s.as_str()), Some("failed")); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(resp.get("status").and_then(|s| s.as_str()), Some("failed"));
     let err = resp.get("error").expect("nested error object present");
     assert_eq!(err.get("message").and_then(|m| m.as_str()), Some("boom"));
-    // The pinned ResponseError enum excludes "boom"; its text remains in message.
+
     assert_eq!(
         err.get("code").and_then(|c| c.as_str()),
         Some("server_error")
@@ -2834,11 +2715,11 @@ fn test_write_error_stream_event_full_shape() {
 }
 
 /// Regression: an unknown/unmapped stop_reason must map to a `completed` status (not `failed`),
-/// so a future IR reason that did not signal an error is not misclassified as a failure.
+
 #[test]
 fn test_unknown_stop_reason_maps_to_completed() {
     let writer = ResponsesWriter;
-    // Streaming MessageDelta path.
+
     let ev = crate::codec::ir::IrStreamEvent::MessageDelta {
         stop_reason: Some(crate::codec::ir::IrStopReason::Refusal),
         stop_sequence: None,
@@ -2854,7 +2735,7 @@ fn test_unknown_stop_reason_maps_to_completed() {
     let (etype, payload) = writer
         .write_response_event(crate::codec::test_host::HOST, &ev)
         .expect("should emit");
-    assert_eq!(etype, "response.completed"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype, "response.completed");
     assert_eq!(
         payload
             .get("response")
@@ -2864,7 +2745,6 @@ fn test_unknown_stop_reason_maps_to_completed() {
         "unknown stop_reason must map to completed in stream"
     );
 
-    // Non-streaming write_response path.
     let resp = crate::codec::ir::IrResponse {
         logprobs: Vec::new(),
         role: crate::codec::ir::IrRole::Assistant,
@@ -2896,12 +2776,11 @@ fn test_unknown_stop_reason_maps_to_completed() {
 }
 
 /// Regression: malformed function_call arguments must be preserved as the raw string, not
-/// dropped to Null (mirrors the OpenAI reader). Covers both the request and response readers.
+
 #[test]
 fn test_malformed_function_call_args_preserved() {
     let reader = ResponsesReader;
 
-    // read_request path.
     let req_json = serde_json::json!({
         "model": "gpt-4o",
         "input": [
@@ -2924,7 +2803,6 @@ fn test_malformed_function_call_args_preserved() {
         "malformed args must be preserved as raw string, not Null"
     );
 
-    // read_response path.
     let resp_json = serde_json::json!({
         "id": "resp_1",
         "status": STATUS_COMPLETED,
@@ -2945,15 +2823,12 @@ fn test_malformed_function_call_args_preserved() {
 }
 
 /// Regression: a base64 `input_image` data URI of the canonical single-`;` shape
-/// (`data:image/png;base64,<payload>`) must parse the FULL payload, not drop it to "". The old
-/// `splitn(3, ';')` logic yielded only two fields and silently discarded every image. Covers
-/// both `read_request` and `responses_block`.
+
 #[test]
 fn test_input_image_base64_payload_preserved() {
     let payload = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
     let url = format!("data:image/png;base64,{payload}");
 
-    // read_request path.
     let json = serde_json::json!({
         "model": "gpt-4o",
         "input": [
@@ -2974,7 +2849,6 @@ fn test_input_image_base64_payload_preserved() {
         other => panic!("expected Image, got {other:?}"),
     }
 
-    // responses_block path (e.g. a content block nested in a function_call_output).
     let block = serde_json::json!({"type": "input_image", "image_url": url});
     match responses_block(&block).expect("responses_block ok") {
         crate::codec::ir::IrBlock::Image {
@@ -2989,8 +2863,7 @@ fn test_input_image_base64_payload_preserved() {
 }
 
 /// Regression: a base64 `input_image` must survive a same-protocol read -> write -> read
-/// round-trip with its payload intact (the writer emits `data:<mime>;base64,<payload>` which the
-/// reader must parse back to the identical pair).
+
 #[test]
 fn test_input_image_roundtrip_lossless() {
     let payload = "QUJDMTIzKz0=";
@@ -3030,8 +2903,7 @@ fn test_input_image_roundtrip_lossless() {
 }
 
 /// Regression: a non-data (https) image URL must be stored verbatim under the `image_url`
-/// sentinel media_type — NOT mangled into a `// note: non-data URL - ...` comment — and must
-/// round-trip back to the exact original URL.
+
 #[test]
 fn test_input_image_https_url_sentinel_roundtrip() {
     let url = "https://example.com/cat.png";
@@ -3052,7 +2924,6 @@ fn test_input_image_https_url_sentinel_roundtrip() {
         "must not embed a human comment in the payload"
     );
 
-    // Round-trip through the writer reconstructs the exact original image_url.
     let ir = crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
             role: crate::codec::ir::IrRole::User,
@@ -3073,7 +2944,7 @@ fn test_input_image_https_url_sentinel_roundtrip() {
 }
 
 /// Regression: `write_request` must emit the `stream` field (a modeled key excluded from
-/// `extra`); omitting it answers a `stream: true` request non-streaming and stalls SSE.
+
 #[test]
 fn test_write_request_emits_stream() {
     let make = |stream: bool| crate::codec::ir::IrRequest {
@@ -3102,7 +2973,7 @@ fn test_write_request_emits_stream() {
 }
 
 /// Regression: a typed `{"type":"message","role":...,"content":[...]}` input item (the official
-/// SDK conversation-turn shape) must be read, not silently dropped.
+
 #[test]
 fn test_typed_message_item_read() {
     let json = serde_json::json!({
@@ -3134,13 +3005,11 @@ fn test_typed_message_item_read() {
 }
 
 /// Regression: the streaming `response.created` event must carry `id`/`created_at`/`status`
-/// (and `model` when present), not a stub. Forwards captured identity for same-protocol
-/// passthrough; synthesizes a valid `resp_` id + current time when the IR carries none.
+
 #[test]
 fn test_message_start_emits_identity() {
     let writer = ResponsesWriter;
 
-    // Identity present (same-protocol passthrough): forwarded verbatim.
     let ev = crate::codec::ir::IrStreamEvent::MessageStart {
         role: crate::codec::ir::IrRole::Assistant,
         usage: None,
@@ -3151,7 +3020,7 @@ fn test_message_start_emits_identity() {
     let (etype, payload) = writer
         .write_response_event(crate::codec::test_host::HOST, &ev)
         .expect("should emit");
-    assert_eq!(etype, "response.created"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype, "response.created");
     let resp = payload.get("response").expect("response object");
     assert_eq!(
         resp.get("id").and_then(|i| i.as_str()),
@@ -3167,7 +3036,6 @@ fn test_message_start_emits_identity() {
         Some("in_progress") // golden wire-contract literal (kept bare on purpose)
     );
 
-    // Identity absent (cross-protocol, stripped by translate_event): synthesized + valid.
     let ev2 = crate::codec::ir::IrStreamEvent::MessageStart {
         role: crate::codec::ir::IrRole::Assistant,
         usage: None,
@@ -3191,9 +3059,7 @@ fn test_message_start_emits_identity() {
         resp2.get("created_at").and_then(|c| c.as_u64()).is_some(),
         "synthesized created_at must be present"
     );
-    // `Response.model` is a REQUIRED non-nullable SDK field, so an absent IR model must emit
-    // the DEFAULT_MODEL fallback — NOT omit the key (which fails a strict decoder and is a
-    // proxy tell).
+
     assert_eq!(
         resp2.get("model").and_then(|m| m.as_str()),
         Some(DEFAULT_MODEL),
@@ -3202,7 +3068,7 @@ fn test_message_start_emits_identity() {
 }
 
 /// Regression: synthesized response ids stay distinct even across many calls in the same second
-/// (the old `timestamp << 24 ^ counter` folding collided once the counter advanced by 2^24).
+
 #[test]
 fn test_synthesize_response_id_unique() {
     let n = 1000;
@@ -3214,30 +3080,21 @@ fn test_synthesize_response_id_unique() {
         n,
         "all synthesized ids in a burst must be unique"
     );
-    assert!(ids.iter().all(|id| id.starts_with("resp_"))); // golden wire-contract literal (kept bare on purpose)
+    assert!(ids.iter().all(|id| id.starts_with("resp_")));
 }
 
 /// `synth_token<const N>` documents and now ENFORCES a
-/// `N >= 11` floor via a compile-time `const _: () = assert!(N >= 11, ...)` evaluated per
-/// monomorphization. The guard cannot be exercised from a passing runtime test (a too-small `N`
-/// fails to BUILD, which a `cargo test` body can't observe without a trybuild harness), so this
-/// test instead locks the observable contract the guard protects: every synthesized id the live
-/// callers mint carries an opaque suffix at least the documented floor wide. Both call sites use
-/// 48 (`ITEM_ID_TOKEN_LEN`/`RESPONSE_ID_TOKEN_LEN`); if a future edit narrowed a width below the
-/// floor (or someone instantiated `synth_token` with `N < 11`), the build would break before this
-/// assertion could even run.
+
 #[test]
 fn test_synth_token_meets_minimum_width() {
     const MIN_TOKEN_LEN: usize = 11;
 
-    // The compile-time guard is the real enforcement; this also pins that the live callers stay
-    // comfortably above the floor so a regression in the width constants surfaces here too.
     const { assert!(ITEM_ID_TOKEN_LEN >= MIN_TOKEN_LEN) };
     const { assert!(RESPONSE_ID_TOKEN_LEN >= MIN_TOKEN_LEN) };
 
     let resp_id = synthesize_response_id(crate::codec::test_host::HOST).expect("test entropy");
     let resp_suffix = resp_id
-        .strip_prefix("resp_") // golden wire-contract literal (kept bare on purpose)
+        .strip_prefix("resp_")
         .expect("synthesized response id uses resp_ prefix");
     assert!(
         resp_suffix.len() >= MIN_TOKEN_LEN,
@@ -3247,7 +3104,7 @@ fn test_synth_token_meets_minimum_width() {
 
     let item_id = synthesize_item_id(crate::codec::test_host::HOST, "msg").expect("test entropy");
     let item_suffix = item_id
-        .strip_prefix("msg_") // golden wire-contract literal (kept bare on purpose)
+        .strip_prefix("msg_")
         .expect("synthesized item id uses the given prefix");
     assert!(
         item_suffix.len() >= MIN_TOKEN_LEN,
@@ -3257,10 +3114,7 @@ fn test_synth_token_meets_minimum_width() {
 }
 
 /// The streaming `response.failed` terminal event
-/// (emitted from an IR `Error`) must carry the native non-error skeleton — specifically a
-/// present-but-empty `output` array (REQUIRED by the SDK's typed `Response`), never omitting it.
-/// A failed response produced no assistant items, so `output` is `[]`. This locks the `output: []`
-/// emission in the Error arm against future regression.
+
 #[test]
 fn test_response_failed_carries_empty_output_skeleton() {
     let writer = ResponsesWriter;
@@ -3274,7 +3128,7 @@ fn test_response_failed_carries_empty_output_skeleton() {
             }),
         )
         .expect("Error emits response.failed");
-    assert_eq!(etype, "response.failed"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype, "response.failed");
     let resp = failed
         .get("response")
         .expect("response.failed wraps an inner response object");
@@ -3285,7 +3139,7 @@ fn test_response_failed_carries_empty_output_skeleton() {
         output.as_array().is_some_and(|a| a.is_empty()),
         "response.failed output must be a present-but-empty array, got {output}"
     );
-    // The native failed skeleton also carries the other non-error required fields.
+
     assert_eq!(
         resp.get("status").and_then(|s| s.as_str()),
         Some("failed"), // golden wire-contract literal (kept bare on purpose)
@@ -3307,8 +3161,7 @@ fn test_response_failed_carries_empty_output_skeleton() {
 }
 
 /// A top-level `metadata` object is carried by the typed slot (IR-03) and re-emitted by
-/// `write_request`. A prior revision listed `metadata` in `modeled_keys` while never emitting it,
-/// silently dropping the caller's response tagging / billing-attribution field.
+
 #[test]
 fn test_metadata_round_trips_through_the_slot() {
     let json = serde_json::json!({
@@ -3320,7 +3173,7 @@ fn test_metadata_round_trips_through_the_slot() {
     let writer = ResponsesWriter;
 
     let ir = reader.read_request(&json).expect("read_request ok");
-    // metadata landed in the typed slot; a member the slot reproduces is not parked in extra too.
+
     assert_eq!(
         ir.metadata,
         Some(vec![
@@ -3331,7 +3184,6 @@ fn test_metadata_round_trips_through_the_slot() {
     );
     assert!(!ir.extra.contains_key("metadata"));
 
-    // write_request writes the slot back, so metadata survives to the upstream body.
     let out = writer.write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(
         out.get("metadata"),
@@ -3341,9 +3193,7 @@ fn test_metadata_round_trips_through_the_slot() {
 }
 
 /// The opening `response.created`
-/// event must carry the FULL required Response skeleton an SDK reads unconditionally — `usage`,
-/// `output`, and `error` must be PRESENT (empty/null), not omitted. Omitting `usage` left strict
-/// SDK decoders without a `Response.usage` field on the first chunk.
+
 #[test]
 fn test_message_start_skeleton_carries_usage_output_error() {
     let writer = ResponsesWriter;
@@ -3357,11 +3207,9 @@ fn test_message_start_skeleton_carries_usage_output_error() {
     let (etype, payload) = writer
         .write_response_event(crate::codec::test_host::HOST, &ev)
         .expect("should emit");
-    assert_eq!(etype, "response.created"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype, "response.created");
     let resp = payload.get("response").expect("response object present");
 
-    // usage key MUST be present and, per the spec's non-nullable `ResponseUsage`, an OBJECT with
-    // every required member zeroed at stream start — never null, never omitted.
     assert!(
         resp.get("usage").is_some(),
         "usage key must be present on the opening chunk: {resp}"
@@ -3377,7 +3225,7 @@ fn test_message_start_skeleton_carries_usage_output_error() {
         }),
         "usage must be a zeroed ResponseUsage object (no tokens yet) at stream start: {resp}"
     );
-    // output array present-but-empty; error present-but-null.
+
     assert_eq!(
         resp.get("output"),
         Some(&serde_json::json!([])),
@@ -3411,8 +3259,7 @@ fn test_role_only_item_still_processed() {
 }
 
 /// An array `input` must be iterated without the prior
-/// `is_array()` + `.as_array().unwrap()` pattern. Exercises the `if let Some(arr)` path and
-/// confirms array items are still decoded into messages.
+
 #[test]
 fn test_read_request_array_input_no_unwrap() {
     let json = serde_json::json!({
@@ -3432,9 +3279,7 @@ fn test_read_request_array_input_no_unwrap() {
 }
 
 /// A `response.failed` terminal event with NO nested `response`
-/// object (truncated SSE frame / body-stripping proxy) must NOT be decoded as a successful
-/// end_turn. It must surface as an explicit Error + MessageStop so downstream clients see the
-/// failure and the breaker receives the failure signal.
+
 #[test]
 fn test_failed_event_without_body_surfaces_error() {
     let reader = ResponsesReader;
@@ -3473,8 +3318,7 @@ fn test_failed_event_without_body_surfaces_error() {
 }
 
 /// A `response.completed`/`response.incomplete` terminal event with no nested `response` object
-/// must still terminate the stream with a success MessageDelta + MessageStop (must NOT become an
-/// Error — only `response.failed` does).
+
 #[test]
 fn test_completed_event_without_body_emits_end_turn() {
     let reader = ResponsesReader;
@@ -3502,9 +3346,7 @@ fn test_completed_event_without_body_emits_end_turn() {
 }
 
 /// The writer's `IrStreamEvent::Error` arm must emit a
-/// `response.failed` event whose error lives inside a `response` object (the shape the official
-/// SDK streaming decoder reads via `event.response`), with a synthesized `resp_` id and
-/// `status: "failed"` — NOT a top-level `{"error":{...}}`.
+
 #[test]
 fn test_error_event_wraps_in_response_object() {
     let writer = ResponsesWriter;
@@ -3516,9 +3358,8 @@ fn test_error_event_wraps_in_response_object() {
     let (etype, payload) = writer
         .write_response_event(crate::codec::test_host::HOST, &ev)
         .expect("error event should emit");
-    assert_eq!(etype, "response.failed"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype, "response.failed");
 
-    // No top-level `error` key — the SDK reads `event.response`, not `event.error`.
     assert!(
         payload.get("error").is_none(),
         "error must be nested under response, not top-level: {payload}"
@@ -3534,14 +3375,13 @@ fn test_error_event_wraps_in_response_object() {
         id.starts_with("resp_"), // golden wire-contract literal (kept bare on purpose)
         "synthesized id must use resp_ prefix, got {id}"
     );
-    assert_eq!(resp.get("status").and_then(|s| s.as_str()), Some("failed")); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(resp.get("status").and_then(|s| s.as_str()), Some("failed"));
     let error = resp.get("error").expect("nested error object");
     assert_eq!(
         error.get("message").and_then(|m| m.as_str()),
         Some("overloaded")
     );
-    // Native ResponseError shape: a non-null canonical `code` enum,
-    // and NO Chat-style `type`/`param` fields.
+
     assert_eq!(
         error.get("code").and_then(|c| c.as_str()),
         Some("server_error")
@@ -3557,13 +3397,7 @@ fn test_error_event_wraps_in_response_object() {
 }
 
 /// EVERY emitted
-/// Responses SSE data body must carry a top-level `"type"` key equal to its event name. The
-/// official OpenAI Python/Node streaming decoders dispatch on `data["type"]`; a body missing it
-/// (the prior `{"response":{...}}` shape) yields None/undefined for the event type and the SDK
-/// never constructs the Response or fires event handlers. This exercises all writer arms that
-/// produce a body — response.created, response.output_item.added, response.output_text.delta,
-/// response.function_call_arguments.delta, response.output_item.done, response.completed, and
-/// response.failed — and asserts `payload["type"] == event_name` for each.
+
 #[test]
 fn test_every_stream_event_carries_top_level_type() {
     let writer = ResponsesWriter;
@@ -3625,7 +3459,7 @@ fn test_every_stream_event_carries_top_level_type() {
 }
 
 /// A full single-stream sequence of emitted Responses events. The events go through the writer in
-/// the order `StreamTranslate::feed` would emit them.
+
 fn usage_fixture() -> crate::codec::ir::IrUsage {
     crate::codec::ir::IrUsage {
         input_tokens: 1,
@@ -3637,13 +3471,11 @@ fn usage_fixture() -> crate::codec::ir::IrUsage {
 }
 
 /// EVERY emitted Responses SSE event must carry a top-level
-/// `sequence_number` that is monotonic from 0 within a single stream. The opening
-/// `response.created` (MessageStart) resets the per-stream counter, so a fresh stream starts at 0
-/// and increases by one per emitted event. Events that produce no body do not consume a number.
+
 #[test]
 fn test_sequence_number_monotonic_from_zero() {
     let writer = ResponsesWriter;
-    // A representative stream: created → text deltas → completed.
+
     let stream = vec![
         IrStreamEvent::MessageStart {
             role: crate::codec::ir::IrRole::Assistant,
@@ -3682,9 +3514,6 @@ fn test_sequence_number_monotonic_from_zero() {
         }
     }
 
-    // This stream has NO Text `BlockStart`, so no message item was opened at index 0; the
-    // `BlockStop` therefore finds nothing open and emits no frame (consuming no sequence number).
-    // The numbered events are therefore: created, two text deltas, completed = four events.
     assert_eq!(
         seqs,
         vec![0, 1, 2, 3],
@@ -3693,12 +3522,7 @@ fn test_sequence_number_monotonic_from_zero() {
 }
 
 /// Regression: a SECOND stream must restart its `sequence_number` from 0 — the counter is
-/// per-stream, not per-process, so one stream's numbering never bleeds into the next on the same
-/// worker. A new stream is a new writer: `ResponsesWriter` is an interior-mutable const, so each
-/// use inlines a fresh zeroed instance. Reusing ONE writer would no longer express this, because
-/// the reset is latched to the stream's FIRST `MessageStart` — a duplicate `MessageStart` inside a
-/// stream continues it rather than restarting it (see
-/// `responses_duplicate_message_start_does_not_restart_stream`).
+
 #[test]
 fn test_sequence_number_resets_per_stream() {
     let writer = ResponsesWriter;
@@ -3714,7 +3538,6 @@ fn test_sequence_number_resets_per_stream() {
         delta: crate::codec::ir::IrDelta::TextDelta("x".to_string()),
     };
 
-    // Stream A: created(0), delta(1).
     let (_, a0) = writer
         .write_response_event(crate::codec::test_host::HOST, &start())
         .expect("emit");
@@ -3724,7 +3547,6 @@ fn test_sequence_number_resets_per_stream() {
     assert_eq!(a0.get("sequence_number").and_then(|s| s.as_u64()), Some(0));
     assert_eq!(a1.get("sequence_number").and_then(|s| s.as_u64()), Some(1));
 
-    // Stream B is a new stream, so a new writer → its counter starts at 0.
     let writer_b = ResponsesWriter;
     let (_, b0) = writer_b
         .write_response_event(crate::codec::test_host::HOST, &start())
@@ -3741,8 +3563,7 @@ fn test_sequence_number_resets_per_stream() {
 }
 
 /// Regression: every writer arm that produces a body carries `sequence_number`, not just the
-/// deltas. Mirrors `test_every_stream_event_carries_top_level_type` but asserts the integer
-/// `sequence_number` is present (and a u64) on each emitted body.
+
 #[test]
 fn test_every_stream_event_carries_sequence_number() {
     let writer = ResponsesWriter;
@@ -3799,13 +3620,11 @@ fn test_every_stream_event_carries_sequence_number() {
 }
 
 /// Regression: `response.output_text.delta` must carry `item_id` and `content_index` (native
-/// shape), and the `output_item.added` for a function call must carry `item_id`. The
-/// `function_call_arguments.delta` carries the matching `item_id`.
+
 #[test]
 fn test_delta_and_item_added_carry_item_id_and_content_index() {
     let writer = ResponsesWriter;
 
-    // Text delta.
     let (_, text) = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -3829,7 +3648,6 @@ fn test_delta_and_item_added_carry_item_id_and_content_index() {
         "output_text.delta must carry content_index"
     );
 
-    // output_item.added for a function call.
     let (_, added) = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -3851,7 +3669,7 @@ fn test_delta_and_item_added_carry_item_id_and_content_index() {
         added_item.starts_with("fc_"), // golden wire-contract literal (kept bare on purpose)
         "function_call item_id must be an fc_ id, got {added_item}"
     );
-    // The nested item id matches the top-level item_id (one logical item).
+
     assert_eq!(
         added
             .get("item")
@@ -3861,7 +3679,6 @@ fn test_delta_and_item_added_carry_item_id_and_content_index() {
         "nested item.id must equal the top-level item_id"
     );
 
-    // The function_call_arguments.delta at the same index reuses the same fc_ item_id.
     let (_, args) = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -3879,12 +3696,7 @@ fn test_delta_and_item_added_carry_item_id_and_content_index() {
 }
 
 /// The `sequence_number` counter is PER-STREAM INSTANCE state,
-/// not thread-local. Two distinct writer instances model two concurrent streams sharing one
-/// worker thread. Interleave their events (A.start, B.start, A.delta, B.delta, ...) — the way a
-/// Tokio work-stealing runtime can schedule two parked stream tasks on the same thread. Each
-/// writer's sequence must stay monotonic-from-0 with NO bleed from the other stream's resets or
-/// increments. With the old thread-local cell, B's `MessageStart` reset clobbered A's in-flight
-/// counter and A's next event would restart non-monotonically; here the counters are independent.
+
 #[test]
 fn test_sequence_number_is_per_instance_not_thread_local() {
     let stream_a = ResponsesWriter;
@@ -3908,13 +3720,12 @@ fn test_sequence_number_is_per_instance_not_thread_local() {
             .expect("sequence_number present")
     };
 
-    // Interleave the two streams on the same "thread".
-    let a0 = seq(stream_a.write_response_event(crate::codec::test_host::HOST, &start())); // A: 0
-    let b0 = seq(stream_b.write_response_event(crate::codec::test_host::HOST, &start())); // B: 0 (must NOT touch A)
-    let a1 = seq(stream_a.write_response_event(crate::codec::test_host::HOST, &delta())); // A: 1
-    let b1 = seq(stream_b.write_response_event(crate::codec::test_host::HOST, &delta())); // B: 1
-    let a2 = seq(stream_a.write_response_event(crate::codec::test_host::HOST, &delta())); // A: 2
-    let b2 = seq(stream_b.write_response_event(crate::codec::test_host::HOST, &delta())); // B: 2
+    let a0 = seq(stream_a.write_response_event(crate::codec::test_host::HOST, &start()));
+    let b0 = seq(stream_b.write_response_event(crate::codec::test_host::HOST, &start()));
+    let a1 = seq(stream_a.write_response_event(crate::codec::test_host::HOST, &delta()));
+    let b1 = seq(stream_b.write_response_event(crate::codec::test_host::HOST, &delta()));
+    let a2 = seq(stream_a.write_response_event(crate::codec::test_host::HOST, &delta()));
+    let b2 = seq(stream_b.write_response_event(crate::codec::test_host::HOST, &delta()));
 
     assert_eq!(
         (a0, a1, a2),
@@ -3929,9 +3740,7 @@ fn test_sequence_number_is_per_instance_not_thread_local() {
 }
 
 /// `response.output_item.done` must carry a stable `item_id`
-/// that matches the `response.output_item.added` for the same output index, plus a typed `item`
-/// object — an SDK reading `event.item_id`/`event.item` off the `done` event must not see
-/// `undefined`. The `added` for a function call and the `done` at the same index share the id.
+
 #[test]
 fn test_output_item_done_carries_matching_item_id_and_item() {
     let writer = ResponsesWriter;
@@ -3961,13 +3770,13 @@ fn test_output_item_done_carries_matching_item_id_and_item() {
             &IrStreamEvent::BlockStop { index: 3 },
         )
         .expect("done emits");
-    assert_eq!(etype, "response.output_item.done"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype, "response.output_item.done");
     assert_eq!(
         done.get("item_id").and_then(|i| i.as_str()),
         Some(added_id.as_str()),
         "output_item.done item_id must match the output_item.added at the same index"
     );
-    // A typed `item` object is present (not undefined / not a bare {}).
+
     let item = done
         .get("item")
         .and_then(|i| i.as_object())
@@ -3985,14 +3794,11 @@ fn test_output_item_done_carries_matching_item_id_and_item() {
 }
 
 /// The in-band `response.failed` error object is the
-/// Responses-native `ResponseError` shape `{code, message}` with a NON-NULL `code` enum — NOT
-/// the Chat-Completions `{message, type, code:null, param:null}` envelope. A null `code` is
-/// impossible from real OpenAI and a distinguishability tell.
+
 #[test]
 fn test_response_failed_uses_native_responseerror_shape() {
     let writer = ResponsesWriter;
 
-    // With a provider signal: it becomes the non-null code enum AND the message.
     let (etype, payload) = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -4003,7 +3809,7 @@ fn test_response_failed_uses_native_responseerror_shape() {
             }),
         )
         .expect("emit");
-    assert_eq!(etype, "response.failed"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype, "response.failed");
     let error = payload
         .get("response")
         .and_then(|r| r.get("error"))
@@ -4027,7 +3833,6 @@ fn test_response_failed_uses_native_responseerror_shape() {
         "Responses ResponseError carries no `param` field"
     );
 
-    // Without a provider signal: code defaults to the canonical `server_error`, never null.
     let (_, payload) = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -4051,9 +3856,7 @@ fn test_response_failed_uses_native_responseerror_shape() {
 }
 
 /// On a cross-protocol / transport-abort path `provider_signal` carries
-/// a HUMAN sentence (e.g. `STREAM_ABORT_DETAIL`), NOT a Responses code enum. `error.code` must be
-/// DERIVED from the class (a valid enum an SDK can switch on), while `error.message` keeps the
-/// human text — the old code forwarded the sentence as the `code` enum, breaking typed SDKs.
+
 #[test]
 fn test_response_failed_code_is_enum_even_for_human_provider_signal() {
     let writer = ResponsesWriter;
@@ -4083,8 +3886,6 @@ fn test_response_failed_code_is_enum_even_for_human_provider_signal() {
         "the human text stays in `message`"
     );
 
-    // ResponseError has no authentication code; the HTTP error envelope does. The stream uses
-    // the generic failure code while retaining the original human message.
     let (_, payload) = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -4104,14 +3905,7 @@ fn test_response_failed_code_is_enum_even_for_human_provider_signal() {
 }
 
 /// A TEXT part must be bracketed inside a `message` output item AND its `output_text` content part.
-/// The Text BlockStart emits `response.output_item.added` (type "message") THEN
-/// `response.content_part.added` (the empty `output_text` part) — the content part a STRICT Responses
-/// client (Codex CLI) requires before the first `output_text.delta`, without which it logs
-/// "OutputTextDelta without active item" and DROPS the output. The Text BlockStop closes the part and
-/// the item in order: `response.output_text.done` → `response.content_part.done` →
-/// `response.output_item.done` (type "message"), all carrying the SAME `msg_…` `item_id` and
-/// `content_index: 0`. Previously the BlockStart/BlockStop emitted only the `output_item` add/done
-/// pair, so the content-part bracket was missing and a strict SDK dropped every delta.
+
 #[test]
 fn test_text_block_emits_message_item_lifecycle() {
     let writer = ResponsesWriter;
@@ -4125,7 +3919,7 @@ fn test_text_block_emits_message_item_lifecycle() {
             model: None,
         },
     );
-    // Text BlockStart opens the message item AND its output_text content part (two ordered frames).
+
     let added_frames = writer.write_response_events(
         crate::codec::test_host::HOST,
         &IrStreamEvent::BlockStart {
@@ -4141,20 +3935,18 @@ fn test_text_block_emits_message_item_lifecycle() {
         "text BlockStart must open the message item THEN its output_text content part"
     );
     let added = &added_frames[0].1;
-    assert_eq!(added["item"]["type"], "message"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(added["item"]["type"], "message");
     assert_eq!(added["item"]["role"], "assistant");
     let added_item_id = added["item_id"]
         .as_str()
         .expect("item_id present")
         .to_string();
-    assert!(added_item_id.starts_with("msg_"), "text item id is msg_…"); // golden wire-contract literal (kept bare on purpose)
+    assert!(added_item_id.starts_with("msg_"), "text item id is msg_…");
 
-    // The content_part.added establishes the active part: same item_id, content_index 0, empty
-    // output_text part.
     let part_added = &added_frames[1].1;
     assert_eq!(part_added["item_id"].as_str(), Some(added_item_id.as_str()));
     assert_eq!(part_added["content_index"], 0);
-    assert_eq!(part_added["part"]["type"], "output_text"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(part_added["part"]["type"], "output_text");
     assert_eq!(part_added["part"]["text"], "");
 
     let _ = writer.write_response_events(
@@ -4165,7 +3957,6 @@ fn test_text_block_emits_message_item_lifecycle() {
         },
     );
 
-    // Text BlockStop closes the content part then the item, in the native order.
     let done_frames = writer.write_response_events(
         crate::codec::test_host::HOST,
         &IrStreamEvent::BlockStop { index: 0 },
@@ -4180,26 +3971,25 @@ fn test_text_block_emits_message_item_lifecycle() {
         ], // golden wire-contract literals (kept bare on purpose)
         "text BlockStop must close output_text → content_part → output_item in order"
     );
-    // output_text.done carries the COMPLETE assembled text under content_index 0.
+
     let text_done = &done_frames[0].1;
     assert_eq!(text_done["text"], "hi");
     assert_eq!(text_done["content_index"], 0);
     assert_eq!(text_done["item_id"].as_str(), Some(added_item_id.as_str()));
-    // content_part.done carries the finalized output_text part with the same text.
+
     let part_done = &done_frames[1].1;
-    assert_eq!(part_done["part"]["type"], "output_text"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(part_done["part"]["type"], "output_text");
     assert_eq!(part_done["part"]["text"], "hi");
     assert_eq!(part_done["item_id"].as_str(), Some(added_item_id.as_str()));
-    // output_item.done closes the message item with the matching id.
+
     let done = &done_frames[2].1;
-    assert_eq!(done["item"]["type"], "message"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(done["item"]["type"], "message");
     assert_eq!(
         done["item_id"].as_str(),
         Some(added_item_id.as_str()),
         "done item_id matches the added item_id (added→done correlation)"
     );
 
-    // A SECOND BlockStop at the (already-closed) text index must NOT re-emit any frame.
     assert!(
         writer
             .write_response_events(
@@ -4212,9 +4002,7 @@ fn test_text_block_emits_message_item_lifecycle() {
 }
 
 /// An interleaved tool+text stream closes the tool index with a
-/// `function_call` done and the text index with a `message` done — each with its own typed
-/// item, never cross-typed. Exercises the per-stream open-index tracking so a text index is
-/// never mistaken for a function-call item and vice-versa.
+
 #[test]
 fn test_tool_and_text_block_stop_emit_correctly_typed_done() {
     let writer = ResponsesWriter;
@@ -4228,7 +4016,7 @@ fn test_tool_and_text_block_stop_emit_correctly_typed_done() {
             model: None,
         },
     );
-    // Tool at index 0, text at index 1.
+
     let _ = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -4259,7 +4047,7 @@ fn test_tool_and_text_block_stop_emit_correctly_typed_done() {
             delta: crate::codec::ir::IrDelta::TextDelta("hi".to_string()),
         },
     );
-    // Tool index closes with a SINGLE function_call done (a tool has no content-part bracket).
+
     let tool_frames = writer.write_response_events(
         crate::codec::test_host::HOST,
         &IrStreamEvent::BlockStop { index: 0 },
@@ -4270,8 +4058,8 @@ fn test_tool_and_text_block_stop_emit_correctly_typed_done() {
         vec!["response.output_item.done"], // golden wire-contract literal (kept bare on purpose)
         "tool BlockStop emits only output_item.done"
     );
-    assert_eq!(tool_frames[0].1["item"]["type"], "function_call"); // golden wire-contract literal (kept bare on purpose)
-                                                                   // Text index closes with the content-part bracket THEN a message done.
+    assert_eq!(tool_frames[0].1["item"]["type"], "function_call");
+
     let text_frames = writer.write_response_events(
         crate::codec::test_host::HOST,
         &IrStreamEvent::BlockStop { index: 1 },
@@ -4286,9 +4074,9 @@ fn test_tool_and_text_block_stop_emit_correctly_typed_done() {
         ], // golden wire-contract literals (kept bare on purpose)
         "text BlockStop closes output_text → content_part → output_item"
     );
-    // The item-close frame (last) is the message done.
-    assert_eq!(text_frames[2].1["item"]["type"], "message"); // golden wire-contract literal (kept bare on purpose)
-                                                             // A SECOND BlockStop at the (already-closed) tool index 0 must not emit a duplicate done.
+
+    assert_eq!(text_frames[2].1["item"]["type"], "message");
+
     assert!(
         writer
             .write_response_events(
@@ -4301,10 +4089,7 @@ fn test_tool_and_text_block_stop_emit_correctly_typed_done() {
 }
 
 /// The terminal `response.completed` event's inner `response`
-/// object must carry both `id` (a `resp_…` string) and `created_at` (a unix-seconds integer).
-/// The official SDKs read `event.response.id` on the terminal event to finalize the Response;
-/// omitting it breaks correlation and is a distinguishability tell (a real stream never sends a
-/// terminal event without an id).
+
 #[test]
 fn test_completed_event_carries_id_and_created_at() {
     let writer = ResponsesWriter;
@@ -4319,7 +4104,7 @@ fn test_completed_event_carries_id_and_created_at() {
             },
         )
         .expect("emit");
-    assert_eq!(etype, "response.completed"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype, "response.completed");
     let resp = payload
         .get("response")
         .and_then(|r| r.as_object())
@@ -4339,8 +4124,7 @@ fn test_completed_event_carries_id_and_created_at() {
 }
 
 /// `write_error` must emit `code:"invalid_api_key"` for an
-/// authentication failure (mirrors `openai_chat.rs` `write_error_emits_invalid_api_key_code_for_auth_failure`).
-/// Emitting `code:null` on auth is a deterministic proxy tell vs a real OpenAI Responses 401.
+
 #[test]
 fn write_error_emits_invalid_api_key_code_for_auth_failure() {
     let writer = ResponsesWriter;
@@ -4360,8 +4144,7 @@ fn write_error_emits_invalid_api_key_code_for_auth_failure() {
 }
 
 /// Non-auth, non-quota error kinds keep `code:null` — the
-/// native shape when no machine-readable code applies — so only the auth and quota paths are
-/// special-cased.
+
 #[test]
 fn write_error_keeps_null_code_for_non_auth_errors() {
     let writer = ResponsesWriter;
@@ -4382,9 +4165,7 @@ fn write_error_keeps_null_code_for_non_auth_errors() {
 }
 
 /// The over-quota path carries a populated machine-readable
-/// `code` — native OpenAI/Responses emits `{"type":"insufficient_quota","code":"insufficient_quota"}`
-/// — so a `code:null` here (the old behavior) would be a fingerprintable divergence. The
-/// `billing` kind (router vocabulary) is normalized to the native `insufficient_quota` type.
+
 #[test]
 fn write_error_insufficient_quota_keeps_type_and_sets_code() {
     let writer = ResponsesWriter;
@@ -4404,20 +4185,18 @@ fn write_error_insufficient_quota_keeps_type_and_sets_code() {
 }
 
 /// A native text item is closed by BOTH `content_part.done`
-/// and `output_item.done` at the SAME `output_index`. The reader must emit EXACTLY ONE
-/// `BlockStop` for that index — the second terminal frame is a no-op — so a downstream writer
-/// does not emit a duplicate `content_block_stop`.
+
 #[test]
 fn test_paired_content_and_item_done_emits_single_block_stop() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
-    // Open a text block lazily.
+
     let _ = reader_read_response_events(
         EVT_OUTPUT_TEXT_DELTA,
         &serde_json::json!({"output_index": 0, "delta": "a"}),
         &mut state,
     );
     assert!(state.open_tools.contains(&TEXT_INDEX_KEY_OFFSET));
-    // First terminal frame: content_part.done → one BlockStop, clears the open index.
+
     let first = reader_read_response_events(
         "response.content_part.done",
         &serde_json::json!({"output_index": 0}),
@@ -4429,7 +4208,7 @@ fn test_paired_content_and_item_done_emits_single_block_stop() {
         "content_part.done closes the text block once"
     );
     assert!(!state.open_tools.contains(&TEXT_INDEX_KEY_OFFSET));
-    // Second terminal frame at the same index: output_item.done → NOTHING (already closed).
+
     let second = reader_read_response_events(
         EVT_OUTPUT_ITEM_DONE,
         &serde_json::json!({"output_index": 0}),
@@ -4442,7 +4221,7 @@ fn test_paired_content_and_item_done_emits_single_block_stop() {
 }
 
 /// A tool item opened by `output_item.added` is closed by a
-/// single `output_item.done`, and a stray second `done` at that index emits nothing.
+
 #[test]
 fn test_tool_item_done_emits_single_block_stop() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -4476,14 +4255,11 @@ fn test_tool_item_done_emits_single_block_stop() {
 }
 
 /// Every lifecycle event in ONE
-/// stream must carry the SAME `response.id`. On a cross-protocol stream the IR strips identity
-/// (id == None), so `response.created` synthesizes a `resp_` id which MUST be replayed verbatim
-/// on `response.completed`. Before the per-stream `response_id` cell, `MessageDelta` minted a
-/// fresh id, so the terminal event's id differed from `response.created` — SDK-breaking.
+
 #[test]
 fn test_terminal_id_matches_created_id_cross_protocol() {
     let writer = ResponsesWriter;
-    // Cross-protocol: id is None, so response.created synthesizes one.
+
     let (_, created) = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -4500,7 +4276,7 @@ fn test_terminal_id_matches_created_id_cross_protocol() {
         .as_str()
         .expect("created carries id")
         .to_string();
-    assert!(created_id.starts_with("resp_")); // golden wire-contract literal (kept bare on purpose)
+    assert!(created_id.starts_with("resp_"));
 
     let (etype, completed) = writer
         .write_response_event(
@@ -4513,7 +4289,7 @@ fn test_terminal_id_matches_created_id_cross_protocol() {
             },
         )
         .expect("MessageDelta emits terminal");
-    assert_eq!(etype, "response.completed"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype, "response.completed");
     assert_eq!(
         completed["response"]["id"].as_str(),
         Some(created_id.as_str()),
@@ -4522,9 +4298,7 @@ fn test_terminal_id_matches_created_id_cross_protocol() {
 }
 
 /// A `response.failed` (from an IR Error) must carry
-/// the SAME `response.id` as the opening `response.created`, so an SDK correlates the failure
-/// with the in-flight Response. Before the carried-id cell, the Error arm synthesized a fresh
-/// id distinct from `response.created`.
+
 #[test]
 fn test_failed_id_matches_created_id_cross_protocol() {
     let writer = ResponsesWriter;
@@ -4552,7 +4326,7 @@ fn test_failed_id_matches_created_id_cross_protocol() {
             }),
         )
         .expect("Error emits response.failed");
-    assert_eq!(etype, "response.failed"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype, "response.failed");
     assert_eq!(
         failed["response"]["id"].as_str(),
         Some(created_id.as_str()),
@@ -4561,7 +4335,7 @@ fn test_failed_id_matches_created_id_cross_protocol() {
 }
 
 /// A same-protocol passthrough forwards the upstream
-/// `id` on `response.created`, and that SAME id must be replayed on the terminal event.
+
 #[test]
 fn test_terminal_id_matches_forwarded_created_id() {
     let writer = ResponsesWriter;
@@ -4597,10 +4371,7 @@ fn test_terminal_id_matches_forwarded_created_id() {
 }
 
 /// A stream's id is scoped to ONE writer instance, and a second `MessageStart` on that instance is
-/// a DUPLICATE rather than a new stream — the same fact the `started` latch already uses to keep
-/// `sequence_number` from rewinding. So the first id holds for the whole stream, and a genuinely
-/// new stream (a fresh writer, which is what each use of the value-namespace const inlines) takes
-/// its own id with nothing leaked from the last one.
+
 #[test]
 fn test_carried_id_resets_per_stream() {
     let writer = ResponsesWriter;
@@ -4617,7 +4388,7 @@ fn test_carried_id_resets_per_stream() {
         )
         .expect("emit");
     assert_eq!(a_created["response"]["id"].as_str(), Some("resp_A"));
-    // A duplicate opening event on the SAME instance, naming a different id.
+
     let (_, dup_created) = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -4652,7 +4423,6 @@ fn test_carried_id_resets_per_stream() {
         "the terminal event replays the id the stream opened with"
     );
 
-    // A genuinely NEW stream is a NEW writer, and carries nothing from the last one.
     let next = ResponsesWriter;
     let (_, b_created) = next
         .write_response_event(
@@ -4674,8 +4444,7 @@ fn test_carried_id_resets_per_stream() {
 }
 
 /// A backend that emits a `response.output_item.added`
-/// for each of many unique `output_index` values must NOT grow `state.open_tools` without
-/// bound. After feeding more than MAX_OPEN_TOOLS distinct indices, the tracked set is capped.
+
 #[test]
 fn test_reader_open_tools_is_capped() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -4697,8 +4466,7 @@ fn test_reader_open_tools_is_capped() {
 }
 
 /// A crafted huge `output_index` must be clamped to
-/// MAX_OUTPUT_INDEX before the usize cast/insert, so the tracked index never exceeds the cap and
-/// downstream index arithmetic stays bounded.
+
 #[test]
 fn test_reader_output_index_clamped() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -4721,8 +4489,7 @@ fn test_reader_output_index_clamped() {
 }
 
 /// The writer's open-text-index set is also capped so a
-/// pathological stream of unique text BlockStarts cannot grow per-stream writer memory without
-/// bound.
+
 #[test]
 fn test_writer_open_text_indices_capped() {
     let writer = ResponsesWriter;
@@ -4759,18 +4526,15 @@ fn test_writer_open_text_indices_capped() {
 }
 
 /// `mark_tool_open` must apply the same cardinality
-/// discipline as `open_text_item` — a `contains` guard (idempotent re-mark) plus a
-/// `MAX_OPEN_TOOLS` cap — so a pathological backend streaming an unbounded run of distinct
-/// function-call indices cannot grow `open_tool_indices` without bound (memory exhaustion).
-/// Before the fix this set grew one entry per distinct index with no ceiling.
+
 #[test]
 fn test_writer_open_tool_indices_capped() {
     let writer = ResponsesWriter;
-    // Feed many distinct indices: re-marking is idempotent and the set is capped.
+
     for i in 0..(MAX_OPEN_TOOLS + 200) {
         writer.mark_tool_open(i);
     }
-    // Re-mark already-tracked indices: must not grow the set further.
+
     for i in 0..MAX_OPEN_TOOLS {
         writer.mark_tool_open(i);
     }
@@ -4782,15 +4546,7 @@ fn test_writer_open_tool_indices_capped() {
 }
 
 /// A function-call open the cap REFUSED must emit no
-/// `response.output_item.added`. The cap is what decides whether the item exists; the frame is the
-/// wire's statement that it does. When they disagree the client is told an item opened that the
-/// writer never tracked, so the matching `BlockStop` finds nothing to close, no
-/// `response.output_item.done` ever follows, and the item is absent from the terminal `output[]`
-/// as well — a lifecycle open for an item that never opened and never ends.
-///
-/// The text arm has always decided both together (`open_text_item` returns the verdict and its
-/// caller honours it); this pins the function-call arm to the same contract: at most
-/// `MAX_OPEN_TOOLS` `output_item.added` frames, and every one of them closed by its `BlockStop`.
+
 #[test]
 fn test_writer_refused_tool_open_emits_no_output_item_added() {
     let writer = ResponsesWriter;
@@ -4829,9 +4585,7 @@ fn test_writer_refused_tool_open_emits_no_output_item_added() {
          {} `output_item.added` frames",
         added.len()
     );
-    // Every `added` frame is an open the wire must see closed: its BlockStop emits the matching
-    // `output_item.done`. A frame written past the cap would fail here too — `take_tool_open`
-    // cannot close an index that was never inserted.
+
     for i in added {
         assert!(
             writer
@@ -4846,16 +4600,11 @@ fn test_writer_refused_tool_open_emits_no_output_item_added() {
 }
 
 /// Production `extract_error` must synthesize the
-/// canonical `context_length_exceeded` code when an oversized-context error carries the
-/// condition only in its MESSAGE (null/generic `code`). Without this the breaker pipeline never
-/// sees `StatusClass::ContextLength` and oversized-request failover does not trigger for this
-/// protocol. Mirrors anthropic.rs's message-scan synthesis. Before the fix `provider_code` was
-/// `None` here (only the `#[cfg(test)] classify()` helper recognized the message).
+
 #[test]
 fn test_extract_error_synthesizes_context_length_from_message() {
     let reader = ResponsesReader;
-    // A real OpenAI-shaped oversized-context body: the canonical code is absent; the signal
-    // lives in the human-readable message.
+
     let body = br#"{"error":{"message":"This model's maximum context length is 8192 tokens, however you requested 9000 tokens. Please reduce the length of the messages.","type":"invalid_request_error","param":"messages","code":null}}"#;
     let raw = reader.extract_error(StatusCode::BAD_REQUEST, body);
     assert_eq!(
@@ -4870,7 +4619,7 @@ fn test_extract_error_synthesizes_context_length_from_message() {
 }
 
 /// A native body that already carries `code: "context_length_exceeded"` must pass through
-/// unchanged (the synthesis is `.or_else`, so a real code always wins).
+
 #[test]
 fn test_extract_error_preserves_native_context_length_code() {
     let reader = ResponsesReader;
@@ -4883,7 +4632,7 @@ fn test_extract_error_preserves_native_context_length_code() {
 }
 
 /// A non-context-length error must NOT be mislabelled as context-length (no false positives
-/// from the message scan).
+
 #[test]
 fn test_extract_error_unrelated_error_not_context_length() {
     let reader = ResponsesReader;
@@ -4893,17 +4642,11 @@ fn test_extract_error_unrelated_error_not_context_length() {
 }
 
 /// The message-only context-length synthesis is GATED to
-/// the oversized HTTP statuses (400/413), mirroring `OpenAiReader::extract_error`. A 429 (or 401,
-/// 5xx) whose prose happens to contain "maximum context length" must NOT synthesize
-/// `context_length_exceeded` — otherwise the breaker maps it to ContextLength and the genuine
-/// rate-limit/auth/server failure escapes fault attribution (no fault recorded). This test FAILS
-/// on the un-gated code (which synthesized the code from the message regardless of status) and
-/// passes with the status gate.
+
 #[test]
 fn test_extract_error_oversized_phrase_on_non_oversized_status_not_synthesized() {
     let reader = ResponsesReader;
-    // A 429 whose body carries no canonical code but whose message contains the context-length
-    // phrase. The gate must block synthesis so this stays a rate-limit (not ContextLength).
+
     let body = br#"{"error":{"message":"This model's maximum context length is 8192 tokens.","type":"rate_limit_error","code":null}}"#;
     let raw = reader.extract_error(StatusCode::TOO_MANY_REQUESTS, body);
     assert_eq!(
@@ -4911,7 +4654,7 @@ fn test_extract_error_oversized_phrase_on_non_oversized_status_not_synthesized()
         None,
         "a 429 mentioning context length must NOT be reclassified as context_length_exceeded"
     );
-    // And the same body on a 401 must likewise not synthesize.
+
     let raw_401 = reader.extract_error(StatusCode::UNAUTHORIZED, body);
     assert_eq!(
         raw_401.provider_code.as_deref(),
@@ -4921,18 +4664,13 @@ fn test_extract_error_oversized_phrase_on_non_oversized_status_not_synthesized()
 }
 
 /// `ResponsesReader::classify` delegates to `openai_chat::openai_classify`
-/// (single-sourced after dedup). Every other reader has a direct `classify` test, but the Responses delegate was only
-/// ever exercised through OpenAi's copy — this guards the delegation directly, mirroring
-/// `test_openai_classify`. 429 → RateLimit.
+
 #[test]
 fn test_responses_classify_delegates() {
     let reader = ResponsesReader;
     let signal = reader.classify(StatusCode::TOO_MANY_REQUESTS, b"{}");
     assert_eq!(signal.class, StatusClass::RateLimit);
 
-    // After the `openai_classify` oversized-status gate fix, a 429 whose body carries the
-    // context-length prose (but no canonical code) must classify as RateLimit, NOT ContextLength
-    // — the gate blocks the un-gated message scan from hijacking a genuine rate-limit signal.
     let ctx_body =
         br#"{"error":{"message":"This model's maximum context length is 8192 tokens."}}"#;
     let signal = reader.classify(StatusCode::TOO_MANY_REQUESTS, ctx_body);
@@ -4944,10 +4682,7 @@ fn test_responses_classify_delegates() {
 }
 
 /// A max_tokens-truncated stream's terminal event must
-/// be `response.incomplete` (event name AND inner `type`), NOT `response.completed`. A native
-/// stream never wraps a `status:"incomplete"` response in a `response.completed` envelope; the
-/// SDKs dispatch on the event `type`, so the previous always-`response.completed` arm mislabelled
-/// every truncated generation.
+
 #[test]
 fn test_terminal_incomplete_emits_response_incomplete_for_max_tokens() {
     let writer = ResponsesWriter;
@@ -4995,7 +4730,7 @@ fn test_terminal_incomplete_emits_response_incomplete_for_max_tokens() {
 }
 
 /// A safety/content-filter stop is also `incomplete`,
-/// so its terminal event is `response.incomplete` with reason `content_filter`.
+
 #[test]
 fn test_terminal_incomplete_emits_response_incomplete_for_safety() {
     let writer = ResponsesWriter;
@@ -5020,8 +4755,8 @@ fn test_terminal_incomplete_emits_response_incomplete_for_safety() {
             },
         )
         .expect("MessageDelta emits a terminal event");
-    assert_eq!(etype, "response.incomplete"); // golden wire-contract literal (kept bare on purpose)
-    assert_eq!(body["type"].as_str(), Some("response.incomplete")); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype, "response.incomplete");
+    assert_eq!(body["type"].as_str(), Some("response.incomplete"));
     assert_eq!(
         body["response"]["incomplete_details"]["reason"].as_str(),
         Some("content_filter") // golden wire-contract literal (kept bare on purpose)
@@ -5029,8 +4764,7 @@ fn test_terminal_incomplete_emits_response_incomplete_for_safety() {
 }
 
 /// A normally-completed stream still emits
-/// `response.completed` with inner type/status `completed` — the fix must not regress the
-/// success path. The carried id must still match `response.created`.
+
 #[test]
 fn test_terminal_completed_unchanged_for_end_turn() {
     let writer = ResponsesWriter;
@@ -5058,11 +4792,10 @@ fn test_terminal_completed_unchanged_for_end_turn() {
             },
         )
         .expect("terminal");
-    assert_eq!(etype, "response.completed"); // golden wire-contract literal (kept bare on purpose)
-    assert_eq!(body["type"].as_str(), Some("response.completed")); // golden wire-contract literal (kept bare on purpose)
-    assert_eq!(body["response"]["status"].as_str(), Some("completed")); // golden wire-contract literal (kept bare on purpose)
-                                                                        // `incomplete_details` is a spec-REQUIRED nullable member: present and null on a completed
-                                                                        // response (an object only on an incomplete one).
+    assert_eq!(etype, "response.completed");
+    assert_eq!(body["type"].as_str(), Some("response.completed"));
+    assert_eq!(body["response"]["status"].as_str(), Some("completed"));
+
     assert_eq!(
         body["response"].get("incomplete_details"),
         Some(&serde_json::Value::Null)
@@ -5071,8 +4804,7 @@ fn test_terminal_completed_unchanged_for_end_turn() {
 }
 
 /// Write_error must NOT leak the Anthropic-vocabulary
-/// `overloaded` type to an OpenAI-family client. A 503 exhaustion/timeout (proxy engine passes
-/// kind `"overloaded"`) maps onto the native `server_error`.
+
 #[test]
 fn test_write_error_maps_overloaded_to_server_error() {
     let writer = ResponsesWriter;
@@ -5088,14 +4820,13 @@ fn test_write_error_maps_overloaded_to_server_error() {
             Some("server_error"), // golden wire-contract literal (kept bare on purpose)
             "kind {kind:?} must map to server_error, never leak overloaded"
         );
-        // `server_error` carries no machine-readable code in the native shape.
+
         assert!(v["error"]["code"].is_null(), "server_error code is null");
     }
 }
 
 /// Synthesized `resp_` ids must be opaque base62 of
-/// native length with NO embedded timestamp or sequential structure, so an observer cannot
-/// fingerprint a proxied response or extract the server clock from the id.
+
 #[test]
 fn test_synthesize_response_id_is_opaque_native_length() {
     let id = synthesize_response_id(crate::codec::test_host::HOST).expect("test entropy");
@@ -5113,7 +4844,7 @@ fn test_synthesize_response_id_is_opaque_native_length() {
         suffix.bytes().all(|b| b.is_ascii_alphanumeric()),
         "opaque base62 suffix only: {id}"
     );
-    // Exactly one delimiter (the prefix's underscore) — no internal timestamp/counter fields.
+
     assert_eq!(
         id.matches('_').count(),
         1,
@@ -5122,7 +4853,7 @@ fn test_synthesize_response_id_is_opaque_native_length() {
 }
 
 /// Synthesized `msg_`/`fc_` item ids must be opaque
-/// base62 of native length, NOT the old sequential `msg_00000000` positional hex.
+
 #[test]
 fn test_synthesize_item_id_is_opaque_native_length() {
     for prefix in ["msg", "fc"] {
@@ -5139,8 +4870,7 @@ fn test_synthesize_item_id_is_opaque_native_length() {
             suffix.bytes().all(|b| b.is_ascii_alphanumeric()),
             "opaque base62 suffix: {id}"
         );
-        // The old form was zero-padded hex (all low chars); assert it is no longer a pure
-        // zero-prefixed positional counter by requiring it differ from the sequential shape.
+
         assert_ne!(
             suffix,
             "0".repeat(ITEM_ID_TOKEN_LEN),
@@ -5150,7 +4880,7 @@ fn test_synthesize_item_id_is_opaque_native_length() {
 }
 
 /// Synthesized ids must be unique across calls even in a tight loop (the monotonic counter folded
-/// into the token guarantees this independent of the RNG).
+
 #[test]
 fn test_synthesized_ids_are_unique() {
     let mut seen = std::collections::HashSet::new();
@@ -5171,8 +4901,7 @@ fn test_synthesized_ids_are_unique() {
 }
 
 /// The writer's `item_id_for` cache must return the SAME opaque id for a `(prefix, index)` across
-/// the item's lifecycle (so `output_item.added`/delta/`output_item.done` correlate), distinct ids
-/// for different indices, and a fresh id for a new stream after `reset_sequence_number`.
+
 #[test]
 fn test_item_id_for_is_stream_stable_and_opaque() {
     let writer = ResponsesWriter;
@@ -5186,7 +4915,7 @@ fn test_item_id_for_is_stream_stable_and_opaque() {
         a1, a2,
         "same (prefix,index) yields a stable id within a stream"
     );
-    assert!(a1.starts_with("msg_")); // golden wire-contract literal (kept bare on purpose)
+    assert!(a1.starts_with("msg_"));
     let b = writer
         .item_id_for(crate::codec::test_host::HOST, "msg", 1)
         .expect("the controlled host supplies another item's entropy");
@@ -5198,9 +4927,8 @@ fn test_item_id_for_is_stream_stable_and_opaque() {
         a1, fc,
         "different prefixes at the same index get distinct ids"
     );
-    assert!(fc.starts_with("fc_")); // golden wire-contract literal (kept bare on purpose)
+    assert!(fc.starts_with("fc_"));
 
-    // A new stream (reset) mints a fresh id for the same key.
     writer.reset_sequence_number();
     let a_after = writer
         .item_id_for(crate::codec::test_host::HOST, "msg", 0)
@@ -5212,8 +4940,7 @@ fn test_item_id_for_is_stream_stable_and_opaque() {
 }
 
 /// Full streamed text item: the `output_item.added`, the `content_part.added`, every
-/// `output_text.delta`, and the closing `output_text.done` / `content_part.done` /
-/// `output_item.done` must ALL carry the SAME `item_id` so a typed SDK correlates the lifecycle.
+
 #[test]
 fn test_streamed_text_item_shares_one_item_id() {
     let writer = ResponsesWriter;
@@ -5235,10 +4962,10 @@ fn test_streamed_text_item_shares_one_item_id() {
             refusal: false,
         },
     );
-    // output_item.added THEN content_part.added, both carrying the msg_… id.
+
     let added_id = added_frames[0].1["item_id"].as_str().unwrap().to_string();
-    assert!(added_id.starts_with("msg_")); // golden wire-contract literal (kept bare on purpose)
-    assert_eq!(added_frames[1].0, "response.content_part.added"); // golden wire-contract literal (kept bare on purpose)
+    assert!(added_id.starts_with("msg_"));
+    assert_eq!(added_frames[1].0, "response.content_part.added");
     assert_eq!(
         added_frames[1].1["item_id"].as_str(),
         Some(added_id.as_str())
@@ -5259,7 +4986,7 @@ fn test_streamed_text_item_shares_one_item_id() {
         crate::codec::test_host::HOST,
         &IrStreamEvent::BlockStop { index: 0 },
     );
-    // output_text.done → content_part.done → output_item.done, ALL sharing the item id.
+
     assert_eq!(done_frames.len(), 3, "text close is a three-frame bracket");
     for (et, frame) in &done_frames {
         assert_eq!(
@@ -5273,11 +5000,7 @@ fn test_streamed_text_item_shares_one_item_id() {
 }
 
 /// The cardinality-cap guard on
-/// `response.output_item.added` was inverted (`if already_open || ...`), re-emitting a BlockStart
-/// for an index that was already open. A repeated `output_item.added` for the SAME function-call
-/// index must NOT produce a second BlockStart (only the first added opens the block); the second
-/// is a no-op. Otherwise downstream sees BlockStart→BlockStart for one block — an invalid
-/// sequence and a proxy tell.
+
 #[test]
 fn test_repeated_output_item_added_does_not_reemit_block_start() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -5295,7 +5018,7 @@ fn test_repeated_output_item_added_does_not_reemit_block_start() {
         first.first(),
         Some(crate::codec::ir::IrStreamEvent::BlockStart { index: 0, .. })
     ));
-    // A second added for the SAME index must emit nothing (the block is already open).
+
     let second = reader_read_response_events(EVT_OUTPUT_ITEM_ADDED, &item, &mut state);
     assert!(
             second.is_empty(),
@@ -5309,8 +5032,7 @@ fn test_repeated_output_item_added_does_not_reemit_block_start() {
 }
 
 /// The fixed guard must STILL bound new distinct
-/// indices under MAX_OPEN_TOOLS — the inversion fix must not weaken the DoS cap. Beyond the cap
-/// a NEW index emits no BlockStart and is not tracked.
+
 #[test]
 fn test_cap_still_bounds_new_indices_after_guard_fix() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -5326,9 +5048,7 @@ fn test_cap_still_bounds_new_indices_after_guard_fix() {
         assert_eq!(out.len(), 1, "each fresh in-cap index opens one BlockStart");
     }
     assert_eq!(state.open_tools.len(), MAX_OPEN_TOOLS);
-    // A fresh index beyond the cap (use a distinct, un-clamped value below MAX_OUTPUT_INDEX is
-    // impossible here since indices 0..128 already fill it; use a high index that clamps to a
-    // value already present is not a "new" index, so instead assert no growth past the cap).
+
     let over = reader_read_response_events(
         EVT_OUTPUT_ITEM_ADDED,
         &serde_json::json!({
@@ -5337,10 +5057,7 @@ fn test_cap_still_bounds_new_indices_after_guard_fix() {
         }),
         &mut state,
     );
-    // The over-cap index clamps to MAX_OUTPUT_INDEX (127), which is already open (it was inserted
-    // in the loop), so by the already-open rule it emits nothing and does not grow the set.
-    // Two INDEPENDENT claims. As one `||` the first disjunct was free: the second is the loop
-    // invariant that already held, so the whole assertion passed whatever `over` contained.
+
     assert!(
         over.is_empty(),
         "an over-cap index clamps onto an already-open one and must emit nothing, got {over:?}"
@@ -5353,13 +5070,11 @@ fn test_cap_still_bounds_new_indices_after_guard_fix() {
 }
 
 /// A `function_call_arguments.delta` for an index
-/// with no open block (suppressed by the cap, or arriving with no preceding
-/// `output_item.added`) must be dropped — never an InputJsonDelta against a block that emitted
-/// no BlockStart.
+
 #[test]
 fn test_args_delta_dropped_for_unopened_index() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
-    // No output_item.added for index 3 — the delta must be dropped.
+
     let out = reader_read_response_events(
         EVT_FUNCTION_CALL_ARGS_DELTA,
         &serde_json::json!({"output_index": 3, "delta": "{\"a\":1}"}),
@@ -5372,7 +5087,7 @@ fn test_args_delta_dropped_for_unopened_index() {
 }
 
 /// A `function_call_arguments.delta` for an index
-/// that DID open (via `output_item.added`) is routed as an InputJsonDelta to that index.
+
 #[test]
 fn test_args_delta_routed_for_opened_index() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -5402,8 +5117,7 @@ fn test_args_delta_routed_for_opened_index() {
 }
 
 /// Every lifecycle event in a stream must carry the
-/// SAME `created_at` as the opening `response.created` — the terminal event must replay the
-/// captured timestamp, not a fresh `now_unix_secs()` wall-clock read.
+
 #[test]
 fn test_created_at_is_constant_across_stream_events() {
     let writer = ResponsesWriter;
@@ -5441,7 +5155,7 @@ fn test_created_at_is_constant_across_stream_events() {
 }
 
 /// The `response.failed` event must also replay the
-/// captured `created_at`, matching `response.created`.
+
 #[test]
 fn test_failed_event_replays_created_at() {
     let writer = ResponsesWriter;
@@ -5477,9 +5191,7 @@ fn test_failed_event_replays_created_at() {
 }
 
 /// The proxy engine transient/upstream error kinds
-/// (`timeout`/`network`/`connect`/`5xx`/`transient`/`api_error`) must map to the native
-/// `server_error` type, and `context_length_exceeded`/`bad_request` to `invalid_request_error`,
-/// never leaking a non-native `error.type` to a Responses client.
+
 #[test]
 fn test_write_error_maps_forward_transient_kinds() {
     let writer = ResponsesWriter;
@@ -5513,13 +5225,11 @@ fn test_write_error_maps_forward_transient_kinds() {
 }
 
 /// The function-call `response.output_item.done`
-/// must carry the FULLY finalized item — `call_id`, `name`, AND the complete accumulated
-/// `arguments` string the SDK reads off `event.item`. Previously it emitted only
-/// `{"type":"function_call","id":…}`, an impossible-from-real-OpenAI shape.
+
 #[test]
 fn test_function_call_done_carries_finalized_item() {
     let writer = ResponsesWriter;
-    // Open the stream so the per-stream state is initialized/reset.
+
     let _ = writer.write_response_event(
         crate::codec::test_host::HOST,
         &crate::codec::ir::IrStreamEvent::MessageStart {
@@ -5530,7 +5240,7 @@ fn test_function_call_done_carries_finalized_item() {
             model: None,
         },
     );
-    // BlockStart(ToolUse) captures call_id + name.
+
     let added = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -5544,9 +5254,8 @@ fn test_function_call_done_carries_finalized_item() {
             },
         )
         .expect("output_item.added should emit");
-    assert_eq!(added.0, "response.output_item.added"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(added.0, "response.output_item.added");
 
-    // Two argument fragments accumulate into the complete string.
     let _ = writer.write_response_event(
         crate::codec::test_host::HOST,
         &crate::codec::ir::IrStreamEvent::BlockDelta {
@@ -5562,16 +5271,15 @@ fn test_function_call_done_carries_finalized_item() {
         },
     );
 
-    // BlockStop closes it with the fully finalized item.
     let (etype, payload) = writer
         .write_response_event(
             crate::codec::test_host::HOST,
             &crate::codec::ir::IrStreamEvent::BlockStop { index: 0 },
         )
         .expect("output_item.done should emit");
-    assert_eq!(etype, "response.output_item.done"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype, "response.output_item.done");
     let item = &payload["item"];
-    assert_eq!(item["type"].as_str(), Some("function_call")); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(item["type"].as_str(), Some("function_call"));
     assert_eq!(
         item["call_id"].as_str(),
         Some("call_abc"),
@@ -5587,18 +5295,16 @@ fn test_function_call_done_carries_finalized_item() {
         Some("{\"city\":\"SF\"}"),
         "done item must carry the COMPLETE accumulated arguments"
     );
-    // `id` (the opaque fc_ item id) is still present and stable with the added frame.
+
     assert_eq!(item["id"], added.1["item"]["id"]);
 }
 
 /// The streaming READER must track open text blocks
-/// PER `output_index`, not with a single index-blind bool. Two message items at distinct indices
-/// must each get their OWN BlockStart and their OWN BlockStop — no orphan delta, no mismatched
-/// close.
+
 #[test]
 fn test_reader_multiple_text_items_distinct_indices() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
-    // First text item at index 0.
+
     let a = reader_read_response_events(
         EVT_OUTPUT_TEXT_DELTA,
         &serde_json::json!({"output_index": 0, "delta": "alpha"}),
@@ -5609,8 +5315,7 @@ fn test_reader_multiple_text_items_distinct_indices() {
         a[0],
         crate::codec::ir::IrStreamEvent::BlockStart { index: 0, .. }
     ));
-    // Second text item at index 1 arrives BEFORE index 0 closes — must open its OWN block,
-    // never an orphan delta against an unopened block.
+
     let b = reader_read_response_events(
         EVT_OUTPUT_TEXT_DELTA,
         &serde_json::json!({"output_index": 1, "delta": "beta"}),
@@ -5629,7 +5334,7 @@ fn test_reader_multiple_text_items_distinct_indices() {
         b[1],
         crate::codec::ir::IrStreamEvent::BlockDelta { index: 1, .. }
     ));
-    // Close index 0: BlockStop must pair with index 0 (not index 1).
+
     let close0 = reader_read_response_events(
         EVT_OUTPUT_ITEM_DONE,
         &serde_json::json!({"output_index": 0}),
@@ -5644,7 +5349,7 @@ fn test_reader_multiple_text_items_distinct_indices() {
         "close must pair with index 0, got {:?}",
         close0[0]
     );
-    // Index 1 is still open and closes on its own terminal frame.
+
     let close1 = reader_read_response_events(
         EVT_OUTPUT_ITEM_DONE,
         &serde_json::json!({"output_index": 1}),
@@ -5658,13 +5363,11 @@ fn test_reader_multiple_text_items_distinct_indices() {
 }
 
 /// A tool item and a text item at DISTINCT indices
-/// in the same stream must not interfere — the tool index routes its arguments delta and closes
-/// as a tool, while the text index opens/closes independently. Confirms the disjoint key-offset
-/// keeps tool routing (`open_tools.contains(&idx)`) intact.
+
 #[test]
 fn test_reader_text_and_tool_indices_coexist() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
-    // Tool item opens at index 0.
+
     let _ = reader_read_response_events(
         EVT_OUTPUT_ITEM_ADDED,
         &serde_json::json!({
@@ -5673,7 +5376,7 @@ fn test_reader_text_and_tool_indices_coexist() {
         }),
         &mut state,
     );
-    // Text item opens at index 1.
+
     let t = reader_read_response_events(
         EVT_OUTPUT_TEXT_DELTA,
         &serde_json::json!({"output_index": 1, "delta": "hi"}),
@@ -5683,7 +5386,7 @@ fn test_reader_text_and_tool_indices_coexist() {
         t[0],
         crate::codec::ir::IrStreamEvent::BlockStart { index: 1, .. }
     ));
-    // Tool arguments delta at index 0 must still route (tool index intact under raw key).
+
     let args = reader_read_response_events(
         EVT_FUNCTION_CALL_ARGS_DELTA,
         &serde_json::json!({"output_index": 0, "delta": "{\"x\":1}"}),
@@ -5697,7 +5400,7 @@ fn test_reader_text_and_tool_indices_coexist() {
             delta: crate::codec::ir::IrDelta::InputJsonDelta(_)
         }
     ));
-    // Close the tool index → tool BlockStop.
+
     let close_tool = reader_read_response_events(
         EVT_OUTPUT_ITEM_DONE,
         &serde_json::json!({"output_index": 0}),
@@ -5707,7 +5410,7 @@ fn test_reader_text_and_tool_indices_coexist() {
         close_tool[0],
         crate::codec::ir::IrStreamEvent::BlockStop { index: 0 }
     ));
-    // Close the text index → text BlockStop.
+
     let close_text = reader_read_response_events(
         EVT_OUTPUT_ITEM_DONE,
         &serde_json::json!({"output_index": 1}),
@@ -5720,10 +5423,7 @@ fn test_reader_text_and_tool_indices_coexist() {
 }
 
 /// `write_response` must emit the SDK-required non-nullable
-/// `model` even when the IR carries none (cross-protocol path, e.g. Bedrock/Anthropic →
-/// Responses). A prior revision emitted `model` only when `resp.model` was `Some`, dropping the
-/// key entirely on cross-protocol responses — a strict-decoder failure and a distinguishability
-/// tell. Absent IR model must fall back to DEFAULT_MODEL; a present model is preserved verbatim.
+
 #[test]
 fn test_write_response_emits_model_fallback() {
     let make_resp = |model: Option<String>| crate::codec::ir::IrResponse {
@@ -5749,7 +5449,6 @@ fn test_write_response_emits_model_fallback() {
         ..Default::default()
     };
 
-    // Cross-protocol: no model in the IR → DEFAULT_MODEL, never an absent key.
     let writer = ResponsesWriter;
     let out_none = writer.write_response(crate::codec::test_host::HOST, &make_resp(None));
     assert_eq!(
@@ -5758,7 +5457,6 @@ fn test_write_response_emits_model_fallback() {
         "absent model must fall back to DEFAULT_MODEL, not be omitted"
     );
 
-    // Same-protocol passthrough: the upstream model is preserved verbatim.
     let writer_some = ResponsesWriter;
     let out_some = writer_some.write_response(
         crate::codec::test_host::HOST,
@@ -5772,13 +5470,9 @@ fn test_write_response_emits_model_fallback() {
 }
 
 /// On a cross-protocol stream (IR `model` is `None` on
-/// `MessageStart`), `response.created` AND every terminal lifecycle event
-/// (`response.completed`/`.incomplete`/`.failed`) must carry the same non-nullable `model`
-/// (DEFAULT_MODEL here). The terminal arms previously emitted no `model` at all — an inner
-/// `response` missing the required field, a strict-decoder failure and a proxy tell.
+
 #[test]
 fn test_stream_terminal_events_carry_model_fallback() {
-    // --- cross-protocol completed stream: model None throughout the IR ---
     let writer = ResponsesWriter;
     let start = crate::codec::ir::IrStreamEvent::MessageStart {
         role: crate::codec::ir::IrRole::Assistant,
@@ -5814,7 +5508,7 @@ fn test_stream_terminal_events_carry_model_fallback() {
     let (ename, completed) = writer
         .write_response_event(crate::codec::test_host::HOST, &delta)
         .expect("terminal event");
-    assert_eq!(ename, "response.completed"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(ename, "response.completed");
     assert_eq!(
         completed
             .get("response")
@@ -5824,7 +5518,6 @@ fn test_stream_terminal_events_carry_model_fallback() {
         "response.completed must replay the required model field"
     );
 
-    // --- same-protocol stream: the captured model is replayed onto the terminal event ---
     let writer2 = ResponsesWriter;
     let start2 = crate::codec::ir::IrStreamEvent::MessageStart {
         role: crate::codec::ir::IrRole::Assistant,
@@ -5844,7 +5537,7 @@ fn test_stream_terminal_events_carry_model_fallback() {
     let (ename2, failed) = writer2
         .write_response_event(crate::codec::test_host::HOST, &err)
         .expect("failed event");
-    assert_eq!(ename2, "response.failed"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(ename2, "response.failed");
     assert_eq!(
         failed
             .get("response")
@@ -5856,10 +5549,7 @@ fn test_stream_terminal_events_carry_model_fallback() {
 }
 
 /// The non-streaming `write_response` body must carry
-/// the REQUIRED nullable `error` field (`null` on a non-failed response), mirroring the
-/// streaming `response.created` skeleton. A real `/v1/responses` non-streaming body always
-/// includes `error`; omitting it breaks strict SDK/Pydantic/Zod decoders that read
-/// `response.error` unconditionally and is a distinguishability tell.
+
 #[test]
 fn test_write_response_emits_error_null_for_completed_and_incomplete() {
     let make_resp = |stop: crate::codec::ir::IrStopReason| crate::codec::ir::IrResponse {
@@ -5880,12 +5570,11 @@ fn test_write_response_emits_error_null_for_completed_and_incomplete() {
     };
     let writer = ResponsesWriter;
 
-    // Completed: error key present and explicitly null.
     let completed = writer.write_response(
         crate::codec::test_host::HOST,
         &make_resp(crate::codec::ir::IrStopReason::EndTurn),
     );
-    assert_eq!(completed["status"].as_str(), Some("completed")); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(completed["status"].as_str(), Some("completed"));
     assert!(
         completed.get("error").is_some(),
         "non-streaming body must include the required error key"
@@ -5895,13 +5584,11 @@ fn test_write_response_emits_error_null_for_completed_and_incomplete() {
         "error must be null on a completed response"
     );
 
-    // Incomplete (max_tokens): error is still present and null (the failure path is the error
-    // envelope, never this success/incomplete body).
     let incomplete = writer.write_response(
         crate::codec::test_host::HOST,
         &make_resp(crate::codec::ir::IrStopReason::MaxTokens),
     );
-    assert_eq!(incomplete["status"].as_str(), Some("incomplete")); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(incomplete["status"].as_str(), Some("incomplete"));
     assert!(
         incomplete["error"].is_null(),
         "error must be null on an incomplete response"
@@ -5909,18 +5596,11 @@ fn test_write_response_emits_error_null_for_completed_and_incomplete() {
 }
 
 /// A non-streaming
-/// Responses body with `status:"failed"` and `output:null` is an upstream provider failure, NOT
-/// a parse error. The reader must surface it as an IrError carrying the upstream `error.code`,
-/// never misclassify it as an internal `ir_parse` ClientError. The IrError `class` is
-/// derived from the captured signal via `class_for_response_failed` (mirroring the streaming
-/// `response.failed` arms and the HTTP classifier) rather than hardcoded ServerError: a
-/// `rate_limit_exceeded` failed body must classify as RateLimit, not a generic ServerError.
+
 #[test]
 fn test_read_response_failed_surfaces_upstream_error() {
     let reader = ResponsesReader;
 
-    // status:"failed" with output:null and a populated error.code. The rate-limit signal must
-    // classify as RateLimit (not the old hardcoded ServerError).
     let body = serde_json::json!({
         "id": "resp_fail",
         "object": OBJ_RESPONSE,
@@ -5944,8 +5624,6 @@ fn test_read_response_failed_surfaces_upstream_error() {
         "the upstream error.code must be surfaced as the provider signal"
     );
 
-    // error.type fallback when code is absent. `content_filter` is not one of the mapped
-    // signals, so it falls to the default transient ServerError bucket.
     let body_type = serde_json::json!({
         "status": STATUS_FAILED,
         "error": { "type": INCOMPLETE_REASON_CONTENT_FILTER, "message": "blocked" },
@@ -5955,9 +5633,8 @@ fn test_read_response_failed_surfaces_upstream_error() {
         .read_response(crate::codec::test_host::HOST, &body_type)
         .expect_err("failed status must surface as an error");
     assert_eq!(err_type.class, StatusClass::ServerError);
-    assert_eq!(err_type.provider_signal.as_deref(), Some("content_filter")); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(err_type.provider_signal.as_deref(), Some("content_filter"));
 
-    // failed with no usable error object → generic response_failed signal, default ServerError.
     let body_bare = serde_json::json!({ "status": STATUS_FAILED });
     let err_bare = reader
         .read_response(crate::codec::test_host::HOST, &body_bare)
@@ -5965,22 +5642,16 @@ fn test_read_response_failed_surfaces_upstream_error() {
     assert_eq!(err_bare.class, StatusClass::ServerError);
     assert_eq!(err_bare.provider_signal.as_deref(), Some("response_failed"));
 
-    // A genuinely malformed body (no status, no output) is STILL an ir_parse ClientError — the
-    // failed-status path must not swallow real parse failures.
     let body_parse = serde_json::json!({ "id": "resp_x" });
     let err_parse = reader
         .read_response(crate::codec::test_host::HOST, &body_parse)
         .expect_err("missing output must surface as a parse error");
     assert_eq!(err_parse.class, StatusClass::ClientError);
-    assert_eq!(err_parse.provider_signal.as_deref(), Some("ir_parse")); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(err_parse.provider_signal.as_deref(), Some("ir_parse"));
 }
 
 /// The writer emits a failed body as
-/// `{"status":"failed","output":[],"error":{...}}` — `output` is a PRESENT EMPTY array, not
-/// null/absent. Before the fix the empty array took the `if let Some(output_arr)` branch,
-/// iterated zero items, then failed the usage check and returned a ClientError `ir_parse`,
-/// MASKING the real upstream error and feeding the breaker the wrong (ClientFault, no-retry)
-/// transition. The failed-status early return must fire regardless of `output` shape.
+
 #[test]
 fn test_read_response_failed_with_empty_output_array_not_masked() {
     let reader = ResponsesReader;
@@ -6009,10 +5680,7 @@ fn test_read_response_failed_with_empty_output_array_not_masked() {
 }
 
 /// `system`/`developer` input turns carry the system
-/// prompt. The reader previously dropped them (handled by neither the typed `message` arm nor
-/// the untyped role arm), losing the system prompt on a cross-protocol hop. They must now be
-/// accumulated into `IrRequest.system`. Covers typed + untyped items, and array + bare-string
-/// content.
+
 #[test]
 fn test_read_request_system_and_developer_turns_feed_system() {
     let reader = ResponsesReader;
@@ -6045,7 +5713,7 @@ fn test_read_request_system_and_developer_turns_feed_system() {
         vec!["you are terse", "be precise", "no emojis"],
         "system/developer turns (typed+untyped, array+string) must feed IrRequest.system in order"
     );
-    // The user turn must NOT have been swallowed into system.
+
     assert_eq!(
         req.messages.len(),
         1,
@@ -6058,14 +5726,11 @@ fn test_read_request_system_and_developer_turns_feed_system() {
 }
 
 /// `max_output_tokens` was read via
-/// `.as_i64()...map(|v| v as u32)`, silently truncating a value larger than `u32::MAX`. It must
-/// now drop an out-of-range value to None (matching the anthropic/bedrock readers) instead of
-/// wrapping it to a bogus small cap.
+
 #[test]
 fn test_read_request_max_output_tokens_out_of_range_drops_to_none() {
     let reader = ResponsesReader;
 
-    // u32::MAX + 1 — pre-fix `as u32` would truncate this to 0, a wildly wrong cap.
     let big = u64::from(u32::MAX) + 1;
     let body_big = serde_json::json!({
         "model": "gpt-4o",
@@ -6078,7 +5743,6 @@ fn test_read_request_max_output_tokens_out_of_range_drops_to_none() {
         "an out-of-range max_output_tokens must drop to None, not truncate"
     );
 
-    // An in-range value still round-trips.
     let body_ok = serde_json::json!({
         "model": "gpt-4o",
         "input": "hi",
@@ -6089,13 +5753,9 @@ fn test_read_request_max_output_tokens_out_of_range_drops_to_none() {
 }
 
 /// The terminal `response.completed`/
-/// `response.incomplete`/`response.failed` events' inner `response` object must carry the
-/// REQUIRED `output` array (present-but-empty) and (on non-failed terminals) `error: null`,
-/// mirroring the `response.created` skeleton. The SDK reads `event.response.output` to finalize
-/// the assembled Response; omitting it breaks strict decoders and is a distinguishability tell.
+
 #[test]
 fn test_stream_terminal_events_carry_output_and_error() {
-    // --- completed terminal ---
     let writer = ResponsesWriter;
     let _ = writer.write_response_event(
         crate::codec::test_host::HOST,
@@ -6127,7 +5787,6 @@ fn test_stream_terminal_events_carry_output_and_error() {
         "response.completed inner response must carry error: null"
     );
 
-    // --- incomplete terminal ---
     let writer2 = ResponsesWriter;
     let _ = writer2.write_response_event(
         crate::codec::test_host::HOST,
@@ -6159,7 +5818,6 @@ fn test_stream_terminal_events_carry_output_and_error() {
         "response.incomplete inner response must carry error: null"
     );
 
-    // --- failed terminal: output present-but-empty alongside the populated error object ---
     let writer3 = ResponsesWriter;
     let _ = writer3.write_response_event(
         crate::codec::test_host::HOST,
@@ -6181,7 +5839,7 @@ fn test_stream_terminal_events_carry_output_and_error() {
             }),
         )
         .expect("failed event");
-    assert_eq!(ename, "response.failed"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(ename, "response.failed");
     assert!(
         failed["response"]["output"].is_array(),
         "response.failed inner response must carry an output array"
@@ -6194,14 +5852,11 @@ fn test_stream_terminal_events_carry_output_and_error() {
 }
 
 /// The terminal `response.completed` event's inner
-/// `response.output` must carry the FULLY assembled output array (the message item with its
-/// `output_text` content, and the finalized function-call item) — NOT a hard-coded `[]`. A
-/// `completed` response with nonzero `usage.output_tokens` but an empty `output` is a shape real
-/// /v1/responses never emits and breaks SDK consumers that read `event.response.output`.
+
 #[test]
 fn test_terminal_output_assembles_streamed_text_and_tool_items() {
     let writer = ResponsesWriter;
-    // Opening event.
+
     let _ = writer.write_response_event(
         crate::codec::test_host::HOST,
         &IrStreamEvent::MessageStart {
@@ -6213,7 +5868,6 @@ fn test_terminal_output_assembles_streamed_text_and_tool_items() {
         },
     );
 
-    // Text item at index 0: BlockStart + two deltas + BlockStop.
     let _ = writer.write_response_event(
         crate::codec::test_host::HOST,
         &IrStreamEvent::BlockStart {
@@ -6241,7 +5895,6 @@ fn test_terminal_output_assembles_streamed_text_and_tool_items() {
         &IrStreamEvent::BlockStop { index: 0 },
     );
 
-    // Function-call item at index 1: BlockStart(ToolUse) + arg deltas + BlockStop.
     let _ = writer.write_response_event(
         crate::codec::test_host::HOST,
         &IrStreamEvent::BlockStart {
@@ -6272,7 +5925,6 @@ fn test_terminal_output_assembles_streamed_text_and_tool_items() {
         &IrStreamEvent::BlockStop { index: 1 },
     );
 
-    // Terminal.
     let (ename, completed) = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -6284,7 +5936,7 @@ fn test_terminal_output_assembles_streamed_text_and_tool_items() {
             },
         )
         .expect("terminal event");
-    assert_eq!(ename, "response.completed"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(ename, "response.completed");
 
     let output = completed["response"]["output"]
         .as_array()
@@ -6295,9 +5947,8 @@ fn test_terminal_output_assembles_streamed_text_and_tool_items() {
         "assembled output must carry both the message and the function_call item, got {output:?}"
     );
 
-    // Items come out in output_index order: message (0) then function_call (1).
     let msg_item = &output[0];
-    assert_eq!(msg_item["type"], serde_json::json!("message")); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(msg_item["type"], serde_json::json!("message"));
     assert_eq!(msg_item["role"], serde_json::json!("assistant"));
     let text = msg_item["content"][0]["text"]
         .as_str()
@@ -6308,7 +5959,7 @@ fn test_terminal_output_assembles_streamed_text_and_tool_items() {
     );
 
     let fc_item = &output[1];
-    assert_eq!(fc_item["type"], serde_json::json!("function_call")); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(fc_item["type"], serde_json::json!("function_call"));
     assert_eq!(fc_item["call_id"], serde_json::json!("call_abc"));
     assert_eq!(fc_item["name"], serde_json::json!("get_weather"));
     assert_eq!(
@@ -6319,7 +5970,7 @@ fn test_terminal_output_assembles_streamed_text_and_tool_items() {
 }
 
 /// A genuinely output-less turn (no blocks streamed) still emits a present-but-empty `output`
-/// array on the terminal event — never an omitted key.
+
 #[test]
 fn test_terminal_output_empty_when_no_blocks_streamed() {
     let writer = ResponsesWriter;
@@ -6354,18 +6005,11 @@ fn test_terminal_output_empty_when_no_blocks_streamed() {
 }
 
 /// A function_call and a text part arriving at the SAME `output_index`
-/// must NOT both open a block, and a terminal event must close that index EXACTLY once.
-///
-/// Before the fix, `output_item.added` tracked the tool under raw key `N` while
-/// `output_text.delta` tracked text under `N + TEXT_INDEX_KEY_OFFSET`, so a tool AND a text
-/// block could both open at the same wire index. `close_open_blocks` then mapped both keys back
-/// to IR index `N` and (with no dedup) emitted TWO `BlockStop{N}` — a duplicate
-/// `content_block_stop` the Anthropic writer relays for an already-closed index.
+
 #[test]
 fn test_same_output_index_tool_and_text_single_open_single_close() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
 
-    // Open a tool block at output_index 0.
     let added = reader_read_response_events(
         EVT_OUTPUT_ITEM_ADDED,
         &serde_json::json!({
@@ -6383,8 +6027,6 @@ fn test_same_output_index_tool_and_text_single_open_single_close() {
         "tool open emits exactly one BlockStart"
     );
 
-    // A text delta arrives at the SAME output_index 0. It must NOT open a second block, and
-    // must NOT route a TextDelta into the open tool block.
     let text = reader_read_response_events(
         EVT_OUTPUT_TEXT_DELTA,
         &serde_json::json!({"output_index": 0, "delta": "hi"}),
@@ -6399,14 +6041,12 @@ fn test_same_output_index_tool_and_text_single_open_single_close() {
         "no text key must be opened at an index already held by a tool"
     );
 
-    // Exactly one key is open for index 0 (the raw tool key).
     assert_eq!(
         state.open_tools.len(),
         1,
         "exactly one open marker for the shared index"
     );
 
-    // A terminal event must close index 0 exactly ONCE.
     let completed = reader_read_response_events(
         EVT_RESPONSE_COMPLETED,
         &serde_json::json!({"response": {"status": STATUS_COMPLETED}}),
@@ -6423,13 +6063,11 @@ fn test_same_output_index_tool_and_text_single_open_single_close() {
 }
 
 /// Even if two open keys for the same IR index somehow
-/// coexist in `open_tools` (raw `N` and `N + TEXT_INDEX_KEY_OFFSET`), the terminal drain must
-/// collapse them to a SINGLE `BlockStop{N}`. This pins the `sort`+`dedup` in `close_open_blocks`
-/// directly: before the dedup fix this drain produced two `BlockStop{N}`.
+
 #[test]
 fn test_terminal_drain_dedups_colliding_keys() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
-    // Directly seed both keys for IR index 3 to exercise the drain's dedup in isolation.
+
     state.open_tools.insert(3);
     state.open_tools.insert(3 + TEXT_INDEX_KEY_OFFSET);
 
@@ -6453,12 +6091,11 @@ fn test_terminal_drain_dedups_colliding_keys() {
 }
 
 /// A tool item must not open at an `output_index` already
-/// held by an OPEN TEXT block. Before the fix, `output_item.added` only checked the raw key, so
-/// a text block open under `N + TEXT_INDEX_KEY_OFFSET` did not block a tool open at raw `N`.
+
 #[test]
 fn test_tool_open_suppressed_when_text_block_open_at_index() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
-    // Open a TEXT block at index 0.
+
     let text = reader_read_response_events(
         EVT_OUTPUT_TEXT_DELTA,
         &serde_json::json!({"output_index": 0, "delta": "a"}),
@@ -6467,7 +6104,6 @@ fn test_tool_open_suppressed_when_text_block_open_at_index() {
     assert!(state.open_tools.contains(&TEXT_INDEX_KEY_OFFSET));
     assert_eq!(text.len(), 2);
 
-    // A function_call item arrives at the same index 0 -> must NOT open a tool block.
     let added = reader_read_response_events(
         EVT_OUTPUT_ITEM_ADDED,
         &serde_json::json!({
@@ -6489,19 +6125,11 @@ fn test_tool_open_suppressed_when_text_block_open_at_index() {
 }
 
 /// `synth_token` must emit ONLY base62 characters, drawn uniformly via
-/// rejection sampling (no biased `byte % 62`). We assert the character class strictly, and run
-/// a targeted check of the EXACT bias `byte % 62` introduces: 256 = 4*62 + 8, so under the old
-/// reduction bytes wrap such that base62 digits at indices 0..=7 get FIVE source bytes each
-/// (`d, d+62, d+124, d+186, d+248`) while indices 8..=61 get only FOUR — a 5/4 = 1.25x
-/// over-representation of the first 8 alphabet positions. Rejection sampling drops bytes >= 248,
-/// so every index gets exactly four source bytes and the two groups have EQUAL expected
-/// frequency. We compare the mean count of the biased group (indices 0..=7) against the
-/// unbiased group (indices 8..=61) over a large sample: under the fix the ratio is ≈1.0; under
-/// the old code it is ≈1.25, far outside the tolerance band.
+
 #[test]
 fn test_synth_token_uniform_base62_only() {
     let alphabet: std::collections::HashSet<char> = BASE62.iter().map(|&b| b as char).collect();
-    // Per-alphabet-INDEX counts (index into BASE62), so we can isolate the exact biased group.
+
     let mut counts = [0usize; 62];
     let char_to_index: std::collections::HashMap<char, usize> = BASE62
         .iter()
@@ -6509,8 +6137,6 @@ fn test_synth_token_uniform_base62_only() {
         .map(|(i, &b)| (b as char, i))
         .collect();
 
-    // 20_000 tokens * 48 chars = 960_000 samples. With ~15.5k expected per digit, the standard
-    // deviation per digit is ~124 (<1%), so a 25% group-mean gap is overwhelmingly significant.
     for _ in 0..20_000 {
         let tok = synth_token::<48>(crate::codec::test_host::HOST).expect("test entropy");
         assert_eq!(tok.len(), 48, "token width must be exactly N");
@@ -6523,19 +6149,15 @@ fn test_synth_token_uniform_base62_only() {
         }
     }
 
-    // Every base62 digit must have appeared at least once.
     assert!(
         counts.iter().all(|&n| n > 0),
         "all 62 base62 digits should appear in a large uniform sample, counts={counts:?}"
     );
 
-    // Mean frequency of the would-be-biased group (alphabet indices 0..=7) vs the rest.
     let biased_group: f64 = counts[0..8].iter().sum::<usize>() as f64 / 8.0;
     let rest_group: f64 = counts[8..62].iter().sum::<usize>() as f64 / 54.0;
     let ratio = biased_group / rest_group;
-    // Fixed code: ratio ≈ 1.0. Old `byte % 62`: ratio ≈ 1.25. A 5% band cleanly separates them
-    // while absorbing ordinary CSPRNG variance (the per-group means concentrate far tighter than
-    // 5% at this sample size).
+
     assert!(
         (0.95..=1.05).contains(&ratio),
         "first-8 base62 digits must not be over-represented (group ratio={ratio:.4}; \
@@ -6543,8 +6165,6 @@ fn test_synth_token_uniform_base62_only() {
     );
 }
 
-// `tool_choice: "required"` must round-trip through the Responses reader into the IR
-// union and back out the writer — not silently degrade to `auto`/omitted on the seam.
 #[test]
 fn test_responses_tool_choice_required_roundtrips() {
     let json = serde_json::json!({
@@ -6559,7 +6179,7 @@ fn test_responses_tool_choice_required_roundtrips() {
         ir.tool_choice,
         Some(crate::codec::ir::IrToolChoice::Required)
     );
-    // It must NOT also linger in `extra` (modeled key).
+
     assert!(!ir.extra.contains_key("tool_choice"));
 
     let writer = ResponsesWriter;
@@ -6570,8 +6190,6 @@ fn test_responses_tool_choice_required_roundtrips() {
     );
 }
 
-// A targeted `{"type":"function","name":"X"}` (the Responses flat shape) must preserve the
-// pinned tool name through the IR and re-emit it in the same flat shape.
 #[test]
 fn test_responses_tool_choice_specific_function() {
     let json = serde_json::json!({
@@ -6595,8 +6213,6 @@ fn test_responses_tool_choice_specific_function() {
     assert_eq!(tc.get("name").and_then(|v| v.as_str()), Some("get_weather"));
 }
 
-// A request with no `tool_choice` must yield `None` (omitted) and the writer must NOT synthesize
-// a spurious directive — preserving the "absent stays absent" contract.
 #[test]
 fn test_responses_tool_choice_absent_is_none() {
     let json = serde_json::json!({
@@ -6612,7 +6228,7 @@ fn test_responses_tool_choice_absent_is_none() {
 }
 
 /// Build a minimal IR request for writer tests, with every Phase-0 / sampling field None/empty so
-/// individual tests can set just the one knob under test.
+
 fn empty_ir_request() -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
         block_origins: Default::default(),
@@ -6653,9 +6269,6 @@ fn empty_ir_request() -> crate::codec::ir::IrRequest {
     }
 }
 
-// REASONING: a non-stream Responses `reasoning` output item must read into an IR Thinking block
-// (text from `content[].reasoning_text`, signature from `encrypted_content`) AND write back as a
-// `reasoning` item — a full round-trip, so reasoning survives both directions of the seam.
 #[test]
 fn test_reasoning_item_thinking_round_trip() {
     let body = serde_json::json!({
@@ -6682,8 +6295,7 @@ fn test_reasoning_item_thinking_round_trip() {
     let ir = reader
         .read_response(crate::codec::test_host::HOST, &body)
         .expect("read_response");
-    // The reasoning item became a Thinking block carrying both text and the encrypted_content
-    // mapped into the signature slot.
+
     let thinking = ir
         .content
         .iter()
@@ -6697,13 +6309,11 @@ fn test_reasoning_item_thinking_round_trip() {
     assert_eq!(thinking.0, "let me think step by step");
     assert_eq!(thinking.1.as_deref(), Some("ENC_BLOB_123"));
 
-    // Write back: the Thinking block must re-emit a native `reasoning` output item with the text
-    // under `content[].reasoning_text` and the signature back in `encrypted_content`.
     let writer = ResponsesWriter;
     let out = writer.write_response(crate::codec::test_host::HOST, &ir);
     let reasoning = out["output"]
         .as_array()
-        .and_then(|a| a.iter().find(|i| i["type"] == "reasoning")) // golden wire-contract literal (kept bare on purpose)
+        .and_then(|a| a.iter().find(|i| i["type"] == "reasoning"))
         .expect("a reasoning output item written back");
     assert_eq!(
         reasoning["content"][0]["type"],
@@ -6721,8 +6331,7 @@ fn test_reasoning_item_thinking_round_trip() {
 }
 
 /// Request-input reasoning: a prior-turn `reasoning` INPUT item must read into an IR
-/// assistant Thinking block (no longer silently dropped) AND the writer must re-emit it as a
-/// top-level `reasoning` input item — a same-protocol Responses->Responses request round-trip.
+
 #[test]
 fn reasoning_input_item_round_trips_through_request() {
     let body = serde_json::json!({
@@ -6743,13 +6352,7 @@ fn reasoning_input_item_round_trips_through_request() {
             }
         ]
     });
-    // HERMETICITY (not an assertion about warns): this fixture carries a reasoning-item `id`, so the
-    // read hits the drop-warn callsite that `responses_request_reasoning_id_dropped_with_warn`
-    // captures. `tracing` caches callsite interest PROCESS-GLOBALLY, so running that callsite from a
-    // parallel test holding no capture can leave it cached "disabled" while the sibling's
-    // thread-local capture is installed, handing the sibling an EMPTY capture — an order-dependent
-    // flake. Holding the capture fixture's reentrant gate for the duration of this read serialises
-    // the two tests, so neither ordering can produce it.
+
     let ir = {
         use busbar_test_kit::warn_capture::WarnCapture;
         let cap = WarnCapture::default();
@@ -6760,7 +6363,6 @@ fn reasoning_input_item_round_trips_through_request() {
         })
     };
 
-    // The reasoning input item is preserved as an assistant Thinking block (NOT dropped).
     let thinking = ir
         .messages
         .iter()
@@ -6775,23 +6377,18 @@ fn reasoning_input_item_round_trips_through_request() {
     assert_eq!(thinking.0, "prior reasoning");
     assert_eq!(thinking.1.as_deref(), Some("ENC_IN_42"));
 
-    // Writer re-emits a top-level `reasoning` input item (round-trip).
     let writer = ResponsesWriter;
     let out = writer.write_request(crate::codec::test_host::HOST, &ir);
     let reasoning = out["input"]
         .as_array()
-        .and_then(|a| a.iter().find(|i| i["type"] == "reasoning")) // golden wire-contract literal (kept bare on purpose)
+        .and_then(|a| a.iter().find(|i| i["type"] == "reasoning"))
         .expect("a reasoning input item written back");
     assert_eq!(reasoning["content"][0]["text"], "prior reasoning");
     assert_eq!(reasoning["encrypted_content"], "ENC_IN_42");
 }
 
 /// F5 role guard: a `reasoning` INPUT item asserts "this is the model's own prior reasoning" —
-/// only an Assistant-role message can truthfully carry that. A Thinking block attached to a
-/// User-role message (reachable today from an upstream reader that does not check role, e.g. the
-/// Gemini reader's `thought: true` parts on any `Content`) must NOT be re-emitted as a top-level
-/// `reasoning` item, or the caller's own content is presented back to the model as if it were the
-/// model's prior reasoning.
+
 #[test]
 fn user_role_thinking_is_not_emitted_as_a_reasoning_item() {
     let req = crate::codec::ir::IrRequest {
@@ -6812,20 +6409,17 @@ fn user_role_thinking_is_not_emitted_as_a_reasoning_item() {
     };
     let writer = ResponsesWriter;
     let out = writer.write_request(crate::codec::test_host::HOST, &req);
-    // A dropped Thinking block leaves the User message with no content at all, so `input` may be
-    // entirely absent (not just empty) — `write_request` only inserts it when non-empty (:277-279).
+
     let has_reasoning_item = out
         .get("input")
         .and_then(|v| v.as_array())
-        .is_some_and(|arr| arr.iter().any(|i| i["type"] == "reasoning")); // golden wire-contract literal (kept bare on purpose)
+        .is_some_and(|arr| arr.iter().any(|i| i["type"] == "reasoning"));
     assert!(
         !has_reasoning_item,
         "a User-role Thinking block must never be emitted as a `reasoning` input item: {out}"
     );
 }
 
-// `usage.input_tokens_details.cached_tokens` must read into the IR `cache_read_input_tokens`
-// and write back to the same nested Responses location (the Bedrock-shared cache-read field).
 #[test]
 fn test_cached_tokens_mapping() {
     let body = serde_json::json!({
@@ -6853,7 +6447,6 @@ fn test_cached_tokens_mapping() {
         "cached_tokens read into cache_read_input_tokens"
     );
 
-    // Write back: the cache count re-emits under usage.input_tokens_details.cached_tokens.
     let writer = ResponsesWriter;
     let out = writer.write_response(crate::codec::test_host::HOST, &ir);
     assert_eq!(
@@ -6861,7 +6454,6 @@ fn test_cached_tokens_mapping() {
         "cache_read_input_tokens written back to cached_tokens"
     );
 
-    // A response with NO cache details must NOT gain a spurious cached_tokens (None stays absent).
     let no_cache = serde_json::json!({
         "id": "resp_n", "status": STATUS_COMPLETED, "model": "gpt-4o",
         "output": [{"type":ITEM_TYPE_MESSAGE,"role":"assistant","content":[{"type":CONTENT_TYPE_OUTPUT_TEXT,"text":"x"}]}],
@@ -6872,17 +6464,13 @@ fn test_cached_tokens_mapping() {
         .expect("read_response");
     assert_eq!(ir2.usage.cache_read_input_tokens, None);
     let out2 = writer.write_response(crate::codec::test_host::HOST, &ir2);
-    // `input_tokens_details` is a REQUIRED field in the official SDKs, so it is ALWAYS
-    // emitted — with `cached_tokens: 0` when there was no cache hit (NOT omitted, which would raise a
-    // strict Pydantic/Zod decoder).
+
     assert_eq!(
         out2["usage"]["input_tokens_details"]["cached_tokens"], 0,
         "no cache hit => input_tokens_details present with cached_tokens: 0"
     );
 }
 
-// STOP: the Responses create API models no `stop` param, so the writer must NOT emit one even
-// when the IR carries stop sequences (they are warned-and-dropped, not silently leaked).
 #[test]
 fn test_stop_not_emitted_on_responses() {
     let mut req = empty_ir_request();
@@ -6903,8 +6491,6 @@ fn test_stop_not_emitted_on_responses() {
     );
 }
 
-// SAMPLING: frequency_penalty / presence_penalty / seed / n are NOT modeled by the Responses
-// create API, so the writer must omit them even when the IR carries values (lossy-by-target).
 #[test]
 fn test_unsupported_sampling_params_omitted() {
     let mut req = empty_ir_request();
@@ -6926,8 +6512,6 @@ fn test_unsupported_sampling_params_omitted() {
     }
 }
 
-// response_format <-> text.format. A Responses `text.format` json_schema (FLAT) must read into
-// the canonical nested IR shape, and the writer must re-flatten it back under `text.format`.
 #[test]
 fn test_response_format_text_format_round_trip() {
     let body = serde_json::json!({
@@ -6945,7 +6529,7 @@ fn test_response_format_text_format_round_trip() {
     });
     let reader = ResponsesReader;
     let ir = reader.read_request(&body).expect("read_request");
-    // Canonicalized into the typed IR (no protocol-shaped Value).
+
     let rf = ir
         .response_format
         .as_ref()
@@ -6957,19 +6541,18 @@ fn test_response_format_text_format_round_trip() {
         Some(&serde_json::json!("object"))
     );
     assert_eq!(rf.strict, Some(true));
-    // The non-format `text` sub-key (verbosity) survives via extra.
+
     assert_eq!(
         ir.extra.get("text").and_then(|t| t.get("verbosity")),
         Some(&serde_json::json!("low")),
         "text.verbosity preserved in extra"
     );
-    // `text` must NOT leak its format into extra (the writer rebuilds it).
+
     assert!(
         ir.extra.get("text").and_then(|t| t.get("format")).is_none(),
         "text.format must be promoted, not left in extra"
     );
 
-    // Write back: text.format flat shape, merged with the preserved verbosity.
     let writer = ResponsesWriter;
     let out = writer.write_request(crate::codec::test_host::HOST, &ir);
     let fmt = &out["text"]["format"];
@@ -6987,8 +6570,6 @@ fn test_response_format_text_format_round_trip() {
     );
 }
 
-// A Responses `input_image` given by `file_id` (no image_url) must NOT become an empty Image
-// block — it carries the file_id faithfully and round-trips back to the `file_id` form.
 #[test]
 fn test_input_image_file_id_round_trip() {
     let body = serde_json::json!({
@@ -7017,9 +6598,6 @@ fn test_input_image_file_id_round_trip() {
         .expect("a responses-vendor Image block from the file_id image");
     assert_eq!(file_id, "file-abc123", "file_id preserved");
 
-    // Write back: re-emits the native file_id form, not an image_url. The writer emits the
-    // CANONICAL message-wrapped form (`{type:message, role, content:[{type:input_image,...}]}`),
-    // so the input_image lives inside a message's `content`, not at the top of `input[]`.
     let writer = ResponsesWriter;
     let out = writer.write_request(crate::codec::test_host::HOST, &ir);
     let image_item = out["input"]
@@ -7037,15 +6615,11 @@ fn test_input_image_file_id_round_trip() {
     );
 }
 
-// REASONING (stream): a reasoning output-item lifecycle (added/delta/done) must read into a
-// Thinking BlockStart + ThinkingDelta + BlockStop, and the writer must re-emit native reasoning
-// stream events from those IR events (`output_item.added`/`reasoning_text.delta`/`.done`).
 #[test]
 fn test_streaming_reasoning_round_trip() {
     let reader = ResponsesReader;
     let mut state = crate::codec::ir::StreamDecodeState::default();
 
-    // output_item.added (reasoning) at index 0 opens a Thinking BlockStart.
     let added = reader.read_response_events(
         crate::codec::test_host::HOST,
         EVT_OUTPUT_ITEM_ADDED,
@@ -7067,7 +6641,6 @@ fn test_streaming_reasoning_round_trip() {
         "reasoning item.added opens a Thinking block at index 0: {added:?}"
     );
 
-    // reasoning_text.delta carries a ThinkingDelta.
     let delta = reader.read_response_events(
         crate::codec::test_host::HOST,
         EVT_REASONING_TEXT_DELTA,
@@ -7085,7 +6658,6 @@ fn test_streaming_reasoning_round_trip() {
         "reasoning_text.delta yields a ThinkingDelta: {delta:?}"
     );
 
-    // Writer side: a Thinking BlockStart emits a native reasoning output_item.added.
     let writer = ResponsesWriter;
     let (etype, payload) = writer
         .write_response_event(
@@ -7097,10 +6669,9 @@ fn test_streaming_reasoning_round_trip() {
             },
         )
         .expect("Thinking BlockStart emits a frame");
-    assert_eq!(etype, "response.output_item.added"); // golden wire-contract literal (kept bare on purpose)
-    assert_eq!(payload["item"]["type"], "reasoning"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype, "response.output_item.added");
+    assert_eq!(payload["item"]["type"], "reasoning");
 
-    // A ThinkingDelta emits a native reasoning_text.delta.
     let (etype2, payload2) = writer
         .write_response_event(
             crate::codec::test_host::HOST,
@@ -7110,11 +6681,9 @@ fn test_streaming_reasoning_round_trip() {
             },
         )
         .expect("ThinkingDelta emits a frame");
-    assert_eq!(etype2, "response.reasoning_text.delta"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(etype2, "response.reasoning_text.delta");
     assert_eq!(payload2["delta"], "pondering");
 
-    // BlockStop closes it: `reasoning_text.done` (the bracket the reasoning_text.delta run needs)
-    // THEN a reasoning `output_item.done` carrying the assembled text.
     let close_frames = writer.write_response_events(
         crate::codec::test_host::HOST,
         &crate::codec::ir::IrStreamEvent::BlockStop { index: 0 },
@@ -7125,17 +6694,14 @@ fn test_streaming_reasoning_round_trip() {
         vec!["response.reasoning_text.done", "response.output_item.done"], // golden wire-contract literals (kept bare on purpose)
         "reasoning BlockStop closes reasoning_text then output_item"
     );
-    // reasoning_text.done carries the COMPLETE assembled reasoning text under content_index 0.
+
     assert_eq!(close_frames[0].1["text"], "pondering");
     assert_eq!(close_frames[0].1["content_index"], 0);
     let payload3 = &close_frames[1].1;
-    assert_eq!(payload3["item"]["type"], "reasoning"); // golden wire-contract literal (kept bare on purpose)
+    assert_eq!(payload3["item"]["type"], "reasoning");
     assert_eq!(payload3["item"]["content"][0]["text"], "pondering");
 }
 
-// Stream: a streamed terminal `response.completed` carrying
-// usage.input_tokens_details.cached_tokens must surface it on the IR MessageDelta usage, and the
-// writer's MessageDelta must re-emit it on the terminal event.
 #[test]
 fn test_streaming_cached_tokens_round_trip() {
     let reader = ResponsesReader;
@@ -7164,7 +6730,6 @@ fn test_streaming_cached_tokens_round_trip() {
         .expect("a MessageDelta with usage");
     assert_eq!(usage.cache_read_input_tokens, Some(32));
 
-    // Writer re-emits cached_tokens on the terminal event's inner response.usage.
     let writer = ResponsesWriter;
     let (_etype, payload) = writer
         .write_response_event(
@@ -7190,9 +6755,7 @@ fn test_streaming_cached_tokens_round_trip() {
 }
 
 /// Non-stream `read_response` cache-token NORMALIZATION (ir.rs:457): the Responses API's
-/// `input_tokens` is a TOTAL that INCLUDES the cached prefix, so the reader SUBTRACTS
-/// `input_tokens_details.cached_tokens` to leave `input_tokens` UNCACHED and stores the cached
-/// count additively in `cache_read_input_tokens` (the OpenAI-family convention).
+
 #[test]
 fn read_response_subtracts_cached_prefix_from_input_tokens() {
     let body = serde_json::json!({
@@ -7221,13 +6784,12 @@ fn read_response_subtracts_cached_prefix_from_input_tokens() {
     );
     assert_eq!(resp.usage.cache_read_input_tokens, Some(100));
     assert_eq!(resp.usage.output_tokens, 5);
-    // billable re-sums to the original wire input total (50 + 100) + output 5 = 155.
+
     assert_eq!(resp.usage.billable_tokens(), 155);
 }
 
 /// The write side RECONSTRUCTS the wire shape: it ADDS the cached prefix BACK onto the uncached IR
-/// `input_tokens` to re-derive the Responses TOTAL `input_tokens`, and re-emits the FLAT
-/// `input_tokens_details.cached_tokens`. Pins the exact inverse of the read normalization.
+
 #[test]
 fn write_response_reconstructs_input_tokens_total_with_cached_details() {
     let resp = crate::codec::ir::IrResponse {
@@ -7267,9 +6829,7 @@ fn write_response_reconstructs_input_tokens_total_with_cached_details() {
 }
 
 /// `incomplete_details.reason` normalization must be EXHAUSTIVE (ir.rs:186): `max_output_tokens`→
-/// MaxTokens, `content_filter`→Safety, `refusal`→Refusal, and any unknown/future reason→Other (no
-/// String payload). Pins the whole codec plus its egress inverse (MaxTokens/Safety render the turn
-/// `incomplete`; everything else is `completed`).
+
 #[test]
 fn incomplete_reason_codec_is_exhaustive() {
     use crate::codec::ir::IrStopReason as S;
@@ -7287,7 +6847,6 @@ fn incomplete_reason_codec_is_exhaustive() {
         S::Other
     );
 
-    // Egress: only MaxTokens/Safety render `incomplete`; the reason projects to the native token.
     assert_eq!(write_responses_status(S::MaxTokens), STATUS_INCOMPLETE);
     assert_eq!(write_responses_status(S::Safety), STATUS_INCOMPLETE);
     assert_eq!(write_responses_status(S::ToolUse), STATUS_COMPLETED);
@@ -7307,8 +6866,7 @@ fn incomplete_reason_codec_is_exhaustive() {
 }
 
 /// A full `read_response` with `status:"incomplete"` + `incomplete_details.reason:"content_filter"`
-/// surfaces `IrStopReason::Safety`, and a `max_output_tokens` reason surfaces `MaxTokens` — the
-/// truncation/moderation signal lives in `incomplete_details`, not the flat status.
+
 #[test]
 fn read_response_incomplete_details_promote_stop_reason() {
     let mk = |reason: &str| {
@@ -7350,9 +6908,7 @@ fn read_response_incomplete_details_promote_stop_reason() {
 }
 
 /// A `response_format` json_schema round-trips read→IR→write through the Responses FLAT
-/// `text.format` shape (name/schema/strict/description sit BESIDE `type`, not nested under
-/// `json_schema` like OpenAI Chat). The IR canonicalizes it so the two OpenAI-family wire shapes
-/// stay isolated and neither leaks cross-protocol (ir.rs:348).
+
 #[test]
 fn text_format_json_schema_flat_round_trips() {
     let schema = serde_json::json!({
@@ -7382,7 +6938,6 @@ fn text_format_json_schema_flat_round_trips() {
     assert_eq!(rf.description.as_deref(), Some("an answer"));
     assert_eq!(rf.schema.as_ref(), Some(&schema));
 
-    // WRITE re-emits the FLAT Responses text.format shape (fields beside type, not nested).
     let writer = ResponsesWriter;
     let out = writer.write_request(crate::codec::test_host::HOST, &ir);
     let fmt = out
@@ -7395,7 +6950,7 @@ fn text_format_json_schema_flat_round_trips() {
     assert_eq!(fmt.get("name").and_then(|n| n.as_str()), Some("Answer"));
     assert_eq!(fmt.get("schema"), Some(&schema));
     assert_eq!(fmt.get("strict").and_then(|s| s.as_bool()), Some(true));
-    // The FLAT shape must NOT nest under a json_schema key (that is the Chat-Completions shape).
+
     assert!(
         fmt.get("json_schema").is_none(),
         "Responses text.format is FLAT — must not nest under json_schema: {out}"
@@ -7403,11 +6958,7 @@ fn text_format_json_schema_flat_round_trips() {
 }
 
 /// Hosted tools: a Responses request whose `tools` array mixes a HOSTED tool
-/// (`web_search`, `file_search`) with a CUSTOM function tool must round-trip the hosted specs
-/// — never mangled into empty `{"type":"function","name":""}` tools — while the function
-/// tool keeps its flat Responses shape. Same-protocol Responses -> Responses passthrough.
-/// IR-11: `web_search` is a kind the IR models neutrally, so it rides `hosted_tools` (and is
-/// written back from there); `file_search` has no neutral form and stays the raw verbatim object.
+
 #[test]
 fn test_hosted_tools_pass_through_intact() {
     let json = serde_json::json!({
@@ -7426,8 +6977,7 @@ fn test_hosted_tools_pass_through_intact() {
     });
 
     let ir = ResponsesReader.read_request(&json).expect("reads");
-    // The reader kept two tools — the raw file_search and the function tool — and the web search
-    // in the neutral hosted slot (IR-11).
+
     assert_eq!(ir.tools.len(), 2);
     assert!(
         ir.tools[0].hosted.is_some(),
@@ -7460,8 +7010,6 @@ fn test_hosted_tools_pass_through_intact() {
             .unwrap_or_else(|| panic!("no {t} tool: {out}"))
     };
 
-    // (a) The hosted tools are re-emitted with their type and sibling fields intact, and NOT
-    // rewritten to a function tool.
     let web_search = by_type("web_search");
     assert_eq!(web_search["search_context_size"], "medium");
     assert!(
@@ -7473,11 +7021,10 @@ fn test_hosted_tools_pass_through_intact() {
         serde_json::json!(["vs_123"])
     );
 
-    // (b) The function tool keeps the FLAT Responses shape.
     let function = by_type("function");
     assert_eq!(function["name"], "get_weather");
     assert!(function.get("parameters").is_some());
-    // No hosted tool leaked an empty function name (the pre-fix mangling tell).
+
     for t in tools {
         if t["type"] == "function" {
             assert_ne!(
@@ -7489,11 +7036,7 @@ fn test_hosted_tools_pass_through_intact() {
 }
 
 /// Hosted tools, CROSS-protocol drop: a Responses hosted tool routed to a NON-Responses egress
-/// has no function-tool analog, so `IrReq::prepare_for_egress` (the cross-protocol seam) must DROP it
-/// with a warn - never let a non-Responses writer emit a malformed empty-name function tool the
-/// backend 400s on. The custom function tool alongside it survives. The paired same-protocol
-/// pass-through is proven by `test_hosted_tools_pass_through_intact` (which never calls
-/// `prepare_for_egress`, matching the real same-proto verbatim path).
+
 #[test]
 fn test_hosted_tools_dropped_cross_protocol() {
     let json = serde_json::json!({
@@ -7515,9 +7058,6 @@ fn test_hosted_tools_dropped_cross_protocol() {
     assert_eq!(ir.tools.len(), 2, "reader keeps hosted + function tool");
     assert!(ir.tools[0].hosted.is_some(), "file_search is hosted");
 
-    // Cross-protocol egress prep (Responses ingress -> a non-Responses backend). The engine calls this
-    // ONLY on the cross-protocol seam; dropping every hosted tool here is the "keep same-proto, drop
-    // cross-proto" contract.
     let mut req = ir;
     super::super::chat_handle::chat_prepare_for_egress(
         &mut req,
@@ -7535,7 +7075,7 @@ fn test_hosted_tools_dropped_cross_protocol() {
         },
     );
     let ir = req;
-    // The hosted tool is GONE; the function tool remains.
+
     assert_eq!(ir.tools.len(), 1, "hosted tool dropped, function tool kept");
     assert!(
         ir.tools.iter().all(|t| t.hosted.is_none()),
@@ -7543,7 +7083,6 @@ fn test_hosted_tools_dropped_cross_protocol() {
     );
     assert_eq!(ir.tools[0].name, "get_weather");
 
-    // The OpenAI-chat (non-Responses) writer now emits NO malformed empty-name function tool.
     let out = super::super::openai_chat::openai_writer()
         .write_request(crate::codec::test_host::HOST, &ir);
     let tools = out["tools"].as_array().expect("tools array");
@@ -7555,14 +7094,6 @@ fn test_hosted_tools_dropped_cross_protocol() {
         );
     }
 
-    // WIRE-LEVEL CROSS-PROTOCOL COVERAGE: the drop happens in `prepare_for_egress` (egress-agnostic),
-    // so EVERY non-Responses egress that renders this same dropped-hosted-tool IR must emit a
-    // tools body with the ONE surviving function tool and NO malformed empty-name tool. Each writer
-    // nests the tool name differently (Anthropic `tools[].name`, Gemini
-    // `tools[].functionDeclarations[].name`, Cohere `tools[].function.name`, Bedrock
-    // `toolConfig.tools[].toolSpec.name`), so rather than hard-code every path, walk the whole body
-    // and assert no object ANYWHERE carries a `"name": ""` (the empty-name mangling tell a hosted
-    // tool would have produced had it survived), while confirming the `get_weather` name is present.
     fn any_empty_name(v: &serde_json::Value) -> bool {
         match v {
             serde_json::Value::Object(m) => {
@@ -7585,7 +7116,6 @@ fn test_hosted_tools_dropped_cross_protocol() {
         }
     }
 
-    // Anthropic egress.
     let anthropic = super::super::anthropic::anthropic_writer()
         .write_request(crate::codec::test_host::HOST, &ir);
     assert!(
@@ -7597,8 +7127,6 @@ fn test_hosted_tools_dropped_cross_protocol() {
         "Anthropic egress must keep the surviving function tool: {anthropic}"
     );
 
-    // Gemini egress. Bind the interior-mutable writer const to a local before use (its per-stream
-    // Mutex state makes a bare-const borrow a clippy::borrow_interior_mutable_const).
     let gemini_writer = super::super::gemini::GeminiWriter;
     let gemini = gemini_writer.write_request(crate::codec::test_host::HOST, &ir);
     assert!(
@@ -7610,7 +7138,6 @@ fn test_hosted_tools_dropped_cross_protocol() {
         "Gemini egress must keep the surviving function tool: {gemini}"
     );
 
-    // Cohere egress. Same interior-mutable-const bind as Gemini above.
     let cohere_writer = super::super::cohere::CohereWriter;
     let cohere = cohere_writer.write_request(crate::codec::test_host::HOST, &ir);
     assert!(
@@ -7622,7 +7149,6 @@ fn test_hosted_tools_dropped_cross_protocol() {
         "Cohere egress must keep the surviving function tool: {cohere}"
     );
 
-    // Bedrock egress.
     let bedrock_writer = super::super::bedrock::BedrockWriter;
     let bedrock = bedrock_writer.write_request(crate::codec::test_host::HOST, &ir);
     assert!(
@@ -7636,12 +7162,9 @@ fn test_hosted_tools_dropped_cross_protocol() {
 }
 
 /// Usage required fields: the emitted Responses `usage` object must carry `total_tokens`
-/// AND the required `input_tokens_details`/`output_tokens_details` objects, so a strict SDK
-/// (Pydantic/Zod) that types them as required does not raise. Covers both the cache-hit and no-cache
-/// cases (details objects present, and correctly populated, in BOTH).
+
 #[test]
 fn test_responses_usage_carries_all_required_fields() {
-    // No-cache case: details objects still present, cached/reasoning tokens are 0.
     let no_cache = crate::codec::ir::IrUsage {
         input_tokens: 10,
         output_tokens: 5,
@@ -7665,7 +7188,6 @@ fn test_responses_usage_carries_all_required_fields() {
         "output_tokens_details.reasoning_tokens is required (0 when non-reasoning): {u}"
     );
 
-    // Cache-hit case: input_tokens is the cache-INCLUSIVE total; only `cached_tokens` is surfaced.
     let cached = crate::codec::ir::IrUsage {
         input_tokens: 10,
         output_tokens: 5,
@@ -7683,9 +7205,7 @@ fn test_responses_usage_carries_all_required_fields() {
         uc["total_tokens"], 25,
         "total = input_total(20) + output(5)"
     );
-    // The pinned Responses usage schema REQUIRES `input_tokens_details.cache_write_tokens`
-    // alongside `cached_tokens`. It carries the cache-creation count (3 here), which ALSO still
-    // folds into the `input_tokens` total (20 above).
+
     assert_eq!(
         uc["input_tokens_details"]["cache_write_tokens"], 3,
         "cache_write_tokens is a required Responses usage member carrying the cache-creation count: {uc}"
@@ -7693,12 +7213,7 @@ fn test_responses_usage_carries_all_required_fields() {
 }
 
 /// EVERY member the pinned OpenAI spec marks REQUIRED on a `Response` object — including the
-/// request-echo members the IR cannot carry (`instructions`, `tools`, `tool_choice`,
-/// `parallel_tool_calls`, `metadata`, `temperature`, `top_p`) and the nullable
-/// `incomplete_details` — must be PRESENT on the non-stream body and on the inner `response` of
-/// every lifecycle event (`response.created`, `response.completed`, `response.failed`), with the
-/// spec's default values where the IR carries nothing; and every `output_text` part (and the
-/// streaming `output_text.delta`/`.done` events) must carry `logprobs`.
+
 #[test]
 fn responses_spec_required_members_present_on_every_response_shape() {
     fn assert_required(resp: &serde_json::Value, ctx: &str) {
@@ -7752,7 +7267,6 @@ fn responses_spec_required_members_present_on_every_response_shape() {
         }
     }
 
-    // Non-stream body (completed).
     let non_stream = ResponsesWriter;
     let body = non_stream.write_response(
         crate::codec::test_host::HOST,
@@ -7776,7 +7290,6 @@ fn responses_spec_required_members_present_on_every_response_shape() {
     assert_required(&body, "non-stream body");
     assert_eq!(body["incomplete_details"], serde_json::Value::Null);
 
-    // Non-stream body (incomplete keeps its real incomplete_details object).
     let truncated = non_stream.write_response(
         crate::codec::test_host::HOST,
         &crate::codec::ir::IrResponse {
@@ -7802,7 +7315,6 @@ fn responses_spec_required_members_present_on_every_response_shape() {
         "max_output_tokens"
     );
 
-    // Streaming lifecycle: created -> text bracket -> completed, then a failed event.
     let writer = ResponsesWriter;
     let created = writer
         .write_response_event(
@@ -7879,8 +7391,7 @@ fn responses_spec_required_members_present_on_every_response_shape() {
 }
 
 /// Streamed token logprobs (an IR `LogprobsDelta`) are buffered and emitted on the
-/// `output_text.done` event (event shape: token/logprob/top_logprobs) and on the finalized
-/// `output_text` part (part shape: token/logprob/bytes/top_logprobs), instead of being dropped.
+
 #[test]
 fn responses_stream_logprobs_ride_text_done_and_finalized_part() {
     let writer = ResponsesWriter;
@@ -7956,12 +7467,7 @@ fn responses_stream_logprobs_ride_text_done_and_finalized_part() {
 }
 
 /// Grounding citations were dropped on the way into Responses: the writer hardcoded
-/// `annotations: []`, so an Anthropic web-search or Gemini grounding response arrived at an
-/// OpenAI-dialect client with its sources gone.
-///
-/// The mapping is not 1:1 — `url_citation` wants url, title and a character span, and neither
-/// source carries all three — so the writer fills what it honestly can and omits the rest rather
-/// than inventing offsets or titles. These pin both halves of that policy.
+
 #[test]
 fn write_response_emits_url_citations_without_inventing_fields() {
     let cite = |kind: &str,
@@ -8074,8 +7580,7 @@ fn write_response_emits_url_citations_without_inventing_fields() {
 }
 
 /// The streaming path dropped citations outright: Responses carries them as `annotations` on the
-/// assembled `output_text` part, not as a delta frame, so a `CitationsDelta` had nowhere to go at
-/// arrival time and was discarded instead of buffered until `BlockStop` built that part.
+
 #[test]
 fn streamed_citations_reach_the_assembled_output_item() {
     let w = ResponsesWriter;
@@ -8123,8 +7628,6 @@ fn streamed_citations_reach_the_assembled_output_item() {
         "text close is the three-frame bracket"
     );
 
-    // The citation must survive onto BOTH the finalized content part (content_part.done) and the
-    // assembled message item (output_item.done).
     let part_anns = close_frames[1].1["part"]["annotations"]
         .as_array()
         .expect("content_part.done annotations array");
@@ -8148,22 +7651,11 @@ fn streamed_citations_reach_the_assembled_output_item() {
 }
 
 /// STRICT-CLIENT CONTRACT: the Responses egress writer, driven with the IR event stream a
-/// CROSS-protocol egress produces (an Anthropic/Gemini backend re-framed to `/v1/responses` — the
-/// shape a Codex CLI client consumes), must emit the intermediate `response.content_part.added`
-/// between `output_item.added` and the first `output_text.delta`, and must close the text part with
-/// `output_text.done` → `content_part.done` before `output_item.done`. Without the
-/// `content_part.added` a strict Responses client sees a delta with no active content part
-/// ("OutputTextDelta without active item") and DROPS all output.
-///
-/// This exercises `write_response_events` — the multi-frame emission path the `StreamTranslate` seam
-/// drives per IR event — and asserts the FULL ordered wire event sequence plus a gap-free
-/// per-stream `sequence_number` run.
+
 #[test]
 fn cross_protocol_egress_into_responses_emits_content_part_bracket() {
     let writer = ResponsesWriter;
-    // The IR event stream a cross-protocol text egress yields (identity stripped to None on the
-    // cross-protocol seam, so the writer synthesizes native `resp_`/`msg_` ids): a message start,
-    // one text block (added → two deltas → stop), then the terminal delta.
+
     let ir_stream = [
         IrStreamEvent::MessageStart {
             role: crate::codec::ir::IrRole::Assistant,
@@ -8194,7 +7686,6 @@ fn cross_protocol_egress_into_responses_emits_content_part_bracket() {
         },
     ];
 
-    // Collect EVERY emitted wire frame in order, exactly as the seam's per-event loop would frame it.
     let frames: Vec<serde_json::Value> = ir_stream
         .iter()
         .flat_map(|ev| writer.write_response_events(crate::codec::test_host::HOST, ev))
@@ -8210,7 +7701,6 @@ fn cross_protocol_egress_into_responses_emits_content_part_bracket() {
         })
         .collect();
 
-    // The exact corrected sequence a native /v1/responses text stream emits.
     assert_eq!(
         types,
         vec![
@@ -8227,7 +7717,6 @@ fn cross_protocol_egress_into_responses_emits_content_part_bracket() {
         "cross-protocol egress into Responses must carry the full content-part bracket, got {types:?}"
     );
 
-    // Strict-client invariants, stated independently of the exact list above.
     let pos = |name: &str| types.iter().position(|t| t == name).unwrap();
     assert!(
         pos("response.content_part.added") > pos("response.output_item.added"),
@@ -8237,11 +7726,10 @@ fn cross_protocol_egress_into_responses_emits_content_part_bracket() {
         pos("response.content_part.added") < pos("response.output_text.delta"),
         "content_part.added must PRECEDE the first output_text.delta (else a strict client drops it)"
     );
-    // The closing brackets, in order, all before the item close.
+
     assert!(pos("response.output_text.done") < pos("response.content_part.done"));
     assert!(pos("response.content_part.done") < pos("response.output_item.done"));
 
-    // item_id / content_index thread consistently across the whole text part.
     let msg_id = frames[1]["item_id"]
         .as_str()
         .expect("output_item.added item_id");
@@ -8272,8 +7760,6 @@ fn cross_protocol_egress_into_responses_emits_content_part_bracket() {
         );
     }
 
-    // Every emitted frame (INCLUDING the bracket sub-frames) is numbered 0..N monotonically —
-    // exactly as a native stream counts emitted events.
     let seqs: Vec<u64> = frames
         .iter()
         .map(|f| f["sequence_number"].as_u64().expect("sequence_number"))
@@ -8286,9 +7772,7 @@ fn cross_protocol_egress_into_responses_emits_content_part_bracket() {
 }
 
 /// A `developer`/`system` item AFTER an earlier conversational turn is still hoisted
-/// (behavior unchanged — the IR cannot express a positioned system turn), but must now WARN, since
-/// hoisting silently changes when the instruction takes effect relative to native Responses
-/// semantics. The BEFORE-any-turn case must NOT warn (that is the ordinary, non-surprising shape).
+
 #[test]
 fn mid_conversation_developer_item_is_flagged() {
     use busbar_test_kit::warn_capture::WarnCapture;
@@ -8308,8 +7792,6 @@ fn mid_conversation_developer_item_is_flagged() {
         ResponsesReader.read_request(&body).expect("read_request")
     });
 
-    // Behavior unchanged: the instruction is still hoisted to `system` (IrRequest.system), applying
-    // from turn 1 — this is a REGRESSION PROOF half, not a red proof.
     assert!(
         ir.system.iter().any(|b| matches!(
             b,
@@ -8326,7 +7808,7 @@ fn mid_conversation_developer_item_is_flagged() {
 }
 
 /// Negative half (REGRESSION PROOF): a `developer`/`system` item BEFORE any conversational turn is
-/// the ordinary shape and must NOT warn.
+
 #[test]
 fn leading_developer_item_does_not_warn() {
     use busbar_test_kit::warn_capture::WarnCapture;
@@ -8352,7 +7834,7 @@ fn leading_developer_item_does_not_warn() {
 }
 
 /// A Responses `output_text` content part's sibling `annotations` (`url_citation` entries) must be
-/// read into the IR Text block's `citations`, including its URL, title and character offsets.
+
 #[test]
 fn responses_output_text_annotations_read_into_ir_citations() {
     let json = serde_json::json!({
@@ -8392,8 +7874,7 @@ fn responses_output_text_annotations_read_into_ir_citations() {
     let c = &citations[0];
     assert_eq!(c.url.as_deref(), Some("https://example.com/r"));
     assert_eq!(c.title.as_deref(), Some("Responses Source"));
-    // SHR-01 (IR mapping Q57): OpenAI documents both offsets as CHARACTER indices into the
-    // message — the IR's unit — so they carry unconverted.
+
     assert_eq!(
         (c.start_index, c.end_index),
         (Some(7), Some(20)),
@@ -8401,14 +7882,8 @@ fn responses_output_text_annotations_read_into_ir_citations() {
     );
 }
 
-// Performance follow-up (no behavior change): `read_reasoning_text` returns `Cow<'_, str>`
-// instead of an owned `String` so `total_text_chars` (which only needs a char count and
-// immediately discards the text) does not pay an allocation on the common single-part case.
-// These tests pin the Cow discipline itself, which a plain `assert_eq!(text, "...")` would not
-// catch (an `Owned` regression still compares equal to a `Borrowed` value of the same content).
-
 /// Exactly one text-bearing part — whether it lives in `content[]` alone or `summary[]` alone —
-/// must borrow straight from the item, not allocate.
+
 #[test]
 fn read_reasoning_text_single_part_borrows() {
     let content_only = serde_json::json!({
@@ -8431,9 +7906,7 @@ fn read_reasoning_text_single_part_borrows() {
 }
 
 /// Two `content[]` parts + one `summary[]` part must still allocate and concatenate in order —
-/// `content[]` fully, then `summary[]` — with NO separator between parts (the existing,
-/// deliberately separator-less concat behavior; this test only pins the Cow variant, not a new
-/// separator).
+
 #[test]
 fn read_reasoning_text_multi_part_concatenates() {
     let item = serde_json::json!({
@@ -8450,7 +7923,7 @@ fn read_reasoning_text_multi_part_concatenates() {
 }
 
 /// Cross-array edge cases: exactly one accepted part in EITHER array alone still borrows; one in
-/// each array must allocate and concatenate BOTH (not silently drop one).
+
 #[test]
 fn read_reasoning_text_cross_array_borrow_vs_allocate() {
     let content_one_summary_zero = serde_json::json!({
@@ -8488,9 +7961,7 @@ fn read_reasoning_text_cross_array_borrow_vs_allocate() {
 }
 
 /// Empty-case discipline: no accepted part in either array must return `Cow::Borrowed("")`, never
-/// `Cow::Owned(String::new())` — a caller that only wants a length (`total_text_chars`) must not
-/// pay an allocation for zero text. `assert_eq!(text, "")` alone would not catch a regression to
-/// `Owned` here, since both compare equal to the empty string.
+
 #[test]
 fn read_reasoning_text_empty_case_borrows_not_owns() {
     let no_arrays = serde_json::json!({"type": "reasoning"});
@@ -8506,9 +7977,6 @@ fn read_reasoning_text_empty_case_borrows_not_owns() {
     ));
 }
 
-// Chat#6: a RESPONSE function_call with a blank/absent `call_id` must NOT yield an empty IR tool_use
-// id (which a cross-protocol target like Anthropic rejects). The reader synthesizes a deterministic
-// `call_…` id so the correlation key is never blank.
 #[test]
 fn response_blank_call_id_is_synthesized() {
     let json = serde_json::json!({
@@ -8548,8 +8016,6 @@ fn response_blank_call_id_is_synthesized() {
     assert_ne!(ids[0], ids[1], "distinct tool calls must get distinct ids");
 }
 
-// Chat#8(a): a Responses function_call whose `arguments` is an already-parsed OBJECT must be carried
-// verbatim, NOT collapsed to `{}`.
 #[test]
 fn response_object_function_arguments_preserved() {
     let json = serde_json::json!({
@@ -8578,10 +8044,7 @@ fn response_object_function_arguments_preserved() {
 }
 
 /// The writer's four per-item accumulators (`tool_calls`, `text_accum`, `citation_accum`,
-/// `reasoning_accum`) grow one entry per distinct block index a backend streams. Nothing bounded
-/// that COUNT, so an upstream emitting an unbounded run of distinct indices grew four maps for the
-/// life of the connection — per-connection memory amplification. `mark_tool_open` already refuses
-/// past `MAX_OPEN_TOOLS`; the accumulators must hold the same line.
+
 #[test]
 fn writer_accumulators_are_bounded_in_entry_count() {
     let writer = ResponsesWriter;
@@ -8625,7 +8088,7 @@ fn writer_accumulators_are_bounded_in_entry_count() {
         "reasoning_accum grew past the cap: {}",
         writer.stream().reasoning_accum.len()
     );
-    // The cap must not be so eager that it starves an ordinary stream: everything up to it is kept.
+
     assert_eq!(
         writer.stream().text_accum.len(),
         MAX_OPEN_TOOLS,
@@ -8634,9 +8097,7 @@ fn writer_accumulators_are_bounded_in_entry_count() {
 }
 
 /// A single tool-call `arguments` accumulator must also stop growing at the operator's translate-body
-/// cap — one open index fed an unbounded run of fragments was previously unbounded in BYTES. Stopping
-/// (not slicing) leaves an accumulation that fails to parse, which degrades to the writer's
-/// established empty-arguments fallback; `output_item.done` still emits a well-formed item.
+
 #[test]
 fn writer_tool_arguments_stop_growing_at_the_translate_cap() {
     let cap = busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
@@ -8664,7 +8125,6 @@ fn writer_tool_arguments_stop_growing_at_the_translate_cap() {
         );
     }
 
-    // The item still closes cleanly: a well-formed `output_item.done` naming the call.
     let frames = writer.write_response_events(
         crate::codec::test_host::HOST,
         &crate::codec::ir::IrStreamEvent::BlockStop { index: 0 },
@@ -8688,8 +8148,7 @@ fn writer_tool_arguments_stop_growing_at_the_translate_cap() {
 }
 
 /// Q128 arch u57: THE LOGPROB ACCUMULATOR IS BOUNDED ON BOTH AXES like every sibling on the writer.
-/// A backend streaming logprob deltas against an unbounded run of distinct indices, or an unbounded
-/// run of them against one index that never stops, used to grow `logprob_accum` without limit.
+
 #[test]
 fn writer_logprob_accumulator_is_bounded_in_entries_and_bytes() {
     let lp = |token: String| crate::codec::ir::IrTokenLogprob {
@@ -8741,13 +8200,7 @@ fn writer_logprob_accumulator_is_bounded_in_entries_and_bytes() {
 }
 
 /// LLM3#4: THE CITATION ACCUMULATOR IS LINEAR. Each item keeps its held text weight beside its
-/// citations, so an append weighs only the batch it brings, never the held list again (which made
-/// a long run of citation deltas against one item quadratic), and the weight it keeps is exactly
-/// [`citation_bytes`] summed over what it holds, through the cap's refusals. A `raw` entry weighs
-/// its compact serialised length.
-///
-/// RED on dev: the accumulator held a bare `Vec<IrCitation>` and re-summed (and re-serialised every
-/// `raw` of) the held list on every append, so `entry.bytes` does not exist there.
+
 #[test]
 fn writer_citation_accumulator_keeps_its_held_weight() {
     let raw = serde_json::json!({"type": "url_citation", "url": "https://example.invalid/r"});
@@ -8806,13 +8259,7 @@ fn writer_citation_accumulator_keeps_its_held_weight() {
 }
 
 /// A URL citation must SURVIVE a Responses→Responses hop.
-///
-/// The Responses wire shape for an annotation is the published `UrlCitationBody`, which FLATTENS
-/// `url`/`title`/`start_index`/`end_index` onto the entry — unlike Chat, which nests them under a
-/// `url_citation` object. The writer has always emitted the flat shape; the shared reader used to
-/// recognize only the nested one, so it dropped every citation it was handed — including the ones
-/// this very writer had just produced. Assert BOTH halves: the bytes are the flat shape the spec
-/// requires, and reading them back recovers the citation.
+
 #[test]
 fn responses_url_citation_survives_a_responses_round_trip() {
     let resp = crate::codec::ir::IrResponse {
@@ -8857,7 +8304,6 @@ fn responses_url_citation_survives_a_responses_round_trip() {
     let writer = ResponsesWriter;
     let wire = writer.write_response(crate::codec::test_host::HOST, &resp);
 
-    // The written shape is the spec's flat `UrlCitationBody`, not Chat's nested object.
     let ann = wire
         .pointer("/output/0/content/0/annotations/0")
         .expect("the output text part carries an annotation");
@@ -8872,7 +8318,6 @@ fn responses_url_citation_survives_a_responses_round_trip() {
         "the Responses wire must NOT nest under url_citation: {ann}"
     );
 
-    // And the reader recovers it rather than dropping it on the floor.
     let back = ResponsesReader
         .read_response(crate::codec::test_host::HOST, &wire)
         .expect("read_response should succeed");
@@ -8901,8 +8346,6 @@ fn responses_url_citation_survives_a_responses_round_trip() {
     );
 }
 
-// ResponseError's closed enum is narrower than the separate HTTP error envelope. These expected
-// words follow the pinned Response schema; no oracle recording or golden file is changed.
 #[test]
 fn status_word_golden() {
     let golden: [(StatusClass, &str); 9] = [
@@ -9020,7 +8463,6 @@ fn item_identity_entropy_callback_can_reenter_and_first_insert_wins() {
     struct Reentrant<'a>(&'a ResponsesWriter, bool);
     impl CodecHost for Reentrant<'_> {
         fn fill_entropy(&self, out: &mut [u8]) -> bool {
-            // This nested call inserts the same key while the outer call is drawing entropy.
             let nested = self.0.item_id_for(&Fixed, ITEM_ID_PREFIX_MSG, 0).unwrap();
             assert_eq!(nested, format!("msg_{}", "7".repeat(ITEM_ID_TOKEN_LEN)));
             out.fill(2);

@@ -21,7 +21,7 @@ fn anthropic_off() -> crate::codec::ir::IrRequest {
 }
 
 /// Item 12: a lane declaring `reasoning_none` gets `reasoning.effort: "none"` for an Off ask; the
-/// default lane keeps today's bytes (omitted).
+
 #[test]
 fn item12_off_is_reasoning_effort_none_on_a_declaring_lane() {
     let w = protocol_for("responses").unwrap();
@@ -45,8 +45,6 @@ fn item12_off_is_reasoning_effort_none_on_a_declaring_lane() {
     assert!(out.get("reasoning").is_none(), "{out}");
 }
 
-// ─────────────────────── item 16: a summary streams back into summary[] ───────────────────────
-
 fn sse_payloads(out: &str) -> Vec<serde_json::Value> {
     out.split("\n\n")
         .flat_map(|frame| frame.lines())
@@ -56,8 +54,7 @@ fn sse_payloads(out: &str) -> Vec<serde_json::Value> {
 }
 
 /// Item 16 (IR-17 stream): a Gemini thought (a SUMMARY) streamed to a Responses client streams as
-/// `reasoning_summary_text` and the finalized reasoning item carries it in `summary[]` — the
-/// buffered item's shape — not as full `reasoning_text` content.
+
 #[test]
 fn item16_gemini_thought_streams_into_the_responses_summary() {
     let mut t = crate::codec::proto_stream::StreamTranslate::new("responses", "gemini")

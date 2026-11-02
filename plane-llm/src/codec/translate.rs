@@ -2,11 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The cross-dialect translate pipeline (#83a SD-3: dialect machinery). Translating one dialect's
-//! request or response into another's (read through the ingress cell, prepare, write through the
-//! egress dialect) is this plane's own rule (Law 5), so it lives with the dialects: the
-//! [`TranslateCodec`](crate::codec::translate::TranslateCodec) entrypoint, blanket-implemented for
-//! every codec cell, and the values its two directions read from and answer with. The cell traits are
-//! contract shapes (`busbar_contract::codec`); nothing here names the host.
 
 use crate::codec::egress_prep::EgressPrep;
 use busbar_contract::billing::Billing;
@@ -18,8 +13,7 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 
 /// What a request-translation hop reads from: a parsed JSON object `Value` (the value-codec fast
-/// path chat overrides to avoid a re-serialize), or opaque bytes plus content-type (a
-/// multipart/binary wire the byte codec owns). [`TranslateCodec`] branches on this.
+
 pub enum TranslateReqInput<'a> {
     /// A JSON-object body, routed through the value codecs.
     Json(&'a Value),
@@ -31,48 +25,32 @@ pub enum TranslateReqInput<'a> {
 }
 
 /// The result of a cross-protocol request translation: the egress wire plus what did not cross (the
-/// controls the egress dialect dropped, then every other dropped member by wire path in
-/// `codec::drops`) for the seam's audit-and-allow event. Empty on the opaque path.
+
 pub struct TranslatedRequest {
     pub wire: EgressWire,
     pub dropped_controls: Vec<String>,
 }
 
 /// Why a cross-protocol request translation could not proceed: three terminal outcomes. The seam
-/// owns the projection into an ingress-native error, so the entrypoint names no HTTP shape.
+
 pub enum TranslateReqReject {
     /// The ingress reader refused the body; the caller renders `ingress_reject_response`.
     Ingress(IngressReject),
     /// The egress protocol does not serve this operation; the caller renders the 404
-    /// (`DETAIL_MODEL_UNSUPPORTED_OPERATION`). Raised only after read+prepare, so a malformed body
-    /// still rejects as a 400, not a 404.
     EgressUnsupported,
     /// The egress dialect cannot represent the request without silent loss; the caller renders a 400
-    /// carrying `reason`.
     Unrepresentable(String),
 }
 
 /// What a non-stream response-translation hop reads from: the upstream 2xx body, a parsed JSON
-/// `Value` (value-codec path) or opaque bytes (a non-JSON wire such as speech audio). The engine
-/// parses the body once and branches into these.
+
 pub enum TranslateRespInput<'a> {
     Json(&'a Value),
     Opaque(&'a [u8]),
 }
 
 /// The single neutral translate entrypoint on the codec cell (G6 step 4). Every request/response hop
-/// flows through it so core never orchestrates the concrete read, prepare, write pipeline:
-/// `wire.rs`'s request seam calls [`Self::translate_request`], the engine's non-stream response arm
-/// calls [`Self::translate_response`], and the hook / lazy-body side calls [`Self::read_facts`] /
-/// [`Self::read_facts_value`]. Streaming routes through the registry
-/// `proto::new_stream_translator_on` factory (G6 step 3).
-///
-/// It wraps the concrete `IrReq`/`IrResp` pipeline unchanged: the defaults read/prepare/write
-/// through the same `OperationHandler` methods the old call sites named inline, so every hop stays
-/// byte-identical. The internals are deliberately concrete here.
-///
-/// Blanket-implemented for every [`OperationHandler`], so any codec cell is a `TranslateCodec`
-/// with no per-cell wiring.
+
 pub trait TranslateCodec: OperationHandler {
     /// Cross-protocol request translation: `self` is the ingress codec (it reads), `egress` the
     /// lane's codec (it writes).
@@ -104,14 +82,13 @@ pub trait TranslateCodec: OperationHandler {
                     .map_err(|CodecError::Malformed(reason)| {
                         TranslateReqReject::Unrepresentable(reason)
                     })?;
-                // The opaque caller resolves and 404-checks `egress`, so it is always `Some`; the guard avoids a panic.
+
                 let egress_proto = egress_proto.ok_or(TranslateReqReject::EgressUnsupported)?;
                 ir.egress_representable(egress_proto)
                     .map_err(TranslateReqReject::Unrepresentable)?;
-                // The handle writes itself onto the egress dialect (by protocol string) after `set_model`.
+
                 let bytes = ir.write_egress_request_bytes(egress_proto, model);
-                // A write that produced nothing is a refusal, never an empty body forwarded upstream
-                // (`IrHandle::write_egress_request`'s contract).
+
                 if bytes.is_empty() {
                     return Err(TranslateReqReject::Unrepresentable(format!(
                         "this request cannot be written onto {egress_proto}"
@@ -123,8 +100,6 @@ pub trait TranslateCodec: OperationHandler {
                 })
             }
             TranslateReqInput::Json(v) => {
-                // One translate attempt: every drop (reader, seam, writer) goes through the one drop
-                // path and returns here for the audit.
                 let seam = crate::codec::drops::Seam {
                     direction: crate::codec::drops::Direction::Request,
                     ingress: prep.ingress_protocol,
@@ -138,7 +113,7 @@ pub trait TranslateCodec: OperationHandler {
                         .map_err(|CodecError::Malformed(reason)| {
                             TranslateReqReject::Unrepresentable(reason)
                         })?;
-                    // Content blocks the caller's dialect has and its reader does not model.
+
                     crate::codec::proto_codec::with_reader(prep.ingress_protocol, |r| {
                         crate::codec::drops::note_unmodelled_blocks(
                             r.grammar().request_blocks,
@@ -146,25 +121,22 @@ pub trait TranslateCodec: OperationHandler {
                             crate::codec::drops::UNMODELLED_REQUEST_BLOCK,
                         )
                     });
-                    // Egress-absent surfaces only after read+prepare, so a malformed body still
-                    // rejects as a 400 (via `Ingress`), not a 404.
+
                     let egress_proto = egress_proto.ok_or(TranslateReqReject::EgressUnsupported)?;
                     if let Err(reason) = ir.egress_representable(egress_proto) {
                         return Err(TranslateReqReject::Unrepresentable(reason));
                     }
                     let controls = ir.egress_dropped_controls(egress_proto);
-                    // The handle owns the value-first / set-model+bytes write onto the egress dialect.
+
                     let wire = ir.write_egress_request(host, egress_proto, model);
-                    // A write that could not be represented is a refusal on the same terminal as the
-                    // pre-write representability guard: the guard answers for what it can see before
-                    // the write, this for what only the writer can.
+
                     if let EgressWire::Unrepresentable { reason } = wire {
                         return Err(TranslateReqReject::Unrepresentable(reason));
                     }
                     Ok((wire, controls))
                 });
                 let (wire, controls) = written?;
-                // A control is named by the caller's wire path for it, as every other drop is.
+
                 let dropped_controls = merge_dropped_paths(
                     controls.into_iter().map(|control| {
                         crate::codec::drops::wire_path(prep.ingress_protocol, control, &[])
@@ -180,14 +152,13 @@ pub trait TranslateCodec: OperationHandler {
     }
 
     /// Read the request facts the hook seam / lazy-body projects from: the one read through this
-    /// codec's reader, projected to [`IrFacts`]. The value-codec path (chat calls its proto reader
-    /// directly, no re-serialize on the hot path).
+
     fn read_facts_value(&self, v: &Value) -> Result<Box<dyn IrFacts + Send + Sync>, IngressReject> {
         Ok(self.read_request_value(v)?.facts())
     }
 
     /// Byte-codec sibling of [`Self::read_facts_value`], for an opaque/multipart body whose caller
-    /// text is reachable only through the byte reader.
+
     fn read_facts(
         &self,
         wire: &[u8],
@@ -219,24 +190,17 @@ pub trait TranslateCodec: OperationHandler {
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
         input: TranslateRespInput<'_>,
-        // Whether the caller's ingress protocol serves this operation (resolved by the engine via `op_for`).
+
         ingress_serves_op: bool,
         ingress_protocol: &str,
-        // The resolved lane wire model this hop routed to, filling the response model when the
-        // upstream carried none ([`busbar_contract::ir::handle::IrHandle::fill_response_model_if_absent`]).
-        // Filled after read (the upstream's own model wins) and before `prepare_for_ingress` and the
-        // ingress write, so a cross-protocol response reports the real serving model.
+
         lane_model: &str,
         now: u64,
         wants_stream: bool,
         elapsed_ms: Option<u64>,
-        // The original ingress request body, when parsed (the cross-protocol path always has it; see
-        // `Hop::body`), threaded to `IrHandle::apply_request_echo` so a dialect whose response spec
-        // mirrors request members (OpenAI Responses) answers with the client's values, not defaults.
-        // `None` for the opaque/audio bridge.
+
         ingress_request_body: Option<&Value>,
-        // The translation cap the plane enforces, threaded to `IrHandle::apply_translate_cap` so a
-        // writer re-emitting the response as a stream bounds what it accumulates.
+
         translate_cap: usize,
     ) -> Result<(Option<Billing>, TranslatedResponse), CodecError> {
         match input {
@@ -248,8 +212,7 @@ pub trait TranslateCodec: OperationHandler {
                     ir.apply_request_echo(body);
                 }
                 ir.prepare_for_ingress(ingress_protocol, now);
-                // The handle writes itself onto the ingress dialect: present is Typed, absent is
-                // Untranslatable, by `ingress_protocol` + `ingress_serves_op`.
+
                 Ok((
                     usage,
                     ir.write_ingress_response_bytes(host, ingress_protocol, ingress_serves_op),
@@ -264,8 +227,7 @@ pub trait TranslateCodec: OperationHandler {
                 }
                 ir.apply_translate_cap(translate_cap);
                 ir.prepare_for_ingress(ingress_protocol, now);
-                // Buffered-2xx-to-native-stream synthesis (a wants-stream ingress served a non-SSE
-                // upstream): tried first; `None` falls through to the normal write.
+
                 if wants_stream {
                     if let Some(frames) =
                         ir.wrap_buffered_as_stream(host, ingress_protocol, elapsed_ms)
@@ -273,7 +235,7 @@ pub trait TranslateCodec: OperationHandler {
                         return Ok((usage, TranslatedResponse::StreamFrames(frames)));
                     }
                 }
-                // The handle owns the absent => IngressUnsupported / value-first => Json / else Typed(WireBody) write.
+
                 Ok((
                     usage,
                     ir.write_ingress_response(host, ingress_protocol, ingress_serves_op),
@@ -284,7 +246,7 @@ pub trait TranslateCodec: OperationHandler {
 }
 
 /// Keep controls first and ordinary drops in encounter order. A value-qualified earlier path
-/// (`tool_choice=none`) also names its unqualified drop (`tool_choice`), in that direction only.
+
 fn merge_dropped_paths(
     controls: impl IntoIterator<Item = String>,
     dropped: Vec<String>,
@@ -298,8 +260,7 @@ fn merge_dropped_paths(
     }
     for path in dropped {
         let prefix = format!("{path}=");
-        // All keys with this prefix are contiguous. Starting at the full prefix also skips
-        // punctuation siblings such as `tool_choice.detail` that cannot name this drop.
+
         let covered = named.contains(&path)
             || named
                 .range(prefix.clone()..)

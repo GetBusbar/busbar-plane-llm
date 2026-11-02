@@ -54,10 +54,7 @@ use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
 use serde_json::{json, Value};
 
 /// Pull the usage off the one `MessageDelta` a terminal stream frame must emit.
-///
-/// Every dialect ends a stream with `MessageDelta{usage} → MessageStop`; this is where the streamed
-/// answer to "what did this turn cost" lives, and asserting it beside the buffered answer is what
-/// stops a tier from being reconcilable at `stream: false` and gone at `stream: true`.
+
 fn terminal_usage(events: &[IrStreamEvent]) -> &crate::codec::ir::IrUsage {
     events
         .iter()
@@ -70,14 +67,8 @@ fn terminal_usage(events: &[IrStreamEvent]) -> &crate::codec::ir::IrUsage {
         })
 }
 
-// ── the capture loaders ─────────────────────────────────────────────────────────────────────────
-
 /// busbar's tree at the pin this repo names (`BUSBAR_CHECKOUT`, a checkout of GetBusbar/busbar at
-/// `.busbar-ref`, which plugin CI exports); an unset variable is a failure, never a skip.
-///
-/// The recordings deliberately live OUTSIDE this crate: they are the property of the oracle and the
-/// conformance rig, which record them against a real binary. Copying them in here would fork the
-/// evidence, and a forked capture is a capture that can quietly stop matching what was recorded.
+
 fn workspace_root() -> std::path::PathBuf {
     std::path::PathBuf::from(
         std::env::var_os("BUSBAR_CHECKOUT").expect(
@@ -87,11 +78,7 @@ fn workspace_root() -> std::path::PathBuf {
 }
 
 /// Load the RESPONSE BODY busbar returned in a recorded shadow-oracle golden cell.
-///
-/// These cells are the signed-off 1.5.5 recording — the reference the money oracle itself diffs
-/// against — so the `usage` object inside one is a real recorded provider usage object, not a
-/// specimen someone typed. Panics loudly (naming the path) rather than skipping: a test that
-/// silently no-ops when its evidence is missing is worse than no test.
+
 fn oracle_cell_body(cell: &str) -> Value {
     let path = workspace_root()
         .join("testing/shadow-oracle/golden/1.5.5/cells")
@@ -105,8 +92,7 @@ fn oracle_cell_body(cell: &str) -> Value {
 }
 
 /// Load a raw RECORDED UPSTREAM BODY from the llm-conformance fixtures — the bytes exactly as they
-/// came off the wire, before any normalization. This is the strongest evidence in the tree: it is
-/// the upstream's own response, not busbar's rendering of it.
+
 fn conformance_raw_body(recording: &str, cell: &str) -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../testing/llm-conformance/fixtures")
@@ -119,14 +105,10 @@ fn conformance_raw_body(recording: &str, cell: &str) -> String {
 }
 
 /// Set one nested member on a copy of a recorded body, returning the copy.
-///
-/// The ONLY mutation any test here performs: the recorded corpus is a no-cache corpus, so the tier
-/// members it carries are `0`/absent and cannot discriminate a reader that reads them from one that
-/// does not. The PATH is always one the recorded body already proved exists (each test asserts that
-/// first); only the magnitude is supplied.
+
 fn with_member(body: &Value, pointer: &str, value: Value) -> Value {
     let mut out = body.clone();
-    // Walk/create the parents so a member the no-cache capture omits entirely can still be set.
+
     let parts: Vec<&str> = pointer.trim_start_matches('/').split('/').collect();
     let (last, parents) = parts.split_last().expect("a non-empty pointer");
     let mut cursor = &mut out;
@@ -144,14 +126,8 @@ fn with_member(body: &Value, pointer: &str, value: Value) -> Value {
     out
 }
 
-// ── bedrock: usage.cacheDetails[] is the per-TTL split of cacheWriteInputTokens ──────────────────
-
 /// The recorded Bedrock Converse body is the shape the reader must handle, and busbar must not
-/// invent a TTL split for a turn that reported none.
-///
-/// The `cacheDetails` member is documented as "Empty if no cache creation occurred", and this
-/// recording is a no-cache turn — so `None` (NOT `Some(0)`) is the correct read, and asserting it
-/// here is what stops a future "fix" from back-filling a fabricated zero tier onto every response.
+
 #[test]
 fn bedrock_recorded_no_cache_turn_invents_no_ttl_split() {
     let body = oracle_cell_body("llm__bedrock__bedrock__request__ok");
@@ -179,16 +155,11 @@ fn bedrock_recorded_no_cache_turn_invents_no_ttl_split() {
 }
 
 /// `usage.cacheDetails[]` → the IR's 5m/1h tiers, and back onto the Bedrock wire (1h before 5m).
-///
-/// The service model types `TokenUsage.cacheDetails` as "Detailed breakdown of cache writes by TTL
-/// … Sorted by TTL duration (1h before 5m)", each entry a `{ttl, inputTokens}`. The two TTLs are
-/// PRICED DIFFERENTLY, so reading only the `cacheWriteInputTokens` total leaves a bill that
-/// reconciles in aggregate and cannot be reconciled per line — which is the failure this pins.
+
 #[test]
 fn bedrock_cache_details_ttl_split_reaches_the_ir_and_the_wire() {
     let recorded = oracle_cell_body("llm__bedrock__bedrock__request__ok");
-    // The same recorded body, on a turn where caching WAS active. 20 + 10 == the write total, as a
-    // real breakdown does.
+
     let body = with_member(
         &with_member(&recorded, "/usage/cacheWriteInputTokens", json!(30)),
         "/usage/cacheDetails",
@@ -230,10 +201,7 @@ fn bedrock_cache_details_ttl_split_reaches_the_ir_and_the_wire() {
 }
 
 /// The STREAM reports the same split the buffered response does.
-///
-/// A tier that is reconcilable at `stream: false` and gone at `stream: true` is the same bill
-/// answering two ways depending on a transport flag, which is the recurring shape of every
-/// attribution defect in this crate.
+
 #[test]
 fn bedrock_cache_details_ride_the_stream_metadata_frame() {
     let mut state = StreamDecodeState::default();
@@ -263,10 +231,8 @@ fn bedrock_cache_details_ride_the_stream_metadata_frame() {
     );
 }
 
-// ── cohere: usage.cached_tokens bills inside the input, as in 1.5.5 ──────────────────────────────
-
 /// The RAW RECORDED Cohere upstream body — the bytes off the wire — is the shape the reader handles,
-/// and a turn with no cache hit must not acquire an invented cache-read count.
+
 #[test]
 fn cohere_recorded_raw_body_reads_without_inventing_a_cache_read() {
     let raw = conformance_raw_body("selftest-recording", "llm__cohere__cohere__request__ok");
@@ -290,10 +256,7 @@ fn cohere_recorded_raw_body_reads_without_inventing_a_cache_read() {
 }
 
 /// `usage.cached_tokens` stays inside the input: the whole reported `tokens.input_tokens` bills at
-/// the input tier and nothing reaches the cache-read tier, as 1.5.5 billed it (v1.5.5
-/// `crates/busbar/src/proto/cohere/reader.rs:964-979`: `input_tokens` = `tokens.input_tokens`,
-/// `cache_read_input_tokens: None`). RED while the reader moved the 4 cached tokens to the
-/// cache-read tier.
+
 #[test]
 fn cohere_cached_tokens_bill_inside_the_input() {
     let raw = conformance_raw_body("selftest-recording", "llm__cohere__cohere__request__ok");
@@ -302,7 +265,7 @@ fn cohere_cached_tokens_bill_inside_the_input() {
         .pointer("/usage/tokens/input_tokens")
         .and_then(Value::as_u64)
         .expect("the recording states an input total");
-    // The same recorded turn, with a prompt-cache hit on it.
+
     let body = with_member(&recorded, "/usage/cached_tokens", json!(4));
 
     let ir = CohereReader
@@ -331,7 +294,7 @@ fn cohere_cached_tokens_bill_inside_the_input() {
 }
 
 /// The STREAM terminal (`message-end.delta.usage`) bills the cache hit inside the input the same
-/// way (v1.5.5 `crates/busbar/src/proto/cohere/reader.rs:709-729`).
+
 #[test]
 fn cohere_cached_tokens_ride_the_stream_terminal_inside_the_input() {
     let mut state = StreamDecodeState::default();
@@ -367,18 +330,8 @@ fn cohere_cached_tokens_ride_the_stream_terminal_inside_the_input() {
     );
 }
 
-// ── cohere: the truncated-recovery path bills the same bucket as the buffered path ───────────────
-
 /// ONE COMPLETION, ONE INVOICE — whichever path read it.
-///
-/// Cohere reports usage TWICE: a raw `tokens` bucket and a separately-metered `billed_units` bucket.
-/// `IrUsage::to_token_usage` ledgers the RAW counts, as 1.5.5 billed them, and the billed bucket
-/// rides beside them as attribution. Every path reads both buckets through one table, so the
-/// figure a completion bills is never decided by whether the response tail fit the reassembly
-/// cap.
-///
-/// The body is the RECORDED upstream body with the two buckets made to DISAGREE — in the recording
-/// they are equal, which is exactly the case that cannot tell the two readings apart.
+
 #[test]
 fn cohere_truncated_recovery_bills_the_same_bucket_as_the_buffered_path() {
     let raw = conformance_raw_body("selftest-recording", "llm__cohere__cohere__request__ok");
@@ -389,23 +342,18 @@ fn cohere_truncated_recovery_bills_the_same_bucket_as_the_buffered_path() {
         "the recording has the two buckets EQUAL, which is why this test must make them differ"
     );
 
-    // The same body, on a turn where Cohere's billed attribution differs from the raw count — the
-    // ordinary case for a short request (billed_units carries a minimum charge).
     let body = with_member(
         &with_member(&recorded, "/usage/billed_units/input_tokens", json!(25)),
         "/usage/billed_units/output_tokens",
         json!(13),
     );
 
-    // The buffered path.
     let buffered = CohereReader
         .read_response(crate::codec::test_host::HOST, &body)
         .expect("cohere parses")
         .usage
         .to_token_usage();
 
-    // The truncated-recovery path: the same bytes, arriving as a TAIL the reassembler could only
-    // salvage the usage object from.
     let tail = serde_json::to_vec(&body).expect("serializes");
     let recovered = CohereReader
         .recover_truncated_usage(&tail)
@@ -434,12 +382,8 @@ fn cohere_truncated_recovery_bills_the_same_bucket_as_the_buffered_path() {
     );
 }
 
-// ── openai_responses: input_tokens_details.cache_write_tokens bills inside the input ──────────────
-
 /// The recorded Responses body carries the member (busbar's own Responses WRITER emits it; the
-/// pinned `ResponseUsage` schema requires it), and the reader leaves it inside the input total: a
-/// recorded `cache_write_tokens: 0` reads as no cache-write tier at all, as in 1.5.5 (v1.5.5
-/// `crates/busbar/src/proto/openai_responses/reader.rs:1341`).
+
 #[test]
 fn responses_recorded_body_carries_the_cache_write_member() {
     let body = oracle_cell_body("llm__responses__responses__request__ok");
@@ -459,8 +403,7 @@ fn responses_recorded_body_carries_the_cache_write_member() {
 }
 
 /// `usage.input_tokens_details.cache_write_tokens` bills inside `input_tokens`, as in 1.5.5: only
-/// the cached prefix is split out (to the cache-read tier); the 6 cache-write tokens stay at the
-/// input tier. RED while the reader moved them to the cache-write tier.
+
 #[test]
 fn responses_cache_write_tokens_bill_inside_the_input() {
     let recorded = oracle_cell_body("llm__responses__responses__request__ok");
@@ -468,7 +411,7 @@ fn responses_cache_write_tokens_bill_inside_the_input() {
         .pointer("/usage/input_tokens")
         .and_then(Value::as_u64)
         .expect("the recording states an input total");
-    // The same recorded turn, on a request that wrote to the cache and read from it.
+
     let body = with_member(
         &with_member(
             &recorded,
@@ -499,7 +442,7 @@ fn responses_cache_write_tokens_bill_inside_the_input() {
 }
 
 /// The STREAM terminal (`response.completed`) bills the cache write inside the input the same way
-/// (v1.5.5 `crates/busbar/src/proto/openai_responses/reader.rs:1022`).
+
 #[test]
 fn responses_cache_write_tokens_ride_the_stream_terminal_inside_the_input() {
     let mut state = StreamDecodeState::default();
@@ -532,10 +475,8 @@ fn responses_cache_write_tokens_ride_the_stream_terminal_inside_the_input() {
     );
 }
 
-// ── openai_chat: prompt_tokens_details.cache_write_tokens bills inside the input ─────────────────
-
 /// The recorded Chat Completions body is the shape the reader handles, and a turn that reported no
-/// cache detail at all must not acquire an invented one.
+
 #[test]
 fn openai_chat_recorded_body_invents_no_cache_write() {
     let body = oracle_cell_body("llm__openai__openai__request__ok");
@@ -559,9 +500,7 @@ fn openai_chat_recorded_body_invents_no_cache_write() {
 }
 
 /// `usage.prompt_tokens_details.cache_write_tokens` bills inside `prompt_tokens`, as in 1.5.5
-/// (v1.5.5 `crates/busbar/src/proto/openai_chat/reader.rs:966`, `cache_creation_input_tokens: None`):
-/// only the cached prefix is split out. RED while the reader moved the 6 cache-write tokens to the
-/// cache-write tier.
+
 #[test]
 fn openai_chat_cache_write_tokens_bill_inside_the_input() {
     let recorded = oracle_cell_body("llm__openai__openai__request__ok");
@@ -569,7 +508,7 @@ fn openai_chat_cache_write_tokens_bill_inside_the_input() {
         .pointer("/usage/prompt_tokens")
         .and_then(Value::as_u64)
         .expect("the recording states a prompt total");
-    // The same recorded turn, on a request that wrote to the cache and read from it.
+
     let body = with_member(
         &with_member(
             &recorded,
@@ -600,7 +539,7 @@ fn openai_chat_cache_write_tokens_bill_inside_the_input() {
 }
 
 /// The STREAM's `include_usage` chunk bills the cache write inside the input the same way (v1.5.5
-/// `crates/busbar/src/proto/openai_chat/reader.rs:693`).
+
 #[test]
 fn openai_chat_cache_write_tokens_ride_the_usage_chunk_inside_the_input() {
     let mut state = StreamDecodeState::default();
@@ -628,14 +567,8 @@ fn openai_chat_cache_write_tokens_ride_the_usage_chunk_inside_the_input() {
     );
 }
 
-// ── the money floor: the lanes never sum to more than the provider reported ──────────────────────
-
 /// BUSBAR NEVER CHARGES MORE INPUT THAN THE PROVIDER STATED — including on the Cohere billed path.
-///
-/// Cohere carries a `billed_units.input_tokens` beside its raw input; `to_token_usage` ledgers the
-/// raw one, as 1.5.5 did. A cache hit on the same turn must not be charged a second time beside it:
-/// the reader leaves `cached_tokens` inside the input (1.5.5), so whatever the buckets,
-/// `input + cache_read` is what the provider said.
+
 #[test]
 fn cohere_billed_input_and_cache_read_never_exceed_the_reported_total() {
     let raw = conformance_raw_body("selftest-recording", "llm__cohere__cohere__request__ok");
@@ -644,8 +577,7 @@ fn cohere_billed_input_and_cache_read_never_exceed_the_reported_total() {
         .pointer("/usage/tokens/input_tokens")
         .and_then(Value::as_u64)
         .expect("the recording states an input total");
-    // The recorded turn, with a prompt-cache hit on it. `billed_units` is present in the recording
-    // already, so this is the exact coexistence the hazard needs.
+
     let body = with_member(&recorded, "/usage/cached_tokens", json!(4));
 
     let ir = CohereReader
@@ -671,9 +603,7 @@ fn cohere_billed_input_and_cache_read_never_exceed_the_reported_total() {
 }
 
 /// A dialect without a billed bucket projects its plain normalized totals.
-///
-/// `billed_input_tokens` is populated by the Cohere reader alone. Pinned so a future edit to the
-/// projection cannot quietly re-tier five providers while touching one.
+
 #[test]
 fn the_billed_netting_does_not_touch_a_dialect_without_billed_units() {
     let recorded = oracle_cell_body("llm__responses__responses__request__ok");

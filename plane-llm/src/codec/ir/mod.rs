@@ -2,17 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The superset intermediate representation (IR), request and response/stream sides, that every
-//! protocol's Reader/Writer maps to and from, so any ingress can reach any backend losslessly (see
-//! `docs/adr/0005-ir-fidelity.md`).
-//!
-//! Opacity is an IR fact, not a wire fact. Three protocols carry assistant reasoning busbar cannot
-//! decrypt, in three shapes; [`IrBlock::is_opaque`] is the one place that knows all three, so a
-//! consumer deciding "show this content or substitute a marker" never re-sniffs the wire. It is a
-//! predicate, not a flag flip on `Thinking.redacted`, which is a writer instruction with
-//! client-visible egress consequences (see `is_opaque`).
 
-// The concrete chat IR and leaf-op IR submodules. The neutral `facts`, `handle`, `invoke`,
-// `subscribe` stay in `busbar_contract::ir::*`.
 pub mod audio;
 pub mod embeddings;
 /// `impl IrFacts for IrRequest` + `project` — relocated with the concrete chat IR (G6 A4b).
@@ -26,7 +16,6 @@ pub mod sig_envelope;
 pub use facts_impl::project;
 
 /// The concrete chat IR TYPES, split to `types.rs` so busbar-core can `#[path]`-share them
-/// (G6 A4b). Re-exported flat so `crate::codec::ir::IrRequest` etc. keep their pre-split paths.
 mod types;
 pub use types::*;
 

@@ -2,10 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE CODEC READS ONLY THE HOST IT IS HANDED (coordinator ruling 2026-10-14, contract-ABI: the
-//! contract holds no host service; a codec is handed a `CodecHost`). A writer that mints an id draws
-//! it from the handle's entropy and stamps the handle's clock, and with a handle that has neither it
-//! refuses synthesis: there is no other source left for it to reach. (The compile half of the same
-//! rule is the contract's `compile_fail` doctest on `CodecHost`: the free ports are gone.)
 
 use busbar_contract::codec::CodecHost;
 
@@ -94,7 +90,6 @@ impl CodecHost for OneDraw {
             out.fill(42);
             true
         } else {
-            // A false result makes these bytes unspecified; accepting them would mint a fake id.
             out.fill(7);
             false
         }
@@ -297,8 +292,7 @@ fn a_terminal_flush_entropy_failure_marks_the_real_relay_end_failed() {
         meter: true,
         translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
-    // A terminal delta is deferred to end(). Without an earlier start it still needs an id;
-    // the failure must be sampled after that final writer call, not before it.
+
     let delta = b"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":3}}\n\n";
     let host = CountRefusals(AtomicUsize::new(0));
     let mut relay = Relay::new(ctx);

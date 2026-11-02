@@ -1,6 +1,5 @@
 //! The codec hosts the integration suites hand the exchange and the codecs.
 
-// Each test binary includes this module and uses the host it needs.
 #![allow(dead_code)]
 
 /// The OS CSPRNG and the system clock in whole seconds, read the way the kernel's host reads them.

@@ -8,19 +8,7 @@ use crate::codec::keys;
 use crate::codec::usage_count::{read_usage, CountRead, CountSlot, UsageCount};
 
 /// Anthropic's usage counts, as data. The four totals come first, then the 5m/1h cache-creation
-/// tier split (slices of `cache_creation_input_tokens`, never additions to it), the separately
-/// metered `server_tool_use.web_search_requests`, and the thinking slice of `output_tokens`
-/// (already inside the total, so a lenient read). The buffered response, both stream frames and a
-/// truncated-body recovery read the same table, so one request never reports a count at
-/// `stream: false` and loses it at `stream: true` or on a cut body.
-///
-/// Where each count is ledgered (the census over the pinned wire lock,
-/// `testing/llm-conformance/wire/anthropic.wire.json`, is `usage_census_tests`): the four totals
-/// are the reserved token classes; `web_search_requests` is the open class `search_units` (one
-/// billed search each, `IrUsage::to_token_usage`). The 5m/1h tiers ride inside `cache_write`, whose
-/// rate card holds one rate. `thinking_tokens` is inside `output_tokens`. `web_fetch_requests` is
-/// the open class of that name: every reported unit is a ledger line, and the operator's card
-/// prices it (0 makes it free).
+
 pub(super) const USAGE: &[UsageCount] = &[
     (CountSlot::Input, CountRead::Zero(&[keys::INPUT_TOKENS])),
     (CountSlot::Output, CountRead::Zero(&[keys::OUTPUT_TOKENS])),
@@ -58,7 +46,7 @@ pub(super) const USAGE: &[UsageCount] = &[
 pub(super) const COUNT_LABEL: &str = super::VENDOR_NAME;
 
 /// A wire `usage` object (`None` when the frame carries none) to the IR usage: the [`USAGE`] table
-/// plus `usage.service_tier` (`standard`/`priority`/`batch`), a word rather than a count.
+
 pub(super) fn read_anthropic_usage(
     usage_val: Option<&serde_json::Value>,
 ) -> Result<crate::codec::ir::IrUsage, IrError> {
@@ -71,13 +59,7 @@ pub(super) fn read_anthropic_usage(
 }
 
 /// The `cache_creation` tier object `{ephemeral_5m_input_tokens, ephemeral_1h_input_tokens}`; the
-/// schema requires the member and both counters, so:
-///
-/// * a reported tier is emitted as-is, the unreported sibling as `0` (the tiers are slices of
-///   `cache_creation_input_tokens`);
-/// * no tier and no cache write: the all-zero object a real uncached response carries;
-/// * no tier but a non-zero cache write (a backend that knows only the total, e.g. Bedrock
-///   `cacheWriteInputTokens`): `null`, rather than an invented split that would not sum.
+
 pub(super) fn write_cache_creation_object(usage: &crate::codec::ir::IrUsage) -> serde_json::Value {
     let d = &usage.detail;
     let any_tier =
@@ -92,7 +74,7 @@ pub(super) fn write_cache_creation_object(usage: &crate::codec::ir::IrUsage) -> 
 }
 
 /// `usage.output_tokens_details`: `{thinking_tokens: N}` when known, else `null`. Required by both
-/// `Usage` and `MessageDeltaUsage`.
+
 pub(super) fn write_output_tokens_details(usage: &crate::codec::ir::IrUsage) -> serde_json::Value {
     match usage.detail.reasoning_tokens {
         Some(t) => serde_json::json!({ (super::THINKING_TOKENS): t }),
@@ -101,9 +83,7 @@ pub(super) fn write_output_tokens_details(usage: &crate::codec::ir::IrUsage) -> 
 }
 
 /// `usage.server_tool_use`: `{web_search_requests, web_fetch_requests}` when a server-tool count is
-/// known, else `null`. Required by both `Usage` and `MessageDeltaUsage`. The echo keys on the
-/// web-search count and writes `web_fetch_requests` as `0`; the fetch count the reader carries
-/// (`IrUsageDetail::web_fetch_requests`) is ledgered, not echoed.
+
 pub(super) fn write_server_tool_use(usage: &crate::codec::ir::IrUsage) -> serde_json::Value {
     match usage.detail.web_search_requests {
         Some(n) => {
@@ -114,13 +94,7 @@ pub(super) fn write_server_tool_use(usage: &crate::codec::ir::IrUsage) -> serde_
 }
 
 /// The full wire `usage` object of a `Message` (the buffered response and the
-/// `message_start.message` skeleton, both the `Usage` schema).
-///
-/// Every required member is always present: the two cache counters as `0`, `cache_creation` as
-/// the zero tier object, `service_tier` as `"standard"` when none was reported (and `null` when the
-/// reported tier has no Anthropic word), and `inference_geo`, `output_tokens_details`,
-/// `server_tool_use` as `null`. Reported values are emitted unchanged. `None` (a cross-protocol
-/// stream whose first frame carried no usage) yields the zero-valued skeleton.
+
 pub(super) fn write_usage_object(usage: Option<&crate::codec::ir::IrUsage>) -> serde_json::Value {
     let zero = crate::codec::ir::IrUsage::default();
     let usage = usage.unwrap_or(&zero);
@@ -154,8 +128,7 @@ pub(super) fn write_usage_object(usage: Option<&crate::codec::ir::IrUsage>) -> s
         super::SERVER_TOOL_USE.to_string(),
         write_server_tool_use(usage),
     );
-    // No tier reported: the tier a request lands on. A tier Anthropic cannot name: `null`, never
-    // a word of busbar's own, so the buffered answer and `message_delta` (which omits it) agree.
+
     let tier = match usage.detail.service_tier.as_deref() {
         None => serde_json::json!(super::STANDARD),
         reported => anthropic_served_tier(reported)
@@ -166,10 +139,7 @@ pub(super) fn write_usage_object(usage: Option<&crate::codec::ir::IrUsage>) -> s
 }
 
 /// The IR served tier to a `usage.service_tier` word, or `None` when Anthropic has none. The IR
-/// slot can carry OpenAI-family words (`flex` / `scale`); the SDK types the member as
-/// `standard | priority | batch`, so an unknown word is dropped with a warn and the member takes
-/// its absent form (`null` on a buffered `Usage`, omitted from a `message_delta`). OpenAI's
-/// `default` is the standard tier.
+
 pub(super) fn anthropic_served_tier(tier: Option<&str>) -> Option<&'static str> {
     let word = tier?;
     let mapped = match word {
@@ -191,10 +161,7 @@ pub(super) fn anthropic_served_tier(tier: Option<&str>) -> Option<&'static str> 
 }
 
 /// The wire `usage` object of a `message_delta` (`MessageDeltaUsage`). `input_tokens`,
-/// `output_tokens`, both cache counters, `output_tokens_details` and `server_tool_use` are always
-/// present, zero/null when unknown. The 5m/1h split and `service_tier` are not members of that
-/// schema but are emitted when reported, so a request reconciles per tier at `stream: true` as at
-/// `stream: false`.
+
 pub(super) fn write_message_delta_usage(usage: &crate::codec::ir::IrUsage) -> serde_json::Value {
     let mut usage_map = serde_json::Map::new();
     usage_map.insert(

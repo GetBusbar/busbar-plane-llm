@@ -2,22 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The irregular half of the typed IR request slots on the OpenAI Chat Completions wire.
-//! The flat members (`metadata`, `service_tier`, `store`,
-//! `safety_identifier`, `prompt_cache_key`, `verbosity`) are rows in `dialects/openai_chat.toml`,
-//! walked by `codec::carry`; what stays here is code no row can state, each case named (the
-//! first two are `codec::carry::Hook`s):
-//!
-//! | Chat member                | IR slot                      | Why it is code |
-//! |----------------------------|------------------------------|----------------|
-//! | `modalities`               | `IrRequest::output_modalities` (IR-19) | `audio` needs the `audio` member |
-//! | `web_search_options`       | `IrRequest::hosted_tools` (`WebSearch`, IR-11) | one search per request, nested location |
-//! | `tool_choice.allowed_tools`| `IrRequest::allowed_tools` + `tool_choice` (IR-10) | tool-choice semantics |
-//! | `tools[]` `custom` entries | `IrRequest::hosted_tools` (`Custom`, OAI-09) | a tools-array entry |
-//!
-//! Same-dialect fidelity: a value the typed slot cannot hold exactly (a non-string metadata value,
-//! an unknown tier word, an unknown `web_search_options` member) is parked RAW in `extra` by the
-//! walker; `extra` is written last (it wins on the same dialect) and is cleared on the
-//! cross-protocol seam, where the typed slot is what crosses.
 
 use crate::codec::ir::{
     IrHostedTool, IrModality, IrRequest, IrToolChoice, IrUserLocation, IrVerbosity, IrWebSearch,
@@ -28,9 +12,7 @@ use crate::codec::keys;
 const TOOL_CHOICE_ALLOWED_TOOLS: &str = "allowed_tools";
 
 /// IR-10: the allowed-tools subset of `tool_choice`, then the `tool_choice` fidelity park.
-/// `tool_choice` is modeled by the reader's own `read_openai_tool_choice`; a shape neither that nor
-/// the allowed-tools read understands (a `custom` tool target, a future type) would be dropped even
-/// OpenAI→OpenAI, so it rides `extra` raw.
+
 pub(super) fn read_tool_choice_slots(
     obj: &serde_json::Map<String, serde_json::Value>,
     ir: &mut IrRequest,
@@ -47,8 +29,7 @@ pub(super) fn read_tool_choice_slots(
 }
 
 /// OAI-09: a Chat `{"type":"custom","custom":{name, description?, format?}}`
-/// tool → the typed custom hosted tool; `None` for any other tool, or a custom tool carrying a
-/// member the IR cannot hold (it stays the raw same-protocol tool).
+
 pub(super) fn read_custom_tool(tool: &serde_json::Value) -> Option<IrHostedTool> {
     let obj = tool.as_object()?;
     if obj.get(keys::TYPE).and_then(|t| t.as_str()) != Some(keys::CUSTOM)
@@ -92,7 +73,7 @@ pub(super) fn dropped_hosted_kinds(req: &IrRequest) -> Vec<&'static str> {
 }
 
 /// The Chat `tool_choice` the writer emits for `req` (before its no-tools guard): the allowed-tools
-/// subset when one is set (IR-10), else the plain directive.
+
 pub(super) fn write_tool_choice(req: &IrRequest) -> Option<serde_json::Value> {
     if let Some(names) = &req.allowed_tools {
         let mode = match req.tool_choice {
@@ -130,10 +111,7 @@ pub(crate) fn read_modalities(v: &serde_json::Value, ir: &mut IrRequest) {
 }
 
 /// Hook (`modalities`, IR-19). Chat accepts `text` and `audio`. `audio` output also REQUIRES the
-/// `audio` request member (the voice and format), which is a vendor catalogue the IR does not carry
-/// — so it is written only when the Chat caller's own `audio` member rides alongside (same
-/// dialect); cross-protocol it is dropped with a warn rather than sent as a request OpenAI rejects.
-/// `image` has no Chat output modality.
+
 pub(crate) fn write_modalities(req: &IrRequest) -> Option<serde_json::Value> {
     let has_audio_member = req.extra.contains_key(super::AUDIO);
     let mut out: Vec<serde_json::Value> = Vec::new();
@@ -156,8 +134,7 @@ pub(crate) fn write_modalities(req: &IrRequest) -> Option<serde_json::Value> {
 }
 
 /// Hook (`web_search_options`, IR-11): Chat `web_search_options{search_context_size,
-/// user_location:{type:"approximate", approximate:{city, region, country, timezone}}}` → the
-/// neutral web search.
+
 pub(crate) fn read_web_search(v: &serde_json::Value, ir: &mut IrRequest) {
     let Some(o) = v.as_object() else {
         return;
@@ -179,8 +156,7 @@ pub(crate) fn read_web_search(v: &serde_json::Value, ir: &mut IrRequest) {
 }
 
 /// Hook (`web_search_options`, IR-11): the first hosted web search, in Chat's one member. A second
-/// search, and every hosted kind Chat has no built-in for, is dropped with a warn; a custom tool is
-/// a `tools[]` entry (`write_custom_tools`), not this member.
+
 pub(crate) fn write_web_search(req: &IrRequest) -> Option<serde_json::Value> {
     let mut written = None;
     for tool in &req.hosted_tools {
@@ -213,7 +189,7 @@ pub(crate) fn write_web_search(req: &IrRequest) -> Option<serde_json::Value> {
 }
 
 /// One web search as `web_search_options`. `max_uses` and the domain filters have no Chat member:
-/// they are dropped with a warn and the search itself is kept.
+
 fn web_search_options(search: &IrWebSearch) -> serde_json::Value {
     if search.max_uses.is_some()
         || !search.allowed_domains.is_empty()
@@ -235,7 +211,6 @@ fn web_search_options(search: &IrWebSearch) -> serde_json::Value {
         );
     }
     if let Some(loc) = &search.user_location {
-        // Chat nests the members under the type's own name.
         let approx = IrUserLocation::TYPE_APPROXIMATE;
         o.insert(
             keys::USER_LOCATION.to_string(),
@@ -246,9 +221,7 @@ fn web_search_options(search: &IrWebSearch) -> serde_json::Value {
 }
 
 /// Chat `tool_choice:{type:"allowed_tools", allowed_tools:{mode, tools:[{type:"function",
-/// function:{name}}]}}` → (the FUNCTION tool names, the directive). A `custom` tool entry has no
-/// cross-dialect tool to name (OAI-09), so it is not listed; a subset with no function tool left is
-/// not a subset at all.
+
 fn read_allowed_tools(v: &serde_json::Value) -> Option<(Vec<String>, IrToolChoice)> {
     if v.get(keys::TYPE).and_then(|t| t.as_str()) != Some(TOOL_CHOICE_ALLOWED_TOOLS) {
         return None;

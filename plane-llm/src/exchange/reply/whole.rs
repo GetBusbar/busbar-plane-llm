@@ -1,12 +1,4 @@
 //! A far end's success answer taken whole: a non-stream answer from a far end of another dialect
-//! (written as the caller's own stream when the caller asked for one). The whole body is read by the
-//! far end's dialect and written by the caller's, and the caller reads exactly one of four ends.
-//!
-//! The decision tree, in order: an opaque body (speech audio) bridges at the byte level; a JSON body
-//! is translated (and, for a caller that asked to stream, written as the caller's own stream frames);
-//! a translated chat answer whose far end reported the generation failed is an error that still
-//! carries the reported usage; the caller's dialect serving no such operation is a 404; and anything
-//! the caller's dialect cannot be written from is a 500, never the far end's native bytes.
 
 use busbar_contract::billing::Billing;
 use busbar_contract::codec::{OperationHandler, TranslatedResponse};
@@ -213,7 +205,7 @@ pub fn translate(
 }
 
 /// An opaque body bridged at the byte level; `None` falls through to the JSON path, `Err` is the
-/// far end's dialect refusing the body.
+
 fn opaque(
     host: &dyn busbar_contract::codec::CodecHost,
     ctx: &WholeCtx<'_>,
@@ -264,7 +256,7 @@ fn opaque(
 }
 
 /// A JSON body translated; `None` when no body could be written, `Err` the far end's dialect
-/// refusing the body.
+
 fn json(
     host: &dyn busbar_contract::codec::CodecHost,
     ctx: &WholeCtx<'_>,
@@ -292,8 +284,7 @@ fn json(
         }
         answered
     };
-    // A translate attempt's drops go through the one drop path; a same-dialect answer drops
-    // nothing.
+
     let (answered, dropped) = if ctx.ingress == ctx.egress {
         (read(), Vec::new())
     } else {
@@ -305,9 +296,7 @@ fn json(
         drops::scope(seam, read)
     };
     let (usage, answered) = answered.map_err(|e| format!("{e:?}"))?;
-    // A buffered-to-stream writer returns through an infallible contract handle. Retain its
-    // entropy refusal here too: failed delivery is not a successful 200 or a refund of work the
-    // far end already executed and reported.
+
     if checked.failed() {
         return Ok(Some(whole(
             WholeEnd::NotTranslatable,

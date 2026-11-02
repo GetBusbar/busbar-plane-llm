@@ -2,9 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Regression net: OpenAI Chat audio egress must map an audio mime onto the CLOSED
-//! `input_audio.format` enum (`{wav, mp3}`, openai-openapi
-//! `ChatCompletionRequestMessageContentPartAudio`), not emit the raw mime subtype. The old
-//! `media_type.rsplit('/')` produced `format:"mpeg"` for `audio/mpeg`, which the API 400-rejects.
 
 use super::*;
 use busbar_test_kit::warn_capture::WarnCapture;
@@ -65,8 +62,6 @@ fn audio_wav_aliases_map_to_wav_format() {
 
 #[test]
 fn unsupported_audio_mime_dropped_with_warn_not_invalid_format() {
-    // `audio/ogg` has no `{wav, mp3}` representation, so no input_audio part is emitted (emitting
-    // `format:"ogg"` would 400) and the drop is observable.
     let cap = WarnCapture::default();
     let subscriber = cap.clone();
     let out = tracing::subscriber::with_default(subscriber, || {

@@ -110,8 +110,7 @@ impl Catalogue for One {
 fn the_adhoc_surface_refuses_a_model_another_provider_serves() {
     let d = arrive("POST", "/wrong/m/v1/messages", &json(), b"{}", &One).expect_err("refused");
     assert_eq!((d.why, d.status), (Decline::ProviderMismatch, 400));
-    // The refusal names the entry it concerns, so the kernel holds it behind the
-    // caller's identity and grant (1.5.5 ran the ad-hoc route's governance guard first).
+
     assert_eq!(d.entry.as_deref(), Some("m"));
     assert_eq!(
         d.message,
@@ -211,8 +210,6 @@ fn a_dialect_path_takes_post_only_and_an_unknown_path_is_not_found_first() {
     );
 }
 
-// ── rehomed from the legacy engine's arrival, decode and ingress tests ──────────────────────────
-
 use busbar_contract::codec::OperationHandler;
 use busbar_contract::operation::OpVerb;
 use busbar_plane_llm::exchange::attempt::build;
@@ -223,7 +220,7 @@ use busbar_plane_llm::refusal::reason;
 use serde_json::json;
 
 /// The host the exchange is handed: a fixed entropy byte, so a dialect that mints a request id
-/// mints one (the same one every time), and no clock.
+
 struct FixedHost;
 
 impl busbar_contract::codec::CodecHost for FixedHost {
@@ -293,12 +290,7 @@ fn gemini_from_openai<'a>(a: &'a Arrived, model: &'a str, json_array: bool) -> W
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/auth_native_envelope_tests.rs::test_residual_dialect_inference`.
-/// 1.5.5 behaviour pinned: the dialect a refusal on a path is shaped in, from the path's shape
-/// alone, for every legacy path: gemini on `/v1beta/models/...` (with or without an action) and on
-/// `/v1/models/...:<action>`; openai on a colon-less `/v1/models/{id}`, a `/model/...` path with no
-/// converse suffix and an unknown path; bedrock on `/model/.../converse[-stream]`; anthropic on
-/// any `.../v1/messages`, a model literally named `model` included; cohere and responses on theirs.
-/// RED if any path is shaped in another dialect.
+
 #[test]
 fn every_paths_refusal_envelope_is_read_off_its_shape() {
     for (path, dialect) in [
@@ -324,11 +316,7 @@ fn every_paths_refusal_envelope_is_read_off_its_shape() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/auth_native_envelope_tests.rs::test_every_router_ingress_path_maps_to_non_fallback_proto`.
-/// 1.5.5 behaviour pinned: every ingress path family the router serves names its own dialect by
-/// shape, never the unknown-path fallback, and that dialect is one the plane holds: anthropic
-/// (plain and named), openai, cohere, responses, gemini (v1beta and the stable v1 alias) and
-/// bedrock (converse and converse-stream). RED if any falls to the fallback or names an unknown
-/// dialect.
+
 #[test]
 fn every_served_ingress_path_names_its_own_dialect() {
     for (path, dialect) in [
@@ -353,11 +341,7 @@ fn every_served_ingress_path_names_its_own_dialect() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/auth_native_envelope_tests.rs::the_residual_dialect_table_shapes_fallback_errors`.
-/// 1.5.5 behaviour pinned: the table the fallback 404/405/413 are shaped by: openai, responses and
-/// cohere on theirs; gemini on both surfaces (with an action on v1, always on v1beta); openai on
-/// `GET /v1/models/{id}`, on the list-models `/v1/models`, on a non-converse `/model/...` (no
-/// bedrock shape) and on an unknown path; anthropic on a named surface.
-/// RED if any row is shaped in another dialect.
+
 #[test]
 fn the_fallback_refusals_shape_table_is_the_released_one() {
     for (path, dialect) in [
@@ -385,11 +369,7 @@ fn the_fallback_refusals_shape_table_is_the_released_one() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_adhoc_rejects_unconfigured_provider_model`.
-/// 1.5.5 behaviour pinned: the ad-hoc `/{provider}/{model}/v1/messages` route reaches configured
-/// models only: an attacker's `evil.example.com` / `../secret` names no configured model, so the
-/// answer is the not-found 404 (this plane states 404 for a model with no destination) and no far
-/// end is reached; a configured model on the wrong provider is refused 400 at the door.
-/// RED if the unknown model reaches a far end or reads another status, or the mismatch is not 400.
+
 #[test]
 fn the_adhoc_route_reaches_configured_models_only() {
     let catalogue = Shaping::from_settings(&json!({
@@ -407,7 +387,7 @@ fn the_adhoc_route_reaches_configured_models_only() {
     .expect("the door takes the route as asked");
     assert_eq!(a.model, "../secret");
     assert!(catalogue.lane("../secret").is_none(), "no far end to reach");
-    // The no-destination status is the kernel's class default (`NotFound`, 404), not a row.
+
     assert!(!busbar_plane_llm::refusal::REFUSAL_STATUSES
         .iter()
         .any(|r| r.reason == reason::NO_DESTINATION));
@@ -438,11 +418,7 @@ fn the_adhoc_route_reaches_configured_models_only() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_path_resolves_model_and_stream`.
-/// 1.5.5 behaviour pinned: a buffered gemini `/v1beta/models/foo:generateContent` names model
-/// `foo` and no stream; routed to an openai far end the far body carries `messages` and no
-/// `stream: true`, and the caller's answer is gemini's own (`candidates`, never `choices`) at 200.
-/// RED if the model or stream reads otherwise, the far body is not OpenAI-shaped, or the caller's
-/// body carries `choices`.
+
 #[test]
 fn a_buffered_gemini_arrival_routes_by_its_url_model_and_reads_gemini_back() {
     let body = r#"{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}"#;
@@ -473,9 +449,7 @@ fn a_buffered_gemini_arrival_routes_by_its_url_model_and_reads_gemini_back() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_path_model_injects_model_and_stream_into_body`.
-/// 1.5.5 behaviour pinned: a path-model arrival carries the URL's model and stream flag in the
-/// body: a streaming path `{"model":"foo","stream":true}`, a buffered path
-/// `{"model":"bar","stream":false}`. RED if either member is missing or wrong.
+
 #[test]
 fn a_path_model_arrival_carries_the_urls_model_and_stream_both_ways() {
     for (target, model, stream) in [
@@ -495,8 +469,7 @@ fn a_path_model_arrival_carries_the_urls_model_and_stream_both_ways() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_malformed_path_no_colon_is_404`.
-/// 1.5.5 behaviour pinned: a gemini path with no colon (`/v1beta/models/gemini-flash`) is a
-/// gemini-shaped JSON 404, never served. RED if it is served or reads another status or type.
+
 #[test]
 fn a_colon_less_gemini_path_is_a_gemini_404() {
     let d = no(
@@ -521,8 +494,7 @@ fn a_colon_less_gemini_path_is_a_gemini_404() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_empty_model_is_404`.
-/// 1.5.5 behaviour pinned: an empty model before the colon (`/v1beta/models/:generateContent`) is a
-/// gemini 404, never routed. RED if it is served or reads another status.
+
 #[test]
 fn an_empty_gemini_model_is_a_404() {
     let d = no(
@@ -535,10 +507,7 @@ fn an_empty_gemini_model_is_a_404() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_v1_surface_error_echoes_v1_not_v1beta`.
-/// 1.5.5 behaviour pinned: an unsupported action on the stable surface
-/// (`/v1/models/foo:countTokens`) is a 404 whose sentence echoes "API version v1," and never
-/// "v1beta"; a colon-less `/v1/models/gemini-flash` is the OpenAI-shaped `not_found_error` 404.
-/// RED if the version echo leaks v1beta, or the colon-less path reads another shape.
+
 #[test]
 fn the_stable_gemini_surface_echoes_v1_and_its_colon_less_path_is_openai_shaped() {
     let d = no("/v1/models/foo:countTokens", &json(), br#"{"contents":[]}"#);
@@ -556,8 +525,7 @@ fn the_stable_gemini_surface_echoes_v1_and_its_colon_less_path_is_openai_shaped(
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_v1beta_surface_error_still_echoes_v1beta`.
-/// 1.5.5 behaviour pinned: an unsupported action on `/v1beta/models/foo:countTokens` is a 404 whose
-/// sentence echoes "v1beta". RED if the echo differs.
+
 #[test]
 fn the_beta_gemini_surface_still_echoes_v1beta() {
     let d = no(
@@ -572,13 +540,7 @@ fn the_beta_gemini_surface_still_echoes_v1beta() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_v1_no_action_returns_openai_shaped_404`.
-/// 1.5.5 behaviour pinned, every leg: a colon-less `/v1/models/gpt-4o` and an OpenAI fine-tune id
-/// with colons but no gemini action (`/v1/models/ft:gpt-3.5-turbo:my-org::abc`) are JSON 404s in
-/// the OpenAI `not_found_error` envelope with no gemini `status`; a colon-less
-/// `/v1beta/models/gemini-flash` keeps gemini's `status: NOT_FOUND`; an empty model
-/// (`/v1beta/models/:generateContent`) and an empty action (`/v1beta/models/gemini-flash:`) both
-/// fall to the "Invalid resource path" 404, never a routed model.
-/// RED if any leg reads another status, shape or sentence.
+
 #[test]
 fn the_ambiguous_stable_prefix_reads_openai_and_the_beta_prefix_reads_gemini() {
     for target in [
@@ -612,9 +574,7 @@ fn the_ambiguous_stable_prefix_reads_openai_and_the_beta_prefix_reads_gemini() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_model_with_colon_splits_on_last_colon`.
-/// 1.5.5 behaviour pinned: `/v1beta/models/tunedModels/abc:1:generateContent` names the model
-/// `tunedModels/abc:1` (the split is on the LAST colon) and is routed to that model's far end.
-/// RED if the model reads otherwise or the attempt is refused.
+
 #[test]
 fn a_gemini_model_with_a_colon_splits_on_the_last_colon() {
     let a = ok(
@@ -628,7 +588,7 @@ fn a_gemini_model_with_a_colon_splits_on_the_last_colon() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_percent_decode_colon`.
-/// 1.5.5 behaviour pinned: `%3A` decodes to `:`. RED if it does not.
+
 #[test]
 fn percent_decode_reads_an_encoded_colon() {
     assert_eq!(percent_decode("%3A"), ":");
@@ -639,7 +599,7 @@ fn percent_decode_reads_an_encoded_colon() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_percent_decode_period_and_plain`.
-/// 1.5.5 behaviour pinned: `%2E` decodes to `.` and a plain id passes unchanged. RED if not.
+
 #[test]
 fn percent_decode_reads_an_encoded_period_and_passes_plain_text() {
     assert_eq!(percent_decode("a%2Eb"), "a.b");
@@ -650,7 +610,7 @@ fn percent_decode_reads_an_encoded_period_and_passes_plain_text() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_percent_decode_malformed_escape_passes_through`.
-/// 1.5.5 behaviour pinned: a `%` before non-hex digits is left verbatim. RED if dropped or decoded.
+
 #[test]
 fn percent_decode_leaves_a_malformed_escape_verbatim() {
     assert_eq!(percent_decode("%XY"), "%XY");
@@ -658,8 +618,7 @@ fn percent_decode_leaves_a_malformed_escape_verbatim() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_percent_decode_trailing_percent_is_safe`.
-/// 1.5.5 behaviour pinned: a trailing `%`, or one with a single following byte, passes through
-/// without reading past the end. RED if it panics or changes the bytes.
+
 #[test]
 fn percent_decode_passes_a_trailing_percent_safely() {
     assert_eq!(percent_decode("abc%"), "abc%");
@@ -675,8 +634,7 @@ fn model_refusal(target: &str, body: &[u8]) -> (u16, Value) {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_cohere_empty_model_is_400_native_envelope`.
-/// 1.5.5 behaviour pinned: cohere `/v2/chat` with `"model": ""` is a 400 (not a 404) in cohere's
-/// bare envelope: a top-level `message`, no `error` or `type`. RED if the status or shape differs.
+
 #[test]
 fn a_cohere_empty_model_is_coheres_400() {
     let (status, body) = model_refusal("/v2/chat", br#"{"model":"","messages":[]}"#);
@@ -692,8 +650,7 @@ fn a_cohere_empty_model_is_coheres_400() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_responses_empty_model_is_400_native_envelope`.
-/// 1.5.5 behaviour pinned: responses with `"model": ""` is a 400 whose `error.type` is
-/// `invalid_request_error`. RED if the status or type differs.
+
 #[test]
 fn a_responses_empty_model_is_an_invalid_request_400() {
     let (status, body) = model_refusal("/v1/responses", br#"{"model":"","input":"hi"}"#);
@@ -702,8 +659,7 @@ fn a_responses_empty_model_is_an_invalid_request_400() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_openai_numeric_model_is_400_native_envelope`.
-/// 1.5.5 behaviour pinned: openai with `"model": 42` is a 400 `invalid_request_error`, never
-/// coerced to a name and answered 404. RED if the status or type differs.
+
 #[test]
 fn an_openai_numeric_model_is_an_invalid_request_400() {
     let (status, body) = model_refusal("/v1/chat/completions", br#"{"model":42,"messages":[]}"#);
@@ -712,8 +668,7 @@ fn an_openai_numeric_model_is_an_invalid_request_400() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_cohere_numeric_model_is_400_native_envelope`.
-/// 1.5.5 behaviour pinned: cohere with `"model": null` is a 400 in cohere's bare envelope.
-/// RED if the status or shape differs.
+
 #[test]
 fn a_cohere_null_model_is_coheres_400() {
     let (status, body) = model_refusal("/v2/chat", br#"{"model":null,"messages":[]}"#);
@@ -729,8 +684,7 @@ fn a_cohere_null_model_is_coheres_400() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_responses_numeric_model_is_400_native_envelope`.
-/// 1.5.5 behaviour pinned: responses with `"model": true` is a 400 `invalid_request_error`.
-/// RED if the status or type differs.
+
 #[test]
 fn a_responses_bool_model_is_an_invalid_request_400() {
     let (status, body) = model_refusal("/v1/responses", br#"{"model":true,"input":"hi"}"#);
@@ -739,9 +693,7 @@ fn a_responses_bool_model_is_an_invalid_request_400() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_non_object_body_is_400`.
-/// 1.5.5 behaviour pinned: a top-level array to `/model/foo/converse` is a bedrock 400
-/// `ValidationException` carrying `x-amzn-errortype`, never a panic or a 500.
-/// RED if the status, the type or the header differs.
+
 #[test]
 fn a_bedrock_non_object_body_is_a_validation_400() {
     let d = no("/model/foo/converse", &json(), b"[1,2]");
@@ -753,10 +705,7 @@ fn a_bedrock_non_object_body_is_a_validation_400() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_bedrock_percent_encoded_model_id_converse_stream`.
-/// 1.5.5 behaviour pinned: `/model/anthropic.claude-3%3Ahaiku/converse-stream` names the decoded
-/// model `anthropic.claude-3:haiku`, streamed, routes to that model's far end, and a bedrock caller
-/// streams back in the AWS eventstream framing. RED if the model is not decoded, the stream flag is
-/// lost, the attempt is refused, or the framing differs.
+
 #[test]
 fn a_percent_encoded_bedrock_model_is_decoded_and_streamed() {
     let a = ok(
@@ -779,10 +728,7 @@ fn a_percent_encoded_bedrock_model_is_decoded_and_streamed() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_model_not_found_uses_native_message`.
-/// 1.5.5 behaviour pinned: a gemini model nothing serves reads a 404 whose sentence is gemini's own
-/// and names the path's version: "models/no-such-model is not found for API version v1beta, or is
-/// not supported for the task you are trying to perform." on v1beta, the same with "v1" on the
-/// stable surface; never the OpenAI "does not exist" copy. RED if either sentence differs.
+
 #[test]
 fn a_gemini_unknown_model_reads_geminis_versioned_sentence() {
     for (target, version) in [
@@ -808,9 +754,7 @@ fn a_gemini_unknown_model_reads_geminis_versioned_sentence() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_v1_stable_stream_generate_content_alt_sse`.
-/// 1.5.5 behaviour pinned: the stable `/v1/models/foo:streamGenerateContent?alt=sse` is served:
-/// model `foo`, streamed, event-stream framing (no JSON-array key in the body), and the openai far
-/// end is asked to stream. RED if the stable alias is refused or the facts differ.
+
 #[test]
 fn the_stable_gemini_surface_streams_events_with_alt_sse() {
     let a = ok(
@@ -829,9 +773,7 @@ fn the_stable_gemini_surface_streams_events_with_alt_sse() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/ingress_integration_tests.rs::test_gemini_v1_stable_stream_generate_content_no_alt_sse`.
-/// 1.5.5 behaviour pinned: the stable `/v1/models/foo:streamGenerateContent` without `alt=sse` is a
-/// JSON-array caller: the caller reads `application/json`, an array of gemini chunks
-/// (`candidates`, never `choices`). RED if the framing or the chunk shape differs.
+
 #[test]
 fn the_stable_gemini_surface_without_alt_sse_reads_a_json_array() {
     let a = ok(
@@ -870,10 +812,7 @@ fn the_stable_gemini_surface_without_alt_sse_reads_a_json_array() {
 }
 
 /// Rehomes `crates/busbar-llm/src/tests/arrival_tests.rs::test_query_has_alt_sse`.
-/// 1.5.5 behaviour pinned: only a genuine `alt=sse` pair selects event-stream framing, wherever it
-/// stands in the query (`alt=sse`, `key=abc&alt=sse`, `alt=sse&key=abc`); `alt=json`, an empty
-/// query, `foo=alt=sse` and a bare `alt` all leave the JSON-array framing.
-/// RED if any of the seven queries reads the other way.
+
 #[test]
 fn only_a_genuine_alt_sse_pair_selects_event_framing() {
     for (query, events) in [
@@ -897,9 +836,7 @@ fn only_a_genuine_alt_sse_pair_selects_event_framing() {
 }
 
 /// Rehomes `crates/busbar-llm/src/tests/arrival_tests.rs::test_gemini_api_version_prefix_mapping`.
-/// 1.5.5 behaviour pinned: the version gemini's sentences echo is `v1` on the stable surface,
-/// `v1beta` on the beta surface, and `v1beta` for any other prefix.
-/// RED if any of the three echoes differs.
+
 #[test]
 fn geminis_version_echo_follows_the_path_prefix() {
     for (target, version) in [
@@ -920,12 +857,7 @@ fn geminis_version_echo_follows_the_path_prefix() {
 }
 
 /// Rehomes `crates/busbar-llm/src/tests/arrival_tests.rs::the_gemini_parse_reads_its_own_url_space`.
-/// 1.5.5 behaviour pinned: `/v1beta/models/p:generateContent` reads model `p`, chat, no stream,
-/// no JSON-array framing and gemini's copy "models/p is not found for API version v1beta, or is not
-/// supported for the task you are trying to perform."; `:streamGenerateContent` streams with the
-/// array framing, and with `alt=sse` without it; an unknown model is still a well-formed URL whose
-/// copy names it; the stable prefix versions its copy "API version v1,"; `:countTokens` and a
-/// colon-less path are refused before routing. RED if any fact or refusal differs.
+
 #[test]
 fn the_gemini_url_space_reads_every_fact() {
     let read = |target: &str| ok(target, &json(), br#"{"contents":[]}"#);
@@ -964,11 +896,7 @@ fn the_gemini_url_space_reads_every_fact() {
 }
 
 /// Rehomes `crates/busbar-llm/src/tests/arrival_tests.rs::the_bedrock_parse_reads_its_own_url_space`.
-/// 1.5.5 behaviour pinned: `/model/p/converse` reads model `p`, chat, no stream, no array framing,
-/// no copy of its own; `/converse-stream` streams; `/invoke` names only the model and leaves the
-/// operation to the body (a body naming `inputText` arrives as a body-model request for `p`, a
-/// body naming no supported operation is the 400); `/invoke-with-response-stream` and `/nope` are
-/// the router's 404. RED if any fact or refusal differs.
+
 #[test]
 fn the_bedrock_url_space_reads_every_fact() {
     let converse = br#"{"messages":[{"role":"user","content":[{"text":"hi"}]}]}"#;
@@ -1024,10 +952,7 @@ fn same_handler(x: &dyn OperationHandler, y: &dyn OperationHandler) -> bool {
 }
 
 /// Rehomes `crates/busbar-llm/src/tests/arrival_tests.rs::the_url_facts_drive_the_two_steps_to_the_live_paths_answer`.
-/// 1.5.5 behaviour pinned: for gemini AND bedrock URL models, streamed and buffered, the arrival's
-/// body is exactly the live splice of the URL's facts (model, stream, and gemini's array key when
-/// asked) into the caller's bytes, it reads as the caller's document with those members set, and
-/// the handler resolved is the live lookup's. RED if the bytes, the document or the handler differ.
+
 #[test]
 fn the_url_facts_land_on_the_live_splice_and_the_live_handler() {
     let gemini = br#"{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}"#;
@@ -1096,10 +1021,7 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::the_path_model_step_injects_the_members_into_the_callers_bytes`.
-/// 1.5.5 behaviour pinned: for every recorded request, through a gemini AND a bedrock URL model,
-/// the arrival's body reads as the caller's document with `model` and `stream` set, and a request
-/// that named neither keeps every one of its own bytes after the opening brace, in order (a
-/// re-serialization would sort and respace them). RED if the document or the caller's bytes move.
+
 #[test]
 fn every_recorded_request_keeps_its_bytes_under_the_path_model_splice() {
     for (name, body) in corpus() {
@@ -1129,9 +1051,7 @@ fn every_recorded_request_keeps_its_bytes_under_the_path_model_splice() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::the_url_model_and_stream_flag_win_over_the_body`.
-/// 1.5.5 behaviour pinned: a body naming `model: from-the-body` and `stream: false` under a URL
-/// naming `from-the-url` and a stream reads the URL's model and `stream: true`, and every other
-/// member (`x: 1`) survives, on gemini and bedrock alike. RED if the body's own values win.
+
 #[test]
 fn the_urls_model_and_stream_win_over_the_bodys() {
     let body = br#"{"model":"from-the-body","stream":false,"x":1}"#;
@@ -1150,10 +1070,7 @@ fn the_urls_model_and_stream_win_over_the_bodys() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::the_array_stream_shim_is_spliced_only_when_asked`.
-/// 1.5.5 behaviour pinned: busbar's array-stream key is spliced only when the JSON-array framing is
-/// asked (gemini streamed without `alt=sse`) and only for a dialect that declares one; a dialect
-/// with no key (bedrock, and every other) is unchanged whether asked or not.
-/// RED if the key appears unasked, is missing when asked, or a keyless dialect changes shape.
+
 #[test]
 fn the_array_stream_key_is_spliced_only_when_asked() {
     let key = shim_key();
@@ -1192,8 +1109,7 @@ fn the_array_stream_key_is_spliced_only_when_asked() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::an_absent_content_type_is_read_as_json`.
-/// 1.5.5 behaviour pinned: an arrival with no content type is read as JSON (its content type empty,
-/// its body parsed), so a header-less client is served. RED if it is refused or left unparsed.
+
 #[test]
 fn an_arrival_with_no_content_type_is_read_as_json() {
     let a = ok("/v1/chat/completions", &head(&[]), br#"{"model":"m"}"#);
@@ -1202,8 +1118,7 @@ fn an_arrival_with_no_content_type_is_read_as_json() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::a_json_content_type_with_parameters_still_parses`.
-/// 1.5.5 behaviour pinned: `application/json; charset=utf-8` is JSON (the read is a prefix match).
-/// RED if the body is left unparsed or refused.
+
 #[test]
 fn a_json_content_type_with_a_charset_still_parses() {
     let a = ok(
@@ -1216,10 +1131,7 @@ fn a_json_content_type_with_a_charset_still_parses() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::the_refusal_set_is_three_and_they_do_not_collide`.
-/// 1.5.5 behaviour pinned: the arrival refusal set is three (the parse refusal, the non-object
-/// refusal, the re-serialization guard), each a 400 `invalid_request_error` with its own sentence;
-/// the first two are driven from real arrivals, the guard (unreachable) by its sentence.
-/// RED if a sentence repeats, or a member reads another status or kind.
+
 #[test]
 fn the_arrival_refusal_set_is_three_distinct_400s() {
     let parse = no("/v1beta/models/m:generateContent", &json(), b"{not json");
@@ -1248,11 +1160,7 @@ fn the_arrival_refusal_set_is_three_distinct_400s() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/audit.rs::audit_refused_matches_the_live_rejected_terminal`.
-/// 1.5.5 behaviour pinned: a refusal before any forward (a missing model) answers 400 with the
-/// same bytes whichever path renders it, and it is an arrival refusal: the kernel answers it before
-/// a unit is admitted, so nothing was charged and nothing is refunded. The plane's half is pinned
-/// here: the arrival refuses (no unit), and its rendering is byte-for-byte the released 400.
-/// RED if the missing model is admitted, or the rendered status or bytes differ.
+
 #[test]
 fn a_pre_forward_refusal_renders_the_released_400_before_any_unit() {
     let d = no("/v1/chat/completions", &json(), br#"{"messages":[]}"#);
@@ -1283,9 +1191,7 @@ fn a_pre_forward_refusal_renders_the_released_400_before_any_unit() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::every_recorded_request_decodes_to_the_live_paths_model`.
-/// 1.5.5 behaviour pinned: for every recorded request, the arrival reads exactly the model 1.5.5
-/// routed (the body's non-empty string `model`), and every request 1.5.5 refused for want of one
-/// is refused 400 `MissingModel`. RED if any recording reads another model or another answer.
+
 #[test]
 fn every_recorded_request_reads_the_released_model() {
     for (name, body) in corpus() {
@@ -1310,8 +1216,7 @@ fn every_recorded_request_reads_the_released_model() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::a_url_model_wins_over_the_body`.
-/// 1.5.5 behaviour pinned: a model named in the URL wins over one the body names, on gemini,
-/// bedrock and the named anthropic surface. RED if the body's model is read.
+
 #[test]
 fn a_url_model_wins_over_the_bodys() {
     for (target, body) in [
@@ -1333,8 +1238,7 @@ fn a_url_model_wins_over_the_bodys() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::a_multipart_body_with_no_model_field_is_a_missing_model`.
-/// 1.5.5 behaviour pinned: a multipart arrival with no `model` part is refused 400 MissingModel.
-/// RED if it is served or refused otherwise.
+
 #[test]
 fn a_multipart_arrival_with_no_model_part_is_a_missing_model() {
     let h = head(&[("content-type", "multipart/form-data; boundary=zz")]);
@@ -1347,10 +1251,7 @@ fn a_multipart_arrival_with_no_model_part_is_a_missing_model() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::the_ladder_floor_catches_every_shape_of_no_model`.
-/// 1.5.5 behaviour pinned: every shape of no model (`{}`, `""`, `null`, `7`, a top-level array, a
-/// JSON string) is refused 400 MissingModel; an EMPTY URL model on a path-model dialect is not
-/// refused at arrival (bedrock `/model//converse` arrives with model ``, resolution's to answer).
-/// RED if any shape is served, or the empty URL model is refused at the door.
+
 #[test]
 fn every_shape_of_no_model_is_the_missing_model_400() {
     for raw in [
@@ -1378,10 +1279,7 @@ fn every_shape_of_no_model_is_the_missing_model_400() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::the_two_handler_misses_carry_the_live_arms_distinct_bytes`.
-/// 1.5.5 behaviour pinned: the protocol miss ("This protocol does not support that operation.")
-/// and the endpoint miss ("This endpoint does not support that operation.") are both 404
-/// `not_found_error`, and in every dialect they render different bytes.
-/// RED if the two collapse into one, or either sentence or status differs.
+
 #[test]
 fn the_two_operation_misses_render_distinct_404s_in_every_dialect() {
     for dialect in [
@@ -1427,10 +1325,7 @@ fn the_two_operation_misses_render_distinct_404s_in_every_dialect() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::the_body_entry_point_answers_the_handler_miss_before_the_parse_miss`.
-/// 1.5.5 behaviour pinned: on the body-model entry point the operation lookup runs BEFORE the
-/// parse, so a request that names no served operation AND carries a malformed body answers the
-/// 404, never the parse 400: a path a dialect claims but resolves no operation for (cohere's
-/// `/v1/chat`), and a path no dialect claims. RED if either answers the 400.
+
 #[test]
 fn a_body_model_arrival_answers_the_operation_miss_before_the_parse_miss() {
     for target in ["/v1/chat", "/nowhere"] {
@@ -1446,9 +1341,7 @@ fn a_body_model_arrival_answers_the_operation_miss_before_the_parse_miss() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::the_path_model_entry_point_answers_the_parse_miss_first`.
-/// 1.5.5 behaviour pinned: the path-model entry point composes the other way round: the body is
-/// parsed first, so a malformed body at a gemini or bedrock URL answers the parse 400.
-/// RED if either answers otherwise.
+
 #[test]
 fn a_path_model_arrival_answers_the_parse_miss_first() {
     for target in ["/v1beta/models/m:generateContent", "/model/m/converse"] {
@@ -1462,9 +1355,7 @@ fn a_path_model_arrival_answers_the_parse_miss_first() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::the_refusal_set_is_three_and_they_do_not_collide` (the decode set).
-/// 1.5.5 behaviour pinned: the decode refusals are the protocol miss 404, the endpoint miss 404
-/// and the missing model 400, three distinct sentences; the missing model is driven from a real
-/// arrival. RED if a status differs or two sentences collide.
+
 #[test]
 fn the_decode_refusal_set_is_two_404s_and_a_400_with_distinct_sentences() {
     let missing = no("/v1/chat/completions", &json(), br#"{"messages":[]}"#);
@@ -1490,10 +1381,7 @@ fn the_decode_refusal_set_is_two_404s_and_a_400_with_distinct_sentences() {
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/decode.rs::the_whole_step_resolves_both_facts_for_a_recorded_request`.
-/// 1.5.5 behaviour pinned: for every recorded request that names a model in its body, the arrival
-/// resolves a non-empty model and a chat handler, and the same model named in a URL (the path-model
-/// spelling) arrives as the same model with a chat handler too. RED if either spelling loses the
-/// model or resolves no handler.
+
 #[test]
 fn every_recorded_body_model_resolves_the_same_model_both_spellings() {
     let mut seen = 0;
@@ -1529,11 +1417,7 @@ fn every_recorded_body_model_resolves_the_same_model_both_spellings() {
 }
 
 /// A HOOK'S REWRITE IS SPLICED INTO THE CALLER'S BYTES, never re-serialized ("hook `rw` edits,
-/// spliced per changed block"). The
-/// body arrives with its members out of sorted order, spaced, with a number spelled `1.50` and an
-/// escaped slash; only `messages` changes, and every other member's bytes reach the far end as the
-/// caller wrote them. RED: the whole body was re-serialized (keys sorted, spacing dropped, `1.50`
-/// read back as `1.5`, the escape normalized).
+
 #[test]
 fn a_hook_rewrite_splices_only_the_members_it_changes() {
     use busbar_plane_llm::exchange::project::apply_rewrite;
@@ -1568,13 +1452,7 @@ fn rewrite_mark(arrived: &mut Arrived, rewrite: &[u8]) -> u32 {
 }
 
 /// A RERANK AND AN EMBEDDING STATE THAT A REWRITE DOES NOT APPLY TO THEM (ruling (A) on busbar
-/// #1709): their content is projected for the gates to screen, but neither has a conversation a
-/// hook's messages could be framed into, so the rewrite is not applied and `project` states
-/// `PROJECT_REWRITE_NOT_APPLICABLE`, which the kernel forwards unmodified and audits. Their bodies
-/// are left exactly as the caller sent them. With no rewrite carried, nothing is stated.
-///
-/// RED before: no mark, and the kernel read the READY answer with no rewritten body as a failed
-/// splice and refused the rerank (500 "request rewrite could not be applied").
+
 #[test]
 fn a_rerank_and_an_embedding_state_that_a_rewrite_does_not_apply() {
     use busbar_contract::abi::plane::PROJECT_REWRITE_NOT_APPLICABLE;
@@ -1610,16 +1488,11 @@ fn a_rerank_and_an_embedding_state_that_a_rewrite_does_not_apply() {
 }
 
 /// A CHAT NEVER STATES THAT A REWRITE DOES NOT APPLY: a chat's rewrite is spliced into its
-/// conversation, and a chat whose rewrite could not be applied (a body with no messages container
-/// to splice it into, a rewrite that does not read) is the kernel's to REFUSE, never to forward
-/// un-rewritten, so the mark stays clear whatever kept the rewrite from applying.
-///
-/// RED: the mark stated for a chat whose rewrite failed to apply, which the kernel would forward
-/// with the caller's un-rewritten body.
+
 #[test]
 fn a_chat_never_states_that_a_rewrite_does_not_apply() {
     use busbar_plane_llm::exchange::project::{apply_rewrite, rewrite_flags};
-    // The plain chat: the rewrite is spliced in.
+
     let mut chat = ok(
         "/v1/chat/completions",
         &json(),
@@ -1632,7 +1505,6 @@ fn a_chat_never_states_that_a_rewrite_does_not_apply() {
     );
     assert_eq!(rewrite_flags(&chat, HOOK_REWRITE, true), 0, "applied");
 
-    // A chat whose rewrite failed to apply: the body has no messages container to splice it into.
     let mut failed = ok(
         "/v1/chat/completions",
         &json(),
@@ -1649,7 +1521,6 @@ fn a_chat_never_states_that_a_rewrite_does_not_apply() {
         "a chat whose rewrite failed to apply states no mark"
     );
 
-    // A chat whose rewrite does not read.
     let mut unread = ok(
         "/v1/chat/completions",
         &json(),

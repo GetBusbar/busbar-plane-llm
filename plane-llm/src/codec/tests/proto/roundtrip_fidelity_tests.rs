@@ -2,36 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! READ → WRITE round-trip fidelity, per protocol, on a RICH body.
-//!
-//! # What this file is, and what it is not
-//!
-//! It is NOT `same_proto_fidelity_tests.rs`. That file tests the byte-verbatim SHORT-CIRCUIT
-//! (`StreamTranslate::new_same_proto`, `proxy/wire.rs`'s `hop_bytes.clone()`), which by construction
-//! cannot lose anything — it never calls a reader or a writer. This file drives the thing that CAN
-//! lose: `read_request` → `write_request` and `read_response` → `write_response` through the neutral
-//! IR, and diffs the result against the original body field by field.
-//!
-//! Until this existed there was NO property/round-trip test at all, only ~30 hand-written per-field
-//! assertions scattered across six `tests/tests.rs` files. That absence is what let a whole class of
-//! loss accumulate unnoticed: **a field that is never read and never emitted has nothing to check
-//! it**, so the writers looked well covered while attachments, usage sub-buckets and citation
-//! offsets were being dropped in silence. A field no test would miss is a field a future edit can
-//! silently drop.
-//!
-//! # The contract: an EXACT allow-list, not a budget
-//!
-//! Each test declares the EXACT set of divergences it accepts, and asserts set EQUALITY. That fails
-//! in BOTH directions on purpose:
-//!
-//! * a NEW divergence fails — the regression this file exists to catch;
-//! * a divergence that DISAPPEARS also fails — so a fix must come here and delete its line, which
-//!   makes the allow-list a live, reviewed inventory of what busbar does not carry rather than a
-//!   stale comment. Every entry carries the reason it is acceptable.
-//!
-//! A same-protocol route never actually reaches these code paths in production (see the
-//! short-circuit above), so nothing here is a live loss. It matters for two reasons: each entry is a
-//! CROSS-protocol loss the moment that field's ingress differs from its egress, and this is the
-//! regression surface if the pristine short-circuit is ever narrowed.
 
 use serde_json::{json, Value};
 
@@ -45,13 +15,7 @@ use serde_json::{json, Value};
 struct Divergence(String);
 
 /// Recursively diff `got` against `want`, appending one [`Divergence`] per differing leaf.
-///
-/// Three classes, deliberately distinguished:
-/// * `LOST`   — a leaf present in the original and absent after the round trip (the loss class);
-/// * `ADDED`  — a leaf the writer synthesized that the original did not carry (a proxy tell, or a
-///   default the target's SDK requires);
-/// * `CHANGED`— a leaf whose value the round trip altered (the CORRUPTION class: a document
-///   stringified into a JSON blob, an internal plan promoted to visible text).
+
 fn diff(path: &str, want: &Value, got: &Value, out: &mut Vec<Divergence>) {
     match (want, got) {
         (Value::Object(w), Value::Object(g)) => {
@@ -143,10 +107,6 @@ fn assert_divergences(proto: &str, dir: &str, want: &Value, got: &Value, allowed
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ANTHROPIC
-// ─────────────────────────────────────────────────────────────────────────────
-
 fn anthropic_request() -> Value {
     json!({
         "model": "claude-sonnet-4",
@@ -175,21 +135,7 @@ fn anthropic_request() -> Value {
 
 #[test]
 fn roundtrip_anthropic_request() {
-    assert_request_roundtrip(
-        "anthropic",
-        anthropic_request(),
-        &[
-            // `model` is set by the ENGINE, not by the reader/writer pair: `proxy/wire.rs` calls
-            // `lane.wire_model()` before the writer runs, because the caller's
-            // model name is a ROUTING key that names a busbar lane, not necessarily a model the
-            // backend knows. A harness that drives the reader/writer directly skips that step, so
-            // the field is absent here and present on every real egress. Not a loss.
-            "LOST model",
-            // Anthropic omits `is_error` when false (the API default); the reader reads the default
-            // and the writer omits it again — a correct default-omission, not a loss. It shows here
-            // only because the fixture states the default explicitly.
-        ],
-    );
+    assert_request_roundtrip("anthropic", anthropic_request(), &["LOST model"]);
 }
 
 #[test]
@@ -216,10 +162,6 @@ fn roundtrip_anthropic_response() {
             }
         }),
         &[
-            // The published `Message` / `Usage` schemas REQUIRE these members; the writer fills
-            // them with the spec's nullable/default shape when the source body omitted them
-            // (`null`, or `service_tier: "standard"`), so a body that left them out gains them on
-            // the way back. Additive and spec-driven; listed so each is a reviewed fact.
             "ADDED container",
             "ADDED content[0].citations",
             "ADDED stop_details",
@@ -232,10 +174,7 @@ fn roundtrip_anthropic_response() {
 }
 
 /// The 5m/1h cache-creation TIER SPLIT survives a round trip.
-///
-/// This is a BILLING-ATTRIBUTION test, not a totals test: the two tiers have DIFFERENT PRICES, so
-/// collapsing them into one `cache_creation_input_tokens` leaves a bill that reconciles in total and
-/// cannot be reconciled per line. Before `IrUsageDetail` there was nowhere to put them.
+
 #[test]
 fn anthropic_cache_tier_split_survives_the_ir() {
     let entry = crate::codec::proto_codec::protocol_for("anthropic").expect("anthropic");
@@ -254,7 +193,7 @@ fn anthropic_cache_tier_split_survives_the_ir() {
     let u = &ir.usage;
     assert_eq!(u.detail.cache_creation_5m_input_tokens, Some(4));
     assert_eq!(u.detail.cache_creation_1h_input_tokens, Some(3));
-    // The tiers are a SLICE of the total, never an addition to it — billing must not change.
+
     assert_eq!(u.cache_creation_input_tokens, Some(7));
     let out = entry
         .writer
@@ -268,10 +207,6 @@ fn anthropic_cache_tier_split_survives_the_ir() {
         3
     );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// OPENAI CHAT
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
 fn roundtrip_openai_request() {
@@ -291,23 +226,12 @@ fn roundtrip_openai_request() {
             "max_tokens": 100,
             "stream": false
         }),
-        &[
-            // `model` is set by the ENGINE, not by the reader/writer pair: `proxy/wire.rs` calls
-            // `lane.wire_model()` before the writer runs, because the caller's
-            // model name is a ROUTING key that names a busbar lane, not necessarily a model the
-            // backend knows. A harness that drives the reader/writer directly skips that step, so
-            // the field is absent here and present on every real egress. Not a loss.
-            "LOST model",
-        ],
+        &["LOST model"],
     );
 }
 
 /// An OpenAI `input_audio` / `file` attachment survives read → write instead of becoming
-/// `{"type":"text","text":""}`.
-///
-/// The regression guard for the defect that most contradicted the losslessness claim: before
-/// `IrBlock::Media`, BOTH of these parts degraded to an EMPTY TEXT BLOCK with no warn — the caller's
-/// audio never reached the model and nothing in the logs said why.
+
 #[test]
 fn openai_attachments_survive_the_ir_rather_than_becoming_empty_text() {
     let entry = crate::codec::proto_codec::protocol_for("openai").expect("openai");
@@ -369,7 +293,7 @@ fn openai_attachments_survive_the_ir_rather_than_becoming_empty_text() {
     assert_eq!(parts[1]["type"], "file");
     assert_eq!(parts[1]["file"]["filename"], "spec.pdf");
     assert_eq!(parts[2]["file"]["file_id"], "file-1");
-    // The failure mode being guarded: NOT one of these may be an empty text part.
+
     for p in parts {
         assert_ne!(
             p["type"], "text",
@@ -407,17 +331,8 @@ fn openai_reasoning_tokens_reach_the_ir() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GEMINI
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// A Gemini `inlineData` of a NON-image mime type must NOT become an `IrBlock::Image`.
-///
-/// The live-400 guard. `proto/gemini/reader.rs` used to map EVERY `inlineData` onto an Image
-/// regardless of mime, and the Anthropic writer emitted `media_type` verbatim and unvalidated — so
-/// `{"type":"image","source":{"type":"base64","media_type":"audio/mp3"}}` reached Anthropic, which
-/// accepts only `image/{jpeg,png,gif,webp}` and rejects the request. That breaks the half of the
-/// losslessness definition that says the backend never rejects the request.
+
 #[test]
 fn gemini_non_image_inline_data_is_not_an_image_block() {
     let entry = crate::codec::proto_codec::protocol_for("gemini").expect("gemini");
@@ -460,7 +375,6 @@ fn gemini_non_image_inline_data_is_not_an_image_block() {
         blocks[2]
     );
 
-    // ...and the Anthropic egress must not put any of it on the wire as an `image`.
     let anthropic = crate::codec::proto_codec::protocol_for("anthropic").expect("anthropic");
     let out = anthropic
         .writer
@@ -476,7 +390,7 @@ fn gemini_non_image_inline_data_is_not_an_image_block() {
             );
         }
     }
-    // The PDF has an Anthropic home (`document`) and must have taken it.
+
     assert!(
         parts.iter().any(|p| p["type"] == "document"),
         "a PDF attachment must reach Anthropic as a native `document` block, got {out}"
@@ -484,9 +398,7 @@ fn gemini_non_image_inline_data_is_not_an_image_block() {
 }
 
 /// A non-image attachment reaches a Gemini backend as native `inlineData` rather than vanishing.
-///
-/// Gemini's attachment slots are mime-GENERIC, which is why the attachment gap was never an
-/// untranslatable-concept problem: the target had a slot the whole time.
+
 #[test]
 fn attachments_reach_gemini_as_inline_data() {
     let openai = crate::codec::proto_codec::protocol_for("openai").expect("openai");
@@ -507,10 +419,6 @@ fn attachments_reach_gemini_as_inline_data() {
     assert_eq!(parts[0]["inlineData"]["mimeType"], "audio/wav");
     assert_eq!(parts[0]["inlineData"]["data"], "AAA");
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// BEDROCK
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
 fn roundtrip_bedrock_request() {
@@ -533,11 +441,7 @@ fn roundtrip_bedrock_request() {
 }
 
 /// A Bedrock `document` / `video` block reaches the IR (cross-protocol) AND is re-emitted verbatim
-/// from the positional stash (same-protocol) — without being emitted twice.
-///
-/// The double-emit is the hazard the suppression in `bedrock/writer.rs` exists for: the reader now
-/// both parks the raw block and models it, so a writer that honored both would send the attachment
-/// upstream twice.
+
 #[test]
 fn bedrock_document_is_modelled_without_double_emitting() {
     let entry = crate::codec::proto_codec::protocol_for("bedrock").expect("bedrock");
@@ -570,16 +474,8 @@ fn bedrock_document_is_modelled_without_double_emitting() {
     assert_eq!(content[1]["document"]["name"], "spec");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// COHERE
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Cohere's `message.tool_plan` must NOT be promoted into visible assistant text.
-///
-/// This is CONTENT INJECTION, not loss: `tool_plan` is the model's INTERNAL pre-tool-call plan, and
-/// reading it into a leading `IrBlock::Text` made every cross-protocol client render it as the
-/// answer's first paragraph — text the model never intended to show. It belongs in the IR's
-/// reasoning carrier, which the Cohere writer emits as a `thinking` content part (COH-08).
+
 #[test]
 fn cohere_tool_plan_is_reasoning_not_visible_text() {
     let entry = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
@@ -614,10 +510,6 @@ fn cohere_tool_plan_is_reasoning_not_visible_text() {
          intend to show"
     );
 
-    // Written back as a Cohere RESPONSE, reasoning is a `{type:"thinking"}` content part ahead of
-    // the answer — never `message.tool_plan`, and never visible text. (A
-    // Cohere -> Cohere answer is relayed verbatim in production; this pins the writer's contract
-    // for a Thinking block, whichever dialect read it.)
     let out = entry
         .writer
         .write_response(crate::codec::test_host::HOST, &ir);
@@ -632,7 +524,6 @@ fn cohere_tool_plan_is_reasoning_not_visible_text() {
     );
     assert_eq!(out["message"]["content"][1]["text"], "hi");
 
-    // Cross-protocol: an Anthropic client sees it as a `thinking` block, not as the answer.
     let anthropic = crate::codec::proto_codec::protocol_for("anthropic").expect("anthropic");
     let a = anthropic
         .writer
@@ -642,9 +533,7 @@ fn cohere_tool_plan_is_reasoning_not_visible_text() {
 }
 
 /// A Cohere tool-result `document` content part must keep its STRUCTURE instead of being stringified
-/// into a literal JSON blob the model reads as escaped syntax: its JSON `data` reaches the IR as the
-/// tool-output `Json` block (the ANT-17 follow-up — it rode the cohere `Vendor` escape, which every
-/// foreign writer dropped), so every target receives the tool's output.
+
 #[test]
 fn cohere_tool_result_document_is_not_stringified() {
     let entry = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
@@ -688,7 +577,7 @@ fn cohere_tool_result_document_is_not_stringified() {
 }
 
 /// Cohere's `billed_units.search_units` is a SEPARATELY BILLED unit that no token field can carry —
-/// its loss is invisible in a token total that reconciles perfectly.
+
 #[test]
 fn cohere_search_units_reach_the_ir() {
     let entry = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
@@ -713,10 +602,6 @@ fn cohere_search_units_reach_the_ir() {
         .write_response(crate::codec::test_host::HOST, &ir);
     assert_eq!(out["usage"]["billed_units"]["search_units"], 2);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// RESPONSES
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// A Responses `input_file` survives read → write instead of becoming an empty `input_text` part.
 #[test]
@@ -749,10 +634,7 @@ fn responses_input_file_survives_the_ir() {
     let parts = out["input"][0]["content"].as_array().expect("content");
     assert_eq!(parts[1]["type"], "input_file");
     assert_eq!(parts[1]["filename"], "spec.pdf");
-    // Pin the WHOLE data URI, payload included. `starts_with` checked only the header, so a base64
-    // re-encode bug that emitted the prefix with an empty or truncated payload — the PDF reaching
-    // the model as zero bytes — satisfied an assertion whose message says "the file bytes must
-    // round-trip". Every sibling attachment test in this file pins its exact payload.
+
     assert_eq!(
         parts[1]["file_data"].as_str(),
         Some("data:application/pdf;base64,JVBERi0="),
@@ -784,13 +666,7 @@ fn responses_reasoning_tokens_are_not_zeroed() {
 }
 
 /// Gemini's `thoughtsTokenCount` is the reasoning sub-bucket, and recording it must not move any
-/// total.
-///
-/// The two halves are separately load-bearing. The FOLD (thinking tokens counted inside
-/// `output_tokens`) is what makes the bill right and predates this pass; the ATTRIBUTION is what
-/// lets an OpenAI-dialect caller ask "how many of those were thinking?" instead of receiving a hard
-/// `0`. Asserting them together is what stops a future edit from "fixing" the attribution by
-/// double-counting.
+
 #[test]
 fn gemini_thoughts_token_count_is_the_reasoning_sub_bucket() {
     let entry = crate::codec::proto_codec::protocol_for("gemini").expect("gemini");
@@ -818,10 +694,7 @@ fn gemini_thoughts_token_count_is_the_reasoning_sub_bucket() {
 }
 
 /// A streamed citation reaches an OpenAI-ingress client instead of vanishing.
-///
-/// The asymmetry this closes is the worst shape of the loss: the SAME request against the SAME
-/// backend returned sources at `stream:false` and no sources at `stream:true`, and nothing about
-/// the request explained the difference.
+
 #[test]
 fn streamed_citations_reach_openai_and_cohere_clients() {
     let citation = crate::codec::ir::IrCitation {
@@ -853,8 +726,7 @@ fn streamed_citations_reach_openai_and_cohere_clients() {
     assert_eq!(ann["url_citation"]["start_index"], 0);
 
     let cohere = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
-    // Cohere's offsets address the concatenated emitted answer, so the direct writer must
-    // receive the text anchor before a citation delta, as the real reader supplies it.
+
     cohere.writer.write_response_event(
         crate::codec::test_host::HOST,
         &crate::codec::ir::IrStreamEvent::BlockDelta {
@@ -867,10 +739,7 @@ fn streamed_citations_reach_openai_and_cohere_clients() {
         .write_response_event(crate::codec::test_host::HOST, &ev)
         .expect("Cohere v2 has a native `citation-start` frame");
     assert_eq!(frame["type"], "citation-start");
-    // WIRE SHAPE (docs.cohere.com/v2/docs/streaming): `delta.message.citations` on a `citation-start`
-    // event is a SINGLE Citation OBJECT, NOT an array. The reference event is
-    // `CitationStartEventDeltaMessage(citations=Citation(...))`. A native Cohere v2 SDK deserializes
-    // this field into one `Citation`, so an array body would be a decode error (and a proxy tell).
+
     let citations = &frame["delta"]["message"]["citations"];
     assert!(
         citations.is_object(),
@@ -891,12 +760,7 @@ fn streamed_citations_reach_openai_and_cohere_clients() {
 }
 
 /// A Cohere backend's grounding citations reach a foreign-dialect client.
-///
-/// The Cohere reader hardcoded `citations: Vec::new()` at every construction site while the Cohere
-/// WRITER emitted citations — so a citation INTO Cohere worked and a citation OUT of Cohere
-/// vanished. That asymmetry is the tell that it was a missing reader rather than a translation
-/// limit: `IrCitation` already existed and both sides already spoke it. A customer running Cohere
-/// RAG behind a client whose wire represents the source should retain its provenance.
+
 #[test]
 fn cohere_response_citations_reach_a_foreign_client() {
     let cohere = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
@@ -919,8 +783,7 @@ fn cohere_response_citations_reach_a_foreign_client() {
             }),
         )
         .expect("read");
-    // A grounded answer leads with its hosted web-search record (DF-MAP item 2); the spans
-    // ride the text block's citations.
+
     let Some(crate::codec::ir::IrBlock::Text { citations, .. }) = ir
         .content
         .iter()
@@ -933,7 +796,6 @@ fn cohere_response_citations_reach_a_foreign_client() {
     assert_eq!(citations[0].end_index, Some(5));
     assert_eq!(citations[0].url.as_deref(), Some("https://atlas"));
 
-    // Chat can represent the answer's URL and span without native Anthropic encrypted state.
     let openai = crate::codec::proto_codec::protocol_for("openai").expect("openai");
     let out = openai
         .writer
@@ -945,7 +807,6 @@ fn cohere_response_citations_reach_a_foreign_client() {
     assert_eq!(source["end_index"], 5, "{out}");
     assert_unrepresentable_anthropic_citation_is_audited(&ir, "cohere");
 
-    // Same-protocol: the source object round-trips verbatim out of `raw`.
     let back = cohere
         .writer
         .write_response(crate::codec::test_host::HOST, &ir);
@@ -956,26 +817,8 @@ fn cohere_response_citations_reach_a_foreign_client() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 1.6.0 GAP CLOSURES — see docs/protocols.md
-//
-// Every test below pins a construct that USED to be dropped on a cross-protocol hop. Each one
-// asserts the value reaches THE OTHER SIDE (a foreign protocol's wire body or wire frame), not
-// merely that the IR held it: "the IR carries it" is exactly the assertion that would have passed
-// while the writers still threw it away.
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// An Anthropic `search_result` block's retrieved passages reach a foreign client.
-///
-/// It used to fall into the reader's degrade-to-empty-Text arm, so a caller who paid to retrieve and
-/// attach RAG passages got them replaced with `{"type":"text","text":""}` on every cross-protocol
-/// egress and the model answered from its own memory instead. Unlike a `document`, the payload is
-/// ENTIRELY TEXT by Anthropic's own schema, so there is nothing untranslatable about it — every
-/// protocol in the matrix can carry text.
-///
-/// Both directions are asserted: the passages must cross, AND the same-protocol Anthropic re-emit
-/// must still be byte-exact (the raw block is parked in the unmodeled sentinel, so modelling it here
-/// must not have cost the verbatim round trip).
+
 #[test]
 fn anthropic_search_result_reaches_a_foreign_client() {
     let anthropic = crate::codec::proto_codec::protocol_for("anthropic").expect("anthropic");
@@ -1018,7 +861,6 @@ fn anthropic_search_result_reaches_a_foreign_client() {
         "the provenance must ride as a citation so a target that models citations shows it"
     );
 
-    // CROSS-PROTOCOL, the direction that was broken: an OpenAI backend must receive the passage.
     let openai = crate::codec::proto_codec::protocol_for("openai").expect("openai");
     let out = openai
         .writer
@@ -1029,7 +871,6 @@ fn anthropic_search_result_reaches_a_foreign_client() {
         "the passage must reach an OpenAI backend: {out}"
     );
 
-    // ... and a Gemini backend, whose content shape is different again.
     let gemini = crate::codec::proto_codec::protocol_for("gemini").expect("gemini");
     let out = gemini
         .writer
@@ -1040,8 +881,6 @@ fn anthropic_search_result_reaches_a_foreign_client() {
         "the passage must reach a Gemini backend: {out}"
     );
 
-    // SAME-PROTOCOL: the original block re-emits verbatim out of the unmodeled sentinel, so nothing
-    // about modelling it cross-protocol degraded the Anthropic→Anthropic path.
     let back = anthropic
         .writer
         .write_request(crate::codec::test_host::HOST, &ir);
@@ -1052,11 +891,7 @@ fn anthropic_search_result_reaches_a_foreign_client() {
 }
 
 /// A streamed citation reaches a BEDROCK-ingress client.
-///
-/// The third of the three writers that suppressed `CitationsDelta`. Bedrock ConverseStream's
-/// `ContentBlockDelta` union DOES have a `citation` member, so the suppression was not a protocol
-/// limit — it produced the same "sources at `stream:false`, none at `stream:true`" split the OpenAI
-/// and Cohere writers had.
+
 #[test]
 fn streamed_citations_reach_a_bedrock_client() {
     let ev = crate::codec::ir::IrStreamEvent::BlockDelta {
@@ -1091,10 +926,7 @@ fn streamed_citations_reach_a_bedrock_client() {
 }
 
 /// A page-located citation must not be mislabelled as a character offset on a Bedrock egress.
-///
-/// `IrCitation.start_index` is interpreted PER `kind`; for Anthropic's `page_location` it is a page
-/// NUMBER. Writing `page 7` into `documentChar.start` would be a confident lie rather than a loss,
-/// which is worse — so those citations cross with title and quoted text and no location.
+
 #[test]
 fn bedrock_citation_omits_a_location_it_cannot_honestly_fill() {
     let ev = crate::codec::ir::IrStreamEvent::BlockDelta {
@@ -1128,11 +960,7 @@ fn bedrock_citation_omits_a_location_it_cannot_honestly_fill() {
 }
 
 /// A Gemini Google-Search-grounded answer's SOURCES reach a foreign client.
-///
-/// `groundingMetadata` — not `citationMetadata` — is where a grounded Gemini answer puts its
-/// provenance, and nothing read it. A customer could not tell a grounded reply from a hallucinated
-/// one after a hop. This is not a vendor-specific concept: every protocol in the matrix models a
-/// citation.
+
 #[test]
 fn gemini_grounding_metadata_reaches_a_foreign_client() {
     let gemini = crate::codec::proto_codec::protocol_for("gemini").expect("gemini");
@@ -1153,8 +981,7 @@ fn gemini_grounding_metadata_reaches_a_foreign_client() {
             "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 4, "totalTokenCount": 7}
         }))
         .expect("read");
-    // A grounded answer leads with its hosted web-search record (DF-MAP item 2); the spans
-    // ride the text block's citations.
+
     let Some(crate::codec::ir::IrBlock::Text { citations, .. }) = ir
         .content
         .iter()
@@ -1166,20 +993,16 @@ fn gemini_grounding_metadata_reaches_a_foreign_client() {
     assert_eq!(citations[0].url.as_deref(), Some("https://atlas"));
     assert_eq!(citations[0].title.as_deref(), Some("Atlas"));
 
-    // Chat carries the URL/span as an annotation. Anthropic needs an encrypted index that the
-    // Gemini source never supplied, so that separate projection must report the loss.
     let openai = crate::codec::proto_codec::protocol_for("openai").expect("openai");
     let out = openai
         .writer
         .write_response(crate::codec::test_host::HOST, &ir);
-    // The Chat wire shape is the NESTED one: `ChatCompletionResponseMessage.annotations` items are
-    // `{type, url_citation:{url,title,start_index,end_index}}`.
+
     assert_eq!(
         out["choices"][0]["message"]["annotations"][0]["url_citation"]["url"], "https://atlas",
         "the grounding source must reach an OpenAI client: {out}"
     );
-    // And it must be READABLE back: what the Chat writer emits is what the Chat reader parses, so
-    // the source survives a further hop instead of being dropped on the way back in.
+
     let recovered = crate::codec::url_citation_wire::read_url_annotations(
         &out["choices"][0]["message"]["annotations"],
     );
@@ -1224,9 +1047,7 @@ fn assert_unrepresentable_anthropic_citation_is_audited(
 }
 
 /// A grounded answer with sources but NO support spans still carries its sources.
-///
-/// Google omits `groundingSupports` on some grounded replies. Requiring them would have silently
-/// re-created the exact gap this closes for that subset of responses.
+
 #[test]
 fn gemini_grounding_chunks_cross_without_support_spans() {
     let gemini = crate::codec::proto_codec::protocol_for("gemini").expect("gemini");
@@ -1246,8 +1067,7 @@ fn gemini_grounding_chunks_cross_without_support_spans() {
             }),
         )
         .expect("read");
-    // A grounded answer leads with its hosted web-search record (DF-MAP item 2); the spans
-    // ride the text block's citations.
+
     let Some(crate::codec::ir::IrBlock::Text { citations, .. }) = ir
         .content
         .iter()
@@ -1260,16 +1080,12 @@ fn gemini_grounding_chunks_cross_without_support_spans() {
 }
 
 /// `tools[].strict` crosses the OpenAI Chat ↔ Responses pair, in both directions.
-///
-/// `strict: true` is a behavioural guarantee (the model's arguments WILL conform to the schema), so
-/// dropping it silently turned validation off while the request still looked accepted. The two
-/// dialects that model it must carry it between themselves.
+
 #[test]
 fn tool_strict_crosses_the_openai_responses_pair() {
     let openai = crate::codec::proto_codec::protocol_for("openai").expect("openai");
     let responses = crate::codec::proto_codec::protocol_for("responses").expect("responses");
 
-    // Chat → Responses.
     let ir = openai
         .reader
         .read_request(&json!({
@@ -1286,7 +1102,6 @@ fn tool_strict_crosses_the_openai_responses_pair() {
         .write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(out["tools"][0]["strict"], true, "{out}");
 
-    // Responses → Chat (the flat shape back into the nested one).
     let ir = responses
         .reader
         .read_request(&json!({
@@ -1302,7 +1117,6 @@ fn tool_strict_crosses_the_openai_responses_pair() {
         .write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(out["tools"][0]["function"]["strict"], true, "{out}");
 
-    // A caller who said NOTHING must not acquire an invented `strict: false`.
     let ir = openai
         .reader
         .read_request(&json!({
@@ -1322,11 +1136,7 @@ fn tool_strict_crosses_the_openai_responses_pair() {
 }
 
 /// OpenAI `messages[].name` survives a same-protocol re-serialize, and never leaks its sentinel.
-///
-/// A pool-alias route rewrites the model and therefore re-serializes rather than forwarding the
-/// caller's bytes — which stripped `name` from every message. No other protocol models a participant
-/// name, so `extra` is the correct scope: it survives here and is NAMED (not silently cleared) at
-/// the cross-protocol seam.
+
 #[test]
 fn openai_message_name_survives_a_same_protocol_reserialize() {
     let openai = crate::codec::proto_codec::protocol_for("openai").expect("openai");
@@ -1357,10 +1167,7 @@ fn openai_message_name_survives_a_same_protocol_reserialize() {
 }
 
 /// Usage sub-buckets survive on the STREAMING path, not only the buffered one.
-///
-/// The buffered path learned `IrUsageDetail` and the streaming readers/writers kept defaulting it
-/// away, so the SAME request reported a reasoning-token count at `stream:false` and a hard `0` at
-/// `stream:true` — the identical asymmetry that made the streamed-citation gap the worst-shaped one.
+
 #[test]
 fn streamed_usage_sub_buckets_are_not_zeroed() {
     let openai = crate::codec::proto_codec::protocol_for("openai").expect("openai");
@@ -1389,7 +1196,6 @@ fn streamed_usage_sub_buckets_are_not_zeroed() {
         "the streamed usage chunk carries the same sub-bucket the buffered response does"
     );
 
-    // And it reaches the other side: an OpenAI-ingress client's terminal chunk carries it natively.
     let (_, chunk) = openai
         .writer
         .write_response_event(
@@ -1446,7 +1252,6 @@ fn streamed_anthropic_cache_tiers_survive() {
     assert_eq!(usage.detail.cache_creation_5m_input_tokens, Some(10));
     assert_eq!(usage.detail.cache_creation_1h_input_tokens, Some(20));
 
-    // The tier split reaches an Anthropic-ingress client's `message_delta`.
     let (_, frame) = anthropic
         .writer
         .write_response_event(
@@ -1480,9 +1285,7 @@ fn streamed_anthropic_cache_tiers_survive() {
 }
 
 /// Cohere's separately-billed `search_units` survive a STREAM.
-///
-/// `search_units` is not a token count at all, so its loss is invisible in a token total that
-/// reconciles perfectly — which is exactly why it needs a test rather than a reviewer.
+
 #[test]
 fn streamed_cohere_search_units_survive() {
     let cohere = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
@@ -1535,10 +1338,7 @@ fn streamed_cohere_search_units_survive() {
 }
 
 /// A BUFFERED response's citations reach a Bedrock client too, not only a streamed one.
-///
-/// The buffered twin of `streamed_citations_reach_a_bedrock_client`. Closing only the streaming half
-/// would have left the identical asymmetry the streaming gap was, merely inverted: sources when the
-/// caller streams and none when it does not.
+
 #[test]
 fn buffered_citations_reach_a_bedrock_client() {
     let cohere = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
@@ -1582,10 +1382,7 @@ fn buffered_citations_reach_a_bedrock_client() {
 }
 
 /// A text block with NO citations keeps the plain `{"text": …}` shape.
-///
-/// `citationsContent` replaces the `text` member rather than sitting beside it, so emitting it
-/// unconditionally would reshape every ordinary Bedrock response — a wire change for every consumer
-/// in exchange for nothing.
+
 #[test]
 fn bedrock_uncited_text_keeps_the_plain_shape() {
     let bedrock = crate::codec::proto_codec::protocol_for("bedrock").expect("bedrock");

@@ -1,7 +1,6 @@
 use super::*;
 use crate::codec::ir::{IrBlockMeta, IrDelta, IrRole, IrStreamEvent};
 
-// read_response decode - Gemini generateContent response with text + functionCall
 #[test]
 fn test_gemini_read_response_decode() {
     let j = serde_json::json!({
@@ -26,7 +25,6 @@ fn test_gemini_read_response_decode() {
         .read_response(crate::codec::test_host::HOST, &j)
         .expect("should parse");
 
-    // Assert content: Text + ToolUse
     assert_eq!(resp.content.len(), 2);
 
     if let crate::codec::ir::IrBlock::Text { text, .. } = &resp.content[0] {
@@ -53,22 +51,15 @@ fn test_gemini_read_response_decode() {
         panic!("expected ToolUse block");
     }
 
-    // Assert stop_reason: Gemini has no TOOL_USE finishReason — a tool-call turn ends with STOP.
-    // Because this response carries a ToolUse block, the reader promotes the mapped `end_turn` →
-    // the canonical `tool_use` (matching every other protocol's reader and keeping cross-protocol
-    // egress correct). The Gemini writer maps `tool_use` back to STOP, so same-protocol stays
-    // lossless.
     assert_eq!(
         resp.stop_reason,
         Some(crate::codec::ir::IrStopReason::ToolUse)
     );
 
-    // Assert usage: promptTokenCount→input_tokens, candidatesTokenCount→output_tokens
     assert_eq!(resp.usage.input_tokens, 15);
     assert_eq!(resp.usage.output_tokens, 8);
 }
 
-// whole-response round-trip - write_response(read_response(j)) == j
 #[test]
 fn test_gemini_read_write_response_roundtrip() {
     let j = serde_json::json!({
@@ -93,18 +84,9 @@ fn test_gemini_read_write_response_roundtrip() {
         .expect("should parse");
     let roundtrip = writer.write_response(crate::codec::test_host::HOST, &ir);
 
-    // Round-trip must be byte-identical for canonical text-only fixture
     assert_eq!(roundtrip, j, "whole-response round-trip must be identical");
 }
 
-// CLASS regression companion to the cross-protocol seam fix
-// (proxy engine::test_cross_protocol_bedrock_to_gemini_carries_total_tokens_and_response_id):
-// the SAME-protocol minimal roundtrip must stay LOSSLESS. A native Gemini body that legitimately
-// omits `responseId` and any timestamp reads into an IR with `id`/`created`/`model` all `None`
-// (the cross-protocol boundary signal is NOT set, because this path never crosses the seam — the
-// seam only stamps a synthesized `created` on a cross-protocol hop). The writer must therefore
-// emit NEITHER a synthesized `responseId` NOR `usageMetadata.totalTokenCount`, so a Gemini→Gemini
-// read→write is byte-identical and a minimal native body never gains fabricated identity.
 #[test]
 fn test_gemini_same_protocol_minimal_response_omits_synthesized_identity() {
     let j = serde_json::json!({
@@ -123,7 +105,7 @@ fn test_gemini_same_protocol_minimal_response_omits_synthesized_identity() {
     let ir = reader
         .read_response(crate::codec::test_host::HOST, &j)
         .expect("should parse");
-    // The minimal native body carries no identity signal at all.
+
     assert_eq!(ir.id, None, "no responseId in the minimal native body");
     assert_eq!(ir.created, None, "Gemini bodies carry no timestamp");
     assert_eq!(ir.model, None, "no modelVersion in the minimal body");
@@ -137,18 +119,13 @@ fn test_gemini_same_protocol_minimal_response_omits_synthesized_identity() {
         out["usageMetadata"].get("totalTokenCount").is_none(),
         "minimal same-protocol roundtrip must NOT inject totalTokenCount: {out}"
     );
-    // And the whole body stays byte-identical to the native input.
+
     assert_eq!(
         out, j,
         "Gemini→Gemini minimal response roundtrip must remain byte-identical"
     );
 }
 
-// Regression: the trait-default `read_response_event` (singular) must NOT be a dead `None`
-// stub for protocols whose live path is the plural fan-out. Before this fix Gemini/Cohere/
-// Responses/Bedrock each overrode the singular with `None`, silently swallowing any event a
-// generic caller passed through it. The shared default now delegates to `read_response_events`
-// over fresh state and surfaces the FIRST IR event. Pin that on Gemini as the class witness.
 #[test]
 fn test_singular_read_response_event_delegates_for_fanout_protocols() {
     let reader = GeminiReader;
@@ -158,8 +135,7 @@ fn test_singular_read_response_event_delegates_for_fanout_protocols() {
             "finishReason": null
         }]
     });
-    // Singular path (trait default) must yield the same first event the fan-out produces,
-    // never a silent None.
+
     let singular = reader.read_response_event(crate::codec::test_host::HOST, "", &chunk);
     let mut st = crate::codec::ir::StreamDecodeState::default();
     let plural_first = reader
@@ -174,8 +150,7 @@ fn test_singular_read_response_event_delegates_for_fanout_protocols() {
         singular, plural_first,
         "default singular must equal the fan-out's first event"
     );
-    // The default holds for any input (incl. an empty object): singular tracks the fan-out's
-    // first event exactly, and never panics.
+
     let empty = serde_json::json!({});
     let mut st2 = crate::codec::ir::StreamDecodeState::default();
     assert_eq!(
@@ -188,13 +163,11 @@ fn test_singular_read_response_event_delegates_for_fanout_protocols() {
     );
 }
 
-// stream fan-out - feed Gemini chunk sequence through StreamDecodeState
 #[test]
 fn test_gemini_read_response_events_stream_fanout() {
     let reader = GeminiReader;
     let mut state = crate::codec::ir::StreamDecodeState::default();
 
-    // Chunk 1: text delta (role+text)
     let chunk1 = serde_json::json!({
         "candidates": [{
             "content": {"role": "model", "parts": [{"text": "Hello"}]},
@@ -202,7 +175,6 @@ fn test_gemini_read_response_events_stream_fanout() {
         }]
     });
 
-    // Chunk 2: more text delta
     let chunk2 = serde_json::json!({
         "candidates": [{
             "content": {"role": "model", "parts": [{"text": ", world!"}]},
@@ -210,7 +182,6 @@ fn test_gemini_read_response_events_stream_fanout() {
         }]
     });
 
-    // Chunk 3: finish with STOP + usageMetadata
     let chunk3 = serde_json::json!({
         "candidates": [{
             "content": {"role": "model", "parts": []},
@@ -233,7 +204,6 @@ fn test_gemini_read_response_events_stream_fanout() {
         ));
     }
 
-    // Assert exact event sequence: MessageStart, BlockStart{0,Text}, BlockDelta×2, BlockStop{0}, MessageDelta{end_turn,usage}, MessageStop
     assert_eq!(events.len(), 7);
 
     assert!(matches!(
@@ -292,7 +262,6 @@ fn test_gemini_read_response_events_stream_fanout() {
     assert!(matches!(events[6], IrStreamEvent::MessageStop));
 }
 
-// write_response_event - BlockDelta TextDelta → candidates[0].content.parts[0].text
 #[test]
 fn test_gemini_write_response_event_text_delta() {
     let writer = GeminiWriter;
@@ -307,7 +276,6 @@ fn test_gemini_write_response_event_text_delta() {
 
     let (_, chunk) = result.unwrap();
 
-    // Assert structure: candidates[0].content.parts[0].text == "hi"
     let candidates = chunk.get("candidates").and_then(|c| c.as_array()).unwrap();
     assert_eq!(candidates.len(), 1);
 
@@ -323,7 +291,6 @@ fn test_gemini_write_response_event_text_delta() {
     assert_eq!(part.get("text").and_then(|t| t.as_str()), Some("hi"));
 }
 
-// write_response_event - MessageDelta{end_turn} → finishReason "STOP"
 #[test]
 fn test_gemini_write_response_event_message_delta() {
     let writer = GeminiWriter;
@@ -346,7 +313,6 @@ fn test_gemini_write_response_event_message_delta() {
 
     let (_, chunk) = result.unwrap();
 
-    // Assert finishReason == "STOP"
     let candidates = chunk.get("candidates").and_then(|c| c.as_array()).unwrap();
     assert_eq!(candidates.len(), 1);
 
@@ -356,9 +322,6 @@ fn test_gemini_write_response_event_message_delta() {
         Some("STOP")
     );
 
-    // Assert usageMetadata carries the EXACT counts off the event. `is_some()` alone was satisfied
-    // by `"usageMetadata": {}`, by zeroed counts, and by prompt/candidate being swapped — the read
-    // path pins these exactly, so the write path must too or a streamed Gemini call mis-bills.
     let usage = chunk.get("usageMetadata").expect("usageMetadata emitted");
     assert_eq!(
         usage.get("promptTokenCount").and_then(|v| v.as_u64()),
@@ -372,13 +335,11 @@ fn test_gemini_write_response_event_message_delta() {
     );
 }
 
-// stream fan-out with functionCall - ToolUse via functionCall
 #[test]
 fn test_gemini_read_response_events_function_call() {
     let reader = GeminiReader;
     let mut state = crate::codec::ir::StreamDecodeState::default();
 
-    // Chunk with text delta
     let chunk1 = serde_json::json!({
         "candidates": [{
             "content": {"role": "model", "parts": [{"text": "Let me check"}]},
@@ -386,7 +347,6 @@ fn test_gemini_read_response_events_function_call() {
         }]
     });
 
-    // Chunk with functionCall (Gemini sends whole args, not streamed)
     let chunk2 = serde_json::json!({
         "candidates": [{
             "content": {
@@ -400,7 +360,6 @@ fn test_gemini_read_response_events_function_call() {
         }]
     });
 
-    // Chunk with finishReason STOP
     let chunk3 = serde_json::json!({
         "candidates": [{
             "content": {"role": "model", "parts": []},
@@ -423,10 +382,8 @@ fn test_gemini_read_response_events_function_call() {
         ));
     }
 
-    // Verify we have MessageStart + BlockStart{Text} + text delta + ToolUse block + tool args delta + blocks stop + MessageDelta + MessageStop
     assert!(events.len() >= 6);
 
-    // Find the ToolUse-related events
     let mut found_tool_block_start = false;
     let mut found_tool_args_delta = false;
 
@@ -446,7 +403,6 @@ fn test_gemini_read_response_events_function_call() {
                 delta: IrDelta::InputJsonDelta(json_str),
                 ..
             } => {
-                // Parse and check args contain location
                 if let Ok(args) = serde_json::from_str::<serde_json::Value>(json_str) {
                     if args.get("location").is_some() {
                         found_tool_args_delta = true;
@@ -464,10 +420,8 @@ fn test_gemini_read_response_events_function_call() {
     );
 }
 
-// --- 1.0 streaming-conformance regression tests (cross-protocol seam) ----------------------
-
 /// Helper: split a concatenated OpenAI SSE byte stream into its per-frame JSON chunk objects
-/// (skipping the `[DONE]` sentinel and any keepalive). Mirrors `parse_sse_frame`'s framing.
+
 fn openai_sse_chunks(bytes: &[u8]) -> Vec<serde_json::Value> {
     let text = std::str::from_utf8(bytes).expect("openai SSE is utf-8");
     let mut chunks = Vec::new();
@@ -487,10 +441,7 @@ fn openai_sse_chunks(bytes: &[u8]) -> Vec<serde_json::Value> {
 }
 
 /// OpenAI per-chunk identity: the real OpenAI API repeats the top-level
-/// `id`/`created`/`model` on EVERY `chat.completion.chunk`, not just the opening role chunk. An
-/// Anthropic egress stream translated to an OpenAI ingress must therefore carry the SAME
-/// `id`/`created`/`model` on every emitted chunk — a single stream identity, never a fresh id per
-/// chunk and never an identity-less later chunk (a detectable shape divergence).
+
 #[test]
 fn test_openai_ingress_per_chunk_identity_repeated() {
     let mut t = StreamTranslate::new("openai", "anthropic").expect("openai ingress translator");
@@ -514,13 +465,13 @@ fn test_openai_ingress_per_chunk_identity_repeated() {
         "expected multiple chunks; got {}",
         chunks.len()
     );
-    // Every chunk is a chat.completion.chunk carrying the SAME id/created/model.
+
     let first_id = chunks[0]
         .get("id")
         .and_then(|v| v.as_str())
         .expect("first chunk has an id")
         .to_string();
-    // Synthesized (cross-protocol) id must be a native chatcmpl- shape, NOT the foreign msg_.
+
     assert!(
         first_id.starts_with("chatcmpl-"),
         "cross-protocol id must be a native chatcmpl- id; got {first_id}"
@@ -549,7 +500,7 @@ fn test_openai_ingress_per_chunk_identity_repeated() {
             "chunk {i} must repeat the stream model; got {c}"
         );
     }
-    // The foreign backend id must never leak to the OpenAI client.
+
     assert!(
         !raw.windows(b"msg_backend".len())
             .any(|w| w == b"msg_backend"),
@@ -558,23 +509,17 @@ fn test_openai_ingress_per_chunk_identity_repeated() {
 }
 
 /// The OpenAI ingress chunk-identity replay (behind the `StreamFraming`
-/// vtable, in `proto/openai_chat.rs`) skips any
-/// frame that is not a `chat.completion.chunk` (no `object` field). The in-band ERROR envelope the
-/// OpenAI writer emits mid-stream (`{"error":{...}}`, no `object`) must therefore pass through
-/// UNCHANGED — no synthetic `id`/`created` injected, which would corrupt the error JSON shape a
-/// strict SDK rejects. Drive an anthropic egress → OpenAI ingress stream with a real opening chunk
-/// (to LATCH the stream identity) followed by a mid-stream error event, then assert the resulting
-/// error frame carries neither `id` nor `created`.
+
 #[test]
 fn test_openai_ingress_mid_stream_error_envelope_unchanged_by_identity() {
     let mut t = StreamTranslate::new("openai", "anthropic").expect("openai ingress translator");
     let mut raw: Vec<u8> = Vec::new();
     for frame in [
-            // Opening chunk: latches id/created/model in the OpenAI stream framing.
+
             "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_x\",\"role\":\"assistant\",\"model\":\"claude-x\"}}\n\n",
             "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}\n\n",
             "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\n",
-            // Mid-stream error: the writer emits an in-band `{"error":{...}}` envelope (no `object`).
+
             "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"upstream overloaded\"}}\n\n",
         ] {
             raw.extend(t.feed(crate::codec::test_host::HOST, frame.as_bytes()));
@@ -582,12 +527,12 @@ fn test_openai_ingress_mid_stream_error_envelope_unchanged_by_identity() {
     raw.extend(t.finish(crate::codec::test_host::HOST));
 
     let chunks = openai_sse_chunks(&raw);
-    // There must be at least one error envelope; locate it.
+
     let error_frame = chunks
         .iter()
         .find(|c| c.get("error").is_some())
         .expect("a mid-stream error envelope must be emitted to the OpenAI client");
-    // The guard must have left it untouched: NO synthetic id/created injected onto the error.
+
     assert!(
             error_frame.get("id").is_none(),
             "error envelope must NOT receive an injected `id` (would corrupt the shape); got {error_frame}"
@@ -600,7 +545,7 @@ fn test_openai_ingress_mid_stream_error_envelope_unchanged_by_identity() {
         error_frame.get("object").is_none(),
         "error envelope is not a chat.completion.chunk and carries no `object`; got {error_frame}"
     );
-    // And the error body itself is well-formed (the writer's standard in-band shape).
+
     assert!(
         error_frame
             .get("error")
@@ -609,8 +554,7 @@ fn test_openai_ingress_mid_stream_error_envelope_unchanged_by_identity() {
             .is_some(),
         "error envelope must carry an `error.type`; got {error_frame}"
     );
-    // The chat.completion.chunk frames before the error still carry a latched identity (proving
-    // identity injection IS active on real chunks — the guard is selective, not globally off).
+
     let had_identity_chunk = chunks.iter().any(|c| {
         c.get("object").and_then(|v| v.as_str()) == Some("chat.completion.chunk")
             && c.get("id").is_some()
@@ -622,16 +566,9 @@ fn test_openai_ingress_mid_stream_error_envelope_unchanged_by_identity() {
 }
 
 /// Bedrock messageStop+metadata fan-out (real latencyMs): a bedrock->bedrock stream must
-/// round-trip — the egress reader collapses the native two-frame stop/usage split into ONE
-/// combined IR MessageDelta, and the ingress writer fan-out RE-SPLITS it back into the native
-/// `messageStop` + `metadata` frame pair (metadata carrying the real usage AND a real
-/// `metrics.latencyMs`). This proves the reader collapse and writer fan-out are exact inverses.
+
 #[test]
 fn test_bedrock_to_bedrock_stream_roundtrips_stop_and_metadata() {
-    // Same-protocol returns None (native passthrough), so drive the cross-protocol seam with a
-    // foreign egress that still produces the combined delta. Use openai egress → bedrock ingress:
-    // a single OpenAI final chunk carries finish_reason + usage, the reader emits ONE combined
-    // MessageDelta, and the bedrock-ingress fan-out must produce messageStop + metadata.
     assert!(
         StreamTranslate::new("bedrock", "bedrock").is_none(),
         "bedrock->bedrock needs no translator (native passthrough)"
@@ -656,7 +593,7 @@ fn test_bedrock_to_bedrock_stream_roundtrips_stop_and_metadata() {
         buf.len()
     );
     let types: Vec<&str> = frames.iter().map(|(et, _)| et.as_str()).collect();
-    // The combined delta fans out to a messageStop FOLLOWED by a metadata frame.
+
     let stop_pos = types
         .iter()
         .position(|t| *t == "messageStop")
@@ -669,7 +606,7 @@ fn test_bedrock_to_bedrock_stream_roundtrips_stop_and_metadata() {
         stop_pos < meta_pos,
         "messageStop must precede metadata (native order); got {types:?}"
     );
-    // The metadata frame carries the real usage and a real latencyMs (not a fabricated 0-tell).
+
     let meta = frames
         .iter()
         .find(|(et, _)| et == "metadata")
@@ -691,7 +628,7 @@ fn test_bedrock_to_bedrock_stream_roundtrips_stop_and_metadata() {
             .is_some(),
         "metadata must carry a real metrics.latencyMs; got {mv}"
     );
-    // The messageStop frame carries the mapped stop reason.
+
     let stop = frames
         .iter()
         .find(|(et, _)| et == "messageStop")
@@ -705,11 +642,7 @@ fn test_bedrock_to_bedrock_stream_roundtrips_stop_and_metadata() {
 }
 
 /// On a BEDROCK-ingress cross-protocol stream the translator's OUTPUT is binary
-/// eventstream framing, so the deleted JSON byte-scanner would have mis-parsed the
-/// length-prefixes/CRC32s and zeroed token accounting. Billing now reads `translate.usage()` — the
-/// IR A-tap accumulated from the structured IR events BEFORE the binary writer runs — so the usage
-/// is correct regardless of the output framing. This asserts the A-tap carries the real
-/// `input`/`output` tokens while the binary `feed`/`finish` OUTPUT is genuinely binary frames.
+
 #[test]
 fn test_bedrock_ingress_ir_usage_carries_real_tokens() {
     let mut t = StreamTranslate::new("bedrock", "openai").expect("bedrock ingress translator");
@@ -723,7 +656,6 @@ fn test_bedrock_ingress_ir_usage_carries_real_tokens() {
         }
     binary_out.extend(t.finish(crate::codec::test_host::HOST));
 
-    // The IR A-tap (billing source) carries the real usage, sourced from the structured IR.
     let usage = t.usage().expect("A-tap captured terminal usage");
     assert_eq!(
         usage.input_tokens, 11,
@@ -734,14 +666,12 @@ fn test_bedrock_ingress_ir_usage_carries_real_tokens() {
         "A-tap reads output tokens from the IR"
     );
 
-    // The translator OUTPUT really is binary eventstream framing (NOT a JSON document): the usage
-    // is read from the IR above, never by brace-scanning these binary frames.
     assert!(!binary_out.is_empty(), "binary frames were emitted");
     assert!(
         serde_json::from_slice::<serde_json::Value>(&binary_out).is_err(),
         "translator output is binary eventstream framing, not a JSON document"
     );
-    // The frames decode as real AWS eventstream frames (proving they are binary-framed, not SSE).
+
     let mut buf = binary_out.clone();
     let frames = crate::codec::eventstream::drain_frames(&mut buf);
     assert!(
@@ -751,11 +681,7 @@ fn test_bedrock_ingress_ir_usage_carries_real_tokens() {
 }
 
 /// A Gemini `cachedContent` reference is dropped on the cross-protocol seam (no
-/// protocol can project a server-side Google context cache into its own request shape) — but
-/// SILENTLY, unlike the two sibling clears in the same function (prompt-cache breakpoints, hosted
-/// tools) which both warn. The consequences are invisible in the response (truncated history +
-/// full uncached billing), so this must warn LOUDLY, naming both. Same-protocol Gemini->Gemini
-/// must NOT warn (regression proof: `extra` is never cleared on that path).
+
 #[test]
 fn gemini_cached_content_warns_naming_truncation_and_billing() {
     use busbar_test_kit::warn_capture::WarnCapture;
@@ -784,8 +710,6 @@ fn gemini_cached_content_warns_naming_truncation_and_billing() {
         lane_caps: Default::default(),
     };
 
-    // The drop goes through the one drop path (`codec::drops`): a WARN (BUSBAR-7084), on a
-    // translate attempt only.
     let seam = crate::codec::drops::Seam {
         direction: crate::codec::drops::Direction::Request,
         ingress: "gemini",
@@ -811,7 +735,6 @@ fn gemini_cached_content_warns_naming_truncation_and_billing() {
         cap.messages()
     );
 
-    // Negative half: a request with no cachedContent must not warn about it.
     let body2 = serde_json::json!({
         "contents": [{"role": "user", "parts": [{"text": "hi"}]}]
     });
@@ -832,16 +755,12 @@ fn gemini_cached_content_warns_naming_truncation_and_billing() {
 }
 
 /// Google's `CitationSource.startIndex`/`endIndex` are documented measured in
-/// BYTES; the IR's `IrCitation::start_index`/`end_index` contract is CHARACTERS. The reader must
-/// convert byte->char on the way in (non-stream path, which has the full response text to convert
-/// against).
+
 #[test]
 fn gemini_citation_byte_indices_convert_to_characters() {
-    // "héllo " is 6 chars / 7 bytes (é is 2 bytes in UTF-8). A citation spanning the word after it
-    // ("wörld", chars 6..11) starts at BYTE 7 (Google's units) but CHAR 6 (the IR's units).
     let text = "héllo wörld";
-    let byte_start = text.find("wörld").unwrap() as i64; // 7
-    let byte_end = byte_start + "wörld".len() as i64; // 7 + 6 = 13
+    let byte_start = text.find("wörld").unwrap() as i64;
+    let byte_end = byte_start + "wörld".len() as i64;
 
     let body = serde_json::json!({
         "candidates": [{
@@ -881,11 +800,7 @@ fn gemini_citation_byte_indices_convert_to_characters() {
 }
 
 /// Writer inverse: `write_gemini_citation`
-/// short-circuits to the verbatim `raw` object whenever the citation carries a Gemini-shaped `raw`
-/// (uri/startIndex/endIndex present) — so a Gemini->Gemini round trip NEVER reaches the neutral
-/// build path this inverse conversion lives in. The inverse is only exercised by a FOREIGN citation
-/// (no Gemini-shaped `raw`, e.g.
-/// translated from Anthropic) reaching a Gemini egress — build one with `raw: None` directly.
+
 #[test]
 fn gemini_writer_reemits_char_indices_as_bytes_for_foreign_citations() {
     let text = "héllo wörld";
@@ -896,10 +811,10 @@ fn gemini_writer_reemits_char_indices_as_bytes_for_foreign_citations() {
         title: Some("T".into()),
         url: Some("https://example.com".into()),
         document_index: None,
-        start_index: Some(6), // CHAR offset (the IR contract)
+        start_index: Some(6),
         end_index: Some(11),
         encrypted_index: None,
-        raw: None, // FOREIGN: no Gemini-shaped raw, so the neutral build path runs.
+        raw: None,
         ..Default::default()
     };
     let resp = crate::codec::ir::IrResponse {

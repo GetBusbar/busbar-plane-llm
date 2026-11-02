@@ -2,7 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Concrete chat IR types (request, response and stream structs and enums), shared by path with
-//! busbar-core's test build so `crate::codec::ir::IrRequest` resolves in both crates.
 
 use serde_json::Value;
 
@@ -22,7 +21,7 @@ pub struct IrRequest {
     pub system_folds: Vec<IrSystemFold>,
     pub tools: Vec<IrTool>,
     pub max_tokens: Option<u32>,
-    // f64, not f32: an f32 round-trip mutates the caller's temperature (0.7 -> 0.699999988).
+
     pub temperature: Option<f64>,
     /// Nucleus-sampling cutoff (`top_p`). First-class, not left in `extra`, because `extra` is
     /// cleared on the cross-protocol seam and a control left there would be dropped on every hop.
@@ -68,8 +67,7 @@ pub struct IrRequest {
     /// "Parallel tool calls allowed?". OpenAI `parallel_tool_calls` and Anthropic
     /// `tool_choice.disable_parallel_tool_use` are the same switch, inverted. `None` emits nothing.
     pub parallel_tool_calls: Option<bool>,
-    // Typed request slots: absent unless the source dialect carried the concept; writers emit
-    // nothing for an absent slot.
+
     /// IR-03. Caller metadata map in key order: OpenAI `metadata`, Bedrock `requestMetadata`, Gemini
     /// `labels`. `Some(empty)` means the caller sent `{}`. A key-validating writer drops bad entries
     /// with a warn, not the whole map.
@@ -127,8 +125,7 @@ pub enum IrToolChoice {
 }
 
 /// Normalize a native stop-sequence field (bare string or array) into `Vec<String>`. Non-string
-/// elements and empty strings are skipped, so `""` or `[""]` yields an empty vec (omitted) and
-/// never a spurious `stop: [""]`.
+
 pub fn read_stop_sequences(val: Option<&Value>) -> Vec<String> {
     match val {
         Some(Value::String(s)) if !s.is_empty() => vec![s.clone()],
@@ -143,13 +140,13 @@ pub fn read_stop_sequences(val: Option<&Value>) -> Vec<String> {
 }
 
 /// Truncate `stop` to the egress vendor's published cap (vendors 400 on more). Warns only when it
-/// truncates. This is a clamp-and-warn degrade at HTTP 200, not a 400.
+
 pub fn clamp_stop(stop: &[String], cap: usize, proto: &'static str) -> Vec<String> {
     if stop.len() <= cap {
         return stop.to_vec();
     }
     let provided = stop.len();
-    // `stop.len() > cap` holds after the early return, so this cannot underflow.
+
     let dropped = provided - cap;
     crate::codec::drops::note(crate::codec::drops::Dropped::slot(
         "stop",
@@ -285,7 +282,7 @@ pub struct IrSafetyVerdict {
 
 impl IrSafetyVerdict {
     /// A `{"<category>": true|false, …}` map (the OpenAI family's moderation `categories`) as one
-    /// flagged, non-blocking verdict per category that is `true`.
+
     pub fn flagged_categories(categories: Option<&Value>) -> Vec<IrSafetyVerdict> {
         categories
             .and_then(|c| c.as_object())
@@ -328,7 +325,7 @@ pub struct IrSearchResult {
 }
 
 /// An empty assistant answer, so construction sites can spread `..Default::default()` and survive
-/// new response slots. `role` is `Assistant` because every IR response is the model's turn.
+
 impl Default for IrResponse {
     fn default() -> Self {
         IrResponse {
@@ -383,19 +380,19 @@ pub enum IrReasoningEffort {
 }
 
 /// Compiled-in effort table (mirrors the config defaults), the writer fallback when the seam did
-/// not stamp [`IrRequest::reasoning_budgets`].
+
 pub const REASONING_BUDGET_DEFAULTS: [u32; 4] = [1024, 4096, 8192, 16384];
 
 impl IrReasoningAsk {
     /// Project to a numeric budget via the table. `None` for `Dynamic` and `Off`, which a writer
-    /// carries in its own form or drops, never substitutes.
+
     pub fn to_budget(self, table: [u32; 4]) -> Option<u32> {
         match self {
             IrReasoningAsk::Budget(n) => Some(n),
             IrReasoningAsk::Effort(IrReasoningEffort::Minimal) => Some(table[0]),
             IrReasoningAsk::Effort(IrReasoningEffort::Low) => Some(table[1]),
             IrReasoningAsk::Effort(IrReasoningEffort::Medium) => Some(table[2]),
-            // No table row above `high`: the two words above it take its top budget.
+
             IrReasoningAsk::Effort(
                 IrReasoningEffort::High | IrReasoningEffort::XHigh | IrReasoningEffort::Max,
             ) => Some(table[3]),
@@ -404,7 +401,7 @@ impl IrReasoningAsk {
     }
 
     /// Project to a word, bucketing a numeric budget to the largest effort whose table entry it
-    /// reaches. `None` for `Dynamic` and `Off`.
+
     pub fn to_effort(self, table: [u32; 4]) -> Option<IrReasoningEffort> {
         match self {
             IrReasoningAsk::Effort(e) => Some(e),
@@ -426,9 +423,7 @@ impl IrReasoningAsk {
 
 impl IrReasoningEffort {
     /// The effort on the `low`/`medium`/`high` scale every reasoning model accepts. Same as
-    /// [`Self::as_str`] except `Minimal` maps to `"low"` (only gpt-5 accepts `"minimal"`) and
-    /// `XHigh`/`Max` map to `"high"`. The lane's model is unknown here, and these are the values
-    /// that never cause a 400. A writer that knows its lane accepts more may use [`Self::as_str`].
+
     pub fn as_three_word_str(self) -> &'static str {
         match self {
             IrReasoningEffort::Minimal => "low",
@@ -449,7 +444,7 @@ impl IrReasoningEffort {
     }
 
     /// The four words every reader has always accepted. Not widened to `xhigh`/`max`: a reader
-    /// opts in through [`Self::parse_extended`] once every reachable writer projects them.
+
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "minimal" => Some(IrReasoningEffort::Minimal),
@@ -543,7 +538,6 @@ pub struct IrBlockOrigins {
     pub response: Vec<IrBlockOrigin>,
 }
 
-// Source paths are diagnostic metadata, not part of the normalized request/response semantics.
 impl PartialEq for IrBlockOrigins {
     fn eq(&self, _other: &Self) -> bool {
         true
@@ -653,7 +647,7 @@ pub struct IrSearchResultParts<'a> {
 
 impl IrBlock {
     /// The block's IR kind, as a dropped block is named (`codec::drops::Member::Block`): `text`,
-    /// `thinking`, `tool_use`, `tool_result`, `image`, or the attachment's media kind.
+
     pub fn kind_name(&self) -> &'static str {
         match self {
             IrBlock::Text { .. } => "text",
@@ -677,12 +671,7 @@ impl IrBlock {
     }
 
     /// The search-result slot: one caller-supplied RAG passage (Anthropic `search_result`, Converse
-    /// `searchResult`) modelled as a `Text` block any dialect can read (a `title — source` header line,
-    /// then the passage), carrying one provenance citation of kind `search_result_location` with no
-    /// location indices (which tells it apart from an answer's search-result citation, which always has
-    /// them). The citation's `raw` holds the block's `citations` switch verbatim (`{"enabled": bool}`,
-    /// spelled identically by both wires). A dialect with the block re-emits it from
-    /// [`IrBlock::as_search_result`]; any other sends the text.
+
     pub fn search_result(
         source: &str,
         title: &str,
@@ -758,34 +747,21 @@ impl IrBlock {
     }
 
     /// COH-17: an empty text block that only carries citations (a grounded turn with no text
-    /// part). A writer whose dialect rejects an empty text block (Anthropic, Bedrock, Gemini) omits it.
+
     pub fn is_citation_carrier(&self) -> bool {
         matches!(self, IrBlock::Text { text, citations, .. } if text.is_empty() && !citations.is_empty())
     }
 
     /// Is this block's content opaque to busbar (carried verbatim, never readable as plaintext, never
-    /// disclosable to a sidecar)? Opaque shapes: Anthropic `redacted_thinking`, Bedrock
-    /// `redactedContent` (both `Thinking { redacted: true, text: <ciphertext> }`), and a Responses
-    /// `reasoning` item with only `encrypted_content` (`redacted: false`, empty text, blob in
-    /// `signature`), which a redaction check keyed on `redacted` would pass, hence this predicate.
-    ///
-    /// `redacted` is deliberately not set for the Responses shape: it is a writer instruction ("this
-    /// block's `text` is the opaque payload to re-emit"). The Responses writer drops `redacted` blocks
-    /// (losing `encrypted_content` on a round-trip) and the Anthropic and Bedrock writers would emit an
-    /// empty-ciphertext block cross-protocol.
-    ///
-    /// The empty-text-plus-blob arm is general: a text-less Gemini thought part with `thoughtSignature`
-    /// lands the same way. A block with real plaintext and a signature is readable. Call this before
-    /// touching `text`, which is empty or the ciphertext itself when this returns true.
+
     pub fn is_opaque(&self) -> bool {
         match self {
-            // `text` holds the opaque bytes (Anthropic `redacted_thinking`, Bedrock `redactedContent`).
             IrBlock::Thinking { redacted: true, .. } => true,
-            // No plaintext and a carrier blob in its place (a Responses `encrypted_content`-only item).
+
             IrBlock::Thinking {
                 text, signature, ..
             } => text.is_empty() && signature.is_some(),
-            // Listed explicitly, not `_`, so a future variant that can carry an opaque payload must decide here.
+
             IrBlock::Text { .. }
             | IrBlock::ToolUse { .. }
             | IrBlock::ToolResult { .. }
@@ -811,7 +787,7 @@ pub enum IrMediaKind {
 
 impl IrMediaKind {
     /// Classify a mime type by its `audio/*` / `video/*` prefix; anything else is a Document.
-    /// `image/*` is not a Media kind, so callers check for it first.
+
     pub fn from_media_type(media_type: &str) -> Self {
         let lower = media_type.to_ascii_lowercase();
         if lower.starts_with("audio/") {
@@ -834,12 +810,9 @@ impl IrMediaKind {
 }
 
 /// Image media types every protocol accepts: `image/{jpeg,png,gif,webp}`. Emitting anything else
-/// verbatim (e.g. a Gemini `audio/mp3` `inlineData` read as an image) 400s the backend. Returns
-/// `None` for a malformed or unsupported mime so the caller drops the block with a warn, otherwise
-/// the lowercased subtype (`jpg` normalized to `jpeg`).
+
 pub fn image_subtype_if_supported(media_type: &str) -> Option<&'static str> {
     let subtype = media_type.strip_prefix("image/").or_else(|| {
-        // Tolerate "Image/PNG" without allocating in the common lowercase case.
         media_type
             .get(..6)
             .filter(|p| p.eq_ignore_ascii_case("image/"))
@@ -898,7 +871,7 @@ impl IrResponseFormat {
     }
 
     /// A `json_schema` directive read from the object holding `name`/`schema`/`strict`/`description`:
-    /// nested under `json_schema` in Chat, flat beside `type` in Responses `text.format`.
+
     pub fn from_json_schema_members(js: Option<&Value>) -> Self {
         let text = |k: &str| {
             js.and_then(|j| j.get(k))
@@ -917,7 +890,7 @@ impl IrResponseFormat {
     }
 
     /// Inverse of [`Self::from_json_schema_members`]. OpenAI requires `name`, so one is synthesized
-    /// when the source had none.
+
     pub fn write_json_schema_members(
         &self,
         schema: &Value,
@@ -1055,7 +1028,7 @@ pub struct IrUsageDetail {
     /// Anthropic `usage.service_tier` (`standard` / `priority` / `batch`): the tier that served and
     /// billed the request. Only the Anthropic reader and writer touch it.
     pub service_tier: Option<String>,
-    // OpenAI Chat usage sub-buckets. Each is a slice of a total in `IrUsage`, never an addition.
+
     /// OpenAI `usage.prompt_tokens_details.audio_tokens`: the audio slice of the input tokens.
     pub input_audio_tokens: Option<u64>,
     /// OpenAI `usage.completion_tokens_details.audio_tokens`: the audio slice of the output tokens.
@@ -1082,15 +1055,14 @@ pub struct IrUsageDetail {
     /// while `IrResponse` is built field-by-field at many sites. A string because converting to
     /// `IrResponse::created` (epoch seconds) would lose precision. Only the Gemini reader and writer touch it.
     pub create_time: Option<String>,
-    // Cohere's `billed_units` bucket, carried so it survives a Cohere to Cohere read and write.
-    // No cross-protocol analog. `None` means not reported.
+
     /// Cohere `usage.billed_units.input_tokens`, distinct from the raw `usage.tokens.input_tokens`.
     pub billed_input_tokens: Option<u64>,
     /// Cohere `usage.billed_units.output_tokens`, distinct from the raw `usage.tokens.output_tokens`.
     pub billed_output_tokens: Option<u64>,
     /// Cohere `usage.billed_units.classifications`, a separately billed unit, not a token count.
     pub billed_classifications: Option<u64>,
-    // Usage-identity cross-check.
+
     /// A reported disagreement between the provider's stated total and the sum of the decoded
     /// buckets (Gemini's `totalTokenCount` is the case). `None` when the provider states no total
     /// or the buckets reconcile. Nothing is zeroed or back-filled to close the sum; the discrepancy
@@ -1144,10 +1116,7 @@ pub struct UsageIdentityNote {
 
 impl IrUsage {
     /// Total billable tokens: `input_tokens` (uncached) + cache reads + cache creation +
-    /// `output_tokens`. Provider-agnostic because readers normalize `input_tokens` to uncached.
-    /// Uses `saturating_add` since the operands are upstream-controlled.
-    // Production billing ledgers the tier split (`proxy::usage::tier_tokens`); this total is what a
-    // provider's stated total is checked against (`usage_count::stated_total_note`).
+
     pub fn billable_tokens(&self) -> u64 {
         self.input_tokens
             .saturating_add(self.cache_read_input_tokens.unwrap_or(0))
@@ -1156,12 +1125,7 @@ impl IrUsage {
     }
 
     /// Project the four normalized totals into the core [`busbar_contract::billing::TokenUsage`],
-    /// so billing and metering need not name this IR type. Attribution buckets are not carried.
-    ///
-    /// The raw token totals are what a key is charged, for every dialect, including Cohere (only
-    /// its `tokens` bucket is billed, buffered and streamed alike). Cohere's billed counts stay on
-    /// `IrUsageDetail` as attribution. Its `search_units` and `classifications` are open classes
-    /// (see `open_units`).
+
     pub fn to_token_usage(&self) -> busbar_contract::billing::TokenUsage {
         busbar_contract::billing::TokenUsage {
             input: self.input_tokens,
@@ -1175,17 +1139,7 @@ impl IrUsage {
     }
 
     /// Separately reported counts by open class. Each is a ledger line under its meter class; the
-    /// plane reports units, never a price.
-    ///
-    /// - `search_units`: Anthropic server-side web searches and Cohere `billed_units.search_units`.
-    /// - `web_fetch_requests`: Anthropic `server_tool_use.web_fetch_requests`.
-    /// - `classifications`: Cohere `billed_units.classifications`.
-    /// - `unitemized_tokens`: a provider-stated total above the itemized sum
-    ///   ([`IrUsageDetail::usage_identity_note`] with positive `unaccounted`). A total below its
-    ///   terms adds nothing; the note and WARN still say so.
-    /// - every class in [`IrUsageDetail::open_units`].
-    ///
-    /// Zero counts are not carried.
+
     fn open_units(&self) -> std::collections::BTreeMap<String, u64> {
         use crate::codec::ir::open_class::{
             add, CLASSIFICATIONS_CLASS, UNITEMIZED_TOKENS_CLASS, WEB_FETCH_REQUESTS_CLASS,
@@ -1222,7 +1176,7 @@ impl IrUsage {
     }
 
     /// Residuals, never billed: [`IrUsageDetail::residual_units`]. Every reported unit has an open
-    /// class ([`Self::open_units`]), so the map is empty; it stays for a count a reader cannot class.
+
     fn residual_units(&self) -> std::collections::BTreeMap<String, u64> {
         self.detail.residual_units.clone()
     }
@@ -1252,8 +1206,6 @@ pub enum IrBlockMeta {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-// Every variant is live on the egress path (`read_response_events` to `StreamTranslate::feed`).
-// `enum_variant_names` is allowed because all variants mirror the wire delta-event names.
 #[allow(clippy::enum_variant_names)]
 pub enum IrDelta {
     TextDelta(String),
@@ -1362,17 +1314,13 @@ pub struct StreamDecodeState {
 
 impl StreamDecodeState {
     /// Claim the next free IR block index. `reasoning_seen` reserves index 0 for the thinking block
-    /// (the OpenAI reader emits it with a hardcoded 0).
+
     pub fn claim_ir_index(&mut self) -> usize {
         let idx = self.next_ir_index.max(usize::from(self.reasoning_seen));
         self.next_ir_index = idx + 1;
         idx
     }
 }
-
-// The typed slot vocabulary: one typed carrier per concept that two or more dialects model
-// natively, never a generic bag. Variant names are the concept, not a wire spelling. A slot is
-// `None`/empty when the source did not carry it, and a writer emits nothing for an absent slot.
 
 /// Requested capacity tier (IR-04): OpenAI `service_tier`, Anthropic `service_tier`, Bedrock
 /// Converse `serviceTier: {type}` (BED-14).
@@ -1586,7 +1534,7 @@ pub struct IrCustomTool {
 
 impl IrCustomTool {
     /// Read the tool's members from the object holding them (Chat `custom`, or the flat Responses
-    /// tool). `None` without a non-empty `name` or when the object has a member the IR cannot hold.
+
     pub fn read_members(
         obj: &serde_json::Map<String, serde_json::Value>,
         extra_ok: &[&str],

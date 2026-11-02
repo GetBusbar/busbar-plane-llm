@@ -1,8 +1,3 @@
-// Input-hardening (1.6.0): the Cohere reader EDGE-VALIDATES structural types. Top-level `messages`
-// is array-only (already strict); per-message `content` is string-or-array, so a present number/
-// bool/object is a genuine TYPE violation → native 400 (ClientError / ir_parse). A `tool_calls`
-// entry must carry a non-empty `id`. These pin BOTH the reject AND the preserved leniency.
-
 use super::*;
 
 fn assert_ir_parse_reject(res: Result<crate::codec::ir::IrRequest, IrError>, ctx: &str) {
@@ -18,8 +13,6 @@ fn assert_ir_parse_reject(res: Result<crate::codec::ir::IrRequest, IrError>, ctx
         "{ctx}: must carry the ir_parse signal"
     );
 }
-
-// ── Fix 1: top-level `messages` type ─────────────────────────────────────────
 
 #[test]
 fn top_level_messages_wrong_typed_rejects() {
@@ -37,16 +30,11 @@ fn top_level_messages_wrong_typed_rejects() {
 
 #[test]
 fn empty_messages_array_stays_lenient() {
-    // NOTE: Cohere pre-1.6.0 already REQUIRES the `messages` key to be present (an absent key is a
-    // separate, pre-existing 400 unrelated to this hardening). A PRESENT-but-empty array, however,
-    // is well-typed and must still parse — an empty conversation is not a type violation.
     let ir = CohereReader
         .read_request(&serde_json::json!({"model": "x", "messages": []}))
         .expect("empty messages array must not reject");
     assert!(ir.messages.is_empty());
 }
-
-// ── Fix 1: per-message `content` type ────────────────────────────────────────
 
 #[test]
 fn per_message_wrong_typed_content_rejects() {
@@ -73,8 +61,6 @@ fn per_message_string_and_array_content_stay_lenient() {
         .read_request(&serde_json::json!({"model": "x", "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]}))
         .expect("array content must parse");
 }
-
-// ── Fix 2: tool_calls `id` ───────────────────────────────────────────────────
 
 #[test]
 fn tool_call_missing_id_rejects() {

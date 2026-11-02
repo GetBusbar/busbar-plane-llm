@@ -116,7 +116,7 @@ fn format_echo_uses_the_same_bounded_named_fields_as_transcription_decoding() {
     ] {
         let mut body = multipart(early);
         body.truncate(body.len() - b"--fixture--\r\n".len());
-        // model, response_format and file occupy three of the reader's 64 named slots.
+
         for index in 0..61 {
             body.extend_from_slice(format!("--fixture\r\nContent-Disposition: form-data; name=\"extra{index}\"\r\n\r\nx\r\n").as_bytes());
         }

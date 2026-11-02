@@ -7,7 +7,7 @@ use crate::codec::proto_codec::protocol_for;
 use serde_json::json;
 
 /// Item 18 (GEM-16): a streamed citation on a LATER text block (text -> functionCall -> text) is
-/// relative to that block's text, not to the whole streamed answer.
+
 #[test]
 fn item18_citation_on_a_later_text_block_is_block_relative() {
     let reader = protocol_for("gemini").unwrap();
@@ -81,9 +81,7 @@ fn bedrock_image_answer() -> crate::codec::ir::IrResponse {
 }
 
 /// Item 17 (IR-21): a generated image in a buffered Bedrock answer reaches a Gemini STREAM client
-/// as an `inlineData` part (it used to be skipped by the buffered-to-stream synthesis), and an
-/// Anthropic stream client — which has no assistant image block — still gets a balanced stream with
-/// contiguous block indices.
+
 #[test]
 fn item17_generated_image_streams_to_a_gemini_client() {
     let mut ir = bedrock_image_answer();

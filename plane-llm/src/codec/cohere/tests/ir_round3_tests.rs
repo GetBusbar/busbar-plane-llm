@@ -22,8 +22,7 @@ fn grounded_history_without_text() -> serde_json::Value {
 }
 
 /// Item 13: a replayed grounded assistant turn with no text part keeps its citations in the IR
-/// (an empty text carrier), and an Anthropic / Bedrock egress omits the carrier rather than send
-/// the empty text block those APIs reject.
+
 #[test]
 fn item13_request_citations_without_text_are_carried_not_sent_as_empty_text() {
     let ir = protocol_for("cohere")

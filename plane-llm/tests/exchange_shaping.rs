@@ -83,8 +83,7 @@ fn a_generation_the_plane_cannot_serve_is_refused() {
 }
 
 /// THE DEALT SECTION ALONE (the boot's stage 3g deal hands the plane `{pools: ...}`, no `models`):
-/// its members are not judged against models the blob does not state, so a valid deployment is not
-/// refused at boot; with `models` stated, an undefined member is still refused (the RED arm).
+
 #[test]
 fn a_pools_section_dealt_alone_names_no_unknown_model() {
     let dealt = json!({ "pools": { "op": { "members": [{ "model": "test-model" }] } } });
@@ -105,8 +104,7 @@ fn empty_settings_are_an_empty_generation_with_the_defaults() {
 }
 
 /// THE TRANSLATE CAP IS THE SETTINGS': the cap a generation enforces is the
-/// `limits.request_body_max_bytes` the kernel handed in the settings it was opened or refreshed
-/// with, and the kernel's own 32 MiB default when it handed none.
+
 #[test]
 fn the_translate_cap_is_the_one_the_settings_carry_else_the_default() {
     let s = Shaping::from_settings(&json!({ "limits": { "request_body_max_bytes": 131072 } }))
@@ -134,17 +132,11 @@ fn the_glob_takes_prefix_suffix_and_middle_wildcards() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/attempt_timeout_precedence_tests.rs::effective_reasoning_member_override_wins`
-/// 1.5.5: the pool member's `reasoning` override wins over the model's
-/// flag in both directions (true over false AND false over true); a member with no override
-/// inherits the model's flag, true or false; a pool or member with no candidate row uses the
-/// model's flag.
-///
-/// RED: a member's `reasoning: false` stops beating a model's `reasoning: true` (the arm the
-/// neighbouring test never drives), or a route with no member row stops reading the model's flag.
+
 #[test]
 fn effective_reasoning_member_override_wins() {
     let mut v = settings();
-    // `claude` states `reasoning: true` at the model level; `quiet` turns it off in its pool only.
+
     v["pools"]["quiet"] = json!({ "members": [ { "model": "claude", "reasoning": false } ] });
     let s = Shaping::from_settings(&v).expect("reads");
     assert_eq!(
@@ -185,10 +177,7 @@ fn effective_reasoning_member_override_wins() {
 }
 
 /// A MODEL'S OWN `protocol` OVERRIDES ITS PROVIDER'S: the
-/// model is spoken in the dialect it names, a sibling model on the same provider keeps the
-/// provider's, and a dialect the plane does not serve is refused naming the model (fail-closed).
-/// RED: a plane that reads only the provider's `protocol` writes the overriding model's requests
-/// in `openai` and accepts an unknown override.
+
 #[test]
 fn a_models_protocol_overrides_its_providers_and_an_unknown_one_is_refused() {
     let mut v = settings();
@@ -210,10 +199,7 @@ fn a_models_protocol_overrides_its_providers_and_an_unknown_one_is_refused() {
 }
 
 /// AN EMPTY `model_capabilities` READS AS AN ABSENT ONE: the
-/// kernel's resolved provider table now hands the plane `model_capabilities: []` where a catalog
-/// entry states none, where it used to leave the key out. The plane reads the two the same way, so
-/// every lane shapes its request exactly as before. RED: an empty rule list read differently from an
-/// absent one (any lane field differing).
+
 #[test]
 fn an_empty_model_capabilities_reads_as_an_absent_one() {
     let absent = settings();

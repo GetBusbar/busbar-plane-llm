@@ -2,28 +2,9 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE CODEC/IR TEST SUITES, RELOCATED HERE from `busbar-core`'s `proto/tests/*`. They NAME DIALECTS
-//! and the concrete wire codecs (`Protocol`/`protocol_for`/
-//! `StreamTranslate`/the six dialect modules), which a neutral crate's tests must not — so they live
-//! beside the types they exercise, in the LLM plugin, linking `busbar-core` as a `test-support`
-//! dev-dependency for the neutral seams (registry accessors, `proxy`/`handlers`/`egress_auth`,
-//! substrate atoms). Every assertion is BYTE-IDENTICAL to the pre-relocation suite: these are the
-//! detection / translate-parity / streaming / IR / round-trip goldens.
-//!
-//! This module reconstructs the `crate::codec::proto` prelude surface the suites were written against (they
-//! open with `use super::*`), so `super::*` inside each relocated file resolves the codec vocabulary
-//! HERE — `Protocol`, `protocol_for`, the dialect modules, the stream translator, the IR types — the
-//! same names it saw when they were `mod`ules of `busbar-core`'s `proto`. Fully-qualified paths in
-//! the suites were repointed mechanically: `crate::codec::proto::{dialect}` → `crate::codec::{dialect}`,
-//! `crate::codec::proto::{proto_codec,proto_stream}` → `crate::codec::{proto_codec,proto_stream}`, and every
-//! neutral `crate::codec::proto::…` name to its home: a contract shape to `busbar_contract::`, a dialect
-//! helper to this plane's `crate::codec::dialect`, a registry read to the host (`busbar_kernel::`).
 
 #![allow(unused_imports)]
 
-// The witnessed codec surface, at this crate's OWN paths (production `busbar-llm`), so `super::*`
-// resolves the dialect vocabulary the suites use bare. (`pub(crate)` throughout: these re-exports
-// serve the child suite modules within THIS crate; several source modules are themselves
-// `pub(crate)`, so a `pub` re-export would be an over-export error.)
 pub use crate::codec::proto_codec::*;
 pub use crate::codec::proto_stream::*;
 pub use crate::codec::{anthropic, bedrock, cohere, gemini, openai_chat, openai_responses};
@@ -31,23 +12,17 @@ pub use crate::codec::{
     chat_handle, ir, ir_encode, leaf_codec, leaf_handles, url_citation_wire, usage_tail,
 };
 
-// The dialect codec structs the suites construct bare (they were bare-imported into `crate::codec::proto`
-// for exactly this surface, pre-relocation — see the `#[cfg(test)] use anthropic::{…}` block that
-// remains in core's `proto/mod.rs` for the witness build).
 pub use crate::codec::anthropic::{synth_anthropic_request_id, AnthropicReader, AnthropicWriter};
-// `pub(crate)` in its home module, so it is re-exported at the same visibility here (a `pub`
-// re-export of a crate-visible item is an over-export error).
+
 pub(crate) use crate::codec::anthropic::anthropic_writer;
 pub use crate::codec::bedrock::{BedrockReader, BedrockWriter};
 pub use crate::codec::cohere::{CohereReader, CohereWriter};
 pub use crate::codec::gemini::{GeminiJsonArrayFramer, GeminiReader, GeminiWriter};
 pub use crate::codec::openai_chat::{OpenAiReader, OpenAiWriter};
-// Same `pub(crate)` fresh-value helper as `anthropic_writer`, for the same lint reason.
+
 pub(crate) use crate::codec::openai_chat::openai_writer;
 pub use crate::codec::openai_responses::{ResponsesReader, ResponsesWriter};
 
-// The neutral proto atoms the suites reach bare via `super::*`: the dialect helpers at this plane's
-// own home, the frame-boundary scan and the IR-parse vocabulary at the contract.
 pub use crate::codec::dialect::{
     bearer_error_code, context_length_prose_scan, parse_sse_frame, sse_event_type,
     strip_top_level_usage_member, write_sse_frame, BASE62_ALPHABET, SSE_DONE_FRAME,
@@ -55,10 +30,7 @@ pub use crate::codec::dialect::{
 };
 pub use crate::codec::framework::SIGNAL_IR_PARSE;
 pub use busbar_contract::protocol::{find_frame_terminator, IrError};
-// The by-name views the suites read, over THIS PLANE'S OWN declarations (#83a SD-3: the codec's
-// tests prove the codec's own seam and never reach the host). `decl_for` is the plane's own lookup;
-// the list views are the plane's declaration table read in its declared order, which is the order
-// the host's fold reports it in (the host tests the fold itself).
+
 pub use crate::codec::decl_of as decl_for;
 
 /// Every protocol this plane declares, in declaration order.
@@ -93,10 +65,8 @@ pub fn array_stream_shim_keys() -> &'static [&'static str] {
 }
 
 /// The global `max_tokens` fallback a caller hands the egress preparation when neither the request
-/// nor the lane names one.
 pub use crate::exchange::shaping::DEFAULT_MAX_TOKENS;
 
-// Substrate atoms the suites name bare (breaker signal + the neutral framing seam types).
 pub use busbar_contract::protocol::{ArrayStreamFramer, DialectCodec};
 pub use busbar_contract::upstream::{CanonicalSignal, StatusClass};
 

@@ -2,10 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE PLANE-CODE DRIFT GUARD (#83a O4): every code this plane defines is the published catalog's
-//! entry of the same number, field for field — number, class, slug, title, severity, summary, action,
-//! since and the retired flag. The published catalog is `docs/diagnostics.json`, which the host
-//! renders from its registry and holds byte-identical to that registry with its own drift test; so a
-//! constant edited here and not in the host catalog, or there and not here, fails one of the two.
 
 use super::DIAGNOSTICS;
 
@@ -61,9 +57,7 @@ fn no_plane_code_is_listed_twice() {
 }
 
 /// THE DOOR'S `declares.json` IS THE PLANE'S CATALOG: the declared section the host folds this plane's
-/// codes from (linked or dropped in) states exactly the entries [`DIAGNOSTICS`] holds, in order and
-/// field for field, beside the transport scheme the plane needs — so the catalogue the host renders
-/// from the declaration is the one this plane defines, and neither can drift from the other.
+
 #[test]
 fn the_declares_file_states_the_catalog() {
     let declared: serde_json::Value =

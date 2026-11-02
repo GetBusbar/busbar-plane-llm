@@ -2,15 +2,12 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Wire shapes held against the PUBLISHED provider specifications pinned by
-//! `testing/llm-conformance/spec-digests.tsv` (fetched into `~/.cache/busbar-llm-specs/`), not
-//! against busbar's own goldens. Each test names the schema and the clause it is proving, so a
-//! re-pin that moves a clause moves the test with it.
 
 use super::*;
 use crate::codec::ir::{IrBlock, IrResponse, IrTokenLogprob, IrUsage};
 
 /// A minimal assistant response carrying `text`, the given stop reason and the given logprobs —
-/// the smallest IR a writer will project into a full native response body.
+
 fn resp(
     stop_reason: Option<crate::codec::ir::IrStopReason>,
     logprobs: Vec<IrTokenLogprob>,
@@ -30,12 +27,7 @@ fn resp(
 }
 
 /// PUBLISHED OPENAI SPEC (`openai/openai-openapi` `openapi.yaml`, the pinned commit):
-/// `CreateChatCompletionResponse.choices[].logprobs` and
-/// `CreateChatCompletionStreamResponse.choices[].logprobs` both declare
-/// `required: ["content", "refusal"]` — `refusal` is a REQUIRED member of the logprobs object
-/// (nullable: a list of refusal tokens, or null when the model did not refuse). The writer emitted
-/// only `{"content": [...]}`, so a strict validator (and the Python SDK's Pydantic model, which
-/// requires the field) rejects every busbar chat completion that carries carried logprobs.
+
 #[test]
 fn openai_logprobs_object_carries_the_required_refusal_member() {
     let lps = vec![IrTokenLogprob {
@@ -59,8 +51,7 @@ fn openai_logprobs_object_carries_the_required_refusal_member() {
 }
 
 /// The Responses writer LIFTS the `content` array out of the Chat logprobs object for an
-/// `output_text` part's `logprobs` (Responses carries a bare `LogProb[]`, not the Chat object), so
-/// adding `refusal` to the Chat object must NOT leak a stray member into the Responses part.
+
 #[test]
 fn responses_part_logprobs_stay_a_bare_array_after_the_refusal_member_lands() {
     let ir = resp(
@@ -74,8 +65,7 @@ fn responses_part_logprobs_stay_a_bare_array_after_the_refusal_member_lands() {
         }],
         "hi",
     );
-    // Bind the interior-mutable const to a local before borrowing
-    // (clippy::borrow_interior_mutable_const).
+
     let writer = openai_responses::ResponsesWriter;
     let wire = writer.write_response(crate::codec::test_host::HOST, &ir);
     let part = wire
@@ -91,12 +81,7 @@ fn responses_part_logprobs_stay_a_bare_array_after_the_refusal_member_lands() {
 }
 
 /// PUBLISHED OPENAI SPEC: `CreateChatCompletionResponse.choices[]` declares
-/// `required: ["finish_reason", "index", "message", "logprobs"]` with
-/// `finish_reason: {type: string, enum: [stop, length, tool_calls, content_filter, function_call]}`
-/// — NO `nullable: true`. Only the STREAM chunk
-/// (`CreateChatCompletionStreamResponse.choices[].finish_reason`) is nullable. A buffered choice
-/// with `finish_reason: null` (what a cross-protocol backend that supplies no stop reason produced)
-/// is not a valid `chat.completion`; the spec's natural-stop token is `stop`.
+
 #[test]
 fn buffered_openai_choice_finish_reason_is_never_null() {
     let ir = resp(None, Vec::new(), "oracle-marker");
@@ -113,7 +98,7 @@ fn buffered_openai_choice_finish_reason_is_never_null() {
 }
 
 /// The STREAM chunk schema keeps `nullable: true` on `finish_reason`, so the non-final chunks must
-/// still carry explicit null — the buffered fallback must not leak into the streamed path.
+
 #[test]
 fn streamed_openai_chunk_finish_reason_stays_nullable() {
     let writer = openai_chat::OpenAiWriter;
@@ -135,15 +120,7 @@ fn streamed_openai_chunk_finish_reason_stays_nullable() {
 }
 
 /// PUBLISHED ANTHROPIC SPEC (the Stainless-published OpenAPI document the official SDK pins in
-/// `.stats.yml`): `ContentBlockStartEvent.content_block` is a `oneOf` DISCRIMINATED on `type`, whose
-/// mapping is exactly `{text, thinking, redacted_thinking, tool_use, server_tool_use,
-/// web_search_tool_result, web_fetch_tool_result, code_execution_tool_result,
-/// bash_code_execution_tool_result, text_editor_code_execution_tool_result,
-/// tool_search_tool_result, container_upload}`. There is NO `image` member: an assistant content
-/// block on the Anthropic RESPONSE wire is never an image. The writer emitted
-/// `content_block: {"type": "image"}`, a frame no Anthropic client can deserialize. Every sibling
-/// writer (bedrock, cohere, gemini, openai_chat, openai_responses) already emits NO frame for
-/// `IrBlockMeta::Image`.
+
 #[test]
 fn anthropic_image_block_start_emits_no_frame() {
     let writer = AnthropicWriter;
@@ -160,9 +137,7 @@ fn anthropic_image_block_start_emits_no_frame() {
             .is_none(),
         "image is not a member of the content_block discriminator; emit no frame"
     );
-    // …and the matching `BlockStop` must be suppressed with it: a `content_block_stop` for an index
-    // a client never saw a `content_block_start` for is an orphan the SDK accumulator cannot close.
-    // This mirrors `BedrockWriter`'s open-index guard.
+
     assert!(
         writer
             .write_response_event(
@@ -175,7 +150,7 @@ fn anthropic_image_block_start_emits_no_frame() {
 }
 
 /// A TEXT block's start/stop pair must stay intact once the open-index guard exists — the guard
-/// closes only what it opened, and text opens.
+
 #[test]
 fn anthropic_text_block_start_stop_pair_survives_the_guard() {
     let writer = AnthropicWriter;
@@ -208,10 +183,7 @@ fn anthropic_text_block_start_stop_pair_survives_the_guard() {
 }
 
 /// A REDACTED thinking block emits its start LATE — from the delta that carries the opaque bytes,
-/// because the published `ContentBlockStartEvent` carries a redacted block's `data` inline and
-/// declares no delta for it. The close follows the START, not the intent to start: once the delta
-/// has written `content_block_start`, the `BlockStop` must emit `content_block_stop`; when the
-/// stream ends before that delta, nothing opened on the wire and nothing may close.
+
 #[test]
 fn anthropic_redacted_thinking_block_stop_follows_the_written_start() {
     let writer = AnthropicWriter;
@@ -250,8 +222,6 @@ fn anthropic_redacted_thinking_block_stop_follows_the_written_start() {
         "the written start owes its content_block_stop"
     );
 
-    // The truncated sequence: the stream ended before the delta, so no start was written and the
-    // close must stay silent rather than orphan one.
     let truncated = AnthropicWriter;
     assert!(
         truncated
@@ -278,14 +248,7 @@ fn anthropic_redacted_thinking_block_stop_follows_the_written_start() {
 }
 
 /// PUBLISHED ANTHROPIC SPEC: `ErrorResponse.error` is discriminated on `type` over exactly nine
-/// tokens — `invalid_request_error`, `authentication_error`, `billing_error`, `permission_error`,
-/// `not_found_error`, `rate_limit_error`, `timeout_error`, `api_error`, `overloaded_error`. The
-/// writer's catch-all passed an UNKNOWN kind through verbatim, so a budget-exhaustion refusal
-/// reached an Anthropic-dialect client as `"type": "insufficient_quota"` (an OpenAI token) and a
-/// context overflow as `"type": "context_length_exceeded"` — neither is a member of the union, and
-/// the official SDK's error factory falls through to a generic `APIError`. Billing exhaustion is
-/// `billing_error`; a context overflow is a request the model cannot accept, i.e.
-/// `invalid_request_error`.
+
 #[test]
 fn anthropic_error_type_stays_inside_the_published_union() {
     let writer = AnthropicWriter;
@@ -325,10 +288,7 @@ fn anthropic_error_type_stays_inside_the_published_union() {
 }
 
 /// PUBLISHED OPENAI SPEC: `FunctionToolCall` (the Responses `function_call` output item) declares
-/// `required: ["type", "call_id", "name", "arguments"]`. The streamed
-/// `response.output_item.added` for a tool call omitted `arguments`, so the item a client receives
-/// at open time fails the item schema; real OpenAI opens the item with `"arguments": ""` and fills
-/// it through `response.function_call_arguments.delta`.
+
 #[test]
 fn responses_output_item_added_seeds_the_required_arguments_member() {
     let writer = openai_responses::ResponsesWriter;

@@ -1,23 +1,4 @@
 //! The plane's shaping tables: what it reads, once per open or refresh, out of the settings the
-//! kernel hands it.
-//!
-//! `OpenIn::settings` is one JSON object `{section: value}` of the sections the plane's tail names,
-//! as the kernel validated them, with secret references stripped: `providers` (declaring), `models`,
-//! `pools` and `limits` (consumed). The kernel keeps the credentials, money and routing; the plane
-//! keeps only the fields that shape the bytes it writes to a far end:
-//!
-//! | field | from |
-//! |---|---|
-//! | the far end's dialect, `path`, `path_base`, `error_map` | the provider |
-//! | the head fields and query parameters set statically ([`crate::options`]) | the provider |
-//! | the output-cap spelling and the two capability switches, per wire model | the provider and its `model_capabilities` |
-//! | `upstream_model`, `default_max_tokens`, `reasoning`, `prompt_caching` | the model |
-//! | `context_max` (one value per model across every pool), a member's own `reasoning` | the pools |
-//! | the global `default_max_tokens` and the effort → thinking-budget table | `limits` |
-//! | the translation cap, `request_body_max_bytes` (the operator's one knob) | `limits` |
-//!
-//! A request is written the same way whichever build holds the tables. The kernel already judged the
-//! grammar: a field this reading does not use is not read, and a malformed one it does use refuses to open.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -29,7 +10,7 @@ use crate::codec::DECLS;
 use crate::options::{self, SetOption};
 
 /// The provider `auth:` overrides that present under a scheme of their own, not the dialect's, so
-/// carry none of its static fields.
+
 const AUTH_API_KEY: &str = "api-key";
 /// See [`AUTH_API_KEY`].
 const AUTH_JWT_BEARER: &str = "jwt-bearer";
@@ -265,7 +246,7 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
 }
 
 /// The capabilities a far end accepts for `wire_model`: the provider's switches, then the first
-/// `model_capabilities` rule whose glob matches the wire model.
+
 fn lane_caps(p: &ProviderCfg, wire_model: &str) -> LaneCaps {
     let mut caps = LaneCaps::default();
     if let Some(k) = &p.max_output_key {
@@ -302,10 +283,7 @@ fn lane_caps(p: &ProviderCfg, wire_model: &str) -> LaneCaps {
 }
 
 /// The provider's options a lane of `dialect` takes. They were judged against the provider's own
-/// dialect, so a lane speaking it takes every one. A model served over the invoke envelope reaches the
-/// provider's (Bedrock's) far end, so it takes them too, invoke-only ones included. A model whose own
-/// `protocol` names another dialect takes only the options that dialect also lists. No other lane
-/// takes an invoke-only option.
+
 fn lane_options(
     set: &[SetOption],
     provider_dialect: Option<&str>,
@@ -378,7 +356,7 @@ pub const DEFAULT_AFFINITY_HEADER: &str = "x-session-id";
 
 impl Shaping {
     /// The header the session affinity of the unit routed over `pool` reads: the pool's own
-    /// `affinity.header_name`, else [`DEFAULT_AFFINITY_HEADER`].
+
     #[must_use]
     pub fn affinity_header(&self, pool: &str) -> &str {
         self.affinity_headers
@@ -387,12 +365,7 @@ impl Shaping {
     }
 
     /// Read the tables from the settings object.
-    ///
-    /// # Errors
-    ///
-    /// Why the settings do not describe a servable generation: a section that does not read, a model
-    /// naming no provider, a provider naming a dialect the plane does not speak, a pool member naming
-    /// no model, or one model given two context windows.
+
     pub fn from_settings(settings: &Value) -> Result<Self, String> {
         let blocks: BTreeMap<String, serde_json::Map<String, Value>> =
             section(settings, sections::PROVIDERS)?.unwrap_or_default();
@@ -400,7 +373,7 @@ impl Shaping {
         for (name, block) in blocks {
             let p: ProviderCfg = serde_json::from_value(Value::Object(block.clone()))
                 .map_err(|e| format!("the `{}` settings do not read: {e}", sections::PROVIDERS))?;
-            // Every key of the block is busbar's or an option of the dialect it speaks.
+
             let dialect = p.protocol.as_deref().unwrap_or(DEFAULT_PROTOCOL);
             let set = options::read(&name, dialect, &block)?;
             providers.insert(name, (p, set));
@@ -413,7 +386,6 @@ impl Shaping {
         let mut context: HashMap<String, Option<usize>> = HashMap::new();
         if let Some(Value::Object(sec)) = settings.get(sections::POOLS) {
             for (name, pool) in sec {
-                // The reserved keys of the section are settings, not pools: a pool has members.
                 let Some(Value::Array(ms)) = pool.get("members") else {
                     continue;
                 };
@@ -421,8 +393,7 @@ impl Shaping {
                 for m in ms {
                     let (m, context_max) = member(m)
                         .ok_or_else(|| format!("pool '{name}' has a member that does not read"))?;
-                    // One model is one far end: its context window is single-valued across every
-                    // pool that names it, and two explicit values that disagree are refused.
+
                     match (context.get(&m.model).copied().flatten(), context_max) {
                         (Some(have), Some(c)) if have != c => {
                             return Err(format!(
@@ -443,8 +414,6 @@ impl Shaping {
                     .pointer("/affinity/header_name")
                     .and_then(Value::as_str)
                 {
-                    // A credential is never a routing key: the caller's key would become the
-                    // kernel's sticky-routing input (CREDENTIAL-LOCKDOWN H8).
                     if super::attempt::governed(h) {
                         return Err(format!(
                             "pool '{name}' affinity.header_name '{h}' names a credential header; \
@@ -463,15 +432,13 @@ impl Shaping {
                     m.provider
                 )
             })?;
-            // The model's own `protocol` overrides its provider's default; the plane serves the
-            // resolved dialect only if it knows it (fail-closed).
+
             let asked = m
                 .protocol
                 .as_deref()
                 .or(p.protocol.as_deref())
                 .unwrap_or(DEFAULT_PROTOCOL);
-            // The invoke envelope is a MODEL's choice alone: a provider defaulting to it states an
-            // unknown protocol, refused below.
+
             let invoke = m.protocol.as_deref() == Some(super::invoke::PROTOCOL);
             let asked = if invoke {
                 super::invoke::CARRIED
@@ -511,9 +478,7 @@ impl Shaping {
             };
             lanes.insert(name, lane);
         }
-        // A pool member is judged against the models the settings STATE: a blob dealt the plane's
-        // own section alone (the boot's stage 3g deal, `{pools: ...}`) states none, and the
-        // kernel's config validation refuses an undefined member there.
+
         let models_stated = settings.get(sections::MODELS).is_some();
         for (name, members) in pools.iter().filter(|_| models_stated) {
             if let Some(m) = members.iter().find(|m| !lanes.contains_key(&m.model)) {
@@ -546,10 +511,7 @@ impl Shaping {
     }
 
     /// The translation cap this generation enforces, in bytes: the kernel's `limits.request_body_max_bytes`
-    /// from the settings (the operator's one knob for the inbound body limit and this egress cap), else
-    /// [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`]. It bounds a whole answer taken for
-    /// translation (past it, the caller's 500), the same-dialect copy kept for usage, and what a
-    /// translating writer accumulates per item.
+
     #[must_use]
     pub fn translate_cap(&self) -> usize {
         self.request_body_max_bytes
@@ -563,7 +525,7 @@ impl Shaping {
     }
 
     /// Whether reasoning reaches the far end for `member` of `pool`: the member's own switch when
-    /// the pool gives it one, else the model's.
+
     #[must_use]
     pub fn reasoning(&self, pool: &str, member: &str) -> Option<bool> {
         let lane = self.lane(member)?;

@@ -2,11 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! An Anthropic in-stream `error` event is Anthropic's ErrorResponse, and the published schema
-//! (`testing/llm-conformance/spec-digests.tsv` row `anthropic`, `components.schemas.ErrorResponse`)
-//! REQUIRES three members: `type`, `error` and `request_id` (nullable). busbar writes this event
-//! itself when a translated stream fails part way. v1.5.5 wrote it without `request_id`
-//! (`crates/busbar/src/proto/anthropic/writer.rs:626-666` at the v1.5.5 tag), so the llm
-//! spec-conformance rig would fail every such row on `required`: named conformance gaps are zero.
 
 mod common;
 

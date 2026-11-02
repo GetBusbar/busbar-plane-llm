@@ -1,12 +1,4 @@
 //! `arrive`, sans I/O: which dialect an arrival speaks, which operation it asks for, which model it
-//! names, and the bytes a unit forwards; or the refusal answered instead.
-//!
-//! The reading, in order: the router's detection fold and its one operation check
-//! (`protocol_dispatch`), the two convenience surfaces naming a model in the path
-//! (`/{name}/v1/messages`, `/{provider}/{model}/v1/messages`), the path-model dialects' URL parses,
-//! and the body-model arrival and decode steps. Every refusal carries the envelope dialect, kind,
-//! status and message; the plane renders it through the dialect's error writer when the kernel asks
-//! (`refusal`, keyed by the unit). The caller's credential is the kernel's authenticate step, not read here.
 
 use std::borrow::Cow;
 
@@ -56,10 +48,7 @@ impl Decline {
     }
 
     /// The arrival names an action its dialect has that this plane does not serve: a resolved
-    /// operation with no handler, or a path-model URL naming no served model and action
-    /// (`REFUSED_UNSUPPORTED_ACTION`, counted by the root as a refusal of a read request, like an
-    /// unsupported action or malformed path). A path no dialect claims, or a verb a dialect path does
-    /// not take, is none.
+
     #[must_use]
     pub const fn unsupported_action(self) -> bool {
         matches!(self, Decline::UnsupportedOperation | Decline::PathNotFound)
@@ -135,7 +124,7 @@ impl Catalogue for () {
 }
 
 /// THE DETECTION FOLD: every dialect's claim on `(fields, path)`, the tightest winning, a tie going
-/// to the earlier declaration.
+
 #[must_use]
 pub fn detect(path: &str, fields: HeadFields<'_>) -> Option<&'static str> {
     DECLS
@@ -156,7 +145,7 @@ pub fn residual(path: &str) -> Option<&'static str> {
 }
 
 /// The envelope a refusal on `path` is rendered in: the dialect the path's shape names, else the
-/// residual default, else the agnostic envelope (empty).
+
 #[must_use]
 pub fn envelope_for(path: &str) -> &'static str {
     residual(path)
@@ -238,8 +227,7 @@ fn content_type(fields: HeadFields<'_>) -> String {
 }
 
 /// The two convenience surfaces: `/{name}/v1/messages` (a pool or model named in the path) and
-/// `/{provider}/{model}/v1/messages` (an ad-hoc route). Both speak the residual dialect of
-/// `/v1/messages`.
+
 enum Convenience {
     Named(String),
     Adhoc(String, String),
@@ -259,10 +247,7 @@ fn convenience(path: &str) -> Option<Convenience> {
 }
 
 /// Read one arrival. `method` is the request method, `target` the request target (path and query),
-/// `fields` its head fields, `body` the whole body. Every dialect path takes POST only.
-/// # Errors
-///
-/// The refusal answered, with its envelope, kind, status and message.
+
 pub fn arrive(
     method: &str,
     target: &str,
@@ -274,7 +259,7 @@ pub fn arrive(
         Some((p, q)) => (p, Some(q)),
         None => (target, None),
     };
-    // The convenience surfaces are the router's own routes: they take precedence over the fold.
+
     if let Some(c) = convenience(path) {
         if method != "POST" {
             return Err(method_not_allowed(path));
@@ -329,7 +314,7 @@ pub fn arrive(
 }
 
 /// A body-model arrival: the operation off the path and body, then the arrival step (the body
-/// read), then the decode step (the handler, then the model ladder).
+
 fn body_arrival(
     proto: &'static str,
     path: &str,
@@ -342,8 +327,7 @@ fn body_arrival(
     let Some(operation) = rh.and_then(|rh| rh.resolve_operation(path, body)) else {
         return Err(no_resource(path));
     };
-    // The handler is read before the bytes: a pair with no handler is answered with the endpoint's
-    // own refusal, never with a parse error the endpoint would not have reached.
+
     let handled = match rh {
         None => Err(declined(
             Decline::UnsupportedOperation,
@@ -431,7 +415,7 @@ fn gemini_api_version(path: &str) -> &'static str {
 }
 
 /// The not-found a path-model dialect answers for its own URL space: its native sentence when it has
-/// one, else the router's.
+
 fn path_not_found(path: &str, native: impl FnOnce() -> String) -> Declined {
     let envelope = envelope_for(path);
     if decl(envelope).is_some_and(|d| d.has_native_path_not_found) {
@@ -567,9 +551,7 @@ fn bedrock_arrival(
 }
 
 /// The path-model carry: the URL's facts (`model`, `stream`, and when asked the array-stream shim key)
-/// spliced into the caller's object as byte-level member edits. Every byte of the caller's own stays,
-/// so the relay's governed removals of the same members give the far end the caller's bytes back
-/// (dialect fidelity). `None` when the body is not an object.
+
 #[must_use]
 pub fn splice_path_facts(
     body: &[u8],
@@ -593,7 +575,7 @@ pub fn splice_path_facts(
 }
 
 /// A path-model arrival's arrival step (the model and the stream flag spliced into the caller's
-/// object) and decode step (the handler, in the path surface's one sentence).
+
 #[allow(clippy::too_many_arguments)]
 fn path_model_arrival(
     proto: &'static str,

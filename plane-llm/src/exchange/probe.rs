@@ -1,11 +1,4 @@
 //! A health probe's far-end request, sans I/O: the smallest request a far end answers with its health
-//! (a probe is a kernel-originated unit pinned to one member; the plane answers its ATTEMPT with
-//! this, the kernel's breaker classifies the answer as organic traffic, and the probe bills nothing).
-//!
-//! 1.5.5's prober as bytes: the far end's dialect's own probe body for the wire model, POSTed to the
-//! provider's fixed path or the dialect's single-answer path, with the head fields a native client
-//! sends. A lane under a path base is never probed (its path is the dialect's reshaped one, which a
-//! probe cannot name). Credential, schedule, timeout and verdict are the kernel's.
 
 use busbar_contract::protocol::{APPLICATION_JSON, EGRESS_UA_DEFAULT};
 
@@ -27,7 +20,7 @@ pub fn probe_body(
 }
 
 /// The path a probe of `lane` is sent to, before encoding: the provider's fixed path, else the
-/// dialect's single-answer path for the wire model.
+
 #[must_use]
 pub fn probe_path(lane: &Lane) -> String {
     lane.path.clone().unwrap_or_else(|| {
@@ -44,7 +37,7 @@ pub fn request(host: &dyn busbar_contract::codec::CodecHost, lane: &Lane) -> Opt
     if lane.path_base.is_some() {
         return None;
     }
-    // A lane over the invoke envelope is probed through it: its target, and its body's edits.
+
     let path = match &lane.path {
         None if lane.invoke => super::invoke::path(lane.wire_model(), false),
         _ => probe_path(lane),
@@ -58,17 +51,18 @@ pub fn request(host: &dyn busbar_contract::codec::CodecHost, lane: &Lane) -> Opt
     let (target, _canonical) = wire_and_canonical_path(&path);
     let target = with_option_query(lane, &target);
     let user_agent = decl(lane.dialect).map_or(EGRESS_UA_DEFAULT, |d| d.egress_user_agent);
-    // The lane's declared static fields first, as an organic request of the lane writes them
-    // (`attempt::head_fields`): a far end that requires its version field answers a probe that
-    // lacks it with a 400, which the breaker would read as the lane's health.
-    let (mut fields, forced) = default_head_fields(lane, [
-        (
-            "content-type".to_string(),
-            APPLICATION_JSON.as_bytes().to_vec(),
-        ),
-        ("user-agent".to_string(), user_agent.as_bytes().to_vec()),
-        ("accept".to_string(), APPLICATION_JSON.as_bytes().to_vec()),
-    ]);
+
+    let (mut fields, forced) = default_head_fields(
+        lane,
+        [
+            (
+                "content-type".to_string(),
+                APPLICATION_JSON.as_bytes().to_vec(),
+            ),
+            ("user-agent".to_string(), user_agent.as_bytes().to_vec()),
+            ("accept".to_string(), APPLICATION_JSON.as_bytes().to_vec()),
+        ],
+    );
     fields.extend(forced);
     Some(FarRequest {
         verb: "POST",

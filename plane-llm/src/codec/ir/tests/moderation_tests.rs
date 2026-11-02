@@ -40,8 +40,6 @@ fn request_holds_mixed_text_and_image_inputs() {
     assert_eq!(req.input.len(), 2);
 }
 
-// ── IrFacts projection (close-non-chat-gate-blindness) ───────────────────────────────────────────
-
 use busbar_contract::ir::facts::{ContentItem, IrFacts, OPAQUE_CONTENT_MARKER};
 use busbar_contract::operation::OpVerb;
 
@@ -58,12 +56,12 @@ fn moderation_projects_text_and_marks_image_url_opaque() {
     assert_eq!(IrFacts::verb(&req), OpVerb::MODERATION);
     let items = req.content();
     assert_eq!(items.len(), 2);
-    // The text is screenable; the ImageUrl is opaque, not the empty projection it was before.
+
     assert!(matches!(items[0], ContentItem::Text { .. }));
     assert_eq!(items[0].screenable_text(), "screen this text");
     assert!(matches!(items[1], ContentItem::Opaque { .. }));
     assert_eq!(items[1].screenable_text(), OPAQUE_CONTENT_MARKER);
-    // The image URL bytes never leak into the gate view.
+
     assert!(!items[1].screenable_text().contains("example.com"));
     assert_eq!(
         req.shape().text_chars,

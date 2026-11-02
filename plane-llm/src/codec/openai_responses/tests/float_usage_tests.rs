@@ -2,20 +2,12 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! FLOAT-ENCODED USAGE COUNTS, PROVEN THROUGH `read_count_u64`.
-//!
-//! `serde_json::Value::as_u64()` returns `None` for ANY float-backed number, `27.0` included. The
-//! OpenAI Responses dialect's usage reads used to go through that bare idiom with `.unwrap_or(0)`,
-//! so a provider (or an OpenAI-compatible proxy) that spells a count as a float had a real count
-//! recorded as a billed ZERO. These tests pin realistic float-encoded wire payloads through every
-//! usage read site: the truncated-stream recovery path (`recover_truncated_usage`), the streaming
-//! terminal `response.completed` event, the buffered `read_response`, and the cached/reasoning
-//! sub-buckets (`read_cached_tokens`, `output_tokens_details.reasoning_tokens`) on both paths.
 
 use super::*;
 use crate::codec::ir::StreamDecodeState;
 
 /// THE TRUNCATED-STREAM RECOVERY PATH. `recover_truncated_usage` parses the trailing `usage` object
-/// independently of the main streaming/buffered decode, so it needed its own proof.
+
 #[test]
 fn recover_truncated_usage_reads_float_encoded_counts() {
     let reader = ResponsesReader;
@@ -32,9 +24,7 @@ fn recover_truncated_usage_reads_float_encoded_counts() {
 }
 
 /// THE STREAMING PATH: the terminal `response.completed` event with EVERY usage field
-/// float-spelled, including the cached and reasoning sub-buckets. A fix that only covers the
-/// buffered response would leave a streamed request reporting these as zero while `stream: false`
-/// reported them correctly.
+
 #[test]
 fn streaming_terminal_reads_float_encoded_counts() {
     let reader = ResponsesReader;
@@ -76,7 +66,7 @@ fn streaming_terminal_reads_float_encoded_counts() {
 }
 
 /// THE BUFFERED PATH. The identical float-spelled usage object on a non-streamed `response` body
-/// must read exactly the same as the streaming terminal above.
+
 #[test]
 fn buffered_read_response_reads_float_encoded_counts() {
     let body = serde_json::json!({

@@ -2,9 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The far end's `user-agent`. On a same-dialect route the caller's
-//! passes through unchanged, and a caller that sent none gets the dialect's declared native-SDK
-//! fingerprint, as 1.5.5 sent. On a translated route the plane writes the far dialect's declared
-//! fingerprint, and no caller value reaches the far end.
 
 mod common;
 
@@ -137,15 +134,7 @@ fn every_dialect() -> Shaping {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_egress_ua_versions_are_pinned_and_present`
-/// 1.5.5: every egress request carries the pinned native-SDK
-/// `user-agent` of its far dialect, as a golden literal: anthropic `Anthropic/Python 0.39.0`,
-/// openai and responses `OpenAI/Python 1.54.0`, gemini `google-genai-sdk/0.8.0 gl-python/3.11`,
-/// bedrock `Boto3/1.35.0 md/Botocore#1.35.0`, cohere `cohere-python/5.11.0`, and a far end no
-/// declaration names `okhttp/4.12.0`. None is ever empty or versionless, and the two Stainless
-/// Python SDKs share the `<Title>/Python <ver>` grammar.
-///
-/// RED: any far dialect's request goes out with another (or no) `user-agent`, the foreign default
-/// moves, or a pinned version string is edited without touching this table.
+
 #[test]
 fn every_dialects_egress_user_agent_version_is_pinned_and_present() {
     let s = every_dialect();
@@ -157,8 +146,7 @@ fn every_dialects_egress_user_agent_version_is_pinned_and_present() {
         ("bedrock-claude", "Boto3/1.35.0 md/Botocore#1.35.0"),
         ("command", "cohere-python/5.11.0"),
     ];
-    // An anthropic caller that sent no user-agent: every far end below sees its own fingerprint,
-    // the same-dialect one included (1.5.5 sent the native fingerprint to a UA-less caller's far end).
+
     let head: Vec<(&[u8], &[u8])> =
         vec![(b"content-type".as_slice(), b"application/json".as_slice())];
     let arrived = arrive("POST", "/v1/messages", &head, MESSAGES.as_bytes(), &()).expect("arrives");
@@ -170,13 +158,13 @@ fn every_dialects_egress_user_agent_version_is_pinned_and_present() {
             "{member} egress UA drifted from the pinned native-SDK string"
         );
     }
-    // The foreign far end (a dialect no declaration names) still gets a present, plausible UA.
+
     assert_eq!(
         busbar_contract::protocol::EGRESS_UA_DEFAULT,
         "okhttp/4.12.0",
         "the foreign/default egress UA drifted from the pinned literal"
     );
-    // Every declaration states its pinned literal, so no far dialect can fall to the default.
+
     for d in busbar_plane_llm::codec::DECLS {
         let want = match d.name {
             "anthropic" => "Anthropic/Python 0.39.0",

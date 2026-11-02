@@ -2,16 +2,12 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Tests for `usage_count.rs`. Lifted out of the implementation file so its line count
-//! measures implementation and nothing else; still a direct child module, so the `use
-//! super::…` below reaches the private items it always did.
 
 use super::{billed_count, read_count_u64, SPELLING_BUDGET};
 use serde_json::json;
 
 #[test]
 fn a_float_spelled_integer_is_the_integer() {
-    // The exact defect: Cohere sends 27.0, `as_u64()` alone says None, and `unwrap_or(0)`
-    // then bills zero for 27 tokens of real work.
     assert_eq!(read_count_u64(&json!(27.0)), Some(27));
     assert_eq!(
         json!(27.0).as_u64(),
@@ -28,7 +24,6 @@ fn a_plain_integer_still_reads_directly() {
 
 #[test]
 fn a_fractional_count_is_refused_not_rounded() {
-    // Rounding would invent a quantity the provider never reported.
     assert_eq!(read_count_u64(&json!(27.5)), None);
     assert_eq!(read_count_u64(&json!(0.5)), None);
 }
@@ -44,12 +39,9 @@ fn negatives_and_non_numbers_are_refused() {
 
 #[test]
 fn beyond_2_53_is_refused_because_the_fractional_test_goes_blind() {
-    // Every f64 at or above 2^53 has fract() == 0.0, so admitting them would accept values
-    // whose integrality was never actually verified.
     assert_eq!(read_count_u64(&json!(9_007_199_254_740_992.0_f64)), None);
     assert_eq!(read_count_u64(&json!(1.0e30_f64)), None);
-    // But an integer-typed value that large is a real integer on the wire, not a float
-    // guess, so the integer path still accepts it.
+
     assert_eq!(
         read_count_u64(&json!(9_007_199_254_740_993_u64)),
         Some(9_007_199_254_740_993)
@@ -58,7 +50,6 @@ fn beyond_2_53_is_refused_because_the_fractional_test_goes_blind() {
 
 #[test]
 fn infinities_and_nan_are_refused() {
-    // serde_json cannot hold these natively, so build them through f64 conversion.
     let inf = serde_json::Number::from_f64(f64::INFINITY);
     assert!(
         inf.is_none(),
@@ -67,18 +58,12 @@ fn infinities_and_nan_are_refused() {
     assert_eq!(read_count_u64(&json!(f64::MAX)), None);
 }
 
-// ── `billed_count`: absent is zero, unreadable is a refusal (#81/#42) ──────────────────────
-
 /// THE DEFECT, STATED AS THE DIFFERENCE BETWEEN THE TWO SEAMS.
-///
-/// This is the red-before-green in one assertion: the old idiom and the new one are handed the
-/// SAME wire value, and the old one says "no work happened" while the new one refuses.
+
 #[test]
 fn an_unreadable_count_was_a_silent_zero_and_is_now_a_refusal() {
     let usage = json!({ "output_tokens": "27" });
 
-    // THE OLD IDIOM, reproduced exactly: `None` from the seam, then a default of zero. A
-    // provider sent us a count and the ledger recorded that it sent nothing.
     let old = usage
         .get("output_tokens")
         .and_then(read_count_u64)
@@ -88,7 +73,6 @@ fn an_unreadable_count_was_a_silent_zero_and_is_now_a_refusal() {
         "the defect: a count that would not read billed ZERO"
     );
 
-    // THE NEW SEAM: a refusal that names the field and quotes what arrived.
     let new = billed_count(&usage, "output_tokens");
     let err = new.expect_err("a count that will not read must refuse, never default");
     assert_eq!(err.field, "output_tokens");
@@ -101,8 +85,6 @@ fn an_unreadable_count_was_a_silent_zero_and_is_now_a_refusal() {
 
 #[test]
 fn an_absent_count_is_zero_and_stays_zero() {
-    // Absence is a real fact and it really is worth zero: an embeddings response reports no
-    // output tokens because there are none. This is the v1.5.5 behaviour and it does not move.
     let usage = json!({ "prompt_tokens": 27 });
     assert_eq!(billed_count(&usage, "completion_tokens"), Ok(0));
     assert_eq!(billed_count(&json!({}), "prompt_tokens"), Ok(0));
@@ -110,8 +92,6 @@ fn an_absent_count_is_zero_and_stays_zero() {
 
 #[test]
 fn a_null_count_reads_as_absent_not_as_a_refusal() {
-    // `null` is how a provider spells "nothing here", and it must not fail a request that works
-    // today. It is absence, not an unreadable value.
     let usage = json!({ "output_tokens": null });
     assert_eq!(billed_count(&usage, "output_tokens"), Ok(0));
 }
@@ -119,7 +99,7 @@ fn a_null_count_reads_as_absent_not_as_a_refusal() {
 #[test]
 fn a_readable_count_is_the_count_however_it_was_spelled() {
     assert_eq!(billed_count(&json!({ "n": 27 }), "n"), Ok(27));
-    // The float-spelled integer this module exists for.
+
     assert_eq!(billed_count(&json!({ "n": 27.0 }), "n"), Ok(27));
     assert_eq!(billed_count(&json!({ "n": 0 }), "n"), Ok(0));
 }
@@ -154,18 +134,7 @@ fn a_hostile_spelling_cannot_write_an_essay_into_the_refusal() {
 }
 
 /// NO DIALECT MAY REINTRODUCE THE BARE READ.
-///
-/// This is the regression that actually matters. Fixing the six dialects once does nothing for
-/// the seventh: the defect was never a typo, it was the house idiom, so the next dialect added
-/// reaches for `.as_u64().unwrap_or(0)` because that is what the neighbouring code looked like.
-/// A count read that way is silently zero for any provider that spells it as a float, and a
-/// zeroed ledger row is invisible downstream — every view over it is faithfully consistent and
-/// faithfully wrong.
-///
-/// Scanning our own source is the cheap, durable guard, and this crate is the right place for
-/// it: the rule is about THIS crate's dialects and nothing else. Comment lines are skipped so
-/// the prose above (and the Bedrock writer's explanation of why its adds saturate) does not
-/// trip the check that the prose describes.
+
 #[test]
 fn no_dialect_reads_a_count_with_the_bare_defaulting_idiom() {
     use std::path::Path;
@@ -177,7 +146,6 @@ fn no_dialect_reads_a_count_with_the_bare_defaulting_idiom() {
         for e in entries.flatten() {
             let p = e.path();
             if p.is_dir() {
-                // A test's own fixture may spell a wire value any way it likes.
                 if p.file_name().is_some_and(|n| n == "tests") {
                     continue;
                 }
@@ -209,7 +177,7 @@ fn no_dialect_reads_a_count_with_the_bare_defaulting_idiom() {
         let Ok(text) = std::fs::read_to_string(f) else {
             continue;
         };
-        // Join non-comment lines so the idiom is caught whether or not rustfmt split it.
+
         let code: String = text
             .lines()
             .map(|l| {
@@ -245,28 +213,13 @@ fn no_dialect_reads_a_count_with_the_bare_defaulting_idiom() {
 }
 
 /// THE SAME RULE, FOR THE OTHER SPELLING — the one that let the defect come back.
-///
-/// The sibling test above bans the METHOD form (`x.as_u64().unwrap_or(0)`). The house idiom has
-/// a second spelling, the PATH form — `.and_then(Value::as_u64).unwrap_or(0)` — which reads
-/// identically, defaults identically, and was invisible to that scan. It is not a hypothetical
-/// gap: the leaf-op handlers were fixed once, the fix was lost, and sixteen live billed reads
-/// came back in the path form precisely because nothing was watching it.
-///
-/// A BLANKET ban on the path form would be wrong — `.and_then(Value::as_u64)` is the correct,
-/// unremarkable way to read `dimensions`, `n`, `seed`, `top_n`, an array `index` or an image
-/// width, none of which are money. So this scans a VOCABULARY instead: the wire field names that
-/// are counts busbar bills on, across all six dialects. A bare read of one of THOSE is a defect;
-/// a bare read of anything else is not this test's business.
-///
-/// Adding a dialect with a new count field means adding its wire name here. That is the point:
-/// the list is the explicit, reviewable statement of what busbar considers a billed count.
+
 #[test]
 fn no_dialect_reads_a_billed_count_field_with_a_bare_as_u64() {
     use std::path::Path;
 
     /// Wire field names that carry a BILLED count, in every dialect's own spelling.
     const BILLED_COUNT_FIELDS: &[&str] = &[
-        // OpenAI Chat / Responses / images / embeddings / transcription
         "prompt_tokens",
         "completion_tokens",
         "input_tokens",
@@ -277,28 +230,24 @@ fn no_dialect_reads_a_billed_count_field_with_a_bare_as_u64() {
         "audio_tokens",
         "accepted_prediction_tokens",
         "rejected_prediction_tokens",
-        // Anthropic
         "cache_creation_input_tokens",
         "cache_read_input_tokens",
         "ephemeral_5m_input_tokens",
         "ephemeral_1h_input_tokens",
         "web_search_requests",
         "thinking_tokens",
-        // Gemini
         "promptTokenCount",
         "candidatesTokenCount",
         "thoughtsTokenCount",
         "cachedContentTokenCount",
         "toolUsePromptTokenCount",
         "totalTokenCount",
-        // Bedrock
         "inputTokens",
         "outputTokens",
         "totalTokens",
         "cacheReadInputTokens",
         "cacheWriteInputTokens",
         "inputTextTokenCount",
-        // Cohere
         "search_units",
         "classifications",
         "billed_units",
@@ -311,8 +260,6 @@ fn no_dialect_reads_a_billed_count_field_with_a_bare_as_u64() {
         for e in entries.flatten() {
             let p = e.path();
             if p.is_dir() {
-                // A test may spell a wire value however it likes; this rule is about the
-                // production readers.
                 if p.file_name().is_some_and(|n| n == "tests") {
                     continue;
                 }
@@ -344,8 +291,7 @@ fn no_dialect_reads_a_billed_count_field_with_a_bare_as_u64() {
         let Ok(text) = std::fs::read_to_string(f) else {
             continue;
         };
-        // Flatten non-comment code so rustfmt's line breaks cannot hide the pair, and so the
-        // prose in this file's own siblings is never scanned.
+
         let code: String = text
             .lines()
             .map(|l| {
@@ -365,8 +311,7 @@ fn no_dialect_reads_a_billed_count_field_with_a_bare_as_u64() {
             while let Some(hit) = flat[from..].find(&needle) {
                 let at = from + hit;
                 from = at + needle.len();
-                // The read follows the key closely; a generous window still cannot reach the
-                // NEXT field lookup, because that lookup would contain its own `get("…")`.
+
                 let window = &flat[from..flat.len().min(from + 120)];
                 let stop = window.find(".get(").unwrap_or(window.len());
                 let window = &window[..stop];
@@ -389,12 +334,7 @@ fn no_dialect_reads_a_billed_count_field_with_a_bare_as_u64() {
 }
 
 /// A MULTI-BYTE UNREADABLE SPELLING REFUSES; IT DOES NOT PANIC THE CUT.
-///
-/// The bound on the quoted spelling was a byte `truncate(64)`, which panics when byte 64 lands
-/// inside a character. `"` + forty `é` puts every `é` on an odd byte offset, so byte 64 is the
-/// middle of one: the read that exists to REFUSE an unreadable count panicked instead — reachable
-/// from the Gemini and OpenAI transcription/image readers, and from every dialect helper now
-/// routed through `billed_count`.
+
 #[test]
 fn a_multi_byte_unreadable_spelling_refuses_rather_than_panicking() {
     let hostile = "é".repeat(40);
@@ -432,8 +372,7 @@ fn billed_count_opt_is_none_when_absent_and_refuses_when_unreadable() {
 }
 
 /// Flatten one source file the way the scans in this file read it: full-line comments dropped,
-/// trailing ` //` comments cut, and then EVERY whitespace character removed, so no rustfmt line
-/// break or spacing choice can split an idiom the scan is looking for.
+
 fn squash(text: &str) -> String {
     text.lines()
         .filter(|l| !l.trim_start().starts_with("//"))
@@ -461,13 +400,7 @@ fn past_balanced(s: &str, open: char, close: char) -> Option<usize> {
 }
 
 /// Every lenient count read in `flat` (a [`squash`]ed file) whose `None` is then DEFAULTED.
-///
-/// A lenient read is `read_count_u64`, or any local closure or `-> Option<u64>` fn that wraps one
-/// (`u64_field`, `billed_u64`, ... — found by what they CALL, never by what they are named, and to
-/// a fixpoint so a wrapper of a wrapper is one too). Its `None` means "absent OR present and
-/// unreadable"; defaulting it — `.unwrap_or(..)`, `.unwrap_or_default()`, `.unwrap_or_else(..)`,
-/// `.map_or(..)`, possibly after `.map(..)` steps — records an unreadable billed count as a number
-/// the provider never sent. That is exactly what `billed_count`/`billed_count_opt` exist to refuse.
+
 fn lenient_defaults(flat: &str) -> Vec<String> {
     let wrappers = lenient_wrappers(flat);
     const DEFAULTS: &[&str] = &[
@@ -482,24 +415,22 @@ fn lenient_defaults(flat: &str) -> Vec<String> {
         while let Some(hit) = flat[from..].find(w.as_str()) {
             let at = from + hit;
             from = at + w.len();
-            // A whole identifier only: `read_count_u64` inside `xread_count_u64y` is another name.
+
             if !whole_ident(flat, at, w.len()) {
                 continue;
             }
             let mut tail = &flat[from..];
             if tail.starts_with('(') {
-                // CALL form `w(..)`.
                 let Some(end) = past_balanced(tail, '(', ')') else {
                     continue;
                 };
                 tail = &tail[end..];
             } else if let Some(t) = tail.strip_prefix(')') {
-                // PATH form `.and_then(w)`: step past the combinator's own close.
                 tail = t;
             } else {
                 continue;
             }
-            // `.map(..)` keeps the lenient `None` flowing; step through any number of them.
+
             while let Some(t) = tail.strip_prefix(".map") {
                 let Some(end) = past_balanced(t, '(', ')') else {
                     break;
@@ -523,12 +454,12 @@ fn whole_ident(flat: &str, at: usize, len: usize) -> bool {
 }
 
 /// `read_count_u64` plus every local closure or `-> Option<u64>` fn in `flat` that wraps one (found
-/// by what they CALL, never by what they are named, to a fixpoint so a wrapper of a wrapper is one).
+
 fn lenient_wrappers(flat: &str) -> Vec<String> {
     let mut wrappers: Vec<String> = vec!["read_count_u64".to_string()];
     loop {
         let mut grew = false;
-        // `letNAME=|..|BODY;` closures.
+
         let mut from = 0;
         while let Some(hit) = flat[from..].find("let") {
             let at = from + hit;
@@ -549,7 +480,7 @@ fn lenient_wrappers(flat: &str) -> Vec<String> {
                 grew = true;
             }
         }
-        // `fnNAME(..)->Option<u64>{BODY}` fns.
+
         let mut from = 0;
         while let Some(hit) = flat[from..].find("fn") {
             let at = from + hit;
@@ -586,11 +517,7 @@ fn lenient_wrappers(flat: &str) -> Vec<String> {
 }
 
 /// The IR fields whose value IS a billed quantity or selects the tier one prices at, where `None`
-/// means "the provider reported none" — so a `None` that really meant "present but unreadable"
-/// DROPS the unit from the bill (the cache tiers, Cohere's `billed_units` bucket, the separately
-/// metered search/web-search/tool-use counts; a rerank's `search_units` is the priced quantity
-/// itself, item 134). The attribution-only slices (`reasoning_tokens`, the audio and
-/// predicted-output slices) are not in the set: their totals are billed elsewhere.
+
 const BILLED_OPTION_FIELDS: &[&str] = &[
     "cache_read_input_tokens",
     "cache_creation_input_tokens",
@@ -605,9 +532,7 @@ const BILLED_OPTION_FIELDS: &[&str] = &[
 ];
 
 /// Every `FIELD: <expr>` initializer in `flat` (a [`squash`]ed file) where FIELD is a
-/// [`BILLED_OPTION_FIELDS`] member and `<expr>` routes through a lenient read — the `None`-flavoured
-/// twin of [`lenient_defaults`]: nothing is defaulted, the unreadable count simply becomes the
-/// field's "not reported" `None` and the unit leaves the ledger (item 133 remainder).
+
 fn lenient_billed_fields(flat: &str) -> Vec<String> {
     let wrappers = lenient_wrappers(flat);
     let mut hits = Vec::new();
@@ -619,14 +544,14 @@ fn lenient_billed_fields(flat: &str) -> Vec<String> {
             if !whole_ident(flat, at, field.len()) {
                 continue;
             }
-            // An initializer `FIELD:` — not a path `FIELD::`, not a use, not a destructure.
+
             let Some(rest) = flat[from..].strip_prefix(':') else {
                 continue;
             };
             if rest.starts_with(':') {
                 continue;
             }
-            // The initializer expression: up to the first top-level `,` or the unmatched close.
+
             let mut depth = 0i32;
             let mut end = rest.len();
             for (i, c) in rest.char_indices() {
@@ -666,13 +591,7 @@ fn lenient_billed_fields(flat: &str) -> Vec<String> {
 }
 
 /// A lenient read whose `None` flows, undefaulted, through `.map(..)` into a STRUCT LITERAL — the
-/// third shape item 133 remainder missed. Unlike [`lenient_defaults`] (defaulted to a bare number)
-/// and [`lenient_billed_fields`] (assigned straight to a named billed field), this shape wraps the
-/// `Some(n)`/`None` in a freshly built record (`TokenUsage{input:n,..Default::default()}`) that
-/// itself becomes the caller's only signal of "was there usage" — so an unreadable count collapses
-/// to the SAME `None` as "the provider reported no usage at all", and every downstream view reads
-/// zero for real work. Live at the Gemini and Bedrock embeddings handlers before this fix:
-/// `.and_then(read_count_u64).map(|n| TokenUsage{input:n,..Default::default()})`.
+
 fn lenient_struct_maps(flat: &str) -> Vec<String> {
     let wrappers = lenient_wrappers(flat);
     let mut hits = Vec::new();
@@ -686,18 +605,16 @@ fn lenient_struct_maps(flat: &str) -> Vec<String> {
             }
             let mut tail = &flat[from..];
             if tail.starts_with('(') {
-                // CALL form `w(..)`.
                 let Some(end) = past_balanced(tail, '(', ')') else {
                     continue;
                 };
                 tail = &tail[end..];
             } else if let Some(t) = tail.strip_prefix(')') {
-                // PATH form `.and_then(w)`: step past the combinator's own close.
                 tail = t;
             } else {
                 continue;
             }
-            // The FIRST `.map(..)` right after the lenient read.
+
             let Some(t) = tail.strip_prefix(".map") else {
                 continue;
             };
@@ -705,13 +622,12 @@ fn lenient_struct_maps(flat: &str) -> Vec<String> {
                 continue;
             };
             let body = &t[..end];
-            // A bare scalar transform (`.map(|n| n * 2)`) is not this shape; a struct literal
-            // (`.map(|n| Type{field:n,..})`) is — it repackages the `None` as "no record at all".
+
             if !body.contains('{') {
                 continue;
             }
             let after = &t[end..];
-            // Already defaulted afterward is `lenient_defaults`'s shape, not this one.
+
             const DEFAULTS: &[&str] = &[
                 ".unwrap_or(",
                 ".unwrap_or_default(",
@@ -729,26 +645,11 @@ fn lenient_struct_maps(flat: &str) -> Vec<String> {
 }
 
 /// THE READ-THROUGH-THE-SEAM SPELLING OF THE SILENT ZERO (item 306).
-///
-/// The two scans above look for the substring `as_u64`, which does not occur inside
-/// `read_count_u64` — so they were structurally blind to the idiom that actually carried the defect:
-/// `u64_field("input_tokens").unwrap_or(0)` over `let u64_field = |k| v.get(k).and_then(read_count_u64)`,
-/// live in all six dialects at 079a16efc (item 133 then removed every one). Routing a count through
-/// the seam and then defaulting its `None` is the ORIGINAL defect, spelled politely: a present,
-/// unreadable count is ledgered as zero. This scan keys on the SHAPE — a lenient read, however it
-/// is named or wrapped, whose `None` is defaulted — so a reintroduction goes red here.
-///
-/// It also keys on the `None` twin ([`lenient_billed_fields`]): a lenient read assigned undefaulted
-/// to a billed `Option` field, where "unreadable" silently reads as "not reported" (item 133); and
-/// on the struct-map twin ([`lenient_struct_maps`]): a lenient read `.map`ped undefaulted into a
-/// freshly built record, where "unreadable" silently reads as "no record at all" (item 133
-/// remainder — the Gemini and Bedrock embeddings handlers).
+
 #[test]
 fn no_dialect_defaults_a_lenient_count_read() {
     use std::path::Path;
 
-    // The detector must see the exact shapes that were live, or a green below proves nothing.
-    // Verbatim (squashed) from anthropic/reader.rs and cohere/reader.rs at 079a16efc.
     let was_live = squash(
         "let u64_field = |k: &str| v.get(k).and_then(crate::codec::usage_count::read_count_u64);\n\
          input_tokens: u64_field(\"input_tokens\").unwrap_or(0),\n\
@@ -763,7 +664,7 @@ fn no_dialect_defaults_a_lenient_count_read() {
         "the detector must flag the closure, path, call and fn-wrapper forms: {:?}",
         lenient_defaults(&was_live)
     );
-    // And it must NOT flag a lenient read whose `None` stays `None`, or the refusing seam.
+
     let is_fine = squash(
         "let billed_u64 = |k: &str| b.get(k).and_then(crate::codec::usage_count::read_count_u64);\n\
          search_units: billed_u64(\"search_units\"),\n\
@@ -776,12 +677,6 @@ fn no_dialect_defaults_a_lenient_count_read() {
         lenient_defaults(&is_fine)
     );
 
-    // THE `None` TWIN (item 133 remainder). A lenient read that is NOT defaulted but lands straight
-    // in a billed `Option` field turns "present but unreadable" into "not reported" and drops the
-    // unit — the Cohere `search_units`/`classifications` reads survived item 133 exactly this way,
-    // and the defaulting scan above is (correctly) blind to them. Verbatim (squashed) from
-    // cohere/reader.rs and cohere/handler.rs before the fix: the closure, the path and the
-    // wrapped-through-`usage_val` forms must all flag.
     let was_live_none = squash(
         "let billed_u64 = |k: &str| { billed_units.and_then(|b| b.get(k)).and_then(crate::codec::usage_count::read_count_u64) };\n\
          search_units: billed_u64(\"search_units\"),\n\
@@ -796,14 +691,14 @@ fn no_dialect_defaults_a_lenient_count_read() {
         "the detector must flag every lenient read into a billed field: {:?}",
         lenient_billed_fields(&was_live_none)
     );
-    // The billed-field twin must flag the line the defaulting scan above is told to pass.
+
     assert_eq!(
         lenient_billed_fields(&is_fine).len(),
         1,
         "{:?}",
         lenient_billed_fields(&is_fine)
     );
-    // And NOT the refusing seam, a declaration, a destructure, or an attribution-only slice.
+
     let is_fine_none = squash(
         "search_units: billed_opt(u.get(\"billed_units\"), \"search_units\")?,\n\
          cache_read_input_tokens: cached,\n\
@@ -817,12 +712,6 @@ fn no_dialect_defaults_a_lenient_count_read() {
         lenient_billed_fields(&is_fine_none)
     );
 
-    // THE STRUCT-MAP TWIN (item 133 remainder). A lenient read piped through `.map(..)` into a
-    // struct literal, never defaulted afterward, repackages "unreadable" as "no record at all" —
-    // neither of the two scans above catch it: nothing is defaulted (so `lenient_defaults` misses
-    // it) and the struct's OWN field name (`input`) is not a `BILLED_OPTION_FIELDS` member (so
-    // `lenient_billed_fields` misses it too). Verbatim (squashed) from gemini/handler.rs and
-    // bedrock/handler.rs before this fix.
     let was_live_map = squash(
         "let usage = v.get(\"usageMetadata\").and_then(|u| u.get(\"promptTokenCount\")).and_then(crate::codec::usage_count::read_count_u64).map(|n| busbar_contract::billing::TokenUsage { input: n, ..Default::default() });\n\
          let usage = v.get(\"inputTextTokenCount\").and_then(crate::codec::usage_count::read_count_u64).map(|n| busbar_contract::billing::TokenUsage { input: n, ..Default::default() });\n",
@@ -833,8 +722,7 @@ fn no_dialect_defaults_a_lenient_count_read() {
         "the detector must flag both the Gemini and Bedrock embeddings shapes: {:?}",
         lenient_struct_maps(&was_live_map)
     );
-    // And NOT the refusing seam, or a lenient read `.map`ped to a bare scalar (already covered by
-    // `lenient_defaults` once it is defaulted) rather than a struct.
+
     let is_fine_map = squash(
         "let usage = crate::codec::usage_count::billed_count_opt(v.get(\"usageMetadata\"), \"promptTokenCount\").map_err(|e| CodecError::Malformed(e.to_string()))?.map(|n| busbar_contract::billing::TokenUsage { input: n, ..Default::default() });\n\
          z: count_of(&v).map(|n| n * 2).unwrap_or(0),\n\

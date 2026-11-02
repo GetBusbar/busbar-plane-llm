@@ -2,12 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The Anthropic (Messages API) dialect: this file is the declaration, `reader.rs` is wire to IR,
-//! `writer.rs` is IR to wire, `handler.rs` names the operations it serves, and `tests/` holds its
-//! own tests. The `busbar` binary links the crate and hands [`DECL`] to core's
-//! `proto::registry::install_protocols` at boot; core never names this dialect.
-//!
-//! Core's test/`test-support` builds compile these same sources back in as `proto::anthropic`, so
-//! every core reference here is spelled with core's crate name and every self reference is relative.
 
 pub mod handler;
 #[rustfmt::skip]
@@ -39,13 +33,11 @@ use busbar_contract::protocol::*;
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
 use busbar_contract::upstream::StatusClass;
-// Reached relatively so it resolves both standalone and netted into core; redundant with the
-// `busbar_contract::protocol::*` glob when netted.
+
 #[allow(unused_imports)]
 use super::proto_codec::*;
 use crate::codec::egress_prep::LaneCaps;
-// Named explicitly: a `test-support` build of busbar-core re-exports a second copy of these items
-// through the `busbar_contract::protocol::*` glob, and a bare use would be ambiguous.
+
 #[allow(unused_imports)]
 use super::proto_codec::{Protocol, ProtocolReader, ProtocolWriter, StreamFraming};
 
@@ -55,13 +47,11 @@ pub fn protocol() -> Protocol {
 }
 
 /// A native Anthropic stream emits `event: ping` right after `message_start`; a translated stream
-/// never did, which is a fingerprintable proxy tell. Injected once after the translated
-/// `message_start` on any ingress-Anthropic cross-protocol stream (same-protocol passthrough is
-/// byte-verbatim and already carries the upstream's pings).
+
 const ANTHROPIC_PING_SSE_FRAME: &[u8] = b"event: ping\ndata: {\"type\":\"ping\"}\n\n";
 
 /// Anthropic's `GET /v1/models` envelope: `model` objects in a single complete page
-/// (`data`, `has_more: false`, `first_id`, `last_id`).
+
 fn models_list_envelope(names: &[&str]) -> serde_json::Value {
     let data: Vec<serde_json::Value> = names
         .iter()
@@ -86,8 +76,7 @@ fn models_list_envelope(names: &[&str]) -> serde_json::Value {
 }
 
 /// Router detection: the `anthropic-version`/`anthropic-beta` headers (2), the `x-api-key`
-/// header, Anthropic's alone among the six (4, catches callers who omit the version header), then
-/// the `/v1/messages` path (11). Lower strength binds tighter.
+
 fn claims(
     h: busbar_contract::protocol::HeadFields<'_>,
     path: &str,
@@ -122,13 +111,10 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     head_keys: super::proto_codec::LLM_CHAT_HEAD_KEYS,
     streaming_content_type: Some(busbar_contract::protocol::TEXT_EVENT_STREAM),
     array_stream_shim_key: None,
-    // `toolu_…` is Anthropic's documented native tool-call id shape.
+
     native_tool_id_prefix: Some("toolu_"),
     ingress_auth: IngressAuth::Bearer,
-    // An API key (`sk-ant-api…`) goes as `x-api-key` with leading whitespace trimmed, an OAuth
-    // token (`sk-ant-oat…`) as `authorization: Bearer`, and any other credential by the lane's mode
-    // (configured key as `x-api-key`, forwarded caller token as a bearer). One scheme per request,
-    // never both: no native client sends two.
+
     egress_auth_headers: None,
     egress_auth_lane_constant: false,
     egress_scheme: Some(EgressScheme::Static {
@@ -163,10 +149,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     ingress_is_eventstream: false,
     emits_sse_done_terminator: false,
     max_citations_per_delta: Some(1),
-    // Native-SDK UA (Stainless `<Title>/Python <ver>`). Re-verify against the latest published SDK
-    // before a release (`test_egress_ua_versions_are_pinned_and_present` forces a conscious bump).
-    // Written on a translated route, on a same-dialect route whose caller sent no user-agent, and on
-    // the health probe; a same-dialect caller's own user-agent replaces it.
+
     egress_user_agent: "Anthropic/Python 0.39.0",
     has_model_in_url: false,
     auth_failure_status_and_kind: (
@@ -184,9 +167,9 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     residual_claims: Some(residual_claims),
     residual_default: false,
     vendor_response_metadata: None,
-    // Narrower than `claims` on purpose (no `x-api-key`/path): the SDK always sends the version.
+
     list_models_fingerprint_headers: &[HDR_ANTHROPIC_VERSION],
-    // Every request carries the API version, whatever its credential.
+
     static_headers: &[(HDR_ANTHROPIC_VERSION, ANTHROPIC_API_VERSION)],
 };
 
@@ -206,19 +189,16 @@ pub(crate) const ENTRY: super::proto_codec::DialectEntry = super::proto_codec::D
 const ANTHROPIC_API_VERSION: &str = "2023-06-01";
 
 /// Mixed-case base62 alphabet, uppercase-first, matching a native Anthropic id token (`01` plus a
-/// mixed-case alphanumeric token, not lowercase hex). Distinct from the shared lowercase-first
-/// `crate::codec::dialect::BASE62_ALPHABET`: `synth_id_with_prefix` (body ids) needs this one,
-/// `synth_anthropic_request_id` (response-header id) deliberately uses the shared one.
+
 const ANTHROPIC_NATIVE_ALPHABET: &[u8; 62] =
     b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
 /// The response header a native Anthropic endpoint always carries (the SDK reads it into
-/// `request_id`). Surfaced externally only via the writer vtable.
+
 const HDR_REQUEST_ID: &str = "request-id";
 
 /// Width of a synthesized id's token after the `01` marker (a native `msg_`/`req_` id is
-/// prefix + `01` + 24 mixed-case base62 chars); matching length and alphabet keeps it
-/// indistinguishable from a native one.
+
 const SYNTH_ID_TOKEN_LEN: usize = 24;
 
 /// SSE event-type strings emitted in the `event:` header of each native Anthropic stream frame.
@@ -245,39 +225,33 @@ const STOP_PAUSE_TURN: &str = "pause_turn";
 const STOP_REFUSAL: &str = "refusal";
 
 /// `stop_reason` reported when the CONTEXT WINDOW (not the caller's `max_tokens`) ran out. The
-/// reader maps it to [`crate::codec::ir::IrStopReason::MaxTokens`] (every writer renders `Other` as
-/// a natural stop, which would tell a foreign client a truncated answer was complete) and sets
-/// [`crate::codec::ir::IrStopDetail::ContextWindowExceeded`] beside it, which this writer (and
-/// Bedrock's) renders back as this token.
+
 const STOP_MODEL_CONTEXT_WINDOW_EXCEEDED: &str = "model_context_window_exceeded";
 
 /// `output_config.format.type` for native structured outputs; the slot a cross-protocol
-/// `response_format` projects into (the deprecated beta spelling is top-level `output_format`).
+
 const OUTPUT_FORMAT_JSON_SCHEMA: &str = "json_schema";
 
 /// `thinking.type` for adaptive thinking, the only on-mode Opus 4.7+/5.x, Sonnet 5 and Fable
-/// accept (`{type:"enabled",budget_tokens}` 400s there).
+
 const THINKING_TYPE_ADAPTIVE: &str = "adaptive";
 
 /// `thinking.type` that switches reasoning off ([`crate::codec::ir::IrReasoningAsk::Off`]).
 const THINKING_TYPE_DISABLED: &str = "disabled";
 
 /// Tool `type` for an ordinary client (function) tool; absent `type` means the same. Any other
-/// `type` is an Anthropic-defined server or client-executed tool whose schema is Anthropic's.
+
 const TOOL_TYPE_CUSTOM: &str = "custom";
 
 /// Content block `type` values not covered by the delta sub-type constants above.
 const BLOCK_TYPE_REDACTED_THINKING: &str = "redacted_thinking";
 
 /// `extra` key parking the raw native content blocks the IR cannot model (e.g. `document`), by
-/// position in `req.messages` (system-role messages excluded). Each entry is `{"m": <message
-/// index>, "i": <block index>, "block": <raw block JSON>}`. `read_block`'s empty-Text placeholder
-/// keeps the block's shape in the turn; this sentinel lets an Anthropic-to-Anthropic hop through
-/// the IR splice the original block back. It is cleared on a cross-protocol hop.
+
 const ANTHROPIC_UNMODELED_BLOCKS_SENTINEL: &str = "__busbar_anthropic_unmodeled_blocks";
 
 /// Every content-block kind [`read_block`] reads (the request and answer grammar, `codec::drops`).
-/// A block of any other kind does not cross a translate attempt, which names it.
+
 const BLOCK_KINDS: &[&str] = &[
     keys::TEXT,
     keys::THINKING,
@@ -317,9 +291,8 @@ const IR_BLOCK_KINDS: &[(&str, &str)] = &[
 ];
 
 /// The IR request members the reader carries by code from a path no map-file row names (how a drop
-/// of one is named by the caller's wire path).
+
 const REQUEST_CODE_NAMES: &[(&str, &str)] = &[
-    // `disable_parallel_tool_use`, inside whichever `tool_choice` arm the caller sent.
     (
         crate::codec::drops::name::PARALLEL_TOOL_CALLS,
         "tool_choice.disable_parallel_tool_use",
@@ -340,13 +313,10 @@ const RESPONSE_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::B
 
 /// What the Anthropic reader parks in `extra` beside the members its map file does not model.
 const PARKED: &[crate::codec::drops::Parked] = &[
-    // The raw unmodelled blocks, for a same-dialect write; `REQUEST_BLOCKS` names them.
     crate::codec::drops::Parked {
         key: ANTHROPIC_UNMODELED_BLOCKS_SENTINEL,
         holds: crate::codec::drops::Holds::Nothing,
     },
-    // The thinking ask and the legacy structured-output spelling cross as the IR's reasoning and
-    // response format.
     crate::codec::drops::Parked {
         key: keys::THINKING,
         holds: crate::codec::drops::Holds::Nothing,
@@ -366,13 +336,12 @@ const PARKED: &[crate::codec::drops::Parked] = &[
 ];
 
 /// What this dialect's answers carry beyond its map file's rows. `stop_details` (the refusal
-/// category) is read beside the stop reason; the stream's block index is structure; `ping` and
-/// `error` are carried by code.
+
 const RESPONSE_CODE: &[&str] = &[STOP_DETAILS];
 const STREAM_CODE: &[&str] = &["type=content_block_delta.index", "type=ping", "type=error"];
 
 /// The answer paths INSIDE a subtree this dialect carries that its code does not carry, named by the
-/// drop walk.
+
 const RESPONSE_DROPS: &[&str] = &[
     "content[].type=bash_code_execution_tool_result",
     "content[].type=code_execution_tool_result",
@@ -408,7 +377,7 @@ const STREAM_DROPS: &[&str] = &[
 ];
 
 /// The block `type` values [`read_block`] holds whole in the IR; any other is parked under
-/// [`ANTHROPIC_UNMODELED_BLOCKS_SENTINEL`].
+
 fn is_modeled_anthropic_block_type(t: &str) -> bool {
     matches!(
         t,
@@ -423,7 +392,7 @@ fn is_modeled_anthropic_block_type(t: &str) -> bool {
 }
 
 /// The block `type` values the stream reader translates; a `content_block_start` of any other
-/// type is suppressed with its deltas and stop.
+
 fn is_streamed_anthropic_block_type(t: &str) -> bool {
     matches!(
         t,
@@ -432,9 +401,7 @@ fn is_streamed_anthropic_block_type(t: &str) -> bool {
 }
 
 /// The `vendor` tag on an [`crate::codec::ir::IrImageSource::Vendor`] this protocol produces: a
-/// Files-API `{"type":"file","file_id":…}` document source or a `{"type":"content"}` document.
-/// Neither has a neutral form, so only this writer re-emits it; any other writer drops it with a
-/// warn.
+
 const VENDOR_NAME: &str = "anthropic";
 
 /// Native `document` content block type (a PDF/text attachment).
@@ -447,9 +414,7 @@ const DOCUMENT_MIME_TEXT_PLAIN: &str = "text/plain";
 const DOCUMENT_MIME_PDF: &str = keys::APPLICATION_PDF;
 
 /// `document.source` for inline bytes, by mime: a PDF rides the `base64` source; `text/*` rides the
-/// `text` source as decoded text (`media_type: "text/plain"`) since the IR carries it base64.
-/// `None` for any other mime or non-UTF-8 text; the caller drops the block with a warn rather than
-/// ship a certain 400 or a corrupt document.
+
 fn inline_document_source(media_type: &str, data: &str) -> Option<serde_json::Value> {
     if media_type.eq_ignore_ascii_case(DOCUMENT_MIME_PDF) {
         return Some(serde_json::json!({
@@ -475,18 +440,15 @@ fn inline_document_source(media_type: &str, data: &str) -> Option<serde_json::Va
 }
 
 /// Native `search_result` block type (a caller-supplied RAG passage). Read into a `Text` block
-/// carrying an [`crate::codec::ir::IrCitation`]; deliberately not in
-/// [`is_modeled_anthropic_block_type`] (see [`read_block`]).
+
 const BLOCK_TYPE_SEARCH_RESULT: &str = "search_result";
 
 /// The stash entry member marking a raw block the IR does not hold at all (an insertion, not a
-/// replacement, on a same-dialect write).
+
 const STASH_INSERT: &str = "insert";
 
 /// Scan a message's raw `content` array (before `read_blocks` parses it) for blocks the IR does
-/// not hold whole, pushing `{"m","i","block"}` entries (`i` is the raw index). A block
-/// [`read_blocks`] leaves out of the IR is marked `"insert": true`; every other entry replaces the
-/// IR block at that raw position.
+
 fn stash_unmodeled_blocks(
     msg_val: &serde_json::Value,
     m: usize,
@@ -500,28 +462,21 @@ fn stash_unmodeled_blocks(
             .get(keys::TYPE)
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        // A `document` is modelled (`IrBlock::Media`) but Media has no slot for `document.context`
-        // or `document.citations`. A document carrying either is also parked verbatim so
-        // `write_message` splices it back byte-exact on an Anthropic-to-Anthropic hop; a
-        // cross-protocol egress falls back to the Media projection and drops them. A document
-        // without them is not parked (Media round-trips it losslessly).
+
         let document_needs_stash = block_type == BLOCK_TYPE_DOCUMENT
             && (block_val.get(keys::CONTEXT).is_some() || block_val.get(keys::CITATIONS).is_some());
         if !is_read_into_ir(block_val) {
-            // Not in the IR at all: a same-dialect write INSERTS it back at raw index `i`.
             sink.push(serde_json::json!({
                 (keys::M): m, (keys::I): i, (keys::BLOCK): block_val, (STASH_INSERT): true
             }));
         } else if !is_modeled_anthropic_block_type(block_type) || document_needs_stash {
-            // In the IR, but not whole: a same-dialect write REPLACES the IR block at raw index
-            // `i` with the original.
             sink.push(serde_json::json!({ (keys::M): m, (keys::I): i, (keys::BLOCK): block_val }));
         }
     }
 }
 
 /// The stashed raw block for position `(m, i)`, for [`write_message`] to splice over the empty-Text
-/// placeholder.
+
 fn find_stashed_block(
     sentinel: &[serde_json::Value],
     m: usize,
@@ -559,7 +514,7 @@ fn stashed_inserts(sentinel: &[serde_json::Value], m: usize) -> Vec<(usize, serd
 }
 
 /// Error `type` strings for error envelopes and in-stream error events. Shared values alias
-/// their canonical home; only `timeout_error` is Anthropic-specific.
+
 const ERR_TYPE_OVERLOADED: &str = crate::codec::framework::ERR_TYPE_OVERLOADED;
 const ERR_TYPE_INVALID_REQUEST: &str = busbar_contract::protocol::ERR_TYPE_INVALID_REQUEST;
 const ERR_TYPE_AUTHENTICATION: &str = busbar_contract::protocol::ERR_TYPE_AUTHENTICATION;
@@ -567,14 +522,12 @@ const ERR_TYPE_RATE_LIMIT: &str = busbar_contract::protocol::ERR_TYPE_RATE_LIMIT
 const ERR_TYPE_API_ERROR: &str = busbar_contract::protocol::ERR_TYPE_API_ERROR;
 const ERR_TYPE_TIMEOUT: &str = "timeout_error";
 /// The billing `ErrorResponse.error` type. No cross-dialect alias exists (OpenAI names the same
-/// condition `insufficient_quota`).
+
 const ERR_TYPE_BILLING: &str = "billing_error";
 const ERR_TYPE_NOT_FOUND: &str = busbar_contract::protocol::ERR_TYPE_NOT_FOUND;
 const ERR_TYPE_PERMISSION: &str = busbar_contract::protocol::ERR_TYPE_PERMISSION;
 const ERR_TYPE_REQUEST_TOO_LARGE: &str = busbar_contract::protocol::ERR_TYPE_REQUEST_TOO_LARGE;
 
-// One spelling per wire word this dialect speaks more than once; words shared with other
-// dialects live in `crate::codec::keys`.
 const BATCH: &str = "batch";
 const BLOCKED_DOMAINS: &str = "blocked_domains";
 const CACHE_CONTROL: &str = "cache_control";
@@ -644,12 +597,11 @@ const STATUS_OVERLOADED: u16 = 503;
 const STATUS_ANTHROPIC_OVERLOADED: u16 = 529;
 
 /// Upper bound on an upstream-supplied streaming block index. The index flows into the IR and then
-/// into writers that allocate against it, so a hostile backend sending up to `u64::MAX` could drive
-/// a pathological allocation. An oversized index is refused rather than aliased to another block.
+
 const MAX_ANTHROPIC_BLOCK_INDEX: u64 = 1023;
 
 /// A streaming event's `index`, bounded by `MAX_ANTHROPIC_BLOCK_INDEX`. `None` (the event is
-/// dropped) when it is missing or non-numeric; unlike the Bedrock reader, which defaults to 0.
+
 fn read_clamped_block_index(data: &serde_json::Value) -> Option<usize> {
     data.get(keys::INDEX)
         .and_then(|i| i.as_u64())
@@ -661,10 +613,7 @@ fn read_clamped_block_index(data: &serde_json::Value) -> Option<usize> {
 pub struct AnthropicReader;
 
 /// Map a streaming `error.type` token to its breaker `StatusClass`, so a mid-stream error drives
-/// the same breaker transition an equivalent HTTP error would (`overloaded_error`, `rate_limit_error`,
-/// `api_error` and `timeout_error` are transient; authentication, permission and billing are hard
-/// down; the caller-fault types do not penalize the lane). An absent or unrecognized type falls back
-/// to `ClientError`, which records nothing, so an unknown error never trips a healthy lane.
+
 fn stream_error_class(error_type: Option<&str>) -> StatusClass {
     match error_type {
         Some(ERR_TYPE_OVERLOADED) => StatusClass::Overloaded,
@@ -682,8 +631,7 @@ fn stream_error_class(error_type: Option<&str>) -> StatusClass {
 }
 
 /// A provider-run tool's record from another dialect has no Anthropic form: a
-/// `web_search_tool_result` must carry each result's `encrypted_content`, which only Anthropic
-/// mints. The record is dropped, observably; its citations still ride the text blocks.
+
 fn warn_hosted_record_dropped() {
     crate::codec::drops::writer_drop!(
         crate::codec::drops::HOSTED_TOOL,
@@ -695,9 +643,7 @@ fn warn_hosted_record_dropped() {
 }
 
 /// [`write_block`] plus the members the published response block schemas require and a request
-/// block must not carry: `text` gets `citations: null`, `tool_use` gets `caller: {"type":"direct"}`,
-/// `thinking` gets `signature: ""` (matching the `content_block_start` seed). A value the source
-/// reported is left untouched.
+
 fn write_response_block(block: &crate::codec::ir::IrBlock) -> serde_json::Value {
     let mut val = write_block_in_context(block, true);
     if let Some(obj) = val.as_object_mut() {
@@ -721,9 +667,7 @@ fn write_response_block(block: &crate::codec::ir::IrBlock) -> serde_json::Value 
 }
 
 /// Parse `cache_control` (`{"type":"ephemeral"}`) into the IR's `CacheControl`. Shared by every
-/// site that can carry a breakpoint (text/system blocks, tool definitions, tool_use/tool_result)
-/// so none is silently dropped. Absent/`null` yields `None`; an unrecognized `type` is a client
-/// error.
+
 fn read_cache_control(
     val: Option<&serde_json::Value>,
 ) -> Result<Option<crate::codec::ir::CacheControl>, IrError> {
@@ -752,8 +696,7 @@ fn write_cache_control(cc: &crate::codec::ir::CacheControl) -> serde_json::Value
 }
 
 /// Normalize `tool_choice` (`{"type":"auto"|"any"|"tool"|"none","name"?}`) into the IR union:
-/// `any` is `Required`, `tool` plus `name` is the targeted `Tool{name}`. An absent field or an
-/// unrecognized or nameless `tool` shape is `None` (omitted), so no spurious directive appears.
+
 fn read_anthropic_tool_choice(
     val: Option<&serde_json::Value>,
 ) -> Option<crate::codec::ir::IrToolChoice> {
@@ -800,9 +743,7 @@ fn read_anthropic_stop_reason(token: &str) -> crate::codec::ir::IrStopReason {
 }
 
 /// [`crate::codec::ir::IrStopReason`] to Anthropic `stop_reason`. Anthropic has no `safety` member:
-/// a foreign content-filter stop is the provider declining to answer, which is what `refusal`
-/// tells a client (`end_turn` would call a filtered answer complete). `error`/`other` degrade to
-/// `end_turn` rather than leak an off-spec value a strict SDK rejects.
+
 fn write_anthropic_stop_reason(reason: crate::codec::ir::IrStopReason) -> &'static str {
     use crate::codec::ir::IrStopReason as S;
     match reason {
@@ -817,9 +758,7 @@ fn write_anthropic_stop_reason(reason: crate::codec::ir::IrStopReason) -> &'stat
 }
 
 /// The refinement of a stop: `model_context_window_exceeded` becomes
-/// [`crate::codec::ir::IrStopDetail::ContextWindowExceeded`] beside the coarse `MaxTokens`, and a
-/// `refusal` stop's `stop_details` becomes [`crate::codec::ir::IrStopDetail::Refusal`]. Shared by
-/// the buffered and stream readers.
+
 fn read_anthropic_stop_detail(
     stop_reason: Option<&str>,
     stop_details: Option<&serde_json::Value>,
@@ -844,8 +783,7 @@ fn read_anthropic_stop_detail(
 }
 
 /// The `stop_reason` token for a coarse reason plus its refinement: a length stop refined as
-/// ContextWindowExceeded is `model_context_window_exceeded`; everything else is
-/// [`write_anthropic_stop_reason`].
+
 fn write_anthropic_stop_reason_detailed(
     reason: crate::codec::ir::IrStopReason,
     detail: Option<&crate::codec::ir::IrStopDetail>,
@@ -860,7 +798,7 @@ fn write_anthropic_stop_reason_detailed(
 }
 
 /// The `stop_details` member (required, nullable): the refusal object when the stop is written as
-/// `refusal` and the IR carries a Refusal detail, else `null`.
+
 fn write_anthropic_stop_details(
     reason: Option<crate::codec::ir::IrStopReason>,
     detail: Option<&crate::codec::ir::IrStopDetail>,
@@ -886,8 +824,6 @@ fn write_block(block: &crate::codec::ir::IrBlock) -> serde_json::Value {
 }
 
 fn write_block_in_context(block: &crate::codec::ir::IrBlock, response: bool) -> serde_json::Value {
-    // Search-result slot: a RAG passage read from a Converse `searchResult` (or an Anthropic
-    // `search_result` whose parked raw block `write_message` did not splice) re-emits natively.
     if let Some(sr) = block.as_search_result() {
         return write_search_result(&sr, block);
     }
@@ -926,8 +862,7 @@ fn write_block_in_context(block: &crate::codec::ir::IrBlock, response: bool) -> 
             }
             serde_json::Value::Object(obj)
         }
-        // A redacted reasoning block (opaque encrypted bytes in `text`) re-emits as
-        // `redacted_thinking`, so the bytes never leak as visible `thinking` text.
+
         crate::codec::ir::IrBlock::Thinking {
             text,
             redacted: true,
@@ -969,7 +904,7 @@ fn write_block_in_context(block: &crate::codec::ir::IrBlock, response: bool) -> 
             name,
             input,
             cache_control,
-            // Anthropic has no wire concept of a Gemini thoughtSignature, so it is unused.
+
             thought_signature: _,
         } => {
             let mut obj = serde_json::Map::new();
@@ -994,11 +929,6 @@ fn write_block_in_context(block: &crate::codec::ir::IrBlock, response: bool) -> 
             if content.is_empty() {
                 obj.insert(keys::CONTENT.to_string(), serde_json::json!(""));
             } else {
-                // A tool_result's content is filtered as a message's is: an attachment with no
-                // Anthropic projection is omitted, never sent as the empty-text placeholder
-                // Anthropic rejects. A structured JSON result (Bedrock `{"json":…}`) rides as a
-                // `text` block of the serialized JSON. An empty text block is omitted too; a
-                // result left with nothing is the empty-string content Anthropic accepts.
                 let kept: Vec<serde_json::Value> = content
                     .iter()
                     .enumerate()
@@ -1035,17 +965,11 @@ fn write_block_in_context(block: &crate::codec::ir::IrBlock, response: bool) -> 
             cache_control,
             detail: _,
         } => {
-            // S3/FileId references have no Anthropic projection and are filtered before
-            // write_block; the arm here is a defensive empty placeholder.
             let mut img = match source {
                 crate::codec::ir::IrImageSource::Url(url) => {
                     serde_json::json!({ (keys::TYPE): keys::IMAGE, (keys::SOURCE): { (keys::TYPE): keys::URL, (keys::URL): url } })
                 }
                 crate::codec::ir::IrImageSource::Base64 { media_type, data } => {
-                    // Validate the media type: Anthropic accepts only `image/{jpeg,png,gif,webp}`
-                    // and 400s anything else, and a non-image mime can reach here (the Gemini
-                    // reader maps every `inlineData` onto an Image). Emit the empty placeholder
-                    // (`write_message` filters first) rather than a block Anthropic rejects.
                     match crate::codec::ir::image_subtype_if_supported(media_type) {
                         Some(subtype) => serde_json::json!({
                             (keys::TYPE): keys::IMAGE,
@@ -1063,8 +987,7 @@ fn write_block_in_context(block: &crate::codec::ir::IrBlock, response: bool) -> 
                         }
                     }
                 }
-                // This protocol's own Files-API `file_id` source: re-emit verbatim. A foreign
-                // vendor handle is filtered before `write_block` (`attachment_is_sendable`).
+
                 crate::codec::ir::IrImageSource::Vendor { vendor, value }
                     if *vendor == VENDOR_NAME =>
                 {
@@ -1089,9 +1012,6 @@ fn write_block_in_context(block: &crate::codec::ir::IrBlock, response: bool) -> 
             citations,
             context,
         } => {
-            // Anthropic's only attachment block is `document` (where an OpenAI `file` part or a
-            // Bedrock `document` lands); Audio/Video are dropped with a warn. `write_message`
-            // filters those first; the placeholder below is defensive.
             if *kind != crate::codec::ir::IrMediaKind::Document {
                 crate::codec::drops::writer_drop!(
                     crate::codec::drops::block(kind.as_str()),
@@ -1108,9 +1028,6 @@ fn write_block_in_context(block: &crate::codec::ir::IrBlock, response: bool) -> 
                     serde_json::json!({ (keys::TYPE): keys::URL, (keys::URL): url })
                 }
                 crate::codec::ir::IrImageSource::Base64 { media_type, data } => {
-                    // A PDF is the `base64` source; text is the `text` source carrying decoded text
-                    // (base64 there would hand the model gibberish). A mime with no Anthropic
-                    // source is filtered before `write_block`; the placeholder is defensive.
                     match inline_document_source(media_type, data) {
                         Some(src) => src,
                         None => {
@@ -1118,8 +1035,7 @@ fn write_block_in_context(block: &crate::codec::ir::IrBlock, response: bool) -> 
                         }
                     }
                 }
-                // This protocol's own opaque source (`file_id` or `content` document): re-emit
-                // verbatim. A foreign vendor reference is filtered in `write_message`.
+
                 crate::codec::ir::IrImageSource::Vendor { value, .. } => value.clone(),
             };
             let mut doc =
@@ -1128,7 +1044,7 @@ fn write_block_in_context(block: &crate::codec::ir::IrBlock, response: bool) -> 
                 if let Some(n) = name {
                     obj.insert(keys::TITLE.to_string(), serde_json::json!(n));
                 }
-                // The document's citation toggle and context hint (Anthropic / Bedrock).
+
                 if let Some(c) = context {
                     obj.insert(keys::CONTEXT.to_string(), serde_json::json!(c));
                 }
@@ -1145,8 +1061,6 @@ fn write_block_in_context(block: &crate::codec::ir::IrBlock, response: bool) -> 
             doc
         }
         crate::codec::ir::IrBlock::Json(_) | crate::codec::ir::IrBlock::HostedToolRecord { .. } => {
-            // A structured-json tool-result block has no top-level Anthropic shape; the ToolResult
-            // arm filters it first. Defensive empty placeholder.
             serde_json::json!({ (keys::TYPE): keys::TEXT, (keys::TEXT): "" })
         }
     }
@@ -1161,17 +1075,14 @@ fn anthropic_effort_word(effort: crate::codec::ir::IrReasoningEffort) -> &'stati
 }
 
 /// `output_config.effort` word to IR effort. `xhigh`/`max` sit above `High`; each foreign writer
-/// projects them onto its own top and `anthropic_effort_word` writes them back verbatim. `minimal`
-/// is not read.
+
 fn read_anthropic_effort_word(word: &str) -> Option<crate::codec::ir::IrReasoningEffort> {
     crate::codec::ir::IrReasoningEffort::parse_extended(word)
         .filter(|e| *e != crate::codec::ir::IrReasoningEffort::Minimal)
 }
 
 /// `output_config.format` (or the deprecated `output_format`) to the typed IR directive. Only the
-/// `json_schema` form with an object schema is one; anything else yields `None` (the key still
-/// rides `extra` same-protocol). There is no name/description sibling, so those and `strict` are
-/// left unset rather than asserting a flag the caller never wrote.
+
 fn read_anthropic_output_format(
     v: &serde_json::Value,
 ) -> Option<crate::codec::ir::IrResponseFormat> {
@@ -1183,8 +1094,7 @@ fn read_anthropic_output_format(
 }
 
 /// Close every object schema (`additionalProperties: false`) in place. Anthropic rejects a
-/// structured-output schema without it, while OpenAI accepts an open object in non-strict mode.
-/// Walks only schema-bearing keywords, never a data position like `enum`/`const`/`default`.
+
 fn close_object_schemas(schema: &mut serde_json::Value) {
     let Some(obj) = schema.as_object_mut() else {
         return;
@@ -1219,14 +1129,7 @@ fn close_object_schemas(schema: &mut serde_json::Value) {
 }
 
 /// Request-side attachment filter shared by a message's content and a `tool_result`'s content.
-/// Returns `false` (after a warn naming the construct) for a block with no valid Anthropic
-/// projection, so the caller omits it instead of emitting `write_block`'s empty-text placeholder,
-/// which Anthropic rejects.
-///
-/// Dropped: an image that is a foreign vendor handle (a Responses `file_id`, a Bedrock
-/// `s3Location`) or whose mime is not `image/{jpeg,png,gif,webp}`; audio/video; a document that is
-/// a foreign vendor handle or inline bytes of a mime with no source (see
-/// [`inline_document_source`]). This protocol's own `file_id` handles are kept.
+
 fn attachment_is_sendable(block: &crate::codec::ir::IrBlock) -> bool {
     match block {
         crate::codec::ir::IrBlock::Image { source, .. } => match source {
@@ -1301,7 +1204,7 @@ fn attachment_is_sendable(block: &crate::codec::ir::IrBlock) -> bool {
 }
 
 /// A native `search_result` block: `source`, `title`, the passage as one text part, the caller's
-/// `citations` switch and the cache breakpoint.
+
 fn write_search_result(
     sr: &crate::codec::ir::IrSearchResultParts<'_>,
     block: &crate::codec::ir::IrBlock,
@@ -1339,27 +1242,14 @@ fn write_message(
     let role_str = match msg.role {
         crate::codec::ir::IrRole::User => keys::USER,
         crate::codec::ir::IrRole::Assistant => keys::ASSISTANT,
-        // There is no `system` role inside `messages`; `write_request` folds system messages into
-        // the top-level `system` array, so this arm is unreachable there. Map to `"user"` so a
-        // direct `write_message` call never emits a `role:"system"`.
+
         crate::codec::ir::IrRole::System => keys::USER,
-        // Anthropic has no "tool" message role — tool results are carried as `user` messages whose
-        // content holds `tool_result` block(s). (Reachable when translating an OpenAI `tool` message.)
+
         crate::codec::ir::IrRole::Tool => keys::USER,
     };
-    // Request-side filter (write_response/_event call write_block directly, so response reasoning
-    // still surfaces). Anthropic 400s an assistant plaintext `thinking` block without a
-    // `signature`, and a cross-protocol IR may carry one, so drop those.
-    //
-    // A redacted thinking block re-emits as `redacted_thinking` with opaque `data` and no
-    // signature, which Anthropic accepts. The `redacted: false` guard below is load-bearing:
-    // without it every redacted block is dropped, losing the encrypted reasoning a multi-turn
-    // extended-thinking conversation replays. Only unsigned plaintext thinking is dropped.
+
     let mut dropped_unsigned_thinking = 0usize;
-    // Enumerate before the drop filter: `find_stashed_block` keys on the raw pre-filter index
-    // `read_request` recorded, so collapsing dropped blocks would misalign every later lookup.
-    // The IR holds no block for a raw block it did not read; those return at their raw positions,
-    // so the walk counts raw positions, not IR indexes.
+
     let mut inserts = stashed_inserts(unmodeled_sentinel, m)
         .into_iter()
         .peekable();
@@ -1383,8 +1273,6 @@ fn write_message(
                     ..
                 } = block
                 {
-                    // A signature minted by another vendor is not valid on Anthropic (400, as for a
-                    // missing one). Only an Anthropic-origin or unknown-origin signature is sent.
                     let foreign = signature_origin
                         .is_some_and(|o| o != crate::codec::ir::IrSignatureOrigin::Anthropic);
                     if signature.is_none() || foreign {
@@ -1413,8 +1301,7 @@ fn write_message(
                 );
                     break 'block None;
                 }
-                // A parked block (e.g. a `document` with `context`) at this raw position: splice the
-                // original back over its IR projection.
+
                 if let Some(original) = find_stashed_block(unmodeled_sentinel, m, i) {
                     break 'block Some(original);
                 }
@@ -1436,18 +1323,15 @@ fn write_message(
              vendor's, IR-18) from anthropic request egress (anthropic rejects them with a 400)"
         );
     }
-    // When no blocks survive (e.g. all unsigned thinking was dropped), emit `[]`, not `""`:
-    // Anthropic 400s an empty-string `content` but accepts an empty array.
+
     let content_val: serde_json::Value = serde_json::Value::Array(blocks);
     serde_json::json!({ (keys::ROLE): role_str, (keys::CONTENT): content_val })
 }
 
 /// Project one IR tool onto `tools[]`. `None` for a hosted tool that is not Anthropic-defined (a
-/// Responses `{"type":"web_search"}` has no `name`); as a function tool it would 400.
+
 fn write_tool(tool: &crate::codec::ir::IrTool) -> Option<serde_json::Value> {
     if let Some(hosted) = &tool.hosted {
-        // An Anthropic-defined tool (non-`custom` `type`) always carries its `name`; re-emit it
-        // verbatim. Anything else is a foreign hosted tool.
         let anthropic_shaped = hosted
             .get(keys::TYPE)
             .and_then(|t| t.as_str())
@@ -1473,7 +1357,7 @@ fn write_tool(tool: &crate::codec::ir::IrTool) -> Option<serde_json::Value> {
     if let Some(cc) = &tool.cache_control {
         obj.insert(CACHE_CONTROL.to_string(), write_cache_control(cc));
     }
-    // Per-tool `strict`: the same schema-guaranteed-arguments contract as OpenAI's `function.strict`.
+
     if let Some(strict) = tool.strict {
         obj.insert(keys::STRICT.to_string(), serde_json::json!(strict));
     }
@@ -1508,8 +1392,7 @@ struct AnthropicStream {
 }
 
 /// Value-namespace constructor for [`AnthropicWriter`]. `protocol_for` builds a fresh writer per
-/// stream, so each use inlines an independent empty set. `clippy::declare_interior_mutable_const`
-/// is suppressed deliberately: a shared `static` would leak one stream's open indices into another.
+
 #[allow(non_upper_case_globals)]
 #[allow(clippy::declare_interior_mutable_const)]
 pub const AnthropicWriter: AnthropicWriter = AnthropicWriter {
@@ -1523,8 +1406,7 @@ pub const AnthropicWriter: AnthropicWriter = AnthropicWriter {
 };
 
 /// A fresh writer as a value, for one-shot `write_request` / `write_response` calls in tests.
-/// Borrowing the const directly is `clippy::borrow_interior_mutable_const`; a test driving a
-/// sequence of stream events must bind one writer to a local instead of calling this per event.
+
 #[cfg(test)]
 pub(crate) fn anthropic_writer() -> AnthropicWriter {
     AnthropicWriter
@@ -1556,11 +1438,7 @@ impl AnthropicWriter {
         frames
     }
     /// THE STREAM'S `message.id`: the first one wins.
-    ///
-    /// Returns the id already captured for this stream if there is one, otherwise captures and
-    /// returns `mint()`. A duplicate `message_start` therefore re-states the identity the client
-    /// already has instead of announcing a second one. Lock poisoning degrades to the freshly
-    /// minted id rather than panicking on the request path.
+
     fn carried_message_id(
         &self,
         mint: impl FnOnce() -> Result<String, IrError>,
@@ -1575,17 +1453,13 @@ impl AnthropicWriter {
     }
 
     /// Record that a `content_block_start` was WRITTEN for IR block `index`, so it owes a closing
-    /// `content_block_stop`. Returns true when the index was newly opened, false when it was
-    /// already open — a redacted-thinking block's start is deferred to its delta, and the boolean
-    /// is what keeps a second delta from writing a duplicate start for a block already open on the
-    /// wire. Lock poisoning degrades to `false` rather than panicking.
+
     fn mark_block_open(&self, index: usize) -> bool {
         self.stream.lock().open_block_indices.insert(index)
     }
 
     /// Consume the open record for `index`, returning whether this writer opened it (and so owes
-    /// the closing frame). An untracked index is a block whose start had no Anthropic projection.
-    /// Lock poisoning degrades to `false` — closing nothing — rather than panicking.
+
     fn take_block_open(&self, index: usize) -> bool {
         self.stream.lock().open_block_indices.remove(&index)
     }

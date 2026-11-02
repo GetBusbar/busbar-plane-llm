@@ -2,11 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The six leaf-op `IrHandle`s: embeddings / image / rerank / moderation / transcription / speech.
-//! Each wraps its concrete `crate::codec::ir::*` request/response and writes itself onto the peer
-//! dialect by protocol string via the `(op, protocol)` `leaf_codec` dispatchers. The prep arms are
-//! no-ops (leaf ops carry no cross-protocol reshape); `set_model` stamps the model; billing projects
-//! each op's own usage. The write methods JSON-parse the leaf bytes, else fall through to the opaque
-//! `Bytes`/`Typed` form, byte-identical to the dissolved `IrReq`/`IrResp` arms.
 
 use crate::codec::ir::audio::{SpeechReq, SpeechResp, TranscriptionReq, TranscriptionResp};
 use crate::codec::ir::embeddings::{EmbeddingsReq, EmbeddingsResp};
@@ -29,8 +24,7 @@ fn slab(body: Bytes) -> SlabBytes {
 }
 
 /// The refusal a transcription writer's empty write becomes: a request always carries its model, so
-/// a writer that wrote nothing refused it (invalid audio or a form delimiter in its bytes). Refused at
-/// the seam, never sent upstream as an empty body.
+
 fn unwritable(egress_proto: &str) -> String {
     format!(
         "this request cannot be written onto {egress_proto}: its audio cannot be represented in \
@@ -190,7 +184,7 @@ macro_rules! leaf_handles {
 }
 
 /// A plain foreign transcript has no timing information from which an SRT/VTT document can be
-/// reconstructed. Refuse that cross-target request before work is sent; native relay is unchanged.
+
 fn transcription_format_refusal(request: &TranscriptionReq, target: &str) -> Option<String> {
     let format = request.response_format.as_deref()?;
     (target != crate::codec::proto_codec::PROTO_OPENAI && matches!(format, "srt" | "vtt"))
@@ -212,8 +206,7 @@ leaf_handles!(ModerationReqHandle(ModerationReq), ModerationRespHandle(Moderatio
 leaf_handles!(TranscriptionReqHandle(TranscriptionReq), TranscriptionRespHandle(TranscriptionResp), TRANSCRIPTION,
     transcription_write_request, transcription_write_response,
     stream: field, req_billing: none, resp_billing: own, refuse_empty: yes, refuse_empty_response: no);
-// Speech meters at the request seam (`SpeechReq::billing`: the input's exact character count),
-// knowable here and never from the opaque audio answer.
+
 leaf_handles!(SpeechReqHandle(SpeechReq), SpeechRespHandle(SpeechResp), SPEECH,
     speech_write_request, speech_write_response,
     stream: field, req_billing: own, resp_billing: own, refuse_empty: no, refuse_empty_response: yes);

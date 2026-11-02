@@ -1,6 +1,5 @@
 //! DF-MAP: an Anthropic `web_search_tool_result` is the IR's
-//! hosted web-search record, in an answer and in replayed history. Before this, the reader degraded
-//! it to an EMPTY text block.
+
 use super::super::proto_codec::protocol_for;
 use crate::codec::ir::{IrBlock, IrHostedToolKind, IrSearchResult};
 use serde_json::json;
@@ -78,7 +77,7 @@ fn a_web_search_error_reads_as_a_record_with_its_status() {
 }
 
 /// A record from another dialect cannot be written as Anthropic's block (it needs the
-/// `encrypted_content` only Anthropic mints): it is dropped, never an empty text block.
+
 #[test]
 fn a_foreign_hosted_record_is_dropped_on_anthropic_egress() {
     let resp = crate::codec::ir::IrResponse {

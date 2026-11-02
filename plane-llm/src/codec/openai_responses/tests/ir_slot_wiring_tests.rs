@@ -2,8 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR mapping: the Responses reader FILLS and the writer EMITS the
-//! typed IR slots. Each request probe drives reader → `chat_prepare_for_egress` → writer, and the
-//! seam clears `extra`, so a member reaches the far side ONLY through its typed slot.
 
 use super::*;
 
@@ -67,11 +65,8 @@ fn reasoning_items(out: &serde_json::Value) -> Vec<serde_json::Value> {
         .collect()
 }
 
-// ─────────────────────────────── RSP-14 / IR-09 reasoning off ───────────────────────────────
-
 /// RSP-14 (IR-09): `reasoning.effort: "none"` is reasoning switched OFF, not "nothing said": it
-/// reaches an Anthropic backend as `thinking:{type:"disabled"}`, and a foreign lane is never handed
-/// an ENABLE ask projected from it (the Responses writer omits it — no lane declares `"none"`).
+
 #[test]
 fn rsp14_effort_none_is_reasoning_off() {
     let body = serde_json::json!({"model": "gpt", "input": "hi", "max_output_tokens": 64,
@@ -84,10 +79,8 @@ fn rsp14_effort_none_is_reasoning_off() {
     assert!(responses.get("reasoning").is_none(), "{responses}");
 }
 
-// ─────────────────────────────── IR-03 .. IR-07 (Chat ↔ Responses shared members) ───────────────
-
 /// IR-03 metadata, IR-04 service_tier, IR-05 store, IR-06 safety_identifier / prompt_cache_key,
-/// IR-07 text.verbosity: each crosses the seam in its typed slot.
+
 #[test]
 fn ir03_07_shared_request_members_cross_the_seam() {
     let body = serde_json::json!({"model": "gpt", "input": "hi",
@@ -122,10 +115,8 @@ fn ir07_verbosity_merges_with_text_format() {
     assert_eq!(out["text"]["format"]["type"], "json_object", "{out}");
 }
 
-// ─────────────────────────────── IR-14 developer role ───────────────────────────────
-
 /// IR-14: a system prompt written as `developer` items goes back as a `developer` item; a `system`
-/// one keeps the `instructions` member.
+
 #[test]
 fn ir14_developer_role_crosses_the_seam() {
     let dev = serde_json::json!({"model": "gpt", "input": [
@@ -150,14 +141,11 @@ fn ir14_developer_role_crosses_the_seam() {
     assert_eq!(ir.system_role, Some(crate::codec::ir::IrSystemRole::System));
     assert_eq!(seam("responses", &sys)["instructions"], "be terse");
 
-    // `instructions` names no role: beside a developer item the role is unknown.
     let mixed = serde_json::json!({"model": "gpt", "instructions": "x", "input": [
         {"role": "developer", "content": "y"}, {"role": "user", "content": "hi"}]});
     let ir = ResponsesReader.read_request(&mixed).expect("read");
     assert_eq!(ir.system_role, None);
 }
-
-// ─────────────────────────────── IR-08 image detail ───────────────────────────────
 
 /// IR-08: `input_image.detail` crosses the seam, in a message and in a tool result.
 #[test]
@@ -178,10 +166,8 @@ fn ir08_image_detail_crosses_the_seam() {
     assert_eq!(fco["output"][0]["detail"], "high", "{out}");
 }
 
-// ─────────────────────────────── IR-10 / RSP-15 allowed_tools ───────────────────────────────
-
 /// RSP-15 (IR-10): the `allowed_tools` tool choice is read into the subset slot and written back,
-/// mode included, instead of vanishing.
+
 #[test]
 fn rsp15_allowed_tools_cross_the_seam() {
     let tool = |n: &str| serde_json::json!({"type": "function", "name": n, "parameters": {}});
@@ -212,10 +198,8 @@ fn rsp15_allowed_tools_cross_the_seam() {
     assert_eq!(seam("responses", &auto)["tool_choice"]["mode"], "auto");
 }
 
-// ─────────────────────────────── IR-11 hosted tools ───────────────────────────────
-
 /// IR-11: a web search and an auto-container code interpreter cross the seam in the neutral
-/// hosted slot and are written back in the Responses spelling.
+
 #[test]
 fn ir11_hosted_tools_cross_the_seam() {
     let body = serde_json::json!({"model": "gpt", "input": "hi", "tools": [
@@ -238,7 +222,6 @@ fn ir11_hosted_tools_cross_the_seam() {
         "{out}"
     );
 
-    // A kind with no Responses tool is dropped and reported.
     let mut req = request_with(Vec::new());
     req.hosted_tools = vec![crate::codec::ir::IrHostedTool::WebFetch(Default::default())];
     let w = ResponsesWriter;
@@ -248,16 +231,12 @@ fn ir11_hosted_tools_cross_the_seam() {
         .is_none());
     assert!(w.dropped_egress_controls(&req).contains(&"web_fetch"));
 
-    // A code interpreter bound to explicit files has no neutral form: it stays raw (same-protocol
-    // only), never a typed tool that silently lost its files.
     let files = serde_json::json!({"model": "gpt", "input": "hi", "tools": [
         {"type": "code_interpreter", "container": {"type": "auto", "file_ids": ["f1"]}}]});
     let ir = ResponsesReader.read_request(&files).expect("read");
     assert!(ir.hosted_tools.is_empty());
     assert!(ir.tools[0].hosted.is_some());
 }
-
-// ─────────────────────────────── IR-02 refusal ───────────────────────────────
 
 /// IR-02: an assistant-history refusal part goes back as a refusal part.
 #[test]
@@ -276,7 +255,7 @@ fn ir02_request_history_refusal_stays_a_refusal() {
 }
 
 /// IR-02: a buffered refusal answer reaches the Responses client as a refusal part, and the
-/// stream reader flags the refusal block the way the buffered read does.
+
 #[test]
 fn ir02_response_refusal_is_a_refusal_part_buffered_and_streamed() {
     let output = serde_json::json!([{"type": "message", "id": "msg_1", "role": "assistant",
@@ -322,8 +301,7 @@ fn ir02_response_refusal_is_a_refusal_part_buffered_and_streamed() {
 }
 
 /// IR-02: a streamed refusal block is written as the refusal part lifecycle — `content_part.added`
-/// with a `refusal` part, `refusal.delta`, `refusal.done`, and the finalized item — which is what the
-/// buffered body carries.
+
 #[test]
 fn ir02_stream_refusal_block_writes_refusal_events() {
     let w = ResponsesWriter;
@@ -374,11 +352,8 @@ fn ir02_stream_refusal_block_writes_refusal_events() {
     );
 }
 
-// ─────────────────────────────── IR-18 / RSP-13 signature provenance ───────────────────────────
-
 /// RSP-13 (IR-18): a foreign thinking signature is never sent as `encrypted_content`. A
-/// signature-only foreign block becomes no item at all (no fabricated `rs_` item); a foreign block
-/// with text keeps the text and loses only the blob; an OpenAI or unknown-origin blob is sent.
+
 #[test]
 fn rsp13_foreign_signature_is_not_sent_as_encrypted_content() {
     use crate::codec::ir::IrSignatureOrigin as O;
@@ -424,7 +399,6 @@ fn rsp13_foreign_signature_is_not_sent_as_encrypted_content() {
         );
     }
 
-    // A redacted block (a vendor's opaque bytes) is never sent, whatever its origin.
     let out = w.write_request(
         crate::codec::test_host::HOST,
         &request_with(vec![assistant(thinking(
@@ -467,10 +441,8 @@ fn ir18_responses_encrypted_content_is_openai_origin() {
     ));
 }
 
-// ─────────────────────────────── IR-17 thinking kind ───────────────────────────────
-
 /// IR-17: a summary-only reasoning item is a Summary, and goes back into `summary[]`; a content-only
-/// item is Full and keeps the `reasoning_text` part.
+
 #[test]
 fn ir17_reasoning_summary_stays_a_summary() {
     let body = serde_json::json!({"model": "gpt", "input": [
@@ -504,9 +476,7 @@ fn ir17_reasoning_summary_stays_a_summary() {
 }
 
 /// A BUFFERED answer places a summary-kind thought where the
-/// stream does, in `summary[]` as a `summary_text` part with no `content`; a full one keeps the
-/// `reasoning_text` part. RED: `write_response` always wrote `summary: []` plus `content[]`, so a
-/// Gemini thought reached a Responses client in one place streamed and another buffered.
+
 #[test]
 fn ir17_a_buffered_summary_thought_is_written_as_a_summary() {
     let resp = serde_json::json!({"id": "resp_1", "object": "response", "created_at": 1,
@@ -535,11 +505,8 @@ fn ir17_a_buffered_summary_thought_is_written_as_a_summary() {
     assert_eq!(items[1]["content"][0]["text"], "long", "{out}");
 }
 
-// ─────────────────────────────── SHR-03 OpenAI file ids ───────────────────────────────
-
 /// SHR-03: an OpenAI Files id a Chat reader tagged (`"openai"`) reaches the Responses writer as
-/// `input_image.file_id` / `input_file.file_id` — one namespace — instead of being dropped as a
-/// foreign vendor handle.
+
 #[test]
 fn shr03_chat_file_id_reaches_responses_input() {
     let vendor = |id: &str| crate::codec::ir::IrImageSource::Vendor {
@@ -576,9 +543,7 @@ fn shr03_chat_file_id_reaches_responses_input() {
 }
 
 /// IR-03..06 placement: the five shared members moved from "always raw in `extra`" to parked
-/// mapping rows. The SAME-DIALECT write must still re-emit each caller's exact member — one the
-/// slot reproduces through the slot, one it cannot raw from `extra` — and an absent one stays
-/// absent. (`store` is edge-validated as a bool, so only its well-typed form reaches here.)
+
 #[test]
 fn ir03_06_same_dialect_member_bytes_are_the_callers() {
     let body = serde_json::json!({

@@ -2,9 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The per-token logprob wire object two dialects speak alike: `{content: [{token, logprob, bytes,
-//! top_logprobs[]}], refusal}` on a Chat choice, whose `content` entries are also the `LogProb`
-//! entries a Responses `output_text` part carries. Both read and write it here rather than one
-//! importing the other (design F3 self-contained).
 
 use crate::codec::ir::{IrTokenLogprob, IrTopLogprob};
 use crate::codec::keys;
@@ -54,7 +51,7 @@ fn read_entry(entry: &serde_json::Value) -> Option<IrTopLogprob> {
 }
 
 /// OpenAI's `logprobs` object to neutral IR entries. Byte vectors are all-or-nothing: filtering an
-/// invalid cell would change the token's byte sequence. Malformed entries are dropped with a diagnostic.
+
 pub fn read_token_logprobs(v: Option<&serde_json::Value>) -> Vec<IrTokenLogprob> {
     let entries = match v.and_then(|logprobs| logprobs.get(keys::CONTENT)) {
         None | Some(serde_json::Value::Null) => return Vec::new(),
@@ -92,7 +89,7 @@ pub fn read_token_logprobs(v: Option<&serde_json::Value>) -> Vec<IrTokenLogprob>
 }
 
 /// Neutral IR logprobs to OpenAI's `logprobs` object. `bytes` is synthesized from the token's UTF-8
-/// when the source protocol (Gemini) carries none; an explicit null stays null.
+
 pub fn write_token_logprobs(lps: &[IrTokenLogprob]) -> serde_json::Value {
     let content: Vec<serde_json::Value> = lps
         .iter()
@@ -114,12 +111,7 @@ pub fn write_token_logprobs(lps: &[IrTokenLogprob]) -> serde_json::Value {
             })
         })
         .collect();
-    // `refusal` is required (nullable) in the choice `logprobs` object in both published schemas
-    // (`CreateChatCompletionResponse` and `...StreamResponse`: `required: ["content", "refusal"]`). The
-    // IR carries no refusal tokens (a refusal arrives as text), so emit explicit null, as OpenAI does
-    // for a non-refusing completion. Emitting only `content` failed strict spec validation and the
-    // Python SDK's Pydantic model, a proxy tell on every logprobs response. The Responses writer lifts
-    // the `content` array out for an `output_text` part's bare `LogProb[]`, so it is unaffected.
+
     serde_json::json!({ (keys::CONTENT): content, (keys::REFUSAL): serde_json::Value::Null })
 }
 

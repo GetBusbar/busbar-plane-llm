@@ -2,9 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR MAPPING: the Bedrock reader FILLS and the Bedrock writer EMITS
-//! the typed IR slots the Converse wire has a member for (`ir-slots-landed.md`), and the writer
-//! reads the lane capabilities (`LaneCaps`) the way the Anthropic writer does. One test per
-//! defect / slot id; each drives the real reader → seam → writer path on a real body.
 
 use super::*;
 use serde_json::{json, Value};
@@ -49,8 +46,7 @@ fn adaptive() -> LaneCaps {
 }
 
 /// BED-10 / IR-16 (buffered): `model_context_window_exceeded` reads as `MaxTokens` PLUS the
-/// `ContextWindowExceeded` detail, and the Bedrock writer writes the detail back as Converse's own
-/// spelling instead of degrading it to `max_tokens`.
+
 #[test]
 fn bed10_context_window_detail_is_read_and_written_buffered() {
     let body = json!({
@@ -74,7 +70,7 @@ fn bed10_context_window_detail_is_read_and_written_buffered() {
         back["stopReason"], "model_context_window_exceeded",
         "{back}"
     );
-    // The coarse reason alone still writes the coarse value.
+
     let mut coarse = resp.clone();
     coarse.stop_detail = None;
     assert_eq!(
@@ -84,8 +80,7 @@ fn bed10_context_window_detail_is_read_and_written_buffered() {
 }
 
 /// BED-10 / IR-16 (stream writer + buffered→stream synthesis): the stop-bearing delta carries the
-/// detail, and both the live `messageStop` frame and the frames synthesized for a buffered upstream
-/// spell it `model_context_window_exceeded` (buffered == stream).
+
 #[test]
 fn bed10_context_window_detail_rides_the_message_stop_frame() {
     let ev = crate::codec::ir::IrStreamEvent::MessageDelta {
@@ -117,8 +112,7 @@ fn bed10_context_window_detail_rides_the_message_stop_frame() {
 }
 
 /// BED-10 / IR-16 and BED-11 (stream reader): the `messageStop` frame's context-window stop and
-/// matched stop string are buffered with the stop reason and carried on the ONE combined
-/// `MessageDelta` the `metadata` frame completes (buffered == stream).
+
 #[test]
 fn bed10_bed11_stream_stop_detail_and_stop_sequence_are_carried() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -158,8 +152,7 @@ fn bed10_bed11_stream_stop_detail_and_stop_sequence_are_carried() {
 }
 
 /// IR-12: a Converse document's `citations.enabled` and `context` are read into the Media slot and
-/// written back on a cross-protocol write (the verbatim stash is gone there), so the switch and the
-/// context are not lost when the IR — not the raw block — is the carrier.
+
 #[test]
 fn ir12_document_citations_and_context_cross() {
     let body = json!({
@@ -187,7 +180,7 @@ fn ir12_document_citations_and_context_cross() {
 }
 
 /// IR-03: Converse `requestMetadata` reads into the typed metadata, and a foreign caller's metadata
-/// is written as `requestMetadata` — with an entry Converse would reject dropped, not the request.
+
 #[test]
 fn ir03_request_metadata_maps_both_ways() {
     let body = json!({
@@ -202,14 +195,12 @@ fn ir03_request_metadata_maps_both_ways() {
             ("team".to_string(), "search".to_string()),
         ])
     );
-    // Same-protocol: the raw object is re-emitted verbatim (once).
+
     assert_eq!(
         writer().write_request(crate::codec::test_host::HOST, &ir)["requestMetadata"],
         body["requestMetadata"]
     );
 
-    // Cross-protocol (no raw object): the typed metadata is written, minus an entry Converse's
-    // pattern rejects.
     let foreign = crate::codec::ir::IrRequest {
         messages: vec![user_turn("hi")],
         metadata: Some(vec![
@@ -224,7 +215,7 @@ fn ir03_request_metadata_maps_both_ways() {
 }
 
 /// IR-10: an allowed-tools subset reaches Converse as the listed tools only (the constraint by
-/// omission), with the mode on `toolChoice`.
+
 #[test]
 fn ir10_allowed_tools_send_only_the_listed_tools() {
     let mut ir = crate::codec::ir::IrRequest {
@@ -250,14 +241,14 @@ fn ir10_allowed_tools_send_only_the_listed_tools() {
         .collect();
     assert_eq!(names, vec!["a", "c"], "{out}");
     assert_eq!(out["toolConfig"]["toolChoice"], json!({"any": {}}), "{out}");
-    // No restriction: every tool.
+
     ir.allowed_tools = None;
     let out = writer().write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(out["toolConfig"]["tools"].as_array().map(Vec::len), Some(3));
 }
 
 /// IR-11 and the request slots with no Converse member: dropped from the wire and REPORTED, so the
-/// seam audits each one instead of the control vanishing silently.
+
 #[test]
 fn ir_slots_without_a_converse_member_are_reported_dropped() {
     let ir = crate::codec::ir::IrRequest {
@@ -299,7 +290,7 @@ fn ir_slots_without_a_converse_member_are_reported_dropped() {
             "{k} leaked onto the Converse wire: {wire}"
         );
     }
-    // Text-only output is Converse's own behaviour — nothing is dropped for it.
+
     let text_only = crate::codec::ir::IrRequest {
         messages: vec![user_turn("hi")],
         output_modalities: Some(vec![crate::codec::ir::IrModality::Text]),
@@ -309,8 +300,7 @@ fn ir_slots_without_a_converse_member_are_reported_dropped() {
 }
 
 /// IR-18: a history reasoning block's signature is attributed from the conversation's model id
-/// (Claude → Anthropic; another visible provider → BedrockOther; an id that reveals nothing →
-/// unknown), and the writer never sends a signature another family minted.
+
 #[test]
 fn ir18_signature_origin_is_read_and_a_foreign_signature_is_not_sent() {
     let body = |model: &str| {
@@ -382,14 +372,7 @@ fn ir18_signature_origin_is_read_and_a_foreign_signature_is_not_sent() {
 }
 
 /// A REASONING ASK DOES NOT CROSS INTO OR OUT OF BEDROCK, as in 1.5.5. The writer dropped every
-/// cross-protocol ask ("no Bedrock Converse mapping in this release", v1.5.5
-/// `crates/busbar/src/proto/bedrock/writer.rs:139-146`) and the reader promoted none (v1.5.5
-/// `crates/busbar/src/proto/bedrock/reader.rs:678`, `reasoning: None`), so no request bills
-/// thinking tokens 1.5.5 did not bill. Whatever the ask, the lane capabilities or the model family,
-/// the egress body carries no `thinking`/`output_config`, keeps its sampling knobs, and the drop
-/// is reported; a Bedrock caller's native ask stays a same-protocol member, re-emitted verbatim.
-/// RED while a foreign ask wrote Claude `thinking` (and stripped `temperature`) on a Claude lane, or
-/// the reader promoted `thinking`/`reasoningConfig`/`output_config.effort` into the IR.
+
 #[test]
 fn a_reasoning_ask_neither_reaches_nor_leaves_bedrock_as_in_1_5_5() {
     let chat = json!({

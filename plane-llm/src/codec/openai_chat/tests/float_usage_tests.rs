@@ -2,20 +2,12 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! FLOAT-ENCODED USAGE COUNTS, PROVEN THROUGH `read_count_u64`.
-//!
-//! `serde_json::Value::as_u64()` returns `None` for ANY float-backed number, `27.0` included. The
-//! OpenAI Chat Completions dialect's usage reads used to go through that bare idiom with
-//! `.unwrap_or(0)`, so a provider (or an OpenAI-compatible proxy) that spells a count as a float had
-//! a real count recorded as a billed ZERO. These tests pin realistic float-encoded wire payloads
-//! through every usage read site: the truncated-stream recovery path (`recover_truncated_usage`),
-//! the `stream_options: {include_usage: true}` streaming trailer, the buffered `read_response`, and
-//! the reasoning/audio/predicted-output sub-buckets on both the streaming and buffered paths.
 
 use super::*;
 use crate::codec::ir::StreamDecodeState;
 
 /// THE TRUNCATED-STREAM RECOVERY PATH. `recover_truncated_usage` parses the trailing `usage` object
-/// independently of the main streaming/buffered decode, so it needed its own proof.
+
 #[test]
 fn recover_truncated_usage_reads_float_encoded_counts() {
     let reader = OpenAiReader;
@@ -32,9 +24,7 @@ fn recover_truncated_usage_reads_float_encoded_counts() {
 }
 
 /// THE STREAMING PATH: a `stream_options: {include_usage: true}` trailing usage-only chunk
-/// (`choices: []`, a real top-level `usage` object) with EVERY field float-spelled, including the
-/// reasoning/audio/predicted-output sub-buckets. A fix that only covers the buffered response would
-/// leave a streamed request reporting these as zero while `stream: false` reported them correctly.
+
 #[test]
 fn streaming_trailing_usage_chunk_reads_float_encoded_counts() {
     let reader = OpenAiReader;
@@ -82,7 +72,7 @@ fn streaming_trailing_usage_chunk_reads_float_encoded_counts() {
 }
 
 /// THE BUFFERED PATH. The identical float-spelled usage object on a non-streamed `chat.completion`
-/// response must read exactly the same as the streaming trailer above.
+
 #[test]
 fn buffered_read_response_reads_float_encoded_counts() {
     let body = serde_json::json!({
@@ -126,26 +116,10 @@ fn buffered_read_response_reads_float_encoded_counts() {
     assert_eq!(ir.usage.detail.rejected_prediction_tokens, Some(2));
 }
 
-// ── AN UNREADABLE COUNT REFUSES, IT DOES NOT BILL ZERO (#81/#42) ────────────────────────────────
-//
-// The float-spelled count above is the case busbar CAN read. This is the case it cannot: a usage
-// field that is there and is not a number busbar understands. The old readers defaulted it to zero,
-// which wrote "no work happened" into the ledger for work that did — and money is a view over
-// `ledger x ratecard`, so every figure derived from that row was faithfully wrong and nothing
-// downstream could tell. These pin the live reader paths, which is where the ledger row comes from.
-
 /// AN UNREADABLE IMAGE COUNT IS RECORDED AS UNKNOWN: THE ANSWER IS SERVED, THE COUNT NEVER 0.
-///
-/// The image tokens are recorded (residual units), never billed. 1.5.5 served the answer whatever
-/// its usage said (v1.5.5 `crates/busbar/src/handlers/openai.rs:731-758` read no usage at all), so
-/// an unreadable count must not refuse it; and a recorded count is a ledger row, so it must not
-/// become a fabricated 0 either (#81, OWNER rule 21). It is UNKNOWN: left out of the record, named
-/// on the answer's warnings, and left out of the re-emitted body. RED while
-/// `openai_chat/handler.rs` `read_image_response` defaulted it to zero, and while it refused the
-/// answer.
+
 #[test]
 fn an_unreadable_image_count_is_recorded_as_unknown_and_the_answer_served() {
-    // `"27"` is a string, not a number: present, and not a count.
     let wire = br#"{"data":[{"b64_json":"aGk="}],"usage":{"input_tokens":"27","output_tokens":5}}"#;
     let resp = crate::codec::openai_chat::handler::read_image_response(wire)
         .expect("the answer is served whatever its usage said, as in 1.5.5");
@@ -193,7 +167,6 @@ fn an_unreadable_image_count_is_recorded_as_unknown_and_the_answer_served() {
         Some(&serde_json::json!(5))
     );
 
-    // The same body, float-spelled, reads and is recorded: only an unreadable count is unknown.
     let ok = br#"{"data":[{"b64_json":"aGk="}],"usage":{"input_tokens":27.0,"output_tokens":5}}"#;
     let resp = crate::codec::openai_chat::handler::read_image_response(ok)
         .expect("a float-spelled count reads");
@@ -208,8 +181,7 @@ fn an_unreadable_image_count_is_recorded_as_unknown_and_the_answer_served() {
 }
 
 /// THE BUFFERED EMBEDDINGS READER REFUSES AN UNREADABLE BILLED COUNT ON ITS OWN (LLM3#6): it bills
-/// nothing and the vectors are served, v1.5.5's `.and_then(Value::as_u64).unwrap_or(0)` figure
-/// (v1.5.5 `handlers/openai.rs:586`). Refusing the whole answer was a 500 with no usage.
+
 #[test]
 fn an_unreadable_embeddings_count_refuses_itself_and_the_answer_is_served() {
     let wire = br#"{"model":"m","data":[{"index":0,"embedding":[0.1]}],"usage":{"prompt_tokens":{"n":27}}}"#;
@@ -224,9 +196,7 @@ fn an_unreadable_embeddings_count_refuses_itself_and_the_answer_is_served() {
 }
 
 /// THE TRANSCRIPTION READER JUDGES ITS TOKEN COUNTS ONE BY ONE (LLM3#6), as v1.5.5 read them
-/// (v1.5.5 `handlers/openai.rs:362-376`): an unreadable `input_tokens` is no token billing at all
-/// (1.5.5's `.and_then(Value::as_u64).map(..)`), an unreadable `output_tokens` beside a readable
-/// input bills no output, and the transcript is served either way.
+
 #[test]
 fn an_unreadable_transcription_count_refuses_itself_and_the_transcript_is_served() {
     use busbar_contract::billing::{Billing, TokenUsage};
@@ -255,10 +225,7 @@ fn an_unreadable_transcription_count_refuses_itself_and_the_transcript_is_served
 }
 
 /// AN ABSENT COUNT IS STILL ZERO, AND A RESPONSE WITH NO USAGE OBJECT STILL READS.
-///
-/// The guard on the guard: if the refusal had been written as "anything I cannot turn into a
-/// number", every well-formed response that simply omits a count would start failing. Absence is a
-/// fact and it is worth zero — that is v1.5.5's behaviour and it does not move.
+
 #[test]
 fn an_absent_count_still_reads_as_zero_and_no_usage_object_still_reads() {
     let wire = br#"{"data":[{"b64_json":"aGk="}],"usage":{"input_tokens":27}}"#;
@@ -275,19 +242,14 @@ fn an_absent_count_still_reads_as_zero_and_no_usage_object_still_reads() {
         }
         other => panic!("expected a zero token line, got {other:?}"),
     }
-    // No `usage` object at all: unchanged, bills via the per-image cost basis.
+
     let wire = br#"{"data":[{"b64_json":"aGk="}]}"#;
     crate::codec::openai_chat::handler::read_image_response(wire)
         .expect("a usage-less image response reads");
 }
 
-// ── THE BILLABLE DURATION IS READ FROM DECIMAL TEXT, NOT THROUGH A DOUBLE (#81) ─────────────────
-
 /// A WHISPER DURATION READS EXACTLY, AND ECHOES BACK THE BYTES IT ARRIVED AS.
-///
-/// `12.1` seconds is not representable in binary floating point. The reader takes it from the
-/// wire's own digits, so the carrier holds `12.1` and not `12.0999999999999996447…`, and the usage
-/// object busbar echoes to the caller is unchanged.
+
 #[test]
 fn a_whisper_duration_reads_exactly_and_echoes_the_same_bytes() {
     let wire = br#"{"text":"hi","usage":{"type":"duration","seconds":12.1}}"#;
@@ -300,7 +262,7 @@ fn a_whisper_duration_reads_exactly_and_echoes_the_same_bytes() {
         }
         other => panic!("expected a duration, got {other:?}"),
     }
-    // The echo carries the same number it arrived as.
+
     let wb = crate::codec::leaf_codec::transcription_write_response("openai", &r);
     let v: serde_json::Value = serde_json::from_slice(&wb.bytes).expect("valid json");
     assert_eq!(v["usage"]["type"], "duration");
@@ -313,12 +275,7 @@ fn a_whisper_duration_reads_exactly_and_echoes_the_same_bytes() {
 }
 
 /// A DURATION FINER THAN THE SCALE REFUSES RATHER THAN BEING ROUNDED (#81).
-///
-/// PARKED FOR THE OWNER: this is a behaviour change on real provider input. OpenAI types
-/// `TranscriptTextUsageDuration.seconds` as `number, format: double`, so a provider may legitimately
-/// report more than six decimal places, and such a response is accepted today and refused here.
-/// #81 is explicit that a value which will not fit the scale EXACTLY is a refusal and never a
-/// rounded guess — but the consequence is the owner's to sign, not a reader's to decide quietly.
+
 #[test]
 fn a_duration_finer_than_the_scale_refuses_rather_than_being_rounded() {
     let wire = br#"{"text":"hi","usage":{"type":"duration","seconds":2.7755575615628914}}"#;

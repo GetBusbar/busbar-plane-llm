@@ -43,9 +43,7 @@ impl ProtocolReader for CohereReader {
 
     fn recover_truncated_usage(&self, tail: &[u8]) -> Option<busbar_contract::billing::TokenUsage> {
         let v = super::super::usage_tail::isolate_tail_usage_object(tail, b"\"usage\"")?;
-        // The proven root usage is read as in `read_response` (one table, `USAGE`), so a cut body
-        // ledgers what its whole twin does: the raw `tokens` counts, with `billed_units` beside them as
-        // attribution (`to_token_usage`). An unreadable count is refused alone and bills nothing.
+
         Some(read_cohere_usage(Some(&v)).ok()?.to_token_usage())
     }
 
@@ -54,7 +52,6 @@ impl ProtocolReader for CohereReader {
         status: StatusCode,
         body: &[u8],
     ) -> busbar_contract::upstream::RawUpstreamError {
-        // Parse once and derive both fields from the one binding, as the Gemini and Bedrock readers do.
         let json = crate::codec::json::parse::<serde_json::Value>(body).ok();
         let provider_code = json
             .as_ref()
@@ -67,18 +64,6 @@ impl ProtocolReader for CohereReader {
             .and_then(|e| e.as_str())
             .map(String::from);
 
-        // Cohere v2 signals an oversized request via the error message only (its `error_type` is the
-        // generic `invalid_request_error`, the message free text such as "too many tokens"), so
-        // `provider_code` would carry that raw string, which the breaker cannot recognize: the 400
-        // would be a plain ClientError that never fails over. The `#[cfg(test)] classify()` helper
-        // synthesized the canonical code but does not run in production. Mirror
-        // `AnthropicReader::extract_error`: scan for Cohere's context-length phrasing and override
-        // `provider_code` with `context_length_exceeded` (breaker.rs `normalize_raw_error`, then
-        // `StatusClass::ContextLength`, failing over without penalty). Cohere always populates
-        // `provider_code` from `message`, so the canonical code must replace it, not fill an empty slot.
-        // The scan is gated to a request-size status (400, and 413 for some gateways): a 401/403/429
-        // whose text mentions token counts must not become the no-penalty ContextLength class, which
-        // would let an auth or rate-limit failure escape the breaker.
         let provider_code = if (status == StatusCode::BAD_REQUEST
             || status == StatusCode::PAYLOAD_TOO_LARGE)
             && Self::body_signals_context_length(body)
@@ -110,9 +95,9 @@ impl ProtocolReader for CohereReader {
         let mut extra = serde_json::Map::new();
         let mut block_origins = crate::codec::ir::IrBlockOrigins::default();
         let mut system_blocks: Vec<crate::codec::ir::IrBlock> = Vec::new();
-        // `system`-role entries folded out of `messages`, keeping `message_count` the raw wire array length.
+
         let mut system_turns_folded: usize = 0;
-        // Where each folded entry stood, for the hook view (`IrRequest::system_folds`).
+
         let mut system_folds: Vec<crate::codec::ir::IrSystemFold> = Vec::new();
 
         let mut messages: Vec<crate::codec::ir::IrMessage> = Vec::new();
@@ -132,17 +117,12 @@ impl ProtocolReader for CohereReader {
                     _ => return Err(ir_parse_error()),
                 };
 
-                // Edge-validate `content` (all roles): legally a string, an array of parts, or absent/`null`
-                // (an assistant turn with only `tool_calls`). A present number/bool/object would be
-                // silently coerced, so reject with the same 400 as the top-level `messages`.
                 if let Some(cv) = msg_val.get(keys::CONTENT) {
                     if !cv.is_null() && !cv.is_string() && !cv.is_array() {
                         return Err(ir_parse_error());
                     }
                 }
 
-                // System content goes into IrRequest.system (as in the other protocols), so it survives
-                // translation to a protocol whose writer reads req.system.
                 if role == crate::codec::ir::IrRole::System {
                     system_turns_folded += 1;
                     let blocks_before = system_blocks.len();
@@ -177,9 +157,6 @@ impl ProtocolReader for CohereReader {
                                             };
                                         }
                                     } else {
-                                        // Cohere's system message is text-only, so a non-text block has no
-                                        // representation and is dropped, but surfaced (a silent loss of a
-                                        // system instruction block is invisible).
                                         let block_type = bo
                                             .get(keys::TYPE)
                                             .and_then(|t| t.as_str())
@@ -208,12 +185,7 @@ impl ProtocolReader for CohereReader {
 
                 let mut msg_content = Vec::new();
                 let mut msg_origins = Vec::new();
-                // The generic content loop must not run for the Tool role: tool content is consumed
-                // by the dedicated Tool branch below into the ToolResult. Running it too decoded the same
-                // `content` into stray top-level Text blocks, so one tool message produced both a Text
-                // block and a ToolResult with identical text, which CohereWriter's Tool branch then
-                // folded into the first ToolResult, duplicating it. The Tool branch owns a tool
-                // message's content (as the System early `continue` does).
+
                 if role != crate::codec::ir::IrRole::Tool {
                     if let Some(content_val) = msg_val.get(keys::CONTENT) {
                         if content_val.is_string() {
@@ -247,13 +219,7 @@ impl ProtocolReader for CohereReader {
                                                 };
                                             }
                                         }
-                                        // Cohere v2 multimodal input: an image part
-                                        // `{"type":"image_url","image_url":{"url":"<data-uri|https>"}}`,
-                                        // the OpenAI-compatible shape. Decoded into `IrBlock::Image` via
-                                        // the shared `parse_image_url` (a `data:<mime>;base64,<payload>`
-                                        // URI splits into (media_type, data); a raw URL is kept), the same
-                                        // contract as the Anthropic/OpenAI readers. ASSUMPTION: no Cohere v2
-                                        // image fixture exists in-repo to confirm the shape.
+
                                         Some(keys::IMAGE_URL) => {
                                             if let Some(url) = block_obj
                                                 .get(keys::IMAGE_URL)
@@ -272,7 +238,7 @@ impl ProtocolReader for CohereReader {
                                                             url,
                                                         ),
                                                     cache_control: None,
-                                                    // IR-08: the requested fidelity.
+
                                                     detail: read_cohere_image_detail(
                                                         block_obj.get(keys::IMAGE_URL),
                                                     ),
@@ -280,8 +246,7 @@ impl ProtocolReader for CohereReader {
                                                 };
                                             }
                                         }
-                                        // A `{"type":"document","document":{id?, data}}` part (COH-04):
-                                        // read into the IR's document Media (see `read_cohere_document`).
+
                                         Some(keys::DOCUMENT) => {
                                             if let Some(doc) = block_obj.get(keys::DOCUMENT) {
                                                 {
@@ -294,8 +259,7 @@ impl ProtocolReader for CohereReader {
                                                 };
                                             }
                                         }
-                                        // An assistant turn replaying a reasoning model's
-                                        // `{"type":"thinking"}` part: the IR Thinking block in place (COH-04).
+
                                         Some(keys::THINKING)
                                             if role == crate::codec::ir::IrRole::Assistant =>
                                         {
@@ -331,10 +295,6 @@ impl ProtocolReader for CohereReader {
                     }
                 }
 
-                // A request assistant message may replay the pre-tool-call plan in `tool_plan` (the
-                // history counterpart of the response `message.tool_plan`). Read it into a leading
-                // Thinking block, as `read_response` does, so it is neither dropped from history nor
-                // mistaken for visible content. The writer reshapes it back into `tool_plan` on egress.
                 if role == crate::codec::ir::IrRole::Assistant {
                     if let Some(plan) = msg_val.get(TOOL_PLAN).and_then(|p| p.as_str()) {
                         if !plan.is_empty() {
@@ -359,10 +319,6 @@ impl ProtocolReader for CohereReader {
                     }
                 }
 
-                // A request message may carry grounding `citations` (replayed prior grounded turn).
-                // They attach to the first text block (Cohere offsets index the assembled content text,
-                // which every writer's join starts from), neither dropped nor multiplied, through the
-                // same `read_cohere_citations` seam as the response.
                 if role != crate::codec::ir::IrRole::Tool {
                     if let Some(cits_val) = msg_val.get(keys::CITATIONS) {
                         let cits = super::read_cohere_citations(cits_val);
@@ -374,9 +330,6 @@ impl ProtocolReader for CohereReader {
                             {
                                 *citations = cits;
                             } else {
-                                // COH-17 request side: a grounded turn with no text part carries its
-                                // citations on an empty text block, as the response reader does; a
-                                // dialect that rejects empty text (Anthropic, Bedrock, Gemini) omits it.
                                 {
                                     msg_origins.push(crate::codec::ir::IrBlockOrigin::at(
                                         &SOURCE_MESSAGE_CITATIONS,
@@ -449,8 +402,6 @@ impl ProtocolReader for CohereReader {
                     let mut content_text = String::new();
                     if let Some(content_val) = msg_val.get(keys::CONTENT) {
                         if let Some(arr) = content_val.as_array() {
-                            // Join adjacent text without separators, flushing it before each
-                            // document so interleaved parts retain their original positions.
                             for b in arr {
                                 let text = if let Some(s) = b.as_str() {
                                     Some(s.to_owned())
@@ -507,8 +458,7 @@ impl ProtocolReader for CohereReader {
                             result_content.push(crate::codec::ir::IrBlock::text(content_text))
                         };
                     }
-                    // A tool result with no parts still needs one empty text block: writers project its
-                    // content, and an empty vec would emit a result with no content.
+
                     if result_content.is_empty() {
                         {
                             result_origins.push(if msg_val.get(keys::CONTENT).is_some() {
@@ -577,8 +527,6 @@ impl ProtocolReader for CohereReader {
             }
         }
 
-        // Refuse a malformed output cap instead of silently removing it from the request.
-        // Checked conversion preserves the existing u32 IR representation without narrowing.
         let max_tokens = obj
             .get(keys::MAX_TOKENS)
             .filter(|value| !value.is_null())
@@ -590,16 +538,13 @@ impl ProtocolReader for CohereReader {
                     .ok_or_else(ir_parse_error)
             })
             .transpose()?;
-        // temperature, `p`, `k`, stop_sequences, penalties and seed are map-file rows, read below.
-        // Cohere v2 `tool_choice` is a top-level enum string (REQUIRED/NONE), promoted to the IR union.
+
         let tool_choice = read_cohere_tool_choice(obj.get(keys::TOOL_CHOICE));
         if obj
             .get(keys::TOOL_CHOICE)
             .is_some_and(|value| !value.is_null())
             && tool_choice.is_none()
         {
-            // The IR's documented policy keeps unknown native choices as Auto. Make that
-            // degradation visible instead of silently losing the caller's constraint.
             tracing::warn!(
                 field = "tool_choice",
                 "unrecognized Cohere tool_choice uses the documented automatic tool policy"
@@ -610,33 +555,14 @@ impl ProtocolReader for CohereReader {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        // Cohere v2 chat models `response_format` (json_object / json_schema) at the top level, carried verbatim into the IR.
         let response_format = obj
             .get(keys::RESPONSE_FORMAT)
             .and_then(read_cohere_response_format);
 
-        // Request `logprobs` is a top-level boolean ask, the same meaning as OpenAI's `logprobs` and
-        // Gemini's `responseLogprobs`. Promoted to `IrRequest.logprobs` so the ask survives the seam
-        // instead of dying in `extra` (and it is in the modeled-key set so a same-protocol passthrough
-        // does not double-emit). Response-side logprobs data is separate (see `read_response`).
         let logprobs = obj.get(keys::LOGPROBS).and_then(|v| v.as_bool());
 
-        // Keep unmodelled members in `extra`. (The modeled set is static data in the map, built once, not per request.)
         crate::codec::carry::keep_unmodelled(super::map::REQUEST, obj, &mut extra);
 
-        // The reasoning ask: `thinking: {type:"enabled", token_budget:N}` is the IR `Budget` (Anthropic
-        // `budget_tokens` / Gemini `thinkingBudget`); `{type:"enabled"}` with no budget is `Dynamic`;
-        // `{type:"disabled"}` is `Off` (IR-09). It once rode `extra` and died at the seam, so a caller's
-        // reasoning ask never reached a foreign reasoning model (COH-05). An unreadable form stays in
-        // `extra`, as in the Anthropic reader.
-        // `strict_tools` is Cohere's strict-schema switch for every tool: the IR carries it per tool
-        // (`IrTool.strict`), set on each (COH-11). It once rode `extra` and died at the seam, turning
-        // the guarantee off on a foreign backend. Promoted only when there are tools; a bare flag stays in `extra`.
-        // `strict_tools` is Cohere's strict-schema switch for EVERY tool of the request: the IR
-        // carries the same guarantee per tool (`IrTool.strict`, OpenAI `tools[].function.strict`),
-        // so it is set on each tool (COH-11). It used to ride `extra` and die at the seam, turning
-        // the caller's schema guarantee off on a foreign backend. Promoted only when there are
-        // tools to carry it; a bare flag stays in `extra`.
         if !tools.is_empty() {
             if let Some(strict) = obj.get(STRICT_TOOLS).and_then(|v| v.as_bool()) {
                 for tool in &mut tools {
@@ -646,11 +572,6 @@ impl ProtocolReader for CohereReader {
             }
         }
 
-        // Top-level `documents` (RAG grounding) read into the IR document `Media` (IR-13), ahead of the
-        // first user turn's content: grounding is conversation-level and the first turn is where every
-        // foreign document slot sits (stable across turns for a prompt cache). It once rode `extra`,
-        // which the seam clears, so a foreign model answered ungrounded. The Cohere writer lifts text
-        // documents back into `documents` (COH-18). A non-array `documents` stays in `extra`.
         if let Some(docs) = obj.get(keys::DOCUMENTS).and_then(|d| d.as_array()) {
             let mut document_origins = Vec::new();
             let blocks: Vec<crate::codec::ir::IrBlock> = docs
@@ -687,14 +608,13 @@ impl ProtocolReader for CohereReader {
 
         let reasoning = read_cohere_reasoning(obj.get(keys::THINKING));
         if reasoning.is_some() {
-            // Promoted: the writer re-emits it from the typed field, so it must not also ride extra.
             extra.remove(keys::THINKING);
         }
 
         let mut ir = crate::codec::ir::IrRequest {
             block_origins,
             reasoning,
-            // Request `logprobs` (bool) promoted so the ask carries cross-protocol.
+
             logprobs,
             system: system_blocks,
             system_turns_folded,
@@ -729,9 +649,7 @@ impl ProtocolReader for CohereReader {
             ET_MESSAGE_START => {
                 if !state.started {
                     state.started = true;
-                    // The response `id` rides the top-level message-start frame: captured for
-                    // passthrough. A missing identity stays absent until a writer needs to mint it;
-                    // decoding usage must not require entropy. Cohere has no stream `created`.
+
                     let id = data
                         .get(keys::ID)
                         .and_then(|v| v.as_str())
@@ -742,8 +660,7 @@ impl ProtocolReader for CohereReader {
                         usage: None,
                         id,
                         created: None,
-                        // The model when the frame carries one (compatible backends), so a cross-protocol
-                        // ingress can surface it; native Cohere omits it, leaving None.
+
                         model: data
                             .get(keys::MODEL)
                             .and_then(|v| v.as_str())
@@ -752,12 +669,7 @@ impl ProtocolReader for CohereReader {
                     });
                 }
             }
-            // Guard on `!text_block_closed`: once the text block has closed (content-end, or a leading
-            // tool-plan's tool-call-start) a later text frame must not reopen it. A failed guard falls to
-            // the `other` no-op arm, keeping egress balanced (no second content_block_start).
-            // A `thinking` content block (a reasoning model streams it ahead of the answer) is its own
-            // block with its own IR index (`THINKING_FRAME_BASE`); it never touches the text slot, so its
-            // `content-end` cannot latch the text block closed before the answer starts (COH-01).
+
             ET_CONTENT_START
                 if data
                     .get(keys::DELTA)
@@ -787,9 +699,7 @@ impl ProtocolReader for CohereReader {
                     }
                 }
             }
-            // A `thinking` content-delta (real Cohere sends `{ "thinking": "<chunk>" }` with no `type`)
-            // streams into the open thinking block, opening one if `content-start` was skipped, never
-            // into the text block (COH-02).
+
             ET_CONTENT_DELTA
                 if let Some(text) = data
                     .get(keys::DELTA)
@@ -812,14 +722,8 @@ impl ProtocolReader for CohereReader {
                 }
             }
             ET_CONTENT_START if !state.text_block_closed => {
-                // A text block opening while thinking is still open (upstream skipped `content-end`)
-                // closes the thinking block first, keeping egress balanced.
                 cohere_close_thinking_block(state, &mut out);
-                // The text block claims a dynamic IR index by first appearance (`cohere_text_ir_index`),
-                // not a hardcoded 0: a `tool-call-start` before any content frame already took 0, and
-                // forcing 0 gave two BlockStarts at one index. `cohere_text_ir_index` also records
-                // TEXT_BLOCK_SEEN_SENTINEL so a later tool stays off the text index even after content-end.
-                // The raw wire `index` is never forwarded into the IR.
+
                 if !state.text_block_open {
                     state.text_block_open = true;
                     let ti = cohere_text_ir_index(state);
@@ -836,9 +740,7 @@ impl ProtocolReader for CohereReader {
             }
             ET_CONTENT_DELTA if !state.text_block_closed => {
                 cohere_close_thinking_block(state, &mut out);
-                // The text block claims a dynamic IR index by first appearance (see content-start), not a
-                // hardcoded 0, so a tool that opened first (and took 0) does not collide. The raw wire
-                // `index` is never forwarded; every BlockStart/Delta below uses `text_idx`.
+
                 let text_idx = cohere_text_ir_index(state);
                 if !state.text_block_open {
                     state.text_block_open = true;
@@ -866,10 +768,6 @@ impl ProtocolReader for CohereReader {
                                 });
                             }
                         } else if let Some(block_obj) = content_obj.as_object() {
-                            // Content-delta shape: real Cohere streams `{ "text": "<chunk>" }` with no
-                            // `type` (only content-start has one); this file's writer emits
-                            // `{ "type": "text", "text": … }`. Accept both: requiring `type == "text"` dropped
-                            // every chunk from a real backend. Reject only an object declaring another type.
                             let ty = block_obj.get(keys::TYPE).and_then(|t| t.as_str());
                             if ty.is_none() || ty == Some(keys::TEXT) {
                                 if let Some(text) =
@@ -907,8 +805,7 @@ impl ProtocolReader for CohereReader {
                         }
                     }
                 }
-                // The chunk's logprobs ride the content-delta frame (`logprobs: {text, token_ids,
-                // logprobs}`), mapped as the buffered `logprobs[]` items onto the text block (COH-14).
+
                 if let Some(lp) = data.get(keys::LOGPROBS).and_then(read_cohere_logprob) {
                     out.push(IrStreamEvent::BlockDelta {
                         index: text_idx,
@@ -916,13 +813,7 @@ impl ProtocolReader for CohereReader {
                     });
                 }
             }
-            // Cohere v2 streams the pre-tool-call reasoning as `tool-plan-delta` frames (one token each at
-            // `delta.message.tool_plan`) before `tool-call-start`, the streamed counterpart of the
-            // non-stream `message.tool_plan` fold; without it a streaming hop drops the reasoning the
-            // buffered one keeps. The plan opens a Thinking block, as the non-stream reader does, so a
-            // stream and non-stream of one turn agree that the plan is not user-visible content. It claims
-            // its index via `cohere_text_ir_index` (0 by first appearance, tools offsetting to 1+): v2
-            // puts `tool_plan` and `content` in mutually exclusive turns, so the one pre-tool slot serves both.
+
             ET_TOOL_PLAN_DELTA if !state.text_block_closed => {
                 cohere_close_thinking_block(state, &mut out);
                 let plan_idx = cohere_text_ir_index(state);
@@ -953,16 +844,6 @@ impl ProtocolReader for CohereReader {
                 }
             }
             ET_CONTENT_END => {
-                // content-end closes the text block at the IR index it claimed on first appearance
-                // (`state.text_index`), not a hardcoded 0 (a tool may have taken 0). The raw wire
-                // `index` is never forwarded. The stop is emitted only if a text block is open, so a stray
-                // content-end cannot unbalance the stream. `state.text_index` is not cleared (like the
-                // `open_tools` entries) so a tool opened after content-end still derives its base off
-                // TEXT_BLOCK_SEEN_SENTINEL and cannot collide. `text_block_closed` latches here so a stray
-                // text frame is dropped rather than reopening the stopped index.
-                //
-                // A content-end closing a thinking block closes only it: the text block is still to come,
-                // so the text latch must not fire (COH-01).
                 if cohere_open_thinking_index(state).is_some() {
                     cohere_close_thinking_block(state, &mut out);
                 } else {
@@ -970,10 +851,6 @@ impl ProtocolReader for CohereReader {
                 }
             }
             ET_MESSAGE_END => {
-                // A stream ending with the leading tool-plan / text block still open (no content-end or
-                // tool-call-start closed it: truncated or adversarial upstream) would leave a dangling
-                // `content_block_start` on an Anthropic egress (unbalanced, a proxy tell). Force-close it
-                // here before the terminal frames, at its claimed index; an open thinking block likewise.
                 cohere_close_thinking_block(state, &mut out);
                 cohere_close_text_slot(state, &mut out);
                 let raw_finish_reason = data
@@ -987,28 +864,14 @@ impl ProtocolReader for CohereReader {
                     Some(read_cohere_stop_reason(raw_finish_reason))
                 };
 
-                // The generic infra `ERROR` is a mid-stream upstream failure, but it only produced
-                // `IrStopReason::Error` on the terminal MessageDelta, which no cross-protocol writer has a
-                // native token for, so each renders a success terminator (`stop` / `end_turn`). With no
-                // `IrStreamEvent::Error`, `terminal_error()` stays None, the breaker records no fault and
-                // the failed stream bills as completed. Push the Error event too (as the gemini/bedrock
-                // inline-error arms do) so the breaker sees it and the client gets a real error frame. The
-                // MessageDelta/MessageStop still follow, so the stream is terminated and usage folded.
-                //
-                // Generic `ERROR` only: `ERROR_TOXIC` maps to `Safety`, a successfully served moderation
-                // refusal that must not trip the breaker.
                 if stop_reason == Some(crate::codec::ir::IrStopReason::Error) {
                     out.push(IrStreamEvent::Error(busbar_contract::protocol::IrError {
-                        // The frame gives only the `ERROR` token, so classify it a transient server fault:
-                        // the lane recovers via cooldown, not a permanent penalty.
                         class: busbar_contract::upstream::StatusClass::ServerError,
                         provider_signal: Some(raw_finish_reason.to_string()),
                         retry_after: None,
                     }));
                 }
 
-                // Billed counts: absent is zero, a present-but-unreadable count refuses and the stream
-                // ends in an error instead of ledgering zero tokens.
                 let usage = data
                     .get(keys::DELTA)
                     .and_then(|d| d.get(keys::USAGE))
@@ -1024,37 +887,15 @@ impl ProtocolReader for CohereReader {
 
                 out.push(IrStreamEvent::MessageDelta {
                     stop_reason,
-                    // Cohere has no stop_sequence analog in its stream.
+
                     stop_sequence: None,
                     usage,
                     stop_detail: None,
                 });
                 out.push(IrStreamEvent::MessageStop);
             }
-            // A tool call streams as tool-call-start / tool-call-delta(s) / tool-call-end under
-            // `delta.message.tool_calls`, mapped onto BlockStart{ToolUse} / BlockDelta{InputJsonDelta} /
-            // BlockStop as the OpenAI and Gemini readers do (otherwise streaming tool use is discarded).
-            // Tool blocks occupy IR indices after any open text block.
-            //
-            // The IR index must be stable for a tool's whole lifetime. Cohere closes each tool before
-            // opening the next, so deriving the index from the live rank of `frame_idx` was unstable: from a
-            // set that shrank on end it collapsed later tools onto the first's index, and even from a
-            // never-shrunk set a non-monotonic upstream `frame_idx` shifted an earlier tool's rank between
-            // its start and end. So the index is assigned once at tool-call-start by insertion order
-            // (`cohere_assign_tool_ir_index`), recorded in `state.tool_ir_index` keyed by frame index
-            // (membership also in `state.open_tools`), and looked up verbatim on delta/end via an O(log n)
-            // `BTreeMap`. Neither map is ever shrunk, so start/delta/end resolve to one IR index
-            // whatever the wire-index order.
+
             ET_TOOL_CALL_START => {
-                // Close a still-open text block before opening the tool. Real Cohere emits `content-end`
-                // before the first `tool-call-start`, so on text-then-tool this is a no-op. But the
-                // `tool-plan-delta` path opens a leading text block Cohere never closes with
-                // `content-end` (it goes from plan tokens to `tool-call-start`, and `message-end` does not
-                // close it), which would leave a `content_block_start` with no stop on an Anthropic egress
-                // (unbalanced, a proxy tell). Close it at the index it claimed (`state.text_index`, not a
-                // hardcoded 0) and clear the live flag. `state.text_index` stays recorded (as in
-                // `content-end`) so TEXT_BLOCK_SEEN_SENTINEL still offsets this and later tools past the
-                // text index. A thinking block left open ahead of tool calls is closed the same way.
                 cohere_close_thinking_block(state, &mut out);
                 cohere_close_text_slot(state, &mut out);
                 let frame_idx = clamp_frame_index(data);
@@ -1073,9 +914,7 @@ impl ProtocolReader for CohereReader {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                // Assign and record the tool's immutable IR index. `None` for a duplicate start (re-emitting
-                // BlockStart would add a spurious opening frame) or a new frame past the cap (untracked, its
-                // delta/end would be dropped, so a BlockStart would orphan it). Emit only when freshly tracked.
+
                 if let Some(ir_idx) = cohere_assign_tool_ir_index(state, frame_idx) {
                     state.block_origins.insert(
                         ir_idx,
@@ -1086,7 +925,7 @@ impl ProtocolReader for CohereReader {
                         block: crate::codec::ir::IrBlockMeta::ToolUse { id, name },
                         refusal: false,
                     });
-                    // Cohere may include initial argument text on the start frame.
+
                     if let Some(args) = tc
                         .and_then(|t| t.get(keys::FUNCTION))
                         .and_then(|f| f.get(keys::ARGUMENTS))
@@ -1102,9 +941,7 @@ impl ProtocolReader for CohereReader {
             }
             ET_TOOL_CALL_DELTA => {
                 let frame_idx = clamp_frame_index(data);
-                // Forward deltas only for a tracked frame (one we opened a BlockStart for), via its
-                // assigned IR index. A frame past MAX_TRACKED_TOOL_FRAMES was never recorded, so its delta is
-                // dropped rather than corrupting another block's arguments. Mirrors tool-call-end.
+
                 if let Some(ir_idx) = state.tool_ir_index.get(&frame_idx).copied() {
                     if let Some(args) = data
                         .get(keys::DELTA)
@@ -1124,22 +961,12 @@ impl ProtocolReader for CohereReader {
             }
             ET_TOOL_CALL_END => {
                 let frame_idx = clamp_frame_index(data);
-                // Close only a tool we opened, via its assigned IR index. The frame's entry is not
-                // removed from `open_tools`/`tool_ir_index`: it keeps each tool's IR index stable for the
-                // stream, and removal would let a later tool reuse a freed slot.
+
                 if let Some(ir_idx) = state.tool_ir_index.get(&frame_idx).copied() {
                     out.push(IrStreamEvent::BlockStop { index: ir_idx });
                 }
             }
-            // Cohere v2's streamed grounding citation (docs.cohere.com/v2/docs/streaming): one Citation
-            // at `delta.message.citations` while the answer's text block is open. It maps to
-            // `IrDelta::CitationsDelta` on the text block's claimed IR index (the block the non-stream
-            // reader attaches `message.citations` to), through `read_cohere_citations`, so a streamed and
-            // buffered read of one turn carry the same citations. The arm was missing, so every streamed
-            // citation vanished. An array body (the shape this crate's writer emitted before it was
-            // made spec-conformant) is accepted too. A citation with no open text block (none yet, a
-            // thinking/tool-plan block, or after content-end) is dropped: a delta into an unopened or
-            // stopped index would unbalance every egress.
+
             ET_CITATION_START => {
                 if state.text_block_open && !state.thinking_block_open {
                     if let Some(raw) = data
@@ -1163,13 +990,9 @@ impl ProtocolReader for CohereReader {
                     }
                 }
             }
-            // The structural close paired with each `citation-start`; no content. Cohere's own writer re-emits it from the citation delta.
+
             ET_CITATION_END => {}
-            // Genuinely unknown event types are ignored: the stream may add frames (e.g. debug) with
-            // no IR content; the `ET_*` arms above catch every tool-call frame. An empty type is folded
-            // in on purpose: the discriminant is upstream-controlled `data["type"]`, so a missing field
-            // is hostile input the reader must survive. A `debug_assert!(!other.is_empty())` here once
-            // aborted debug/test builds on such a frame, violating the never-panic contract.
+
             _ => {}
         }
         out
@@ -1203,12 +1026,7 @@ impl ProtocolReader for CohereReader {
 
         let mut content: Vec<crate::codec::ir::IrBlock> = Vec::new();
         let mut block_origins = crate::codec::ir::IrBlockOrigins::default();
-        // Cohere v2's internal pre-tool-call plan is in `message.tool_plan` (a string, distinct from
-        // `content[]`). It lands in the IR reasoning carrier (`Thinking`), not Text: as a leading Text it
-        // was content injection, since every cross-protocol hop showed the model's internal plan to
-        // the user as the answer's first paragraph and no writer could tell it from a real message.
-        // `Thinking` fixes both: the plan stops being visible content, and the Cohere writer reshapes
-        // it back into `tool_plan`. Writers with no reasoning slot drop it, correctly.
+
         if let Some(plan) = message_val.get(TOOL_PLAN).and_then(|p| p.as_str()) {
             if !plan.is_empty() {
                 {
@@ -1228,9 +1046,7 @@ impl ProtocolReader for CohereReader {
                 };
             }
         }
-        // Grounding citations. Cohere's offsets are character offsets into the assembled content text,
-        // so they belong on the first text block, where every writer's join starts (see the
-        // base-offset accumulation in `openai_chat::url_annotations`); on each block they would multiply.
+
         let response_citations = message_val
             .get(keys::CITATIONS)
             .map(super::read_cohere_citations)
@@ -1255,8 +1071,7 @@ impl ProtocolReader for CohereReader {
                                 };
                             }
                         }
-                        // A reasoning model's `{"type":"thinking","thinking":"…"}` part is the IR Thinking
-                        // block, never visible text (it once vanished, COH-03).
+
                         Some(keys::THINKING) => {
                             if let Some(text) = block_obj
                                 .get(keys::THINKING)
@@ -1285,8 +1100,7 @@ impl ProtocolReader for CohereReader {
                 }
             }
         }
-        // Citations with no text block to ride (a grounded turn with no text part) were once lost with
-        // the pending list (COH-17). They ride an empty text block after the content, ahead of the tool calls.
+
         if !citations_pending.is_empty() {
             {
                 block_origins
@@ -1350,17 +1164,10 @@ impl ProtocolReader for CohereReader {
             Some(read_cohere_stop_reason(raw_finish_reason))
         };
 
-        // An absent `usage` is zero-defaulted, not an error: an upstream quirk (mock/staging/proxy
-        // backend), and a `ClientError` would mislabel the cause and break retry logic. The Bedrock and
-        // Gemini readers tolerate the same. Each token lookup below already defaults to 0.
         let usage_val = obj.get(keys::USAGE);
-        // `cached_tokens` (the prompt-cache hit, counted inside `tokens.input_tokens`) stays in the
-        // input count. `billed_units.search_units` is a separately metered unit, not a token count (see
-        // `USAGE`). Absent is zero, a present-but-unreadable count refuses.
+
         let usage = read_cohere_usage(usage_val)?;
 
-        // Response `logprobs[]`: one item per decoded text chunk, mapped to neutral per-span entries
-        // (`read_cohere_logprob`); once dropped with a warn on every cross-protocol hop (COH-13).
         let logprobs: Vec<crate::codec::ir::IrTokenLogprob> = obj
             .get(keys::LOGPROBS)
             .and_then(|l| l.as_array())
@@ -1372,10 +1179,6 @@ impl ProtocolReader for CohereReader {
             .and_then(|m| m.as_str())
             .map(String::from);
 
-        // Capture the response identity so Cohere to Cohere passthrough preserves it. v2 responses carry
-        // an opaque UUID-like `id`; if omitted it stays absent in the IR. Identity synthesis belongs
-        // to the fallible writer after the caller has captured usage. v2 has no `created`,
-        // `system_fingerprint` or `stop_sequence`: those stay `None`.
         let id = obj
             .get(keys::ID)
             .and_then(|v| v.as_str())
@@ -1403,15 +1206,7 @@ impl ProtocolReader for CohereReader {
 }
 
 /// Cohere's usage counts, as data. The raw `tokens` bucket gives the totals; `billed_units` is the
-/// provider-metered bucket (token counts, `search_units`, `classifications`). `cached_tokens`, the
-/// cache hit, is a slice inside `tokens.input_tokens` and is not split out: the cached share bills
-/// at the input tier (only `tokens.*` is read and `cache_read_input_tokens` is `None`); moving it to
-/// the cache-read tier would change what a key is charged.
-///
-/// Ledgering (the census over the pinned wire lock `testing/llm-conformance/wire/cohere.wire.json`
-/// is `usage_census_tests`): raw token counts are the reserved input/output classes, billed token
-/// counts ride beside them as attribution only (`IrUsage::to_token_usage`), and `search_units` and
-/// `classifications` are open classes.
+
 const USAGE: &[UsageCount] = &[
     (
         CountSlot::Input,
@@ -1440,8 +1235,7 @@ const USAGE: &[UsageCount] = &[
 ];
 
 /// A Cohere `usage` / `meta` object (`None` when absent) → the IR usage, through [`USAGE`]. Every
-/// count it reads is ledgered under its class (`IrUsage::to_token_usage`), the billed
-/// `classifications` included.
+
 fn read_cohere_usage(
     usage: Option<&serde_json::Value>,
 ) -> Result<crate::codec::ir::IrUsage, IrError> {

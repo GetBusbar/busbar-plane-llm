@@ -2,8 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR mapping — the IR-CORE half of the typed slots: what the shared stream machinery does with
-//! a slot a reader set. Buffered == stream: a slot the buffered response carries must reach the
-//! synthesized stream a streaming client of a buffered upstream is given.
 
 use crate::codec::ir::{IrBlock, IrResponse, IrStopDetail, IrStopReason, IrStreamEvent, IrUsage};
 

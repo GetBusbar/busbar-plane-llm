@@ -195,7 +195,7 @@ fn native_auth_context_and_supported_operation_controls() {
         assert_eq!(result.answer.body, body);
         assert_eq!(result.answer.fields[1].1, b"a\xffb");
     }
-    // Existing provider-message priority is unchanged even when a header identity maps.
+
     let result = judge(
         &Host,
         "bedrock",
@@ -359,7 +359,7 @@ fn anthropic_search_source_crosses_to_bedrock_without_union_conflict() {
     assert!(!cap.contains("union"));
     assert!(!cap.contains("opaque:source#7"));
 }
-// Native bytes use Reply's relay path; Whole is deliberately the translation entry.
+
 #[test]
 fn native_images_and_citation_responses_retain_literal_bytes() {
     use busbar_plane_llm::exchange::{

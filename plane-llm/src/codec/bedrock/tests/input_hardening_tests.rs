@@ -1,8 +1,3 @@
-// Input-hardening (1.6.0): the Bedrock Converse reader EDGE-VALIDATES structural types. Top-level
-// `messages` and per-message `content` are ARRAY-ONLY, so a present string/number/object in either
-// position is a genuine TYPE violation → native 400 (ClientError / ir_parse). A `toolUse` block must
-// carry a non-empty `toolUseId`. These pin BOTH the reject AND the preserved leniency.
-
 use super::*;
 
 fn assert_ir_parse_reject(res: Result<crate::codec::ir::IrRequest, IrError>, ctx: &str) {
@@ -18,8 +13,6 @@ fn assert_ir_parse_reject(res: Result<crate::codec::ir::IrRequest, IrError>, ctx
         "{ctx}: must carry the ir_parse signal"
     );
 }
-
-// ── Fix 1: top-level `messages` type ─────────────────────────────────────────
 
 #[test]
 fn top_level_messages_wrong_typed_rejects() {
@@ -46,8 +39,6 @@ fn absent_and_empty_messages_stay_lenient() {
     assert!(ir.messages.is_empty());
 }
 
-// ── Fix 1: per-message `content` type (array-only) ───────────────────────────
-
 #[test]
 fn per_message_wrong_typed_content_rejects() {
     for bad in [
@@ -73,8 +64,6 @@ fn array_and_absent_content_stay_lenient() {
         .read_request(&serde_json::json!({"messages": [{"role": "user"}]}))
         .expect("absent content must parse");
 }
-
-// ── Fix 2: toolUse `toolUseId` ───────────────────────────────────────────────
 
 #[test]
 fn tool_use_missing_id_rejects() {

@@ -2,7 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The flat field walker (`codec/carry.rs`) over a test table: read, write, word tables, nested
-//! paths, the same-dialect fidelity park and the modelled keys.
 
 use super::*;
 use crate::codec::ir::{IrModality, IrRequest, IrServiceTier, IrVerbosity};
@@ -135,7 +134,7 @@ fn a_member_the_slot_cannot_reproduce_is_parked_raw_in_extra() {
     assert_eq!(ir.extra.get("metadata"), Some(&json!({"a": 1})));
     assert_eq!(ir.extra.get("tier"), Some(&json!("turbo")));
     assert!(!ir.extra.contains_key("user_id"));
-    // A nested row's container is the dialect's own: never parked by the walker.
+
     let ir = read_obj(json!({"text": {"verbosity": "loud"}}));
     assert!(ir.extra.is_empty());
 }
@@ -217,7 +216,7 @@ fn drops_are_derived_from_missing_rows_in_the_control_order() {
         ..Default::default()
     };
     let names: Vec<&str> = dropped(&[ROWS], CONTROLS, &ir).map(Slot::name).collect();
-    // A `silent` control is dropped like one with no row: never silently (spec Part 2 #76).
+
     assert_eq!(names, ["top_k", "stop", "service_tier", "store"]);
     let ir = IrRequest {
         service_tier: Some(IrServiceTier::Priority),
@@ -258,18 +257,18 @@ fn the_name_resolver_reads_the_wire_path_from_the_rows() {
         row(&["count"], Slot::Structure, ValueCodec::Prim("n")),
     ];
     let table: Table = &[ROWS];
-    // A slot row names the slot, and wins over a `prim` row of the same name.
+
     assert_eq!(wire_path(table, "n").as_deref(), Some("config.count"));
-    // Of several rows, the member outside every list.
+
     assert_eq!(
         wire_path(table, "thinking").as_deref(),
         Some("thought.level")
     );
-    // Rows that all sit in lists name the path they share.
+
     assert_eq!(
         wire_path(table, "mark").as_deref(),
         Some("turns[].parts[].mark")
     );
-    // No row: no wire path (the caller keeps the IR name).
+
     assert_eq!(wire_path(table, "seed"), None);
 }

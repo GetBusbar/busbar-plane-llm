@@ -37,7 +37,7 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// The controls Gemini has no form for, derived from the mapping file; `write_request` drops
-    /// each with a warn and the seam audits it from here.
+
     fn dropped_egress_controls(&self, req: &crate::codec::ir::IrRequest) -> Vec<&'static str> {
         crate::codec::carry::dropped(super::map::REQUEST, super::map::CONTROLS, req)
             .map(crate::codec::carry::Slot::name)
@@ -45,14 +45,11 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     fn upstream_path(&self) -> &str {
-        // Model-independent fallback; the real per-request path comes from upstream_path_for().
         GEMINI_PATH_BASE
     }
 
     /// Gemini expresses the candidate count as `generationConfig.candidateCount` (the snake_case
-    /// `candidate_count` is also tolerated). `Some(k)` only for a genuine `k > 1` ask. See the trait
-    /// doc for why the engine rejects `k > 1` on a cross-protocol route (the single-candidate IR would
-    /// drop candidates `1..k`).
+
     fn requested_candidate_count(&self, body: &serde_json::Value) -> Option<u64> {
         body.pointer("/generationConfig/candidateCount")
             .or_else(|| body.pointer("/generationConfig/candidate_count"))
@@ -61,12 +58,9 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// Gemini's URL embeds the model AND the stream mode. Streaming requests go to
-    /// `:streamGenerateContent?alt=sse` (the gemini reader already decodes those SSE chunks);
-    /// non-streaming to `:generateContent`.
+
     fn upstream_path_for_stream(&self, model: &str, stream: bool) -> String {
         if stream {
-            // SSE streaming endpoint. `alt=sse` yields `data:`-framed chunks the gemini
-            // reader's read_response_events already decodes.
             let (key, value) = super::STREAM_QUERY;
             format!("{GEMINI_PATH_BASE}/{model}:streamGenerateContent?{key}={value}")
         } else {
@@ -79,10 +73,7 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// Gemini carries turns in `contents` as `{role, parts: [{text}]}`, and spells the assistant
-    /// role `model`. BOTH the canonical `assistant` and the native `model` are accepted on the reply
-    /// so a hook that echoes the role it was projected — and one written to Gemini's own vocabulary
-    /// — round-trip to `model` rather than falling through to `user` and corrupting every assistant
-    /// turn.
+
     fn apply_rewrite_to_ingress_body(
         &self,
         obj: &mut serde_json::Map<String, serde_json::Value>,
@@ -114,8 +105,7 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// The production write: the lane model is known, so a reasoning-OFF ask is written only where
-    /// that model accepts it (IR-09, [`gemini_model_accepts_thinking_off`]). `model` is empty from
-    /// the model-blind [`ProtocolWriter::write_request`]; nothing else here depends on it.
+
     fn write_request_for_lane(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -125,7 +115,6 @@ impl ProtocolWriter for GeminiWriter {
     ) -> serde_json::Value {
         let mut out = serde_json::Map::new();
 
-        // systemInstruction.parts[] from IrRequest.system
         if !req.system.is_empty() {
             let parts: Vec<_> = req
                 .system
@@ -138,9 +127,7 @@ impl ProtocolWriter for GeminiWriter {
                         crate::codec::ir::IrBlock::Text { text, .. } => {
                             Some(serde_json::json!({ (keys::TEXT): text }))
                         }
-                        // Gemini's systemInstruction.parts carries text only. Drop any non-Text system
-                        // block WITH a warn (matching cohere's warn for the same case) rather than
-                        // vanishing silently — a system array with a non-text block is degenerate.
+
                         _ => {
                             crate::codec::drops::writer_drop!(
                             crate::codec::drops::block(block.kind_name()),
@@ -162,22 +149,6 @@ impl ProtocolWriter for GeminiWriter {
             }
         }
 
-        // Cross-protocol tool-id → function-name map for `functionResponse.name` correlation.
-        //
-        // Gemini correlates a `functionResponse` to its `functionCall` strictly BY NAME — the wire
-        // format carries no call ids. On a SAME-protocol (Gemini→Gemini) turn the reader already sets
-        // each ToolResult's `tool_use_id` to the function name (Gemini's only result-side handle), so
-        // round-tripping it straight into `functionResponse.name` is correct. But on a CROSS-protocol
-        // seam (Anthropic/OpenAI ingress → Gemini egress) the IR's ToolUse blocks carry a SYNTHETIC
-        // `call_<hash>` id and the matching ToolResult's `tool_use_id` carries that SAME synthetic id
-        // — NOT the real function name. Emitting that hash as `functionResponse.name` while
-        // `functionCall.name` stays the real `get_weather` left the backend unable to correlate, so
-        // every cross-protocol→Gemini multi-turn tool call broke.
-        //
-        // Build a `tool_use_id -> function_name` map from ALL ToolUse blocks across the whole request
-        // (a later turn's result references an earlier turn's call), then resolve the real name in the
-        // ToolResult arm below, FALLING BACK to the `tool_use_id` itself when it is not in the map —
-        // which preserves the same-protocol case where `tool_use_id` already IS the function name.
         let mut tool_name_by_id: std::collections::HashMap<&str, &str> =
             std::collections::HashMap::new();
         for (message_index, msg) in req.messages.iter().enumerate() {
@@ -200,7 +171,6 @@ impl ProtocolWriter for GeminiWriter {
             }
         }
 
-        // messages → contents (Assistant→"model", User→"user")
         let mut contents_arr: Vec<serde_json::Value> = Vec::new();
         for (message_index, msg) in req.messages.iter().enumerate() {
             let _message_origins = req
@@ -213,15 +183,9 @@ impl ProtocolWriter for GeminiWriter {
             let role_str = match msg.role {
                 crate::codec::ir::IrRole::User => keys::USER,
                 crate::codec::ir::IrRole::Assistant => keys::MODEL,
-                // A Tool-role IR message carries `ToolResult` blocks, emitted below as Gemini
-                // `functionResponse` parts. In the native Gemini GenerateContentRequest schema a
-                // `functionResponse` MUST be sent under a `user`-side turn: the `model` role is
-                // exclusively the assistant's turn (which produces `functionCall`s, never
-                // `functionResponse`s). Emitting a `functionResponse` under `role:"model"` is a
-                // non-native shape the real Gemini API / google-genai SDK rejects. Map Tool →
-                // "user" (matching the Bedrock writer's `toolResult` handling).
+
                 crate::codec::ir::IrRole::Tool => keys::USER,
-                crate::codec::ir::IrRole::System => continue, // Already in systemInstruction
+                crate::codec::ir::IrRole::System => continue,
             };
 
             let mut parts_arr: Vec<serde_json::Value> = Vec::new();
@@ -230,7 +194,7 @@ impl ProtocolWriter for GeminiWriter {
                     crate::codec::drops::block_scope(_message_origins.get(block_index));
 
                 match block {
-                    // COH-17: an empty text part carrying only citations has no Gemini form.
+
                     b @ crate::codec::ir::IrBlock::Text { .. } if b.is_citation_carrier() => {}
                     crate::codec::ir::IrBlock::Text { text, .. } => {
                         parts_arr.push(serde_json::json!({ (keys::TEXT): text }))
@@ -242,16 +206,16 @@ impl ProtocolWriter for GeminiWriter {
                         thought_signature,
                         ..
                     } => {
-                        // ToolUse → functionCall{id?, name, args}. `args` MUST be a JSON OBJECT
-                        // (Gemini Struct); coerce any non-object input (array/scalar/null/unparseable
-                        // string) the same way `functionResponse.response` is coerced below. The
-                        // call's id rides Gemini's optional `functionCall.id` (GEM-08), paired with
-                        // the same id on its `functionResponse`.
-                        // `thoughtSignature`: by the time this writer runs, `thought_signature`
-                        // already carries the right value — either a real one captured by Gemini's
-                        // own reader, or a sentinel injected upstream by `IrReq::prepare_for_egress`
-                        // for cross-protocol traffic — so this writer stays dumb and just emits what
-                        // it's given.
+
+
+
+
+
+
+
+
+
+
                         parts_arr.push(function_call_part(
                             id,
                             name,
@@ -265,11 +229,11 @@ impl ProtocolWriter for GeminiWriter {
                         is_error,
                         ..
                     } => {
-                        // ToolResult → functionResponse{id?, name, response, parts?}. Resolve the
-                        // REAL function name from the id→name map built above so the emitted
-                        // `functionResponse.name` matches the `functionCall.name` Gemini correlates
-                        // against. Fall back to the `tool_use_id` itself when it is not a known call
-                        // id — a result carried with its function name as its handle.
+
+
+
+
+
                         let known_call = tool_name_by_id.get(tool_use_id.as_str()).copied();
                         let name: &str = known_call.unwrap_or(tool_use_id.as_str());
                         let response_text = content
@@ -280,8 +244,8 @@ impl ProtocolWriter for GeminiWriter {
                             })
                             .collect::<Vec<_>>()
                             .join(" ");
-                        // A Bedrock `{"json": …}` tool result is a JSON value, and Gemini's
-                        // `response` IS a JSON object: carry it (GEM-02) instead of dropping it.
+
+
                         let json_values: Vec<&serde_json::Value> = content
                             .iter()
                             .filter_map(|b| match b {
@@ -289,24 +253,24 @@ impl ProtocolWriter for GeminiWriter {
                                 _ => None,
                             })
                             .collect();
-                        // If the joined text is valid JSON, forward it as the structured response.
-                        // Otherwise (e.g. multiple plain-text chunks) wrap the raw text in
-                        // `{"output": <text>}` — the Gemini functionResponse convention for
-                        // plain-text tool output — rather than silently discarding the content
-                        // with an empty `{}` object.
-                        //
-                        // Gemini's `functionResponse.response` is a protobuf Struct: it MUST be a JSON
-                        // OBJECT. A non-object parse result — a JSON `null` (e.g. upstream omitted the
-                        // response object and a literal "null" arrived), a bare scalar ("42", "true",
-                        // "\"text\""), or an array ("[1,2]") — would be emitted verbatim and rejected by
-                        // the backend (400). Coerce any non-object parsed value into a valid Struct:
-                        // `null` becomes `{}` (an empty-but-valid response), and any other non-object
-                        // scalar/array is wrapped under `{"output": <value>}` so its content survives.
-                        //
-                        // The payload: the text (parsed when it is JSON), or — for a result that is
-                        // ONLY structured json — that value (several json blocks become an array).
-                        // Text and json together: the json values join the text as one `output`
-                        // array, so neither is lost.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
                         let payload: serde_json::Value = if json_values.is_empty() {
                             crate::codec::json::parse_str(&response_text)
                                 .unwrap_or_else(|_| serde_json::json!(response_text))
@@ -322,8 +286,8 @@ impl ProtocolWriter for GeminiWriter {
                             all.extend(json_values.iter().map(|v| (*v).clone()));
                             serde_json::Value::Array(all)
                         };
-                        // A FAILED tool call is Gemini's documented `response.error` (GEM-05); a
-                        // payload that already names `error` is kept as the error it states.
+
+
                         let response_val: serde_json::Value = if *is_error {
                             match payload {
                                 serde_json::Value::Object(o) if o.contains_key(keys::ERROR_WORD) => {
@@ -340,15 +304,15 @@ impl ProtocolWriter for GeminiWriter {
                             serde_json::json!({ (keys::OUTPUT): payload })
                         };
                         let mut fr_obj = serde_json::Map::new();
-                        // Gemini's optional `functionResponse.id`, the pair of `functionCall.id`
-                        // (GEM-08) — only for a result whose id names a call in this request.
+
+
                         if known_call.is_some() && !tool_use_id.is_empty() {
                             fr_obj.insert(keys::ID.to_string(), serde_json::json!(tool_use_id));
                         }
                         fr_obj.insert(keys::NAME.to_string(), serde_json::json!(name));
                         fr_obj.insert(keys::RESPONSE.to_string(), response_val);
-                        // An image / document the tool returned rides Gemini's multimodal
-                        // `functionResponse.parts` (GEM-06) instead of vanishing.
+
+
                         let media_parts: Vec<serde_json::Value> =
                             content.iter().enumerate().filter_map(|(index, block)| crate::codec::drops::with_child_origin(index, || write_gemini_media_part(block))).collect();
                         if !media_parts.is_empty() {
@@ -359,24 +323,24 @@ impl ProtocolWriter for GeminiWriter {
                         }))
                     }
                     crate::codec::ir::IrBlock::Image { source, .. } => match source {
-                        // A remote URL → Gemini's native `fileData{fileUri, mimeType}` (URL
-                        // reference, not base64). `mimeType` is REQUIRED for Gemini to decode the
-                        // referenced file (this file's own invariant, lines 6-10) — the Media-URL
-                        // arm below already supplies one, and omitting it on the image arm produced
-                        // a `fileData` Gemini rejects. The source URL carries no mime of its own
-                        // (an OpenAI/Anthropic image URL), so derive a representative `image/*` from
-                        // the URL extension, defaulting to `image/jpeg`.
+
+
+
+
+
+
+
                         crate::codec::ir::IrImageSource::Url(uri) => parts_arr.push(serde_json::json!({
                             (FIELD_FILE_DATA): { (FIELD_FILE_URI): uri, (FIELD_MIME_TYPE): gemini_image_mime_for_url(uri) }
                         })),
-                        // Inline base64 → `inlineData{mimeType, data}`.
+
                         crate::codec::ir::IrImageSource::Base64 { media_type, data } => {
                             parts_arr.push(serde_json::json!({
                                 (FIELD_INLINE_DATA): { (FIELD_MIME_TYPE): media_type, (keys::DATA): data }
                             }))
                         }
-                        // A Responses `file_id` / Bedrock `s3Location` reference has no Gemini
-                        // projection — emitting it would corrupt the part. Drop with a warn.
+
+
                         crate::codec::ir::IrImageSource::Vendor { .. } => {
                             crate::codec::drops::writer_drop!(
                                 crate::codec::drops::IMAGE,
@@ -386,16 +350,16 @@ impl ProtocolWriter for GeminiWriter {
                                  egress: a file_id / s3Location has no cross-vendor analog");
                         }
                     },
-                    // Gemini is the ONE dialect in the matrix whose attachment slots are
-                    // mime-generic: `inlineData{mimeType,data}` and `fileData{fileUri,mimeType}`
-                    // carry a PDF, an audio clip and a video with no per-kind wire shape. So every
-                    // `Media` kind projects natively here — this writer is why the attachment gap
-                    // was never an untranslatable-concept problem, only an unmodelled-IR one.
+
+
+
+
+
                     crate::codec::ir::IrBlock::Media { kind, source, .. } => match source {
                         crate::codec::ir::IrImageSource::Url(uri) => {
-                            // Re-emit the `mimeType` the reader used to route this block. A bare
-                            // container guess is better than omitting it: Gemini uses `mimeType` to
-                            // decide how to decode the referenced file.
+
+
+
                             parts_arr.push(serde_json::json!({
                                 (FIELD_FILE_DATA): { (FIELD_FILE_URI): uri, (FIELD_MIME_TYPE): gemini_mime_for_kind(*kind) }
                             }))
@@ -416,10 +380,10 @@ impl ProtocolWriter for GeminiWriter {
                         }
                     },
                     crate::codec::ir::IrBlock::Json(_) | crate::codec::ir::IrBlock::HostedToolRecord { .. } => {
-                        // Structured-json (Bedrock tool-result content) has no Gemini part shape.
+
                     }
-                    // A REDACTED reasoning block holds opaque encrypted bytes with no Gemini analog —
-                    // drop it (its `text` is not plaintext reasoning).
+
+
                     crate::codec::ir::IrBlock::Thinking { redacted: true, .. } => {}
                     crate::codec::ir::IrBlock::Thinking {
                         text,
@@ -427,12 +391,12 @@ impl ProtocolWriter for GeminiWriter {
                         signature_origin,
                         ..
                     } => {
-                        // Thinking → Gemini `{text, thought:true, thoughtSignature?}`. Gemini
-                        // DOES carry reasoning parts; round-trip the text and the opaque resumable
-                        // `thoughtSignature`. `thoughtSignature` is emitted only when present AND
-                        // minted by Gemini (IR-18, GEM-19): an Anthropic / Bedrock / Responses blob
-                        // is not a Gemini signature, and Gemini rejects or misreads it. An unknown
-                        // origin (`None`) keeps the pre-slot behaviour and is emitted.
+
+
+
+
+
+
                         let mut part = serde_json::Map::new();
                         part.insert(keys::TEXT.to_string(), serde_json::json!(text));
                         part.insert(FIELD_THOUGHT.to_string(), serde_json::json!(true));
@@ -453,13 +417,6 @@ impl ProtocolWriter for GeminiWriter {
                 }
             }
 
-            // A turn whose IR blocks were ALL non-representable here leaves `parts_arr` empty.
-            // SKIPPING the whole contents entry drops the turn and can break Gemini's strict
-            // user/model alternation — two same-role turns then land adjacent and the API rejects the
-            // request with 400 INVALID_ARGUMENT. Mirror the Bedrock writer (bedrock.rs, empty
-            // `content_arr` → minimal placeholder): substitute an empty text part so the turn survives
-            // the seam and alternation is preserved. System-role messages never reach here (they
-            // `continue` during role mapping).
             if parts_arr.is_empty() {
                 parts_arr.push(serde_json::json!({ (keys::TEXT): "" }));
             }
@@ -469,7 +426,6 @@ impl ProtocolWriter for GeminiWriter {
             contents_arr.push(serde_json::Value::Object(content_obj));
         }
 
-        // Write contents to output after building all messages
         if !contents_arr.is_empty() {
             out.insert(
                 FIELD_CONTENTS.to_string(),
@@ -477,12 +433,8 @@ impl ProtocolWriter for GeminiWriter {
             );
         }
 
-        // tools → tools[0].functionDeclarations[]
         super::super::ir_encode::warn_dropped_tool_strict(&req.tools, COUNT_LABEL);
-        // A tool SUBSET (IR-10) with a "may call" directive (`Auto` or none) has no Gemini form —
-        // `allowedFunctionNames` is only valid with mode ANY — so it is expressed by omission: only
-        // the listed tools are declared. A "must call" subset (`Required`) is written natively as
-        // ANY + `allowedFunctionNames` below and keeps every declaration.
+
         let omit_to_subset = match (&req.allowed_tools, &req.tool_choice) {
             (Some(names), None | Some(crate::codec::ir::IrToolChoice::Auto)) => Some(names),
             _ => None,
@@ -502,15 +454,7 @@ impl ProtocolWriter for GeminiWriter {
                     if let Some(desc) = &tool.description {
                         obj.insert(keys::DESCRIPTION.to_string(), serde_json::json!(desc));
                     }
-                    // Gemini's tool `parameters` accept only a strict OpenAPI-3.0 Schema subset,
-                    // NOT full JSON Schema. A cross-protocol tool def (OpenAI/Anthropic) routinely
-                    // carries draft keywords (`$schema`, a schema-valued `additionalProperties`, …)
-                    // that Gemini 400-rejects, and a `$ref`/`$defs` nested-model shape (what every
-                    // Pydantic/Zod-generated tool schema uses) that the live API does not reliably
-                    // resolve on its own — see the research note on `GEMINI_SCHEMA_REJECTED_KEYS`.
-                    // `resolve_gemini_schema_refs` inlines `$ref` against `$defs` first so nested
-                    // structure survives, then `sanitize_gemini_schema` strips the rest recursively;
-                    // same-protocol Gemini schemas (which never carry these) are unaffected.
+
                     obj.insert(
                         keys::PARAMETERS.to_string(),
                         sanitize_gemini_schema(&resolve_gemini_schema_refs(&tool.input_schema)),
@@ -518,7 +462,7 @@ impl ProtocolWriter for GeminiWriter {
                     serde_json::Value::Object(obj)
                 })
                 .collect();
-            // Hosted tools (IR-11, GEM-10) are their own `tools[]` entries after the functions.
+
             let mut tool_entries = Vec::with_capacity(1 + hosted_entries.len());
             if !func_decls.is_empty() {
                 tool_entries.push(serde_json::json!({(FIELD_FUNCTION_DECLARATIONS): func_decls}));
@@ -530,14 +474,6 @@ impl ProtocolWriter for GeminiWriter {
             );
         }
 
-        // ToolConfig{functionCallingConfig{mode, allowedFunctionNames}}.
-        //
-        // Start from the RAW `toolConfig` the reader preserved in `extra` (same-protocol Gemini→Gemini
-        // byte-identity), then OVERLAY a fresh `functionCallingConfig` built from the typed
-        // `req.tool_choice`. Same map key, so the overlay REPLACES (never duplicates) any preserved
-        // `functionCallingConfig`. On cross-protocol egress `extra` is already cleared, so this object
-        // holds only the typed `functionCallingConfig` and no foreign Gemini sub-field leaks. Mirrors
-        // the `generationConfig` overlay below. Emitted only when there is something to say.
         let mut tool_config = req
             .extra
             .get(keys::TOOL_CONFIG)
@@ -545,11 +481,6 @@ impl ProtocolWriter for GeminiWriter {
             .cloned()
             .unwrap_or_default();
         if let Some(tc) = &req.tool_choice {
-            // A `functionCallingConfig` with no accompanying `tools` is meaningless (there is
-            // nothing to force/allow) and, like every sibling protocol's equivalent guard, the
-            // reachable case is a cross-protocol request whose hosted tools `prepare_for_egress`
-            // stripped (`ir/variant.rs`) while the tool_choice directive survived. Drop with a warn
-            // rather than emitting a directive over an empty tool set.
             if func_tools.is_empty() {
                 crate::codec::drops::writer_drop!(
                     crate::codec::drops::TOOL_CHOICE,
@@ -561,7 +492,6 @@ impl ProtocolWriter for GeminiWriter {
                 );
             } else {
                 let fcc = match (tc, &req.allowed_tools) {
-                    // "Must call one of these" is Gemini's native ANY + allowedFunctionNames (IR-10).
                     (crate::codec::ir::IrToolChoice::Required, Some(names)) => {
                         serde_json::json!({(keys::MODE): GEMINI_ANY, (FIELD_ALLOWED_FUNCTION_NAMES): names})
                     }
@@ -576,9 +506,7 @@ impl ProtocolWriter for GeminiWriter {
                 serde_json::Value::Object(tool_config),
             );
         }
-        // Egress: `generateContent` models no parallelism control at all — `None` is
-        // NOT touched here (owner decision 4: a warn on EVERY request would be noise). The
-        // `is_some()` gate means this can only fire on a request that actually carried the flag.
+
         if req.parallel_tool_calls.is_some() {
             crate::codec::drops::writer_drop!(
                 crate::codec::drops::PARALLEL_TOOL_CALLS,
@@ -588,16 +516,6 @@ impl ProtocolWriter for GeminiWriter {
                  control, so the backend's default parallelism applies");
         }
 
-        // generationConfig{maxOutputTokens, temperature, topP, topK, stopSequences, …}
-        //
-        // Start from the RAW `generationConfig` the reader preserved in `extra` (if any) so any
-        // unmodeled sub-field — `responseMimeType` (JSON mode), `thinkingConfig` (extended-thinking
-        // budget), `candidateCount`, `seed`, `presencePenalty`, `frequencyPenalty`,
-        // `responseModalities`, `speechConfig`, `routingConfig`, … — survives, then OVERLAY the 5
-        // typed IR fields on top. This mirrors `BedrockWriter`'s `inferenceConfig` overlay. On
-        // same-protocol Gemini→Gemini the overlay reproduces the original values byte-for-byte; on
-        // cross-protocol egress `extra` is already cleared at the forward seam, so this object holds
-        // only the 5 typed fields and no foreign Gemini sub-field leaks to a non-Gemini backend.
         let mut gen_config = req
             .extra
             .get(FIELD_GENERATION_CONFIG)
@@ -610,8 +528,7 @@ impl ProtocolWriter for GeminiWriter {
                 serde_json::json!(max_tokens),
             );
         }
-        // The sampling rows of the mapping file (temperature, topP, topK, stopSequences capped at 5,
-        // frequencyPenalty, presencePenalty, seed, candidateCount), overlaid on the raw object.
+
         out.insert(
             FIELD_GENERATION_CONFIG.to_string(),
             serde_json::Value::Object(gen_config),
@@ -626,10 +543,7 @@ impl ProtocolWriter for GeminiWriter {
             Some(serde_json::Value::Object(gc)) => gc,
             _ => serde_json::Map::new(),
         };
-        // The logprobs ask in Gemini's native spellings (an OpenAI `logprobs`/`top_logprobs`
-        // arrives here via the IR): boolean `responseLogprobs`, top-count `logprobs`.
-        // Gemini requires `responseLogprobs: true` for the `logprobs` top-count to be valid. Force
-        // it whenever the count is present (even if the source only set the count), or Gemini 400s.
+
         if req.top_logprobs.is_some() {
             gen_config.insert(FIELD_RESPONSE_LOGPROBS.to_string(), serde_json::json!(true));
         } else if let Some(logprobs) = req.logprobs {
@@ -639,9 +553,6 @@ impl ProtocolWriter for GeminiWriter {
             );
         }
         if let Some(top_logprobs) = req.top_logprobs {
-            // Gemini's `logprobs` top-count caps at 5 on most models (OpenAI allows up to 20).
-            // Clamp to the safe floor rather than 400 a cross-protocol request that asked for more;
-            // busbar can't know the target model's exact cap, and 5 is universally accepted.
             const GEMINI_MAX_TOP_LOGPROBS: u32 = 5;
             let clamped = top_logprobs.min(GEMINI_MAX_TOP_LOGPROBS);
             if clamped != top_logprobs {
@@ -652,28 +563,19 @@ impl ProtocolWriter for GeminiWriter {
                     "clamping top_logprobs to Gemini's max (5)"
                 );
             }
-            // Gemini's `logprobs` top-count is valid only in 1..=5. OpenAI's `top_logprobs: 0`
-            // ("chosen token, no alternatives") must NOT emit `logprobs: 0` — Gemini 400s on it.
-            // `responseLogprobs: true` (forced above) still returns the chosen token's logprob, so
-            // omit the alternatives count entirely for 0 rather than send an invalid value.
+
             if clamped >= 1 {
                 gen_config.insert(keys::LOGPROBS.to_string(), serde_json::json!(clamped));
             }
         }
-        // The reasoning carry in Gemini's native spelling: `thinkingConfig.thinkingBudget`.
-        // Dynamic round-trips as Gemini's own -1; effort words go through the table. (Only present
-        // when the seam's per-lane capability gate allowed the ask through.)
+
         if let Some(ask) = req.reasoning {
             let table = req
                 .reasoning_budgets
                 .unwrap_or(crate::codec::ir::REASONING_BUDGET_DEFAULTS);
             let budget: Option<i64> = match ask {
                 crate::codec::ir::IrReasoningAsk::Dynamic => Some(-1),
-                // Reasoning switched OFF (IR-09), matched BEFORE the table projection (which would
-                // read it as the smallest ENABLE ask): Gemini's budget 0, written only for a model
-                // that accepts it. Elsewhere (a model that cannot stop thinking, or a model this
-                // writer does not know) the ask is omitted with a warn, so the request never 400s
-                // and the model runs at its default.
+
                 crate::codec::ir::IrReasoningAsk::Off => {
                     if gemini_model_accepts_thinking_off(model) {
                         Some(0)
@@ -690,14 +592,7 @@ impl ProtocolWriter for GeminiWriter {
                 }
                 other => other.to_budget(table).map(i64::from),
             };
-            // Only SYNTHESIZE a thinkingConfig when the request did not already carry a native
-            // Gemini one (i.e. this is a CROSS-protocol ask — `extra` is cleared at the seam, so
-            // `gen_config` has no thinkingConfig). A Gemini-native request keeps its original
-            // thinkingConfig verbatim (seeded from `extra`), so same-protocol stays byte-exact.
-            // On the synthesized (cross-protocol) path, `includeThoughts: true` is REQUIRED or
-            // Gemini spends the budget thinking but returns NO thought parts — the carry would come
-            // back empty. We always want the thoughts back to translate them to the caller.
-            // Off asks for no thoughts, so there are none to include.
+
             if let (Some(budget), false) = (budget, gen_config.contains_key(FIELD_THINKING_CONFIG))
             {
                 let thinking_config = if matches!(ask, crate::codec::ir::IrReasoningAsk::Off) {
@@ -708,15 +603,11 @@ impl ProtocolWriter for GeminiWriter {
                 gen_config.insert(FIELD_THINKING_CONFIG.to_string(), thinking_config);
             }
         }
-        // response_format: map the IR's normalized object back into Gemini's
-        // `responseMimeType` / `responseSchema` (overlaying any raw copy preserved in `extra`). The
-        // schema is sanitized of JSON-Schema keywords Gemini rejects so a cross-protocol structured
-        // output definition does not 400.
+
         if let Some(rf) = &req.response_format {
             write_gemini_response_format(&mut gen_config, rf);
         }
-        // Requested output modalities (IR-19), synthesized only when the request did not carry a
-        // native `responseModalities` (the thinkingConfig rule above: same-protocol stays verbatim).
+
         if let Some(modalities) = &req.output_modalities {
             if !gen_config.contains_key(FIELD_RESPONSE_MODALITIES) {
                 gen_config.insert(
@@ -732,25 +623,10 @@ impl ProtocolWriter for GeminiWriter {
             );
         }
 
-        // NB: the native Gemini GenerateContentRequest schema has NO top-level `stream` field —
-        // streaming is selected entirely by the URL endpoint (`:generateContent` vs
-        // `:streamGenerateContent?alt=sse`, produced by `upstream_path_for_stream`). This writer
-        // therefore NEVER synthesizes a `stream` member from `req.stream`; the streaming intent is
-        // read only by path selection. The ONLY way a `stream` key appears on the egress body is if
-        // the SOURCE request carried one and it was preserved verbatim through `extra` (the reader
-        // does NOT model `stream`, mirroring how it round-trips `model` for byte-identity). For a
-        // NATIVE Gemini request `extra` carries no `stream`, so the egress body carries none either.
-        // On same-protocol passthrough `proxy::strip_router_shim_keys` removes any router-injected
-        // `stream` before the upstream call. (An earlier version of this comment wrongly claimed the
-        // reader excludes `stream` via `modeled_keys`; it does not — the accurate behavior is here.)
-
-        // Caller metadata → `labels` (IR-03). A raw `labels` the reader kept in `extra` overrides it
-        // below, so a same-protocol body stays verbatim.
         if let Some(metadata) = &req.metadata {
             out.insert(FIELD_LABELS.to_string(), write_gemini_labels(metadata));
         }
-        // The controls with no Gemini form: drop with a warn; the seam audits them through
-        // `dropped_egress_controls`.
+
         crate::codec::carry::warn_drops(
             super::map::REQUEST,
             super::map::CONTROLS,
@@ -758,15 +634,6 @@ impl ProtocolWriter for GeminiWriter {
             req,
         );
 
-        // Merge extra fields (may override, but that's expected behavior). `generationConfig` AND
-        // `toolConfig` are SKIPPED here: their raw `extra` copies were already folded into the
-        // typed-overlay `gen_config` / `tool_config` objects emitted above, so re-inserting the raw
-        // copy would CLOBBER the overlay and silently revert `req.tool_choice`/the 5 typed
-        // generationConfig fields back to whatever the source request originally carried — the exact
-        // failure mode when a caller (e.g. a post-read governance/routing hook) mutates
-        // `IrRequest.tool_choice` without also touching `IrRequest.extra["toolConfig"]`: the typed
-        // override would build correctly above, then get overwritten right back to the stale raw
-        // value by this loop. Every OTHER unmodeled top-level key still round-trips verbatim.
         for (key, value) in &req.extra {
             if key == FIELD_GENERATION_CONFIG || key == keys::TOOL_CONFIG {
                 continue;
@@ -778,17 +645,7 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// Native Gemini error envelope: `{"error":{"code":<int>,"message":<msg>,"status":<UPPER_SNAKE>}}`.
-    /// This mirrors the google.rpc.Status shape every Gemini/Google AI Generative Language API error
-    /// uses (and that `extract_error` above already parses on the read side: `error.code` /
-    /// `error.status`). The official `google-genai` SDK raises `APIError` whose `.code`/`.status`
-    /// read straight off these fields, so a native client gets its typed exception. Served as
-    /// application/json (the trait contract; every vendor error envelope is JSON).
-    ///
-    /// `status` is mapped to the canonical google.rpc.Code name for the HTTP status; the generic
-    /// `kind` is mapped onto that vocabulary where a known busbar/router category exists, otherwise
-    /// the HTTP-status-derived name wins (so an unrecognized `kind` never produces a non-canonical
-    /// `status` string a native SDK would choke on). No `_ =>` catch-all is used on `kind`; the
-    /// final fallback is the explicit HTTP-status mapping.
+
     fn write_error(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -796,7 +653,6 @@ impl ProtocolWriter for GeminiWriter {
         kind: &str,
         message: &str,
     ) -> serde_json::Value {
-        // google.rpc.Code name for an HTTP status (the canonical Generative Language API mapping).
         fn status_name_for_http(status: u16) -> &'static str {
             if let Some((name, _)) = STATUS_HTTP.iter().find(|(_, code)| *code == status) {
                 return name;
@@ -810,12 +666,6 @@ impl ProtocolWriter for GeminiWriter {
             }
         }
 
-        // Map busbar/router `kind` categories onto google.rpc.Code names where one exists. An
-        // unknown `kind` yields `None` so the HTTP-status mapping (always defined) is authoritative.
-        // `overloaded` (no `_error` suffix) is the bare alias `proxy engine::cross_protocol_error_kind`
-        // emits for a relayed upstream 503 — it MUST map to UNAVAILABLE alongside `overloaded_error`,
-        // otherwise a cross-protocol 503 fell through to `None` and (when the status arm below was
-        // bypassed) could surface the wrong code/status pairing.
         fn status_name_for_kind(kind: &str) -> Option<&'static str> {
             match kind {
                 ERR_TYPE_INVALID_REQUEST | "invalid_argument" | "bad_request" => {
@@ -845,11 +695,6 @@ impl ProtocolWriter for GeminiWriter {
             }
         }
 
-        // Canonical HTTP status a google.rpc.Code name pairs with — the inverse of
-        // `status_name_for_http`. Used to detect a code/status DISAGREEMENT: the real Generative
-        // Language API never emits, e.g., `code:503` with `status:INTERNAL` (INTERNAL pairs with
-        // 500; UNAVAILABLE pairs with 503). Exhaustive over the names `status_name_for_kind` can
-        // return (it reads the same `STATUS_HTTP` table) so a new kind→name arm needs its row there.
         fn http_for_status_name(name: &str) -> Option<u16> {
             STATUS_HTTP
                 .iter()
@@ -857,36 +702,14 @@ impl ProtocolWriter for GeminiWriter {
                 .map(|(_, code)| *code)
         }
 
-        // Prefer the `kind`-derived google.rpc.Code name ONLY when it is internally CONSISTENT with
-        // the emitted `code` (the HTTP status). On a cross-protocol upstream 5xx the relay collapses
-        // distinct subtypes onto a single `kind` (e.g. a 503 relayed as `api_error`→INTERNAL), which
-        // would emit a `code:503 / status:INTERNAL` pair the real API never produces — a
-        // distinguishability tell. When the kind-derived name's canonical HTTP status disagrees with
-        // `status`, the HTTP status drives the code/status pairing so the two always stay consistent.
         let status_str = match status_name_for_kind(kind) {
             Some(name) if http_for_status_name(name) == Some(status) => name,
             _ => status_name_for_http(status),
         };
 
-        // The real Generative Language API's bad/missing-key 400 ALWAYS carries an
-        // `error.details[]` array with a single google.rpc.ErrorInfo whose `reason` is
-        // `API_KEY_INVALID` (domain `googleapis.com`, service metadata
-        // `generativelanguage.googleapis.com`). The `google-genai` SDK and many clients key their
-        // auth-error handling off `details[].reason == "API_KEY_INVALID"`, so omitting the array on
-        // our auth-failure envelope (produced by `auth.rs::unauthorized_response` for a
-        // Gemini-inferred path) is a deterministic proxy tell on exactly the auth-failure surface.
-        //
-        // The Gemini auth-failure path (`auth.rs::auth_failure_status_and_kind`) calls this with
-        // status 400, kind `invalid_request_error` (→ INVALID_ARGUMENT), and the distinctive
-        // canonical bad-key message `"API key not valid. Please pass a valid API key."`
-        // (`proto::vendor_auth_failure_message("gemini")`). We gate the `details[]` array on that
-        // exact triple so ONLY the bad-key 400 grows the ErrorInfo — a generic malformed-request
-        // 400/INVALID_ARGUMENT (which carries a DIFFERENT message and does NOT carry API_KEY_INVALID
-        // at real Google) is left untouched, so we neither under-fill the auth surface nor over-fill
-        // an unrelated 400 with a reason it should not carry.
         let is_auth_bad_key = status == 400
-                && status_str == GRPC_INVALID_ARGUMENT // golden wire-contract literal (kept bare on purpose)
-                && message == GEMINI_BAD_KEY_MESSAGE;
+            && status_str == GRPC_INVALID_ARGUMENT
+            && message == GEMINI_BAD_KEY_MESSAGE;
         if is_auth_bad_key {
             serde_json::json!({
                 (keys::ERROR_WORD): {
@@ -933,12 +756,9 @@ impl ProtocolWriter for GeminiWriter {
         ev: &IrStreamEvent,
     ) -> Option<(String, serde_json::Value)> {
         match ev {
-            // MessageStart emits identity/model metadata. Preserve a carried id, or mint one
-            // from a complete entropy draw. responseId is optional: an unavailable draw leaves
-            // it absent while the response and its accounting continue.
             IrStreamEvent::MessageStart { id, model, .. } => {
                 let mut frame = serde_json::Map::new();
-                // Resolve host entropy outside the stream lock, then cache first-wins.
+
                 let response_id =
                     self.carried_response_id(|| id.clone().or_else(|| synth_response_id(host)));
                 if let Some(response_id) = response_id {
@@ -947,27 +767,13 @@ impl ProtocolWriter for GeminiWriter {
                         serde_json::json!(response_id),
                     );
                 }
-                // A native Gemini SSE stream ALWAYS carries `modelVersion` in the first chunk (the
-                // official google-genai SDK reads `chunk.model_version`). `StreamTranslate` now
-                // preserves the lane's `model` across the cross-protocol boundary, so this is
-                // populated on cross-protocol streams (not just same-protocol passthrough) and the
-                // SDK no longer sees an empty model on every cross-protocol response.
+
                 if let Some(model) = model {
                     frame.insert(FIELD_MODEL_VERSION.to_string(), serde_json::json!(model));
                 }
                 Some(("".to_string(), serde_json::Value::Object(frame)))
             }
 
-            // BlockStart → for a tool block, OPEN a buffer holding the tool name and an empty args
-            // accumulator, and emit NO frame. A native Gemini SSE stream carries a tool call as a
-            // SINGLE `functionCall` part `{name, args}`; the IR carries the name here and the
-            // arguments on the following InputJsonDelta fragment(s). We accumulate name + every arg
-            // fragment per block and emit the one native `{name, args}` part on BlockStop, so a
-            // multi-chunk streamed `arguments` JSON reassembles into one valid functionCall (and a
-            // zero-arg tool call still flushes `{name, args:{}}`). Re-opening the SAME index resets
-            // its accumulator; a NEW index appends a fresh entry so parallel tool blocks (whose
-            // BlockStarts are not strictly interleaved with their BlockStops) never clobber each
-            // other. Text blocks have no Gemini block-start frame (inline parts) → None.
             IrStreamEvent::BlockStart {
                 index,
                 block,
@@ -984,15 +790,7 @@ impl ProtocolWriter for GeminiWriter {
                                 entry.args.clear();
                                 entry.overflowed = false;
                             }
-                            // A NEW index is refused once `MAX_GEMINI_TOOL_FRAMES` blocks are
-                            // already open: the per-block byte cap below bounds how large one
-                            // accumulator grows, but nothing bounded how MANY of them a backend
-                            // streaming an unbounded run of distinct tool indices could open, and
-                            // this Vec lives for the whole stream. Same cap, and the same
-                            // stop-recording (not abort) policy, the reader's `open_tools` holds.
-                            // A refused block's argument fragments then find no entry and are
-                            // dropped exactly as an untracked block's already are, so the outcome
-                            // is the established degraded one rather than a new failure mode.
+
                             None if open_count >= MAX_GEMINI_TOOL_FRAMES => {}
                             None => guard.push(GeminiOpenTool {
                                 index: *index,
@@ -1005,23 +803,15 @@ impl ProtocolWriter for GeminiWriter {
                     }
                     None
                 }
-                // Gemini has no streaming thinking/redacted-thinking/image start frame; these carry no
-                // opening event (a redacted block is dropped exactly like plaintext thinking — Gemini
-                // has no encrypted-reasoning shape).
+
                 crate::codec::ir::IrBlockMeta::Text
                 | crate::codec::ir::IrBlockMeta::Thinking { .. }
                 | crate::codec::ir::IrBlockMeta::RedactedThinking
                 | crate::codec::ir::IrBlockMeta::Image => None,
             },
 
-            // TextDelta → chunk with text part
             IrStreamEvent::BlockDelta { index, delta } => match delta {
                 crate::codec::ir::IrDelta::TextDelta(text) => {
-                    // Record the answer text so a streamed citation that follows converts against it
-                    // (GEM-16). A block's start is where its first text landed.
-                    // The copy is bounded by this stream's `translate_cap` (the same live limit the
-                    // tool-argument buffer holds): stop recording at the first oversized fragment,
-                    // preserving a prefix so later citation offsets clamp to its end.
                     if !text.is_empty() {
                         let mut stream = self.stream.lock();
                         let cap = stream.translate_cap;
@@ -1056,39 +846,6 @@ impl ProtocolWriter for GeminiWriter {
                     Some(model_part_frame(serde_json::json!({(keys::TEXT): text})))
                 }
 
-                // InputJsonDelta → ACCUMULATE this fragment into the open tool block's arg buffer and
-                // emit NO frame. A cross-protocol backend streams `arguments` as MULTIPLE partial-JSON
-                // fragments (`{"lo`, `c":"SF"}`); parsing each fragment independently here (as before)
-                // failed on the partials (→ `args:{}`) AND emitted one nameless/partial `functionCall`
-                // part per fragment — data loss plus a multi-part split a native Gemini client never
-                // sees. Concatenating the fragments and emitting once on BlockStop yields the single
-                // native `{name, args}` part with the FULLY reassembled arguments. If no matching open
-                // block is tracked (no tool BlockStart seen, or a poisoned lock) the fragment is
-                // dropped silently rather than panicking on the request path — the same degraded
-                // outcome the stateless arm produced, never a crash.
-                //
-                // Bound how large this ONE block's buffer can grow across the life of the stream:
-                // nothing previously capped it, a hostile/buggy upstream streaming an unbounded run of
-                // fragments against one open index could grow this `String` without bound (a
-                // per-connection memory-amplification DoS distinct from `MAX_GEMINI_TOOL_FRAMES`, which
-                // only bounds the COUNT of distinct open blocks, not one block's accumulated size).
-                //
-                // The cap is this stream's `translate_cap`, the one the plane's settings carry: the
-                // kernel hands `limits.request_body_max_bytes`, the SAME operator-tunable,
-                // live-reconfigurable limit (default 32 MiB, coupled to `limits.request_body_max_bytes`)
-                // that already bounds a buffered cross-protocol NON-STREAM completion body elsewhere
-                // (`proxy::wire::max_translated_body_bytes`), whose own doc comment names "big tool-call
-                // arguments" as exactly why that cap must be generous. Reusing it here — rather than a
-                // new hardcoded constant — means an operator who raises the one knob to admit larger
-                // tool payloads gets that same headroom on this streaming path too, instead of the two
-                // paths silently diverging. Read from the writer's own state (the plane's settings,
-                // row 155) so this plugin never reaches the host. A read per fragment is one atomic
-                // load.
-                //
-                // Overflow is sticky for this block. A later small fragment must not turn the
-                // retained prefix into different runnable arguments. BlockStop reports the existing
-                // protocol-shaped server error for a translation failure instead of executing a
-                // call whose arguments were lost.
                 crate::codec::ir::IrDelta::InputJsonDelta(json_str) => {
                     {
                         let mut stream = self.stream.lock();
@@ -1107,57 +864,24 @@ impl ProtocolWriter for GeminiWriter {
                     None
                 }
 
-                // ThinkingDelta → a streamed Gemini thought part `{text, thought:true}`. Gemini
-                // models reasoning as a `thought:true` content part (see the non-stream
-                // read/write_response handling), and its stream framing carries each incremental
-                // reasoning fragment as exactly such a part in a `candidates[].content.parts[]` chunk —
-                // the same per-chunk shape used for a `TextDelta`, just flagged `thought:true`. So we
-                // emit one chunk per fragment, mirroring the non-stream `{text, thought:true}` shape.
-                // Previously this returned None, silently dropping a cross-protocol reasoning stream.
                 crate::codec::ir::IrDelta::ThinkingDelta(thinking) => Some(model_part_frame(
                     serde_json::json!({(keys::TEXT): thinking, (FIELD_THOUGHT): true}),
                 )),
 
-                // SignatureDelta → a streamed thought part carrying the opaque resumable
-                // `thoughtSignature`. Gemini attaches the signature to a `thought:true` part
-                // (non-stream emits `{text, thought:true, thoughtSignature}`); on the stream the
-                // signature arrives as its own IR delta, so emit a minimal thought part bearing the
-                // signature (empty text, `thought:true`) — the closest faithful streamed form, since a
-                // bare signature has no accompanying incremental text. Previously dropped (None).
                 crate::codec::ir::IrDelta::SignatureDelta(sig) => Some(model_part_frame(
                     serde_json::json!({(keys::TEXT): "", (FIELD_THOUGHT): true, (FIELD_THOUGHT_SIGNATURE): sig}),
                 )),
-                // A streamed redacted-reasoning delta (opaque encrypted bytes) has no Gemini analog —
-                // drop it rather than emit a non-native part.
+
                 crate::codec::ir::IrDelta::RedactedReasoningDelta(_) => None,
-                // IR-21: a generated image / audio part re-emits as the Gemini
-                // `inlineData` / `fileData` part the buffered writer uses.
+
                 crate::codec::ir::IrDelta::MediaDelta(block) => {
                     super::write_gemini_media_part(block).map(model_part_frame)
                 }
 
-                // STREAMING citations → emit a candidate-level `citationMetadata.citationSources`
-                // chunk, mirroring the non-stream `read_response`/`write_response` shape (Gemini
-                // carries citations at the candidate level, not per part). `write_gemini_citation`
-                // re-emits a byte-exact Gemini source verbatim when `raw` is Gemini-shaped (uri /
-                // startIndex / endIndex present — the same-protocol path) and synthesizes one from the
-                // neutral fields otherwise (e.g. an Anthropic-sourced citation on an Anthropic→Gemini
-                // hop), so a foreign `raw` never leaks through this writer. An EMPTY citation vec
-                // carries nothing → emit no chunk (None) rather than a stray empty `citationMetadata`.
                 crate::codec::ir::IrDelta::CitationsDelta(citations) => {
                     if citations.is_empty() {
                         None
                     } else {
-                        // A foreign citation's CHARACTER offsets are relative to its own text
-                        // block; Gemini's are candidate-wide BYTES. Convert against the block's text
-                        // as streamed so far, shifted by where the block started — the same
-                        // conversion the buffered writer makes (GEM-16). A citation whose block has
-                        // carried no text yet has no answer anchor and omits foreign offsets;
-                        // the `raw` short-circuit keeps a native Gemini source byte-exact.
-                        // The stream's text is indexed as it grew, so each offset converts in at
-                        // most one index stride of work rather than a walk of the block.
-                        // Resolve offsets without callbacks under the lock. Build/report the
-                        // projected sources only after releasing it, retaining the sparse index.
                         let spans: Vec<_> =
                             {
                                 let stream = self.stream.lock();
@@ -1217,9 +941,6 @@ impl ProtocolWriter for GeminiWriter {
                     }
                 }
                 crate::codec::ir::IrDelta::LogprobsDelta(lps) => {
-                    // Streamed logprobs (e.g. an OpenAI backend's per-chunk `logprobs.content[]`)
-                    // in Gemini's native chunk shape: a candidate carrying only `logprobsResult`.
-                    // An empty vec carries nothing and emits no frame.
                     if lps.is_empty() {
                         None
                     } else {
@@ -1235,38 +956,20 @@ impl ProtocolWriter for GeminiWriter {
                 }
             },
 
-            // BlockStop → FLUSH the open tool block as a single native `{name, args}` part. This is
-            // the ONLY point a functionCall frame is written: by here every arg fragment has been
-            // accumulated, so the buffered arg string is the COMPLETE `arguments` JSON and parses
-            // once into the args object (a multi-chunk stream reassembles correctly; a zero-arg call
-            // — empty buffer — flushes `args:{}`, so the call is never lost). A non-tool BlockStop
-            // (text block, or an index with no tracked tool) finds no entry and emits no frame. The
-            // matched entry is REMOVED so parallel tool blocks each flush exactly once. A poisoned
-            // lock degrades to no frame rather than panicking on the request path.
             IrStreamEvent::BlockStop { index } => match self.flush_tool(*index) {
                 Ok(frame) => frame,
                 Err(error) => self.write_response_event(host, &IrStreamEvent::Error(error)),
             },
 
-            // MessageDelta → chunk with finishReason + usageMetadata
             IrStreamEvent::MessageDelta {
                 stop_reason,
                 usage,
                 stop_sequence: _,
                 stop_detail: _,
             } => {
-                // Native Gemini SSE carries `usageMetadata` (incl. `totalTokenCount`) on the final
-                // chunk; a strict google-genai client computing totals reads `totalTokenCount`.
-                // Emit it (= prompt + candidates, saturating) alongside the component counts so the
-                // streamed usage frame matches the native final-chunk shape. This path runs only on
-                // cross-protocol egress (same-protocol Gemini streams pass through byte-for-byte and
-                // never reach this writer), so emitting the total here cannot disturb a same-protocol
-                // round-trip. Saturating add avoids an overflow panic on the request path for
-                // pathological/garbage counts.
                 let (usage_metadata, _) = gemini_usage_metadata(usage, true);
                 let mut out_obj = serde_json::Map::new();
-                // A usage-only delta is not a successful generation stop. In particular it may
-                // precede EOF while an incomplete tool call still awaits validation.
+
                 if let Some(reason) = stop_reason {
                     out_obj.insert(
                         FIELD_CANDIDATES.to_string(),
@@ -1279,8 +982,7 @@ impl ProtocolWriter for GeminiWriter {
                     FIELD_USAGE_METADATA.to_string(),
                     serde_json::Value::Object(usage_metadata),
                 );
-                // Vertex's top-level `createTime`, re-emitted on the streaming terminal chunk too
-                // (buffered twin above), when the IR carried it (OWNER RULING Q1).
+
                 if let Some(create_time) = &usage.detail.create_time {
                     out_obj.insert(
                         FIELD_CREATE_TIME.to_string(),
@@ -1290,15 +992,8 @@ impl ProtocolWriter for GeminiWriter {
                 Some(("".to_string(), serde_json::Value::Object(out_obj)))
             }
 
-            // MessageStop → None (no frame needed)
             IrStreamEvent::MessageStop => None,
 
-            // Error → full google.rpc.Status envelope `{"error":{"code","message","status"}}`.
-            // Real Gemini stream errors carry an HTTP `code` (int) and an UPPER_SNAKE `status`
-            // (e.g. INTERNAL, UNAVAILABLE, RESOURCE_EXHAUSTED); a Gemini SDK branches on
-            // `error.status`/`error.code`. Emitting only `message` (as before) was detectable and
-            // left SDK retry-decision code reading null. We derive `code`/`status` from the
-            // canonical `StatusClass`; an untyped/unknown class falls back to 500 / INTERNAL.
             IrStreamEvent::Error(err) => {
                 let (code, status_name) = gemini_stream_error_code_status(err.class);
                 let message = err
@@ -1324,16 +1019,8 @@ impl ProtocolWriter for GeminiWriter {
         host: &dyn busbar_contract::codec::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> serde_json::Value {
-        // Build candidates array (Gemini whole-response format)
         let mut parts_arr: Vec<serde_json::Value> = Vec::new();
 
-        // Collect citations from every Text block to re-emit at the candidate level
-        // (`candidates[].citationMetadata.citationSources[]`) — Gemini carries citations there, not
-        // per content-part. The reader anchors them to a Text block, with indices relative to THAT
-        // block's own text (see `attach_gemini_citations_to_text_blocks`); here we hoist them back
-        // out to candidate level and un-shift each converted (non-`raw`) index by `byte_prefix` — the
-        // BYTE length of every text block already emitted — so a citation whose block is not the
-        // first text part still lands on the correct candidate-wide wire offset.
         let mut citation_sources: Vec<serde_json::Value> = Vec::new();
         let mut byte_prefix: i64 = 0;
 
@@ -1346,14 +1033,11 @@ impl ProtocolWriter for GeminiWriter {
                     text, citations, ..
                 } => {
                     if !citations.is_empty() {
-                        // One index over the block for all its citations, not a walk per offset.
                         if text.is_empty() {
                             for c in citations {
                                 citation_sources.extend(write_gemini_citation(c, None));
                             }
                         } else {
-                            // Built on the first converted offset: a Gemini-sourced citation
-                            // re-emits its `raw` and converts nothing.
                             let idx = std::cell::OnceCell::new();
                             let convert = |v: i64| {
                                 idx.get_or_init(|| GeminiCharIndex::build(text))
@@ -1377,9 +1061,6 @@ impl ProtocolWriter for GeminiWriter {
                     }
                 }
 
-                // ToolUse → functionCall{name, args}. `args` MUST be a JSON OBJECT (Gemini Struct);
-                // coerce any non-object input (array/scalar/null/unparseable string) the same way
-                // `write_request` does.
                 crate::codec::ir::IrBlock::ToolUse {
                     id,
                     name,
@@ -1387,12 +1068,6 @@ impl ProtocolWriter for GeminiWriter {
                     thought_signature,
                     ..
                 } => {
-                    // The call's id rides Gemini's optional `functionCall.id` (GEM-08), so the
-                    // client answers it with a `functionResponse.id` busbar pairs back to the call.
-                    // `thoughtSignature`, mirroring `write_request`: this writer talks to a real
-                    // client and `prepare_for_egress` is request-side only, so this path never gets
-                    // sentinel-injected — it only ever carries a real value, when Gemini was the
-                    // response SOURCE and its own reader captured one. Never fabricate one here.
                     parts_arr.push(function_call_part(
                         id,
                         name,
@@ -1401,12 +1076,6 @@ impl ProtocolWriter for GeminiWriter {
                     ));
                 }
 
-                // Thinking → Gemini `{text, thought:true, thoughtSignature?}`. Gemini DOES
-                // surface reasoning as a `thought:true` content part with an opaque resumable
-                // `thoughtSignature`; emit it so reasoning + signature round-trip on the response
-                // path instead of being dropped.
-                // A REDACTED reasoning block holds opaque encrypted bytes with no Gemini analog —
-                // drop it (emitting its `text` would leak the encrypted bytes as visible reasoning).
                 crate::codec::ir::IrBlock::Thinking { redacted: true, .. } => {}
                 crate::codec::ir::IrBlock::Thinking {
                     text, signature, ..
@@ -1437,36 +1106,6 @@ impl ProtocolWriter for GeminiWriter {
             .map(write_gemini_stop_reason)
             .unwrap_or(GEMINI_FINISH_STOP);
 
-        // A native Gemini `generateContent` response ALWAYS carries
-        // `usageMetadata.totalTokenCount` (= promptTokenCount + candidatesTokenCount); the
-        // google-genai SDK surfaces it as `usage_metadata.total_token_count` for billing/accounting.
-        // On the CROSS-protocol egress path a native Gemini client therefore expects the sum, and the
-        // value is a faithfully DERIVED total from the IR counts — not a fabricated field — so we emit
-        // it (mirroring the stream final-chunk frame), closing a concrete token-accounting gap and a
-        // distinguishability tell. `saturating_add` avoids an overflow panic on the request path.
-        //
-        // We gate emission on a cross-protocol BOUNDARY signal: `resp.created.is_some()` OR
-        // `resp.model.is_some()`. Gemini bodies carry no `created`, so a populated `created` means a
-        // non-Gemini backend reader set it (the OpenAI reader does) — but the Anthropic, Bedrock, and
-        // Cohere readers all return `created: None`, so `created` ALONE missed three of the five
-        // foreign backends, dropping `totalTokenCount` for a Gemini client routed to them (the
-        // google-genai SDK then read `usage_metadata.total_token_count` as None, breaking billing).
-        // The Anthropic and Cohere readers DO populate `model` from the upstream body (a real
-        // Anthropic `Message` / Cohere response always names its model), so OR-ing `model.is_some()`
-        // closes the gap for those two as well. Bedrock's Converse body carries no body-level model
-        // or timestamp, so its IR was identity-field-empty here — the residual that this gate alone
-        // could not distinguish from a minimal native body. That residual is now closed UPSTREAM at
-        // the cross-protocol seam (`proxy engine`), which stamps a synthesized `created` on any
-        // identity-empty egress IR before this writer runs, so a Bedrock→Gemini hop arrives with
-        // `created.is_some()` and emits `totalTokenCount` here just like the other backends. The OR
-        // on `model` stays as defense-in-depth for any caller of this writer that bypasses the seam.
-        //
-        // This still keeps a SAME-protocol read→write idempotent on the in-IR identity invariant that
-        // `src/proto/mod.rs::test_gemini_read_write_response_roundtrip` guards: that fixture is a
-        // native Gemini body with neither `modelVersion` nor a timestamp, so `model`/`created` are
-        // BOTH `None` and no `totalTokenCount` is injected — the round-trip stays byte-identical.
-        // (`write_response` only ever runs on cross-protocol egress in production — same-protocol
-        // passthrough is byte-exact and bypasses the writer — so this gate is conservative there.)
         let (mut usage_metadata, total) = gemini_usage_metadata(&resp.usage, false);
         if let Some(m) = &resp.usage.detail.by_modality {
             super::usage::write_by_modality(m, &mut usage_metadata);
@@ -1484,21 +1123,17 @@ impl ProtocolWriter for GeminiWriter {
             }
         });
         candidate[FIELD_FINISH_REASON] = serde_json::json!(finish_reason);
-        // Re-emit candidate-level citationMetadata when the IR carried citations (grounding /
-        // web-search). Only emitted when non-empty so a normal response stays byte-identical.
+
         if !citation_sources.is_empty() {
             candidate[FIELD_CITATION_METADATA] = serde_json::json!({
                 (FIELD_CITATION_SOURCES): citation_sources
             });
         }
-        // Carried per-token logprobs (e.g. from an OpenAI backend's `choices[].logprobs`) in
-        // Gemini's native candidate shape. Only emitted when the backend produced them, matching
-        // Gemini's own omission when `responseLogprobs` was not requested.
+
         if !resp.logprobs.is_empty() {
             candidate[FIELD_LOGPROBS_RESULT] = write_gemini_logprobs_result(&resp.logprobs);
         }
-        // DF-MAP items 1-2: the hosted web-search records as grounding chunks, the safety verdicts
-        // as safety ratings.
+
         if let Some(gm) = super::citations::write_grounding_chunks(&resp.content) {
             candidate[super::citations::FIELD_GROUNDING_METADATA] = gm;
         }
@@ -1509,40 +1144,15 @@ impl ProtocolWriter for GeminiWriter {
             (FIELD_CANDIDATES): [candidate]
         });
         out[FIELD_USAGE_METADATA] = serde_json::Value::Object(usage_metadata);
-        // model that served the response (preserved across cross-protocol translation)
+
         if let Some(ref model) = resp.model {
             out[FIELD_MODEL_VERSION] = serde_json::json!(model);
         }
-        // Vertex's top-level `createTime` (RFC3339). Only the Gemini reader ever populates
-        // `usage.detail.create_time`, so this is a no-op for every foreign-backend egress and a
-        // same-protocol Gemini/Vertex read→write reproduces the field verbatim (OWNER RULING Q1,
-        // docs/design/1.6.0-QUESTIONS.md Q36).
+
         if let Some(ref create_time) = resp.usage.detail.create_time {
             out[FIELD_CREATE_TIME] = serde_json::json!(create_time);
         }
-        // Response identity. This mirrors the Anthropic writer's id rule, keying synthesis off
-        // "did we cross a protocol boundary" (proxied by `created` being populated) rather than off
-        // `id` alone, so same-protocol round-trips stay idempotent. Three cases:
-        //   * Same-protocol passthrough: the Gemini reader set `id` from the upstream `responseId`
-        //     (and `created == None`, since Gemini bodies carry no timestamp), so it is re-emitted
-        //     verbatim — `(Some(id), _)`.
-        //   * Cross-protocol with a foreign id present: the non-Gemini backend reader set `id` to
-        //     that protocol's response id (OpenAI `chatcmpl-…`, Anthropic `msg_…`); the id is opaque
-        //     to the Gemini SDK (Gemini ids carry no documented prefix it could reject), so we
-        //     surface it verbatim — `(Some(id), _)`.
-        //   * Cross-protocol with NO foreign id: `proxy engine` strips `id` to `None` on every
-        //     cross-protocol response but LEAVES `created` populated as the boundary signal, so
-        //     `(None, Some(_))` — try a Gemini-shaped `responseId` from complete entropy so a native `google-genai`
-        //     client reading `GenerateContentResponse.response_id` always sees a value (real Gemini
-        //     responses carry one). Previously this case omitted `responseId` on EVERY
-        //     cross-protocol response, a distinguishability signal; the old comment wrongly claimed a
-        //     value was "always present", contradicting `proxy engine` which sets `ir.id = None`.
-        //     If entropy is unavailable, omit this optional field rather than publish a partial id.
-        //   * Minimal same-protocol IR with neither id nor created: a native body that legitimately
-        //     omitted `responseId` yields `(None, None)` — omit it rather than fabricate, since
-        //     `responseId` is `Optional` in the Gemini schema / SDK and fabricating one would make a
-        //     read→write round-trip distinguishable from the native response.
-        // Gemini bodies carry no `created`, so none is emitted in the wire shape.
+
         match (&resp.id, resp.created) {
             (Some(id), _) => {
                 out[FIELD_RESPONSE_ID] = serde_json::json!(id);
@@ -1560,16 +1170,10 @@ impl ProtocolWriter for GeminiWriter {
     fn make_array_stream_framer(
         &self,
     ) -> Option<Box<dyn busbar_contract::protocol::ArrayStreamFramer>> {
-        // Gemini `:streamGenerateContent` WITHOUT `?alt=sse` expects a JSON-array streamed body; this
-        // builds the framer that reframes the (gemini-shape) SSE bytes into that array. The forward
-        // path engages it only when `uses_array_stream_shim()` AND `wants_array_stream(body)` hold.
         Some(Box::new(GeminiJsonArrayFramer::new()))
     }
 
     fn wants_array_stream(&self, body: &serde_json::Value) -> bool {
-        // The gemini ingress route injects `GEMINI_JSON_ARRAY_SHIM_KEY: true` when the client sent a
-        // streaming `:streamGenerateContent` request WITHOUT `?alt=sse`. Read it here (the only site
-        // that knows this shim key) so the forward core stays shim-key-agnostic.
         body.get(GEMINI_JSON_ARRAY_SHIM_KEY)
             .and_then(|b| b.as_bool())
             .unwrap_or(false)
@@ -1586,10 +1190,7 @@ impl ProtocolWriter for GeminiWriter {
 }
 
 /// One native `functionCall` part: `{functionCall: {id?, name, args}, thoughtSignature?}`. The id
-/// rides Gemini's optional `functionCall.id` (GEM-08) and is omitted when empty. `thoughtSignature`
-/// is a sibling of `functionCall` on the `Part` object, NOT nested inside it — same placement as the
-/// Thinking block's signature; Gemini 3 REQUIRES it echoed back verbatim on the next turn or the
-/// backend 400s. The key is omitted entirely when absent rather than emitted as an empty string.
+
 fn function_call_part(
     id: &str,
     name: &str,
@@ -1614,31 +1215,7 @@ fn function_call_part(
 }
 
 /// The native `usageMetadata` RECONSTRUCTED from the normalized IR usage, shared by the stream's
-/// terminal chunk and `write_response`, with the `totalTokenCount` it states: four additive terms,
-/// exactly as Google states them — prompt (cache-inclusive) + candidates + the tool-use prompt term
-/// (thinking is already inside `output_tokens`). `totalTokenCount` is inserted only when
-/// `emit_total`; `write_response` gates and places it itself.
-///
-/// - `promptTokenCount`: the IR stores UNCACHED input, but Gemini's `promptTokenCount` is a TOTAL
-///   that includes the cached prefix, so `cache_read` is added back; cache_creation is ALSO part of
-///   the TOTAL prompt count (cross-protocol ingress only). The tool-use prompt term rides INSIDE
-///   `input_tokens` in the IR (1.6.0 money change) but sits BESIDE `promptTokenCount` on the wire,
-///   where it is re-emitted as its own field, so it is subtracted back out here or a native
-///   google-genai client would count it twice and read a `usageMetadata` that no longer reconciles.
-/// - `candidatesTokenCount`: the WHOLE output count, reasoning included, exactly as 1.5.5 wrote it
-///   (v1.5.5 `crates/busbar/src/proto/gemini/writer.rs:962-964`,
-///   `serde_json::json!(usage.output_tokens)`). A Gemini client reconciling usage against its bill
-///   reads the figure 1.5.5 gave it; splitting the reasoning out into `thoughtsTokenCount` lowered
-///   the answer count a 1.5.5 client read, and no register entry signs that value change.
-/// - `cachedContentTokenCount`: only when a cache read is present (native shape — no spurious field
-///   on a no-cache roundtrip).
-/// - `toolUsePromptTokenCount` (field carry): only when the IR carried it (a same-protocol Gemini
-///   read set it; a foreign backend leaves it None), so the native field survives a read→write
-///   round-trip and an ordinary response stays byte-identical.
-/// - `trafficType`: the informational billing-lane marker (OWNER RULING Q1,
-///   docs/design/1.6.0-QUESTIONS.md Q36), only when the IR carried one.
-///
-/// Saturating arithmetic avoids an overflow panic on the request path for pathological counts.
+
 fn gemini_usage_metadata(
     usage: &crate::codec::ir::IrUsage,
     emit_total: bool,

@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The 1.5.5 hook tests' own in-process policies: a capturing policy, a canned gate, a rewriting
-//! gate, an erroring policy and a capturing tap.
+
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

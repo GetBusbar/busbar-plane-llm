@@ -1,8 +1,5 @@
 use super::StreamTranslate;
 
-// Feed `input` (in one or more chunks) through a same-proto translator and return the
-// concatenated `feed`+`finish` output. `chunks` lets a test prove cross-chunk reassembly is still
-// verbatim (frames split across transport boundaries).
 fn run_same_proto(proto: &str, chunks: &[&[u8]]) -> (Vec<u8>, StreamTranslate) {
     let mut t = StreamTranslate::new_same_proto(proto).expect("same-proto translator");
     let mut out = Vec::new();
@@ -19,7 +16,6 @@ fn concat(chunks: &[&[u8]]) -> Vec<u8> {
 
 #[test]
 fn anthropic_sse_round_trip_byte_exact() {
-    // Native Anthropic SSE: input on message_start, output on message_delta.
     let frames: &[&[u8]] = &[
             b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"role\":\"assistant\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n",
             b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
@@ -33,17 +29,12 @@ fn anthropic_sse_round_trip_byte_exact() {
         "anthropic same-proto SSE must be byte-exact"
     );
     let u = t.usage().expect("anthropic A-tap usage");
-    // Backfill: input from message_start (11), output from message_delta (7).
+
     assert_eq!((u.input_tokens, u.output_tokens), (11, 7));
 }
 
 #[test]
 fn openai_bare_data_round_trip_byte_exact() {
-    // OpenAI bare `data:` frames + `include_usage` trailing usage chunk + [DONE]. This fidelity test
-    // pins the VERBATIM re-emit for a client that OPTED IN to streaming usage: the trailing
-    // usage-only chunk is exactly what that client asked for, so it must pass through byte-for-byte.
-    // (The opted-OUT case, where that same chunk is STRIPPED, is covered by
-    // `stream_translate_tests::same_proto_openai_opted_out_strips_trailing_usage_chunk`.)
     let frames: &[&[u8]] = &[
             b"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hi\"},\"finish_reason\":null}]}\n\n",
             b"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
@@ -68,7 +59,6 @@ fn openai_bare_data_round_trip_byte_exact() {
 
 #[test]
 fn gemini_sse_round_trip_byte_exact() {
-    // Gemini SSE (`?alt=sse`): usageMetadata on the terminal chunk.
     let frames: &[&[u8]] = &[
             b"data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hi\"}]}}]}\n\n",
             b"data: {\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"\"}]}}],\"usageMetadata\":{\"promptTokenCount\":15,\"candidatesTokenCount\":4,\"totalTokenCount\":19}}\n\n",
@@ -85,7 +75,6 @@ fn gemini_sse_round_trip_byte_exact() {
 
 #[test]
 fn cohere_sse_round_trip_byte_exact() {
-    // Cohere v2 SSE: tokens.input_tokens / tokens.output_tokens on the message-end event.
     let frames: &[&[u8]] = &[
             b"event: message-start\ndata: {\"type\":\"message-start\",\"id\":\"co_1\"}\n\n",
             b"event: content-delta\ndata: {\"type\":\"content-delta\",\"index\":0,\"delta\":{\"message\":{\"content\":{\"text\":\"hi\"}}}}\n\n",
@@ -103,7 +92,6 @@ fn cohere_sse_round_trip_byte_exact() {
 
 #[test]
 fn responses_sse_round_trip_byte_exact() {
-    // OpenAI Responses SSE: usage on response.completed's inner response.usage.
     let frames: &[&[u8]] = &[
             b"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n",
             b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":21,\"output_tokens\":8}}}\n\n",
@@ -120,8 +108,6 @@ fn responses_sse_round_trip_byte_exact() {
 
 #[test]
 fn bedrock_binary_eventstream_round_trip_byte_exact() {
-    // Binary application/vnd.amazon.eventstream — re-emit the ORIGINAL frame
-    // bytes, NEVER re-encode (any CRC32 / length-prefix divergence is an undecodable frame).
     use crate::codec::eventstream::encode_frame;
     let mut input = Vec::new();
     input.extend(encode_frame("messageStart", br#"{"role":"assistant"}"#));
@@ -135,7 +121,6 @@ fn bedrock_binary_eventstream_round_trip_byte_exact() {
         br#"{"usage":{"inputTokens":31,"outputTokens":12},"metrics":{"latencyMs":5}}"#,
     ));
 
-    // Feed in two arbitrary chunks to prove cross-poll reassembly is still verbatim.
     let mid = input.len() / 2;
     let (out, t) = run_same_proto("bedrock", &[&input[..mid], &input[mid..]]);
     assert_eq!(
@@ -148,7 +133,6 @@ fn bedrock_binary_eventstream_round_trip_byte_exact() {
 
 #[test]
 fn same_proto_cross_chunk_split_is_verbatim() {
-    // A frame split across the chunk boundary (partial first feed) must still re-emit verbatim.
     let whole: &[u8] = b"data: {\"id\":\"chatcmpl-2\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n";
     let split = whole.len() / 2;
     let (out, _t) = run_same_proto("openai", &[&whole[..split], &whole[split..]]);
@@ -159,22 +143,12 @@ fn same_proto_cross_chunk_split_is_verbatim() {
 }
 
 /// BENCHMARK: same-proto streaming per-feed latency / throughput. The short-circuit's
-/// whole point is that it does NOT re-serialize the IR back to wire — it re-emits the retained
-/// original bytes. So the meaningful no-regression baseline is the RE-SERIALIZING translator (the
-/// cross-proto path that runs the egress reader → ingress writer → reframe pipeline for every
-/// frame). This bench proves the same-proto SHORT-CIRCUIT is at least as fast as that full
-/// re-serialize path (it must be: it skips the writer + reframe), AND reports the raw verbatim
-/// memcpy floor for reference. Covers an SSE path AND the binary eventstream path explicitly.
-/// In-crate `Instant` bench (pattern store.rs); `#[ignore]` so it never runs in the normal
-/// suite (timing is environment-sensitive). Run with:
-///   cargo test --release bench_same_proto_short_circuit -- --ignored --nocapture
+
 #[test]
 #[ignore = "a timing bench: run with --release --ignored --nocapture"]
 fn bench_same_proto_short_circuit() {
     use crate::codec::eventstream::encode_frame;
 
-    // Build one realistic OpenAI SSE stream and one bedrock binary eventstream, each as a Vec of
-    // per-feed chunks (one frame per chunk — the per-feed latency unit).
     let mut openai_frames: Vec<Vec<u8>> = (0..32)
             .map(|i| {
                 format!(
@@ -203,7 +177,6 @@ fn bench_same_proto_short_circuit() {
         ),
     ]);
 
-    // Raw verbatim memcpy floor (what `FirstByteBody` did on the legacy `translate == None` path).
     fn bench_memcpy(frames: &[Vec<u8>], iters: u64) -> f64 {
         let start = std::time::Instant::now();
         for _ in 0..iters {
@@ -216,9 +189,6 @@ fn bench_same_proto_short_circuit() {
         start.elapsed().as_nanos() as f64 / iters as f64
     }
 
-    // Run a stream through a translator built by `ctor`. Used for both the same-proto short-circuit
-    // (no re-serialize) and the cross-proto re-serialize baseline, so the only difference measured
-    // is the re-serialize work the short-circuit avoids.
     fn bench_translator(ctor: &dyn Fn() -> StreamTranslate, frames: &[Vec<u8>], iters: u64) -> f64 {
         let start = std::time::Instant::now();
         for _ in 0..iters {
@@ -236,9 +206,7 @@ fn bench_same_proto_short_circuit() {
     }
 
     let iters = 50_000u64;
-    // (label, short-circuit ctor, RE-SERIALIZE baseline ctor, frames)
-    // The re-serialize baseline is a CROSS-proto translator over the SAME egress frames — it runs
-    // the full reader→writer→reframe pipeline, which is exactly the cost the short-circuit elides.
+
     let openai_sc = || {
         let mut translator = StreamTranslate::new_same_proto("openai").unwrap();
         translator.set_client_include_usage(true);
@@ -246,10 +214,8 @@ fn bench_same_proto_short_circuit() {
     };
     let openai_xproto = || StreamTranslate::new("anthropic", "openai").unwrap();
     let bedrock_sc = || StreamTranslate::new_same_proto("bedrock").unwrap();
-    let bedrock_xproto = || StreamTranslate::new("anthropic", "bedrock").unwrap(); // bedrock EGRESS frames
+    let bedrock_xproto = || StreamTranslate::new("anthropic", "bedrock").unwrap();
 
-    // Before timing, prove both constructors read these actual egress frames, retain all the text,
-    // and expose the stated counts at the production billing tap.
     for (ctor, frames, input) in [
         (
             &openai_sc as &dyn Fn() -> StreamTranslate,
@@ -294,7 +260,6 @@ fn bench_same_proto_short_circuit() {
         assert_eq!((billed.input, billed.output), (input, 32));
     }
 
-    // Warm up.
     let _ = bench_memcpy(&openai_frames, 2_000);
     let _ = bench_translator(&openai_sc, &openai_frames, 2_000);
     let _ = bench_translator(&openai_xproto, &openai_frames, 2_000);
@@ -323,10 +288,7 @@ fn bench_same_proto_short_circuit() {
             frames.len(),
             sc / reserialize.max(1.0)
         );
-        // NO REGRESSION: the short-circuit skips the egress writer + reframe, so it must be at
-        // least as fast as the full re-serialize path (a generous 1.25x margin absorbs timing
-        // noise). A short-circuit that accidentally re-serialized would land AT or ABOVE the
-        // re-serialize baseline and fail this.
+
         assert!(
             sc <= reserialize * 1.25,
             "same_proto[{label}] short-circuit {sc:.0} ns is NOT faster than the re-serialize \

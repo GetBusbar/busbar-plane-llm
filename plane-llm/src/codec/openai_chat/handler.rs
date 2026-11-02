@@ -2,7 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! OpenAI `RequestHandler` and its OperationHandlers. OperationHandlers are pure codecs — wire ↔ IR,
-//! both directions, nothing else: moderation, embeddings, images, audio, and chat each get one.
 
 use crate::codec::ir::moderation::{
     ModerationInput, ModerationReq, ModerationResp, ModerationResult,
@@ -10,7 +9,7 @@ use crate::codec::ir::moderation::{
 use crate::codec::keys;
 use crate::codec::leaf_codec::LeafCodec;
 use busbar_contract::codec::{CodecError, IngressReject, RequestHandler};
-// The leaf cells' trait, which the dialect's handler tests call through.
+
 #[cfg(test)]
 use busbar_contract::codec::OperationHandler;
 use busbar_contract::codec::{EgressCtx, WireBody};
@@ -21,7 +20,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 /// Endpoint paths — each appears on BOTH the egress side (`upstream_path`) and the ingress match
-/// (`resolve_operation`); single-sourced so the two sides cannot drift.
+
 const PATH_CHAT_COMPLETIONS: &str = "/v1/chat/completions";
 const PATH_EMBEDDINGS: &str = "/v1/embeddings";
 const PATH_MODERATIONS: &str = "/v1/moderations";
@@ -33,7 +32,7 @@ const PATH_RERANK: &str = "/v1/rerank";
 
 pub struct OpenAiRequestHandler;
 /// This protocol's OWN chat instance — delete this line (and the registry arm) and this
-/// protocol's chat 404s via the standard no-handler path; everything else keeps working.
+
 static CHAT: super::super::chat_handle::ChatOperation =
     super::super::chat_handle::ChatOperation(super::VENDOR_NAME);
 
@@ -44,9 +43,7 @@ static TRANSCRIPTION: OpenAiTranscription = OpenAiTranscription;
 static SPEECH: OpenAiSpeech = OpenAiSpeech;
 
 /// OPENAI'S ROW OF THE SUPPORT MATRIX — the verbs this protocol speaks, as data. A verb absent from
-/// this table is the standard no-handler 404, which is what the enumerated `None` arm used to say:
-/// OpenAI ships no rerank surface, and the protocol-surface verbs are MCP's and A2A's, so the pair
-/// is unrepresentable rather than refused at runtime.
+
 static CELLS: &[busbar_contract::codec::Cell] = &[
     (OpVerb::CHAT, &CHAT),
     (OpVerb::MODERATION, &MODERATION),
@@ -57,7 +54,7 @@ static CELLS: &[busbar_contract::codec::Cell] = &[
 ];
 
 /// The egress half of the path constants above; `resolve_operation` reads the same constants on the
-/// ingress side, so the two directions cannot drift.
+
 static PATHS: &[(OpVerb, &str)] = &[
     (OpVerb::CHAT, PATH_CHAT_COMPLETIONS),
     (OpVerb::EMBEDDINGS, PATH_EMBEDDINGS),
@@ -70,14 +67,11 @@ static PATHS: &[(OpVerb, &str)] = &[
 impl RequestHandler for OpenAiRequestHandler {
     dialect_identity!(super::VENDOR_NAME);
     fn upstream_path(&self, ctx: &EgressCtx) -> String {
-        // The fallback is unreachable in practice: a verb with no cell above never reaches egress
-        // here. It keeps the pre-1.6.0 answer verbatim rather than inventing a new one.
         crate::codec::framework::path_of(PATHS, ctx.operation)
             .unwrap_or(PATH_RERANK)
             .into()
     }
     fn resolve_operation(&self, path: &str, _body: &[u8]) -> Option<OpVerb> {
-        // OpenAI names the operation in the path — the body is never needed.
         if path.ends_with(PATH_CHAT_COMPLETIONS) {
             Some(OpVerb::CHAT)
         } else if path.ends_with(PATH_EMBEDDINGS) {
@@ -98,8 +92,6 @@ impl RequestHandler for OpenAiRequestHandler {
     }
 }
 
-// -------------------------------------------------- audio cells (real codecs, cross-protocol)
-
 use crate::codec::framework::MediaBlob;
 use crate::codec::framework::MediaPayload;
 use crate::codec::ir::audio::{SpeechReq, SpeechResp, TranscriptionReq, TranscriptionResp};
@@ -110,11 +102,7 @@ use busbar_contract::media::base64_decode;
 type MultipartField<'a> = crate::exchange::multipart::TranscriptionField<'a>;
 
 /// Sanitize a client-supplied MIME type before it enters the IR: a MIME type is `type/subtype`
-/// plus optional `; param=value`, all printable ASCII. A CR/LF or other control char here is a
-/// header-injection vector — on a cross-protocol transcription hop the value is written verbatim
-/// into busbar's OUTGOING multipart `Content-Type` header, so `audio/mp3\r\nX-Injected: ...`
-/// would inject headers (or a premature blank line) into the upstream request. Cut at the first
-/// control character; if nothing survives, fall back to a safe default.
+
 fn sanitize_mime_type(raw: &str) -> String {
     let clean: String = raw
         .chars()
@@ -130,7 +118,7 @@ fn sanitize_mime_type(raw: &str) -> String {
 }
 
 /// Decode an audio blob at the egress boundary. A failed decode is an unwritable-body sentinel,
-/// never an empty audio part in an otherwise successful form or response.
+
 fn decode_ir_b64(s: &str) -> Option<SlabBytes> {
     let decoded = base64_decode(s);
     if decoded.is_none() {
@@ -143,21 +131,13 @@ fn decode_ir_b64(s: &str) -> Option<SlabBytes> {
 }
 
 /// Minimal byte-level `multipart/form-data` parser: enough for the OpenAI audio form (a `model` text
-/// part + a binary `file` part). Boundary comes from the content-type; file bytes are preserved raw
-/// (never lossily UTF-8'd) so audio survives the ingress→IR hop.
+
 fn parse_multipart<'a>(body: &'a [u8], content_type: &str) -> Vec<MultipartField<'a>> {
     crate::exchange::multipart::transcription_fields(content_type, body)
 }
 
 /// Transcription (STT): multipart audio IN → `{text}` OUT.
-///
-/// KNOWN LIMITATION (1.3): OpenAI's `/v1/audio/translations` (translate-to-English) and
-/// `/v1/audio/transcriptions` share an identical multipart body and differ only in the URL path,
-/// which `resolve_operation` consumes and `read_request` never sees. So a `/translations` request
-/// forwarded CROSS-PROTOCOL (e.g. to Gemini) is not tagged with `target_language` and transcribes
-/// verbatim instead of translating. Same-protocol OpenAI→OpenAI is unaffected (the path is
-/// preserved to the upstream). Fixing it cross-protocol requires threading the ingress path/sub-op
-/// into the operation codec, which is a trait-signature change.
+
 struct OpenAiTranscription;
 
 leaf_op! {
@@ -178,24 +158,14 @@ leaf_op! {
 }
 
 /// The multipart boundary the transcription egress form is framed with: a constant, so the
-/// plugin keeps no process-global state for it (a plugin holds no process-global state) and the
-/// upstream receives the same bytes each time.
-///
-/// A client that knows the delimiter cannot use it: the audio part carries raw client-controlled
-/// bytes, so a payload embedding `\r\n--<boundary>` could close the file part early and append a
-/// second `model` field — and [`part_carries_delimiter`] refuses exactly that, failing the whole body
-/// closed. That check, not the delimiter's secrecy, is the guarantee.
+
 pub const TRANSCRIPTION_BOUNDARY: &str = "----busbaraudioMIME";
 
 /// The Content-Type the transcription egress form is declared with; names [`TRANSCRIPTION_BOUNDARY`].
 const TRANSCRIPTION_CONTENT_TYPE: &str = "multipart/form-data; boundary=----busbaraudioMIME";
 
 /// Does `part` contain the multipart delimiter, i.e. can splicing it into a body framed with
-/// `boundary` terminate its own part and start a new one?
-///
-/// Two framings count. A delimiter mid-payload is `\r\n--<boundary>`. A payload that STARTS with
-/// `--<boundary>` is equally dangerous: the blank line that ends the part's headers supplies the
-/// leading `\r\n`, so the delimiter is complete without the payload containing one.
+
 fn part_carries_delimiter(part: &[u8], boundary: &str) -> bool {
     let head = format!("--{boundary}");
     let head = head.as_bytes();
@@ -207,22 +177,11 @@ fn part_carries_delimiter(part: &[u8], boundary: &str) -> bool {
 }
 
 /// IR → openai multipart transcription request wire (the body of
-/// [`OpenAiTranscription::write_request`], moved behind the `(transcription, openai)` key). OpenAI-as-egress rebuilds the multipart form around [`TRANSCRIPTION_BOUNDARY`]; not on
-/// the harness path (openai is always ingress there), kept for cross-protocol symmetry.
-///
-/// Returns an EMPTY body if any part carries the delimiter. The leaf writer is typed infallible
-/// (`-> Bytes`), so the empty write is its refusal: the transcription handle and the translate seam
-/// turn it into `EgressWire::Unrepresentable` / an unrepresentable refusal, so the request is
-/// refused 4xx at the seam and never dispatched. It is never truncated or silently sanitized: a
-/// request that tried to inject parts does not go upstream at all.
+
 pub fn write_transcription_request(r: &TranscriptionReq) -> Bytes {
     let boundary = TRANSCRIPTION_BOUNDARY;
     let mut out: Vec<u8> = Vec::new();
     let mut push_field = |name: &str, val: &str| {
-        // Strip CR/LF from the value: any field (model, language, prompt, response_format) can
-        // carry attacker- or misconfig-supplied text, and an embedded `\r\n--boundary` would
-        // terminate this part and inject arbitrary new MIME parts. This is the one place these
-        // fields are serialized, so sanitizing here covers every text field uniformly.
         let safe: String = val.chars().filter(|&c| c != '\r' && c != '\n').collect();
         out.extend_from_slice(
             format!(
@@ -232,9 +191,7 @@ pub fn write_transcription_request(r: &TranscriptionReq) -> Bytes {
         );
     };
     push_field(keys::MODEL, &r.model);
-    // Carry the caller's transcription hints on cross-protocol egress (e.g. Gemini ingress ->
-    // OpenAI Whisper): dropping these silently changed behavior (no language hint / prompt /
-    // format). Emit each only when present, matching the OpenAI multipart form field names.
+
     if let Some(lang) = &r.source_language {
         push_field(super::LANGUAGE, lang);
     }
@@ -244,8 +201,7 @@ pub fn write_transcription_request(r: &TranscriptionReq) -> Bytes {
     if let Some(fmt) = &r.response_format {
         push_field(keys::RESPONSE_FORMAT, fmt);
     }
-    // Carry the sampling `temperature` too — OpenAI's transcription form accepts it natively;
-    // dropping it silently reset sampling to the default on a cross-protocol hop.
+
     if let Some(t) = r.temperature {
         push_field(keys::TEMPERATURE, &t.to_string());
     }
@@ -259,14 +215,9 @@ pub fn write_transcription_request(r: &TranscriptionReq) -> Bytes {
                 decoded
             }
         };
-        // Sanitize at the EGRESS boundary too: mime_type can enter the IR from ANY ingress
-        // reader (e.g. Gemini inline_data), not just the OpenAI multipart parser, so sanitizing
-        // only at ingress left the gemini->openai transcription path exposed to CR/LF header
-        // injection. This is the one place the outgoing header is built, so it covers all paths.
+
         let safe_mime = sanitize_mime_type(&blob.mime_type);
-        // The audio is raw client bytes — the ONE part that is not text-sanitized, because
-        // rewriting it would corrupt the media. If it carries the delimiter, refuse the whole
-        // request rather than emit a body whose parts the client chose.
+
         if part_carries_delimiter(&bytes, boundary) {
             tracing::warn!(
                 "openai transcription egress: audio part carries the multipart delimiter; \
@@ -283,12 +234,8 @@ pub fn write_transcription_request(r: &TranscriptionReq) -> Bytes {
 }
 
 /// IR → openai transcription response wire (the body of [`OpenAiTranscription::write_response`], moved
-/// behind the `(transcription, openai)` key). Byte-identical to the inline write.
+
 pub fn write_transcription_response(r: &TranscriptionResp) -> WireBody {
-    // OpenAI serves the plain response formats (`text`/`srt`/`vtt`) as a raw `text/plain` body, not
-    // a JSON envelope. When the response IR records one of those (the reader saw a non-JSON body),
-    // re-emit the transcript verbatim under `text/plain` rather than JSON-wrapping it — otherwise a
-    // WEBVTT/SRT response is mangled into `{"text":"WEBVTT..."}` with the wrong content-type.
     if matches!(
         r.response_format.as_deref(),
         Some(keys::TEXT | "srt" | "vtt")
@@ -296,10 +243,7 @@ pub fn write_transcription_response(r: &TranscriptionResp) -> WireBody {
         return WireBody::typed(SlabBytes::from(r.text.clone().into_bytes()), "text/plain");
     }
     let mut body = json!({ (keys::TEXT): r.text });
-    // `verbose_json` carries language/duration/segments/words alongside the text. These are all
-    // modelled by the IR; emit each when present (a plain-`json` response leaves them unset, so an
-    // absent field emits nothing rather than a fabricated empty array). Cross-protocol readers that
-    // captured timestamps/diarization survive the openai egress hop instead of being flattened away.
+
     if let Some(lang) = &r.detected_language {
         body[super::LANGUAGE] = json!(lang);
     }
@@ -339,11 +283,9 @@ pub fn write_transcription_response(r: &TranscriptionResp) -> WireBody {
                 .collect(),
         );
     }
-    // Surface the billable usage in OpenAI's own transcription shape — duration or tokens.
+
     match &r.usage {
         Some(Billing::Duration { seconds }) => {
-            // The one render boundary — byte-identical to what this wrote before the quantity
-            // became exact (see `billing::duration_seconds_to_wire`).
             let seconds = crate::codec::framework::duration_seconds_to_wire(*seconds);
             body[keys::USAGE] =
                 json!({ (keys::TYPE): super::W_DURATION, (super::SECONDS): seconds });
@@ -360,20 +302,9 @@ pub fn write_transcription_response(r: &TranscriptionResp) -> WireBody {
 }
 
 /// OpenAI transcription `usage` → `Billing`: `{type:"duration",seconds}` (whisper) or a token shape.
-///
-/// The token counts are judged one by one ([`refused_count`]). The presence of a READABLE
-/// `input_tokens` is what says this response is token-metered: an absent, `null` or
-/// unreadable `input_tokens` is no token billing at all, and an unreadable `output_tokens` beside a readable input bills no output.
-///
-/// # Errors
-/// The duration's `seconds` does not fit the exact decimal scale (see
-/// `a_duration_finer_than_the_scale_refuses_rather_than_being_rounded`).
+
 fn parse_transcription_usage(wire: &[u8], u: &Value) -> Result<Option<Billing>, CodecError> {
     match u.get(keys::TYPE).and_then(Value::as_str) {
-        // THE DURATION IS A MEASUREMENT, so it is read from the wire's DECIMAL TEXT and never
-        // through an `f64`. `u.get("seconds")` would hand back a `Value` whose number is
-        // already a double and has already lost the exactness no later conversion can give back, so
-        // the read goes to the ORIGINAL BYTES by pointer and `u` only says whether it is there.
         Some(super::W_DURATION) => {
             if u.get(super::SECONDS).is_none() {
                 return Ok(None);
@@ -385,10 +316,8 @@ fn parse_transcription_usage(wire: &[u8], u: &Value) -> Result<Option<Billing>, 
                 })?;
             Ok(Some(Billing::Duration { seconds }))
         }
-        // BILLED COUNTS, each judged on its own: absent is not billed, an UNREADABLE one is
-        // refused (it bills nothing, loudly) and never refuses the answer.
+
         _ => match crate::codec::usage_count::billed_count_opt(Some(u), keys::INPUT_TOKENS) {
-            // Absent, or spelled `null`: this response is not token-metered. Unchanged.
             Ok(None) => Ok(None),
             Err(unreadable) => {
                 crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
@@ -422,14 +351,13 @@ leaf_op! {
 }
 
 /// IR → openai speech (TTS) request wire (the body of [`OpenAiSpeech::write_request`], moved behind
-/// the `(speech, openai)` key). Byte-identical to the pre-cutover inline write.
+
 pub fn write_speech_request(r: &SpeechReq) -> Bytes {
     let mut body = json!({ (keys::MODEL): r.model, (keys::INPUT): r.input, "voice": r.timbre });
     if let Some(f) = &r.response_format {
         body[keys::RESPONSE_FORMAT] = json!(f);
     }
-    // Carry the caller's style + playback controls (gpt-4o-mini-tts `instructions`, `speed`);
-    // dropping them made the synthesized audio ignore the request on a cross-protocol hop.
+
     if let Some(instr) = &r.instructions {
         body[keys::INSTRUCTIONS] = json!(instr);
     }
@@ -440,8 +368,7 @@ pub fn write_speech_request(r: &SpeechReq) -> Bytes {
 }
 
 /// IR → openai speech (TTS) response wire (the body of [`OpenAiSpeech::write_response`], moved behind
-/// the `(speech, openai)` key): raw audio bytes with the blob's own content-type.
-/// Byte-identical to the pre-cutover inline write.
+
 pub fn write_speech_response(r: &SpeechResp) -> WireBody {
     let Some(blob) = &r.audio else {
         return WireBody::json(SlabBytes::default());
@@ -458,13 +385,10 @@ pub fn write_speech_response(r: &SpeechResp) -> WireBody {
     WireBody::typed(bytes, &sanitize_mime_type(&blob.mime_type))
 }
 
-// -------------------------------------------------- embeddings OperationHandler (real codec, cross-protocol)
-
 use crate::codec::ir::embeddings::{
     EmbInput, EmbeddingItem, EmbeddingsReq, EmbeddingsResp, EncFmt, VectorData,
 };
 
-///
 /// openai embeddings wire → IR (used when openai is the INGRESS of a cross-protocol call).
 struct OpenAiEmbeddings;
 
@@ -481,7 +405,7 @@ leaf_op! {
 }
 
 /// IR → openai embeddings request wire (the body of [`OpenAiEmbeddings::write_request`], moved behind
-/// the `(embeddings, openai)` key). Byte-identical to the pre-cutover inline write.
+
 pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
     let input = match &r.input {
         EmbInput::Text(v) if v.len() == 1 => json!(v[0]),
@@ -501,16 +425,11 @@ pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
     if let Some(d) = r.dimensions {
         body[keys::DIMENSIONS] = json!(d);
     }
-    // Carry the caller's `user` abuse-tracking signal (read into the IR by `read_embeddings_request`)
-    // so an openai->openai embeddings passthrough does not strip it — the writer previously emitted
-    // neither, silently dropping the field on the round trip. Emitted only when present so a request
-    // that never carried it gains no fabricated field.
+
     if let Some(u) = &r.user {
         body[keys::USER] = json!(u);
     }
-    // Honor a base64 encoding request (OpenAI supports float (default) and base64). Dropping
-    // it made a cross-protocol base64 embeddings request silently come back as float; the
-    // response reader decodes both, so emitting the field completes the round trip.
+
     if r.encoding_formats.contains(&EncFmt::Base64) {
         body[super::ENCODING_FORMAT] = json!(keys::BASE64);
     }
@@ -518,7 +437,7 @@ pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
 }
 
 /// IR → openai embeddings response wire (the body of [`OpenAiEmbeddings::write_response`], moved
-/// behind the `(embeddings, openai)` key). Byte-identical to the inline write.
+
 pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
     let data: Vec<Value> = r
         .embeddings
@@ -547,8 +466,6 @@ pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
     ))
 }
 
-// ---------------------------------------------------------------- image OperationHandler (real, cross-protocol)
-
 use crate::codec::framework::ImageOutput;
 use crate::codec::ir::image::{ImageOp, ImageReq, ImageResp, ImageSize};
 
@@ -567,7 +484,7 @@ leaf_op! {
 }
 
 /// IR → openai image request wire (the body of [`OpenAiImage::write_request`], moved behind the
-/// `(image, openai)` key). Byte-identical to the pre-cutover inline write.
+
 pub fn write_image_request(r: &ImageReq) -> Bytes {
     let mut body = json!({ (keys::MODEL): r.model });
     if let Some(p) = &r.prompt {
@@ -583,8 +500,7 @@ pub fn write_image_request(r: &ImageReq) -> Bytes {
         Some(ImageSize::Auto) => body[super::SIZE] = json!(keys::AUTO),
         None => {}
     }
-    // Carry the generation controls the reader captures; dropping them silently downgraded the
-    // request (e.g. a `b64_json` ask fell back to the default URL response, `hd` to standard).
+
     if let Some(q) = &r.quality {
         body[keys::QUALITY] = json!(q);
     }
@@ -594,8 +510,7 @@ pub fn write_image_request(r: &ImageReq) -> Bytes {
     if let Some(f) = &r.response_format {
         body[keys::RESPONSE_FORMAT] = json!(f);
     }
-    // gpt-image-1 output controls the reader captures — dropping them downgraded the request
-    // (a transparent-background/webp ask fell back to opaque PNG, a moderation policy was lost).
+
     if let Some(b) = &r.background {
         body[super::BACKGROUND] = json!(b);
     }
@@ -615,7 +530,7 @@ pub fn write_image_request(r: &ImageReq) -> Bytes {
 }
 
 /// IR → openai image response wire (the body of [`OpenAiImage::write_response`], moved behind the
-/// `(image, openai)` key). Byte-identical to the pre-cutover inline write.
+
 pub fn write_image_response(r: &ImageResp) -> WireBody {
     let data: Vec<Value> = r
         .images
@@ -635,16 +550,11 @@ pub fn write_image_response(r: &ImageResp) -> WireBody {
         })
         .collect();
     let mut body = json!({ (keys::DATA): data });
-    // Emit `created` only when the upstream actually sent it — fabricating `created:0` invents a
-    // 1970 timestamp on a response that carried none (gpt-image-1 omits it), a wrong wire value.
+
     if let Some(created) = r.created {
         body[super::CREATED] = json!(created);
     }
-    // gpt-image-1 returns a token `usage` object; the reader parses it (for billing) but the writer
-    // dropped it, so a same-/cross-protocol image hop lost the usage the client should see. Re-emit
-    // it in OpenAI's own image-usage shape when present.
-    // An UNKNOWN count (one the reader could not read) is left out rather than written as 0, and
-    // so is the total it would have summed into.
+
     if let Some(u) = &r.usage {
         let mut usage = serde_json::Map::new();
         if let Some(n) = u.input {
@@ -663,8 +573,6 @@ pub fn write_image_response(r: &ImageResp) -> WireBody {
     ))
 }
 
-// ---------------------------------------------------------------- moderation cell
-
 struct OpenAiModeration;
 
 leaf_op! {
@@ -674,14 +582,14 @@ leaf_op! {
 }
 
 /// IR → openai moderation request wire (the body of [`OpenAiModeration::write_request`], moved behind
-/// the `(moderation, openai)` key). Byte-identical to the pre-cutover inline write.
+
 pub fn write_moderation_request(r: &ModerationReq) -> Bytes {
     let body = json!({ (keys::MODEL): r.model, (keys::INPUT): input_to_value(&r.input) });
     Bytes::from(serde_json::to_vec(&body).unwrap_or_default())
 }
 
 /// IR → openai moderation response wire (the body of [`OpenAiModeration::write_response`], moved
-/// behind the `(moderation, openai)` key). Byte-identical to the inline write.
+
 pub fn write_moderation_response(r: &ModerationResp) -> WireBody {
     let results: Vec<Value> = r
         .results
@@ -706,8 +614,6 @@ pub fn write_moderation_response(r: &ModerationResp) -> WireBody {
         serde_json::to_vec(&body).unwrap_or_default(),
     ))
 }
-
-// ---- helpers ----
 
 fn parse_input(v: Option<&Value>) -> Result<Vec<ModerationInput>, IngressReject> {
     match v {
@@ -739,7 +645,6 @@ fn parse_input(v: Option<&Value>) -> Result<Vec<ModerationInput>, IngressReject>
 }
 
 fn input_to_value(input: &[ModerationInput]) -> Value {
-    // Round-trip: a single text input emits the bare string (OpenAI's common form); otherwise an array.
     if let [ModerationInput::Text(s)] = input {
         return json!(s);
     }
@@ -797,7 +702,7 @@ mod tests;
 mod speech_mime_regression_tests;
 
 /// Wire -> concrete `TranscriptionReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+
 pub fn read_transcription_request(
     body: &[u8],
     content_type: &str,
@@ -840,21 +745,13 @@ pub fn read_transcription_request(
 }
 
 /// Wire -> concrete `TranscriptionResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+
 pub fn read_transcription_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::audio::TranscriptionResp, CodecError> {
-    // OpenAI transcription is `{"text": "..."}` (json) or bare text (response_format=text). The
-    // real API also carries `usage` — whisper-1 DURATION (`{type:"duration",seconds}`), the
-    // gpt-4o-transcribe models TOKENS — captured from the live API. Both → Billing.
-    // A `verbose_json` body additionally carries language/duration/segments/words — all modelled by
-    // the IR. Parse them so timestamps/diarization survive the hop instead of being flattened to text.
     let v = match serde_json::from_slice::<Value>(wire) {
         Ok(v) => v,
-        // A non-JSON body is one of OpenAI's plain formats (`text`/`srt`/`vtt`), all served as
-        // `text/plain`. Record the plain shape so the writer re-emits `text/plain` rather than
-        // JSON-wrapping (the reader cannot tell text from srt/vtt on the wire; `text` is the
-        // normalized plain marker and the transcript bytes are carried verbatim regardless).
+
         Err(_) => {
             return Ok(TranscriptionResp {
                 text: String::from_utf8_lossy(wire).into_owned(),
@@ -928,7 +825,7 @@ pub fn read_transcription_response(
 }
 
 /// Wire -> concrete `SpeechReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+
 pub fn read_speech_request(
     body: &[u8],
     _content_type: &str,
@@ -962,51 +859,24 @@ pub fn read_speech_request(
 }
 
 /// Wire -> concrete `SpeechResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+
 pub fn read_speech_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::audio::SpeechResp, CodecError> {
-    // OpenAI speech is raw binary audio whose container is whatever the request's `response_format`
-    // asked for (`mp3`|`opus`|`aac`|`flac`|`wav`|`pcm`, default `mp3` — openai-openapi
-    // `CreateSpeechRequest.response_format`). This reader is the EGRESS codec reading the upstream
-    // 2xx body; the cross-protocol response pipeline (`translate_response`) hands it ONLY the body
-    // bytes — not the originating request nor the upstream `Content-Type` header — so the requested
-    // `response_format` is not reachable here. Hardcoding `audio/mpeg` therefore mislabeled every
-    // non-mp3 format the caller asked for (a wav/opus/flac blob surfaced to the client as
-    // `Content-Type: audio/mpeg`). Recover the true container from the audio's own magic bytes
-    // instead — the one in-band source of truth — which yields exactly the mime the requested
-    // `response_format` implies for every format that carries a container signature.
     Ok(SpeechResp {
         audio: Some(MediaBlob {
             payload: MediaPayload::Bytes(SlabBytes::from(wire)),
             mime_type: sniff_speech_audio_mime(wire).into(),
             pcm: None,
         }),
-        // TTS carries no usage object in its binary body, so without a marker `billing()` returned
-        // `None` and the synthesis was billed nothing. The TRUE unit is per-input-character (tts-1)
-        // counted from the REQUEST `input`, which this response-only reader cannot see — so the exact
-        // count is resolved at the request seam by `crate::codec::ir::audio::SpeechReq::billing`. This marker
-        // stays `Flat` only to record that a request was delivered (as rerank does).
+
         usage: Some(Billing::Flat),
         ..Default::default()
     })
 }
 
 /// Recover the audio Content-Type of an OpenAI speech (TTS) response body from its container magic
-/// bytes, mapping onto the mime for each `response_format` the endpoint can emit.
-///
-/// The reader has neither the originating request's `response_format` nor the upstream
-/// `Content-Type` header (see [`read_speech_response`]), so the container signature is the only
-/// in-band discriminant:
-/// * `ID3` tag or raw MPEG frame-sync → mp3 → `audio/mpeg`
-/// * `OggS` (Ogg-encapsulated Opus) → opus → `audio/opus`
-/// * `fLaC` → flac → `audio/flac`
-/// * `RIFF`…`WAVE` → wav → `audio/wav`
-/// * ADTS syncword (`0xFF 0xF1`/`0xF9`) → aac → `audio/aac`
-///
-/// A headerless raw-PCM body carries no signature and falls to the `audio/mpeg` default alongside
-/// bare frame-sync mp3 — the endpoint's own default `response_format` — the one residual ambiguity,
-/// since PCM is byte-indistinguishable from an unlucky mp3 frame prefix.
+
 fn sniff_speech_audio_mime(wire: &[u8]) -> &'static str {
     if wire.starts_with(b"ID3") {
         keys::AUDIO_MPEG
@@ -1017,17 +887,14 @@ fn sniff_speech_audio_mime(wire: &[u8]) -> &'static str {
     } else if wire.len() >= 12 && wire[0..4] == *b"RIFF" && wire[8..12] == *b"WAVE" {
         super::AUDIO_WAV
     } else if wire.len() >= 2 && wire[0] == 0xFF && (wire[1] == 0xF1 || wire[1] == 0xF9) {
-        // ADTS AAC syncword (12-bit 0xFFF + layer/protection bits): 0xFFF1 (MPEG-4) / 0xFFF9
-        // (MPEG-2). Distinct from the mp3 frame-sync second bytes (0xFB/0xFA/0xF3/0xF2/…).
         "audio/aac"
     } else {
-        // Raw MPEG frame-sync mp3 (no ID3 tag) or headerless PCM → the endpoint's default format.
         keys::AUDIO_MPEG
     }
 }
 
 /// Wire -> concrete `EmbeddingsReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+
 pub fn read_embeddings_request(
     body: &[u8],
     _content_type: &str,
@@ -1042,10 +909,6 @@ pub fn read_embeddings_request(
     let input = match wire.get(keys::INPUT) {
         Some(Value::String(s)) => EmbInput::Text(vec![s.clone()]),
         Some(Value::Array(a)) => {
-            // An array of strings is the multi-text batch. An array of integers (or token-ID
-            // sub-arrays) is OpenAI's pre-tokenized input form, which does not translate across
-            // providers — reject it loudly rather than silently `filter_map` it to an empty batch
-            // that reaches the backend as a confusing 400.
             if a.is_empty() || !a.iter().all(Value::is_string) {
                 return Err(IngressReject::BadRequest(
                     "embeddings `input` must be a string or a non-empty array of strings \
@@ -1087,7 +950,7 @@ pub fn read_embeddings_request(
 }
 
 /// Wire -> concrete `EmbeddingsResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+
 pub fn read_embeddings_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::embeddings::EmbeddingsResp, CodecError> {
@@ -1126,8 +989,7 @@ pub fn read_embeddings_response(
                 .collect()
         })
         .unwrap_or_default();
-    // BILLED COUNT: absent is zero; an UNREADABLE one is refused on its own ([`refused_count`]): it
-    // bills nothing and the vectors are served.
+
     let usage =
         v.get(keys::USAGE)
             .map(|u| busbar_contract::billing::TokenUsage {
@@ -1151,7 +1013,7 @@ pub fn read_embeddings_response(
 }
 
 /// Wire -> concrete `ImageReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+
 pub fn read_image_request(
     body: &[u8],
     _content_type: &str,
@@ -1163,12 +1025,7 @@ pub fn read_image_request(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    // `read_request` sees the body + content-type, never the PATH — so `/v1/images/edits` vs
-    // `/v1/images/generations` (both resolve to `Operation::IMAGE`, handlers/openai.rs:79) is
-    // distinguished by BODY SHAPE, not the route: an `image` reference names an edit
-    // (`mask` present) or variation sub-op. No 1.5.0 egress writer emits anything but
-    // `/v1/images/generations` (`upstream_path`, below), so every edit/variation request is
-    // unsupported today — the second 404 site, not a missing route.
+
     if wire.get("image").is_some() {
         return Err(IngressReject::UnsupportedSubOp {
             op: OpVerb::IMAGE,
@@ -1211,7 +1068,7 @@ pub fn read_image_request(
             .get(keys::RESPONSE_FORMAT)
             .and_then(Value::as_str)
             .map(str::to_string),
-        // gpt-image-1 output controls — carried through so egress re-emits them (see write_image_request).
+
         background: wire
             .get(super::BACKGROUND)
             .and_then(Value::as_str)
@@ -1237,7 +1094,7 @@ pub fn read_image_request(
 }
 
 /// Wire -> concrete `ImageResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+
 pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::ImageResp, CodecError> {
     let v: Value =
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
@@ -1261,13 +1118,7 @@ pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::Image
                 .collect()
         })
         .unwrap_or_default();
-    // gpt-image-1 returns a token `usage` object (`{total_tokens,input_tokens,output_tokens}`);
-    // per-image models (dall-e, etc.) return no usage body at all. The tokens are RECORDED, never
-    // billed (`ImageResp::billing`).
-    // A recorded count is still a ledger row, so it is read through the one count seam
-    // (`usage_count::recorded_count`): absent is zero; a present count this build cannot read is
-    // UNKNOWN, left out of the record and named on `warnings` and in the log. It is never a 0
-    // and never a refusal: the answer is served whatever its usage said.
+
     let mut warnings = Vec::new();
     let usage = v
         .get(keys::USAGE)
@@ -1279,10 +1130,7 @@ pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::Image
                 &mut warnings,
             ),
         });
-    // Per-image (dall-e-style) providers carry no `usage` — record the per-image cost basis so the
-    // op is billed as `Billing::Images` rather than nothing. The billable COUNT is recoverable from
-    // the response itself (one image per `data` entry). The size/quality TIERS live on the request
-    // params, which this response-only reader cannot see, so they stay `None` (count is the unit).
+
     let cost_basis = if usage.is_none() {
         Some(crate::codec::ir::image::CostBasis {
             count: u32::try_from(images.len()).unwrap_or(u32::MAX),
@@ -1302,7 +1150,7 @@ pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::Image
 }
 
 /// Wire -> concrete `ModerationReq` parse, extracted from the `OperationHandler::read_request`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+
 pub fn read_moderation_request(
     body: &[u8],
     _content_type: &str,
@@ -1323,7 +1171,7 @@ pub fn read_moderation_request(
 }
 
 /// Wire -> concrete `ModerationResp` parse, extracted from the `OperationHandler::read_response`
-/// body so a dissolved leaf-op handle and the `(op,proto)` `leaf_codec` read dispatch can recover the concrete IR without a downcast. Byte-identical parse.
+
 pub fn read_moderation_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::moderation::ModerationResp, CodecError> {

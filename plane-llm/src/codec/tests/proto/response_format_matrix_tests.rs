@@ -1,7 +1,5 @@
 //! THE REGRESSION NET for the `response_format` bug class. Before the typed `IrResponseFormat`
-//! layer, the same "writer echoes a foreign shape cross-protocol → backend 400" bug surfaced once
-//! per writer (openai → cohere → gemini → responses). Now the IR is typed, so a writer physically
-//! cannot hold or echo a foreign shape — and this matrix proves every projection lands native.
+
 use super::*;
 use crate::codec::ir::{IrBlock, IrMessage, IrResponseFormat, IrRole};
 
@@ -17,7 +15,7 @@ fn req_with_format(rf: IrResponseFormat) -> crate::codec::ir::IrRequest {
 }
 
 /// ONE typed directive, projected by EVERY native-structured-output writer, must land in THAT
-/// writer's own wire shape — never a foreign one — with the schema preserved.
+
 #[test]
 fn every_writer_emits_its_native_shape() {
     let schema = serde_json::json!({"type":"object","properties":{"x":{"type":"string"}}});
@@ -29,7 +27,6 @@ fn every_writer_emits_its_native_shape() {
         description: None,
     });
 
-    // OpenAI: {type:"json_schema", json_schema:{name, schema}} — schema NESTED under .schema.
     let o = openai_writer().write_request(crate::codec::test_host::HOST, &req);
     assert_eq!(
         o.pointer("/response_format/type"),
@@ -45,7 +42,6 @@ fn every_writer_emits_its_native_shape() {
         "no Gemini-shaped key may leak into OpenAI: {o}"
     );
 
-    // Cohere: {type:"json_object", json_schema:<schema DIRECTLY>}.
     let cohere_writer = CohereWriter;
     let c = cohere_writer.write_request(crate::codec::test_host::HOST, &req);
     assert_eq!(
@@ -61,7 +57,6 @@ fn every_writer_emits_its_native_shape() {
         "Cohere does NOT nest under .schema (that's OpenAI's shape): {c}"
     );
 
-    // Gemini: generationConfig.responseMimeType + responseSchema; no top-level response_format.
     let gemini_writer = GeminiWriter;
     let g = gemini_writer.write_request(crate::codec::test_host::HOST, &req);
     assert_eq!(
@@ -77,7 +72,6 @@ fn every_writer_emits_its_native_shape() {
         "Gemini has no top-level response_format: {g}"
     );
 
-    // Responses: text.format FLAT json_schema (name/schema beside type, not nested).
     let responses_writer = ResponsesWriter;
     let r = responses_writer.write_request(crate::codec::test_host::HOST, &req);
     assert_eq!(
@@ -95,7 +89,7 @@ fn every_writer_emits_its_native_shape() {
 }
 
 /// And the read side: each protocol's NATIVE structured-output request canonicalizes into the
-/// same typed directive — proving readers feed the agnostic IR, not a protocol-shaped blob.
+
 #[test]
 fn every_reader_canonicalizes_to_typed_ir() {
     let oi = OpenAiReader
@@ -136,10 +130,6 @@ fn every_reader_canonicalizes_to_typed_ir() {
     assert!(rf.json && rf.name.as_deref() == Some("out") && rf.schema.is_some());
 }
 
-// ── tool_choice-without-tools guard + stop-sequence vendor-cap clamp ──────────────────────────────
-// Six-writer REQUEST matrix (unlike `stop_reason_matrix_tests.rs`, which is response/`write_response`
-// only — `write_request` never appears there).
-
 fn req_with_tool_choice_no_tools() -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
@@ -153,10 +143,7 @@ fn req_with_tool_choice_no_tools() -> crate::codec::ir::IrRequest {
 }
 
 /// A `tool_choice` with NO accompanying `tools` is a guaranteed 400 on every vendor that models the
-/// constraint (Anthropic/OpenAI/Gemini/Cohere/Responses all reject it; only Bedrock's Converse ALSO
-/// documents + guards this today). Reachable cross-protocol: `prepare_for_egress` strips hosted
-/// tools while a `tool_choice` directive can survive. Every writer must omit `tool_choice` in this
-/// shape; Bedrock is a REGRESSION PROOF (it already guarded before this fix).
+
 #[test]
 fn tool_choice_without_tools_is_omitted_on_every_writer() {
     use busbar_test_kit::warn_capture::WarnCapture;
@@ -167,8 +154,6 @@ fn tool_choice_without_tools_is_omitted_on_every_writer() {
     let responses_writer = ResponsesWriter;
     let bedrock_writer = BedrockWriter;
 
-    // Capture PER WRITER. A single shared capture cannot say WHICH writer warned — one writer's warn
-    // satisfied the check for all six — so each runs under its own subscriber.
     let run = |f: &dyn Fn() -> serde_json::Value| -> (serde_json::Value, WarnCapture) {
         let cap = WarnCapture::default();
         let subscriber = cap.clone();
@@ -211,10 +196,6 @@ fn tool_choice_without_tools_is_omitted_on_every_writer() {
         "responses must omit tool_choice with no tools; got {r}"
     );
 
-    // Every writer that dropped a directive must have warned (Bedrock already did, pre-fix). `&&`
-    // binds tighter than `||`, so the un-parenthesised form read as
-    // `(dropping && tool_choice) || toolChoice` — a capture carrying only `toolChoice` passed with no
-    // "dropping" at all. The naming half is the alternative; the "dropping" half is required.
     for (name, cap) in [
         ("Anthropic", &cap_a),
         ("OpenAI", &cap_o),
@@ -243,19 +224,7 @@ fn req_with_stop(stop: Vec<String>) -> crate::codec::ir::IrRequest {
 }
 
 /// The IR's `stop` is an unbounded `Vec<String>` (no protocol enforces a cap on ingress), so a
-/// cross-protocol request can carry more stop sequences than a smaller target vendor allows:
-/// OpenAI caps at 4, Gemini/Cohere at 5 — exceeding any is a guaranteed 400.
-///
-/// v1.5.4-restored clamp: each capped writer TRUNCATES an over-cap stop list to its published cap
-/// (`busbar_kernel::ir::clamp_stop`) — with a `warn!` naming the dropped count — and forwards the
-/// clamped set at HTTP 200, rather than the cross-protocol seam rejecting the request with a 400.
-/// Fail-loud is a deliberate future opt-in, not a 1.6.0 default. See
-/// `proxy::tests::stop_sequence_cap_degrade_tests` for the end-to-end degrade coverage of all three
-/// vendors. This test pins both the caps each writer PUBLISHES (retained for the future opt-in) and
-/// the clamp each writer's `write_request` now performs.
-///
-/// Anthropic/Bedrock publish no fixed cap and are LEFT UNCHANGED (inventing one would be a new
-/// lossy behavior) — still carrying all 8 when called directly.
+
 #[test]
 fn stop_sequences_clamped_per_vendor_cap() {
     let stops: Vec<String> = (0..8).map(|i| format!("STOP{i}")).collect();
@@ -297,7 +266,6 @@ fn stop_sequences_clamped_per_vendor_cap() {
         "cohere must publish its documented stop-sequence cap of 5"
     );
 
-    // Anthropic and Bedrock publish no fixed cap — UNCHANGED, still carrying all 8.
     let a = anthropic_writer().write_request(crate::codec::test_host::HOST, &req);
     let a_stop = a["stop_sequences"]
         .as_array()
@@ -310,10 +278,7 @@ fn stop_sequences_clamped_per_vendor_cap() {
 }
 
 /// Egress: an OpenAI/Anthropic caller who DID set `parallel_tool_calls` and routes to
-/// Gemini/Cohere/Bedrock (none of which model any parallelism control) must get a WARN naming the
-/// drop — the flag silently vanishing was the exact class-9-adjacent bug this fix removes. The
-/// `is_some()` gate is what discriminates from noise: a request that never carried the flag must
-/// NOT warn (the negative half is a regression proof for the false-positive risk).
+
 #[test]
 fn parallel_tool_calls_discarded_on_gemini_cohere_bedrock_warns() {
     use busbar_test_kit::warn_capture::WarnCapture;
@@ -327,7 +292,6 @@ fn parallel_tool_calls_discarded_on_gemini_cohere_bedrock_warns() {
         ..Default::default()
     };
 
-    // Positive half: Some(_) must warn on all three.
     let cap = WarnCapture::default();
     let subscriber = cap.clone();
     let with_flag = req(Some(true));
@@ -355,8 +319,6 @@ fn parallel_tool_calls_discarded_on_gemini_cohere_bedrock_warns() {
         cap.messages()
     );
 
-    // Negative half (REGRESSION PROOF): None must NOT warn — this is what makes the positive half
-    // a real signal instead of firing on every request regardless of content.
     let cap2 = WarnCapture::default();
     let subscriber2 = cap2.clone();
     let without_flag = req(None);
@@ -371,8 +333,6 @@ fn parallel_tool_calls_discarded_on_gemini_cohere_bedrock_warns() {
         cap2.messages()
     );
 }
-
-// ── F25 REHOME (rows 613, 614): the Cohere stop-sequence cap ─────────────────────────────────────
 
 /// The production request translate steps onto `egress` (reader → egress seam → writer).
 fn rehome_xreq(ingress: &'static str, egress: &str, body: &serde_json::Value) -> serde_json::Value {
@@ -400,9 +360,7 @@ fn rehome_xreq(ingress: &'static str, egress: &str, body: &serde_json::Value) ->
 }
 
 /// F25 REHOME row 613, from `crates/busbar-llm/src/engine/tests/stop_sequence_cap_degrade_tests.rs:23`
-/// (`openai_to_cohere_over_cap_stop_sequences_is_clamped_not_rejected`): an OpenAI caller's six stop
-/// sequences onto a Cohere lane are CLAMPED to Cohere's cap of 5 and forwarded, not rejected
-/// (v1.5.4's truncate-and-forward).
+
 #[test]
 fn openai_to_cohere_over_cap_stop_sequences_are_clamped_not_rejected() {
     let out = rehome_xreq(
@@ -422,8 +380,7 @@ fn openai_to_cohere_over_cap_stop_sequences_are_clamped_not_rejected() {
 }
 
 /// F25 REHOME row 614, from `crates/busbar-llm/src/engine/tests/stop_sequence_cap_degrade_tests.rs:63`
-/// (`openai_to_cohere_exactly_cap_stop_sequences_is_allowed`): exactly five stop sequences is within
-/// Cohere's cap and is forwarded whole.
+
 #[test]
 fn openai_to_cohere_exactly_cap_stop_sequences_are_forwarded_whole() {
     let out = rehome_xreq(
@@ -443,8 +400,7 @@ fn openai_to_cohere_exactly_cap_stop_sequences_are_forwarded_whole() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/stop_sequence_cap_degrade_tests.rs::openai_to_gemini_over_cap_stop_sequences_is_clamped_not_rejected`:
-/// six stop sequences onto a Gemini lane are CLAMPED to Gemini's cap of 5 in
-/// `generationConfig.stopSequences` and forwarded, not rejected (v1.5.4's truncate-and-forward).
+
 #[test]
 fn openai_to_gemini_over_cap_stop_sequences_are_clamped_not_rejected() {
     let out = rehome_xreq(
@@ -464,8 +420,7 @@ fn openai_to_gemini_over_cap_stop_sequences_are_clamped_not_rejected() {
 }
 
 /// Rehomes `crates/busbar-llm/src/engine/tests/stop_sequence_cap_degrade_tests.rs::anthropic_to_openai_over_cap_stop_sequences_is_clamped_not_rejected`:
-/// five Anthropic stop sequences onto an OpenAI Chat lane are CLAMPED to OpenAI's cap of 4 in
-/// `stop` and forwarded, not rejected (v1.5.4's truncate-and-forward).
+
 #[test]
 fn anthropic_to_openai_over_cap_stop_sequences_are_clamped_not_rejected() {
     let out = rehome_xreq(

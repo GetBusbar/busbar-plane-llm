@@ -1,7 +1,5 @@
 //! Regression net for the stop_reason bug class (closed by the typed `IrStopReason`). EVERY
-//! variant, projected by EVERY writer, must land on a value VALID in that protocol's finish enum —
-//! never an off-spec token. A writer physically cannot leak a foreign value (it matches a typed
-//! enum exhaustively); this guards the projections.
+
 use super::*;
 use crate::codec::ir::{IrBlock, IrResponse, IrRole, IrStopReason, IrUsage};
 
@@ -53,9 +51,7 @@ fn every_writer_emits_only_valid_native_finish_tokens() {
         "refusal",
     ];
     let gemini_ok = ["STOP", "MAX_TOKENS", "SAFETY", "OTHER"];
-    // `malformed_model_output` is a Converse `StopReason` member: the Bedrock writer's value for
-    // `IrStopReason::Error`, where `end_turn` told a client a failed
-    // generation had finished normally.
+
     let bedrock_ok = [
         "end_turn",
         "tool_use",
@@ -64,9 +60,7 @@ fn every_writer_emits_only_valid_native_finish_tokens() {
         "content_filtered",
         "malformed_model_output",
     ];
-    // NOTE: "ERROR_TOXIC" is deliberately absent — it is a v1 Generate-API finish token, not a
-    // valid Cohere v2 `/v2/chat` value (COMPLETE|STOP_SEQUENCE|MAX_TOKENS|TOOL_CALL|ERROR). The
-    // writer must never emit it, even for IrStopReason::Safety.
+
     let cohere_ok = [
         "COMPLETE",
         "STOP_SEQUENCE",
@@ -74,8 +68,7 @@ fn every_writer_emits_only_valid_native_finish_tokens() {
         "TOOL_CALL",
         "ERROR",
     ];
-    // `failed` is a Responses `status` member: the writer's value for `IrStopReason::Error`,
-    // where `completed` told a client a failed generation had succeeded.
+
     let responses_ok = ["completed", "incomplete", "failed"];
     let cohere_writer = CohereWriter;
     let gemini_writer = GeminiWriter;

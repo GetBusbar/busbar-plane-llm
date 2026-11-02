@@ -1,12 +1,5 @@
 //! ITEM 133 — A PRESENT-BUT-UNREADABLE BILLED COUNT IS REFUSED ON ITS OWN; IT IS NEVER LEDGERED AS
-//! ZERO, AND IT REFUSES NOTHING ELSE.
-//!
-//! The Bedrock reader used to read every billed count as `.and_then(read_count_u64).unwrap_or(0)`,
-//! so a stringified `"1500"` from a compatible self-hosted backend reached the ledger as ZERO tokens
-//! for work that happened. Each usage field is now judged on its own: the unreadable one is REFUSED
-//! (warned loudly, it bills nothing, nothing stands in for it, and no stated-total gap prices it
-//! back in) and the readable ones bill as stated, on the buffered read, the streamed metadata and
-//! the truncated-tail recovery alike. An ABSENT count keeps its meaning — zero — and still reads.
+
 use super::*;
 
 #[test]
@@ -90,14 +83,6 @@ fn truncated_recovery_refuses_a_stringified_count_and_recovers_the_readable_ones
     assert_eq!((u.input, u.output), (0, 9));
 }
 
-// ── CACHE COUNTS (item 133 remainder) ────────────────────────────────────────────────────────────
-//
-// `read_cache_usage` read `cacheReadInputTokens`/`cacheWriteInputTokens` as
-// `.and_then(read_count_u64)` — an unreadable spelling became `None`, "no caching this turn" — and
-// `read_cache_details` SKIPPED a 5m/1h entry whose `inputTokens` would not read, silently. Each is
-// now REFUSED on its own, loudly, on every path: it bills nothing and the readable counts beside it
-// bill.
-
 fn converse(usage: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
@@ -179,13 +164,6 @@ fn truncated_recovery_refuses_an_unreadable_cache_tier_on_its_own() {
         .expect("the readable counts recover");
     assert_eq!((u.input, u.output), (5, 9));
 }
-
-// ── EMBEDDINGS AND RERANK ──────────────────────────────────────────────────────
-//
-// The Titan embeddings and the rerank answers judge their billed count the same way the Converse
-// table does: an unreadable one is refused ON ITS OWN, it bills nothing, and the answer is served.
-// Refusing the whole answer turned a delivered answer into a 500 with no usage, where v1.5.5's
-// `.and_then(Value::as_u64)` served it and billed no usage (v1.5.5 `handlers/bedrock.rs:243-249`).
 
 #[test]
 fn embeddings_response_refuses_an_unreadable_billed_input_on_its_own() {

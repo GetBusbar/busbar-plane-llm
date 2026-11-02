@@ -1,12 +1,5 @@
 //! ITEM 133 — A PRESENT-BUT-UNREADABLE BILLED COUNT IS REFUSED ON ITS OWN; IT IS NEVER LEDGERED AS
-//! ZERO, AND IT REFUSES NOTHING ELSE.
-//!
-//! The Anthropic reader used to read every billed count as `.and_then(read_count_u64).unwrap_or(0)`,
-//! so a stringified `"1500"` from a compatible self-hosted backend reached the ledger as ZERO tokens
-//! for work that happened. Each usage field is now judged on its own: the unreadable one is REFUSED
-//! (warned loudly, it bills nothing, nothing stands in for it) and the readable ones bill as stated,
-//! on the buffered read, both streamed usage frames and the truncated-tail recovery alike. An
-//! ABSENT count keeps its meaning — zero — and still reads.
+
 use super::*;
 
 #[test]
@@ -87,13 +80,6 @@ fn truncated_recovery_refuses_a_stringified_count_and_recovers_the_readable_ones
         .expect("an absent count still recovers");
     assert_eq!((u.input, u.output), (0, 9));
 }
-
-// ── CACHE TIER / METERED DETAIL COUNTS (item 133 remainder) ─────────────────────────────────────
-//
-// `read_cache_tier_detail` read the 5m/1h cache-creation tiers and `web_search_requests` as
-// `.and_then(read_count_u64)`, so an unreadable spelling became `None` silently. Each is now
-// REFUSED on its own, loudly, as the totals are: it bills nothing and the readable counts beside it
-// bill.
 
 fn message(usage: serde_json::Value) -> serde_json::Value {
     serde_json::json!({

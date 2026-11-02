@@ -1,5 +1,4 @@
 //! Rung 2 of the model ladder: the `model` form field of a multipart arrival, read as a document. The
-//! arrival reading is the plane's, and there is one of it.
 
 use std::borrow::Cow;
 
@@ -12,12 +11,7 @@ fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// The boundary, off the `Content-Type`: the one thing that says where a part begins. Every
-/// delimiter in the body is spelled from it, so a reader without it reads bytes that resemble parts.
-/// `None` where the header has no `boundary` parameter (a body no conforming parser, the provider's
-/// included, can read).
-///
-/// The parameter is matched as a whole key, not by substring, so a `boundary` inside another
-/// parameter's quoted value is not mistaken for it; the value may be quoted and is unquoted (RFC 2045).
+
 fn multipart_boundary(content_type: &str) -> Option<String> {
     parameter(content_type, "boundary")
         .filter(|value| !value.is_empty())
@@ -25,8 +19,7 @@ fn multipart_boundary(content_type: &str) -> Option<String> {
 }
 
 /// Split a header value on `;`, ignoring separators inside a quoted string (a naive `split(';')` cuts
-/// `filename="a;b"` in half and invents a parameter). The first item is the value's own token
-/// (`multipart/form-data`), which the boundary search skips.
+
 fn split_params(value: &str) -> impl Iterator<Item = &str> {
     let (mut quoted, mut escaped) = (false, false);
     value.split(move |c| {
@@ -91,7 +84,7 @@ fn parameter<'a>(value: &'a str, attribute: &str) -> Option<Cow<'a, str>> {
 }
 
 /// Only the whole `name` parameter of Content-Disposition names a field. A filename, quoted
-/// semicolon or another header cannot supply it. Admission and transcription share this reading.
+
 pub(crate) fn multipart_field_name(headers: &str) -> Option<Cow<'_, str>> {
     for line in headers.split("\r\n") {
         let Some((name, value)) = line.split_once(':') else {
@@ -105,8 +98,7 @@ pub(crate) fn multipart_field_name(headers: &str) -> Option<Cow<'_, str>> {
 }
 
 /// Borrowed multipart segments, excluding delimiter lines but retaining the CRLF before each
-/// delimiter. The complete upload is already available at arrival; walking it requires no audio
-/// copy or per-part allocation. Admission and transcription decoding use the same framing.
+
 pub(crate) struct MultipartSegments<'a> {
     body: &'a [u8],
     delimiter: String,
@@ -137,7 +129,6 @@ impl MultipartSegments<'_> {
             if closing && end == self.body.len() {
                 return Some((start, end, true));
             }
-            // A prefix such as `--boundarySuffix` or `--boundary--Suffix` is payload.
         }
         None
     }
@@ -173,22 +164,7 @@ pub(crate) fn multipart_segments<'a>(
 }
 
 /// Rung 2 of the model ladder: the `model` form field of a multipart arrival, read as a document.
-///
-/// This model decides the lane the unit is verified against, the pool it is admitted to and the card
-/// that prices it, while the provider decides which model answers by parsing the same bytes with a
-/// conforming multipart parser. The two readings must agree or the caller picks what busbar charges
-/// independently of what it receives, so this walks the parts the boundary delimits and reads the
-/// `model` part's headers, rather than scanning for a string that occurs as readily in a prompt.
-///
-/// Two `model` parts resolve to nothing: repetition is legal and no rule says which one a provider
-/// takes, so busbar cannot know the model. It falls to the ladder's floor and gets the missing-model
-/// refusal, before the door, costing the caller nothing.
-///
-/// The complete form must be checked: a duplicate model after a large audio part is just as
-/// ambiguous as an adjacent duplicate. Only the selected text value is copied, never the audio.
-///
-/// Public so every reader of the arrival calls this rung rather than carrying a second copy: two
-/// readings of one wire are two answers waiting to disagree.
+
 pub fn multipart_model(content_type: &str, body: &[u8]) -> Option<String> {
     multipart_field_value(content_type, body, "model", true)
         .map(|value| String::from_utf8_lossy(value).trim().to_string())
@@ -196,9 +172,7 @@ pub fn multipart_model(content_type: &str, body: &[u8]) -> Option<String> {
 }
 
 /// The last form field, as the transcription reader resolves repeated format fields, borrowed
-/// from the same complete framing admission uses. This is
-/// also how reply formatting retains a transcription's small `response_format` without parsing
-/// or copying its uploaded audio.
+
 pub(crate) fn multipart_field<'a>(
     content_type: &str,
     body: &'a [u8],
@@ -224,7 +198,7 @@ pub(crate) fn transcription_fields<'a>(
     let Some(parts) = multipart_segments(content_type, body) else {
         return Vec::new();
     };
-    // Preserve the transcription reader's existing bound and last-field resolution policy.
+
     const MAX_MULTIPART_PARTS: usize = 64;
     parts
         .filter_map(|segment| {
@@ -263,7 +237,6 @@ fn multipart_field_value<'a>(
         let headers = std::str::from_utf8(&part[..hdr_len]).ok()?;
         if multipart_field_name(headers)? == name {
             if unique && found.is_some() {
-                // Two `model` parts: no model, rather than a guess at which one is billed.
                 return None;
             }
             let value = &part[hdr_len + 4..];

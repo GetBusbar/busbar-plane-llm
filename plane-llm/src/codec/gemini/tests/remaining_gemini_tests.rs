@@ -37,7 +37,7 @@ fn an_overflowing_fragment_cannot_be_removed_to_make_other_arguments_runnable() 
     let _ = writer.write_response_event(crate::codec::test_host::HOST, &tool_start(1, "parallel"));
     argument(&writer, 0, "{\"x\":\"");
     argument(&writer, 0, &"must-not-disappear".repeat(2));
-    // The old writer dropped only the long fragment, then resumed and emitted {"x":""}.
+
     argument(&writer, 0, "\"}");
     let (_, failed) = writer
         .write_response_event(
@@ -269,7 +269,7 @@ fn streamed_grounding_uses_the_named_parts_utf8_coordinates() {
     let events = read_chunk(&mut state, two_parts());
     let found = citations(&events);
     assert_eq!(found.len(), 1);
-    // These two adjacent wire Parts share one streamed IR Text block.
+
     assert_eq!(
         (found[0].start_index, found[0].end_index),
         (Some(5), Some(7))
@@ -616,7 +616,7 @@ fn document_coordinates_are_replaced_only_by_an_unambiguous_answer_quote() {
                     "unanchored source coordinates must be audited"
                 );
             }
-            // The production buffered-to-stream synthesizer drives the same block bases.
+
             for ingress in ["cohere", "gemini"] {
                 let mut prepared = response.clone();
                 crate::codec::chat_handle::chat_prepare_for_ingress(&mut prepared, ingress, 1);
@@ -710,7 +710,7 @@ fn schema_instance_literals_are_opaque_to_every_schema_walk() {
         "properties":{"actual":{"type":"string","default":literal}},
         "anyOf":[{"type":"object","default":literal}]});
     assert_schema_egress(schema, expected);
-    // A definition nested in instance data must not become a schema reference target.
+
     assert_schema_egress(
         json!({"default":{"$defs":{"Fake":{"type":"number"}}},
         "properties":{"value":{"$ref":"#/$defs/Fake"}}}),
@@ -749,7 +749,7 @@ impl busbar_contract::codec::CodecHost for EntropyHost<'_> {
         let draw = self
             .draws
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        // Re-enter the real writer during the host call; a held stream lock would deadlock.
+
         if let Some(writer) = self.writer {
             writer.set_translate_cap(4096);
         }
@@ -892,7 +892,7 @@ fn direct_gemini_writer_refuses_malformed_json_without_changing_valid_argument_p
             "{frame}"
         );
         assert!(frame.pointer("/candidates").is_none(), "{frame}");
-        // Consuming a rejected tool cannot contaminate a later independent block.
+
         writer.write_response_event(crate::codec::test_host::HOST, &tool_start(1, "next"));
         argument(&writer, 1, "{\"x\":1}");
         let (_, frame) = writer

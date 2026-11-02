@@ -81,12 +81,7 @@ fn field_value<'a>(r: &'a busbar_plane_llm::exchange::attempt::FarRequest, name:
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/health_tests.rs::test_probe_sends_native_user_agent_and_accept_headers`
-/// 1.5.5: an active probe of an anthropic lane sends the SAME native-SDK
-/// fingerprint organic traffic sends: `user-agent: Anthropic/Python 0.39.0` and the non-streaming
-/// `accept: application/json`, so a far end cannot tell busbar's probes from its clients.
-///
-/// RED: the probe's `user-agent` or `accept` value differs from the one an organic (UA-less,
-/// non-streaming) anthropic request carries, or either moves off the pinned literal.
+
 #[test]
 fn test_probe_sends_native_user_agent_and_accept_headers() {
     use busbar_plane_llm::exchange::arrive::arrive;
@@ -100,7 +95,6 @@ fn test_probe_sends_native_user_agent_and_accept_headers() {
     let lane = s.lane("claude").expect("lane");
     let probe = request(HOST, lane).expect("probed");
 
-    // Organic traffic on the same lane: a native caller that sent no user-agent, not streaming.
     let head: Vec<(&[u8], &[u8])> =
         vec![(b"content-type".as_slice(), b"application/json".as_slice())];
     let body = br#"{"model":"claude","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}"#;
@@ -125,13 +119,7 @@ fn test_probe_sends_native_user_agent_and_accept_headers() {
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/health_tests.rs::test_probe_signs_and_sends_same_encoded_path_for_reserved_chars`
-/// 1.5.5: a probe of a bedrock model id carrying a reserved `:` sends
-/// the `%3A`-encoded path, never the raw `:0/converse`, and the signature's canonical path is
-/// computed from that SAME wire path, so the signed and sent paths cannot diverge
-/// (`SignatureDoesNotMatch` would park every such lane dead).
-///
-/// RED: the raw colon reaches the wire, the probe sends a path other than the one the signature
-/// is computed from, or the canonical path stops being the wire path's own encoding.
+
 #[test]
 fn test_probe_signs_and_sends_same_encoded_path_for_reserved_chars() {
     use busbar_plane_llm::exchange::attempt::{uri_encode_path, wire_and_canonical_path};
@@ -162,12 +150,7 @@ fn test_probe_signs_and_sends_same_encoded_path_for_reserved_chars() {
 }
 
 /// A probe of a lane carries the lane's declared static fields exactly as organic traffic on the
-/// lane does: an anthropic lane's probe without `anthropic-version` is answered 400 by the far end,
-/// and the breaker would read that refusal as the lane's health. A lane under an operator `auth:`
-/// override whose declaration carries no static field probes without one, as its organic traffic.
-///
-/// RED on dev: the probe wrote only `content-type`, `user-agent` and `accept`, so the
-/// `anthropic-version` lookup below finds nothing.
+
 #[test]
 fn a_probe_carries_the_lanes_static_fields_as_organic_traffic_does() {
     use busbar_plane_llm::exchange::arrive::arrive;
@@ -234,16 +217,29 @@ fn probes_apply_the_same_provider_options_as_organic_requests() {
         let lane = shaping.lane(model).unwrap();
         let probe = request(HOST, lane).expect("probe");
         let body = serde_json::to_vec(&json!({"model":model,"max_tokens":5,
-            "messages":[{"role":"user","content":"hi"}]})).unwrap();
+            "messages":[{"role":"user","content":"hi"}]}))
+        .unwrap();
         let arrived = arrive("POST", "/v1/messages", caller, &body, &()).unwrap();
         let organic = build(HOST, &arrived, caller, &shaping, "", model).unwrap();
         assert_eq!(probe.target, organic.target, "{model}");
         for option in lane.options.iter().filter(|o| o.place == Place::Header) {
-            assert_eq!(field_value(&probe, &option.wire), field_value(&organic, &option.wire), "{model}: {}", option.wire);
+            assert_eq!(
+                field_value(&probe, &option.wire),
+                field_value(&organic, &option.wire),
+                "{model}: {}",
+                option.wire
+            );
         }
         if model == "anthropic" {
             assert_eq!(field_value(&probe, "anthropic-version"), b"2023-01-01");
-            assert_eq!(probe.fields.iter().filter(|(n, _)| n == "anthropic-version").count(), 1);
+            assert_eq!(
+                probe
+                    .fields
+                    .iter()
+                    .filter(|(n, _)| n == "anthropic-version")
+                    .count(),
+                1
+            );
         }
         if model == "azure" {
             assert_eq!(probe.target, "/azure/chat?api-version=2024-10-21");

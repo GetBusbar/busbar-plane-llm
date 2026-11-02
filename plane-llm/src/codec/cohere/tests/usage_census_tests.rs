@@ -2,14 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE COHERE USAGE CENSUS (MONEY-AUDIT A-F1; owner 2026-10-02: every billed count lands in an
-//! existing meter class by the provider's own semantics; the plane reports units, never a price).
-//!
-//! The census is the pinned wire lock (`testing/llm-conformance/wire/cohere.wire.json`, read through
-//! `codec::usage_census`). Cohere's spec types every count as a JSON `number`, so a census that read
-//! only `integer` members found none; this one reads both. Every count the lock declares under the
-//! response `usage` and the `message-end` frame's `delta.usage` has a class below, and reporting 7
-//! more of it moves the ledgered units by exactly that class on the buffered read, the
-//! truncated-body recovery and the stream tap, through both ledger projections.
 
 use super::*;
 use crate::codec::usage_census::{
@@ -28,20 +20,11 @@ enum Turn {
 }
 
 /// What each Cohere `usage` count IS, as the move one more of it makes on the ledgered units
-/// (the four token tiers and every open class), and the turn it is measured on. The raw token
-/// counts are the reserved input/output classes, as 1.5.5 billed them; the billed token counts are
-/// attribution and move no ledgered figure; the cache hit stays inside the input (1.5.5);
-/// `search_units` is the open class `search_units`; `classifications` is the open class
-/// `classifications` (owner LEDGER-100: every reported unit is a ledger line).
+
 const COHERE_COUNT_CLASSES: &[(&str, (Turn, Ledgered))] = &[
     ("tokens.input_tokens", (Turn::Raw, at(IN, 1))),
     ("tokens.output_tokens", (Turn::Raw, at(OUT, 1))),
-    // The cache hit is a slice of `tokens.input_tokens` and bills inside it, as 1.5.5 billed it
-    // (v1.5.5 `crates/busbar/src/proto/cohere/reader.rs:964-979` and `:709-729` read only
-    // `tokens.*`): 7 more cached tokens move nothing, on the raw turn where the raw input is the bill.
     ("cached_tokens", (Turn::Raw, NONE)),
-    // Cohere's billed token counts are attribution the writer re-emits; 1.5.5 billed the raw
-    // `tokens` and never read them, so 7 more move nothing.
     ("billed_units.input_tokens", (Turn::Billed, NONE)),
     ("billed_units.output_tokens", (Turn::Billed, NONE)),
     (
@@ -112,8 +95,7 @@ fn streamed(usage: &serde_json::Value) -> Ledgered {
 }
 
 /// EVERY COUNT COHERE REPORTS IS LEDGERED IN ITS OWN CLASS, ON EVERY READ PATH. RED when the reader
-/// drops a count (a chat's billed search units ledgered nowhere), mis-classes one, or the lock gains
-/// a count nobody classed.
+
 #[test]
 fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {
     let response = lock_counts("cohere", "response", "usage.");
@@ -162,8 +144,7 @@ fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {
 }
 
 /// A chat's billed search units reach the ledger as `search_units` and its billed classifications
-/// as `classifications`, one line each, on every read path (owner LEDGER-100). RED before this
-/// lane: the reader only WARNed the classifications and they were ledgered nowhere.
+
 #[test]
 fn chat_search_units_and_classifications_each_ledger_one_line() {
     let usage = base_usage(Turn::Billed);

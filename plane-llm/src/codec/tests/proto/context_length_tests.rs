@@ -5,7 +5,6 @@ use busbar_contract::upstream::Disposition;
 
 #[test]
 fn test_classify_context_length_both_protocols() {
-    // OpenAI: error.code == context_length_exceeded
     let o = OpenAiReader.classify(
             StatusCode::BAD_REQUEST,
             br#"{"error":{"code":"context_length_exceeded","message":"maximum context length is 8192 tokens"}}"#,
@@ -16,7 +15,6 @@ fn test_classify_context_length_both_protocols() {
         "openai code → ContextLength"
     );
 
-    // Anthropic: "prompt is too long"
     let a = AnthropicReader.classify(
             StatusCode::BAD_REQUEST,
             br#"{"error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens > 200000 maximum"}}"#,
@@ -27,7 +25,6 @@ fn test_classify_context_length_both_protocols() {
         "anthropic message → ContextLength"
     );
 
-    // A plain 400 client error is NOT context-length (must still be ClientError).
     let c = AnthropicReader.classify(
         StatusCode::BAD_REQUEST,
         br#"{"error":{"type":"invalid_request_error","message":"unexpected field 'foo'"}}"#,

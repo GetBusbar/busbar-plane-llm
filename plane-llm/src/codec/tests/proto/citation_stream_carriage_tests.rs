@@ -2,18 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! CITATION CARRIAGE, STREAM ≡ NON-STREAM, END TO END (upstream citations reach
-//! clients; the IR maps a field wherever the target dialect can carry it). 1.5.5 dropped the
-//! citations a STREAMED Cohere or Responses upstream sent; its buffered answers kept them. This is
-//! the fixture the oracle corpus does not have (no cell carries a citation-bearing streamed
-//! response): for each citing upstream × each client dialect that can carry a citation, the client
-//! reading the STREAMED answer must receive the same citations as the client reading the BUFFERED
-//! answer to the same upstream response.
-//!
-//! Streamed leg: the upstream's native SSE bytes → `StreamTranslate::new(client, upstream)` (the
-//! production seam) → the client's wire bytes → the client dialect's own reader → every
-//! `CitationsDelta` citation. A same-dialect hop is a verbatim passthrough, so the upstream bytes are
-//! read by that dialect's reader directly. Buffered leg: the upstream's native body →
-//! upstream reader → IR → client writer → client reader → the text blocks' citations.
 
 use super::*;
 
@@ -31,8 +19,6 @@ fn sse(frames: &[(&str, serde_json::Value)]) -> Vec<u8> {
     }
     out
 }
-
-// ── Responses upstream ─────────────────────────────────────────────────────────────────────────
 
 fn responses_annotations() -> serde_json::Value {
     serde_json::json!([
@@ -123,8 +109,6 @@ fn responses_stream() -> Vec<u8> {
     sse(&frames)
 }
 
-// ── Cohere upstream ────────────────────────────────────────────────────────────────────────────
-
 fn cohere_citations() -> [serde_json::Value; 2] {
     [
         serde_json::json!({"start": 0, "end": 15, "text": "The sky is blue", "type": "TEXT_CONTENT",
@@ -174,25 +158,18 @@ fn cohere_stream() -> Vec<u8> {
     sse(&named)
 }
 
-// ── the two legs ───────────────────────────────────────────────────────────────────────────────
-
 /// Every citation-identifying string the upstream answer carries: both sources' URL and title.
 const MARKS: [&str; 4] = [URL_A, "Why the sky is blue", URL_B, "Rayleigh scattering"];
 
 /// Which of `MARKS` a client's wire bytes carry. Read off the WIRE, not re-read through busbar's own
-/// reader, because the client is a native SDK: a Responses client finds the annotations on
-/// `content_part.done`/`output_item.done`/`response.completed`, a Gemini client reads every
-/// chunk's `citationMetadata`, a Bedrock client reads the event-stream payload JSON. A citation's
-/// URL or title on the wire is the content a client can show. The Anthropic projection is checked
-/// separately for audited loss because these sources supply no native encrypted search index.
-/// For representable targets, stream ≡ non-stream is the invariant pinned here.
+
 fn carried(wire: &[u8]) -> Vec<&'static str> {
     let text = String::from_utf8_lossy(wire);
     MARKS.iter().copied().filter(|m| text.contains(m)).collect()
 }
 
 /// The client's streamed wire: the upstream's native stream through `StreamTranslate`, the
-/// production seam; a same-dialect hop is a verbatim passthrough.
+
 fn streamed_wire(upstream: &str, client: &str, upstream_bytes: &[u8]) -> Vec<u8> {
     match StreamTranslate::new(client, upstream) {
         Some(mut st) => {
@@ -205,7 +182,7 @@ fn streamed_wire(upstream: &str, client: &str, upstream_bytes: &[u8]) -> Vec<u8>
 }
 
 /// The client's buffered body: upstream reader → IR → client writer; a same-dialect hop is a
-/// verbatim passthrough, exactly as on the stream.
+
 fn buffered_wire(upstream: &str, client: &str, upstream_body: &serde_json::Value) -> Vec<u8> {
     if upstream == client {
         return upstream_body.to_string().into_bytes();
@@ -237,8 +214,7 @@ fn assert_carriage(upstream: &str, stream: &[u8], body: &serde_json::Value) {
              answer carries (1.5.5 dropped a streamed {upstream} upstream's citations)"
         );
     }
-    // A foreign URL citation has no Anthropic encrypted_index. Both legs must keep the
-    // answer/accounting while auditing the unrepresentable citation, never inventing that state.
+
     let ir = protocol_for(upstream)
         .unwrap()
         .reader()

@@ -2,13 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE PLANE STATES ITS PROVIDER KEYS: the descriptor in
-//! `meta::PROVIDER_KEYS` is what the door's Statement carries under the contract's one extensions
-//! key, it reads in the neutral shape vocabulary, and the one loader hands it on in the plane's
-//! registration, unchanged. That each form's keys are the frozen grammar's, in its order, is held
-//! where the frozen grammar is reachable (the legacy engine's `provider_keys_drift_tests`). The two
-//! cells that read the descriptor through the one loader (the door's Statement rendering and the
-//! registration it hands on) live in `tests/conformance.rs`, the one file of a plugin crate that may
-//! name the loader (kind-isolation's conformance-witness grant).
 
 use busbar_contract::provider_keys::{decode, encode, ProviderKeys};
 use busbar_plane_llm::meta::PROVIDER_KEYS;

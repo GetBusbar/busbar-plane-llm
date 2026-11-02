@@ -2,8 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Tests for the write-default's terminal: the contract's `IrHandle::write_egress_request` default
-//! refuses rather than invents a body, and this plane's translate seam turns that refusal into the
-//! 4xx reject. (Moved with the translate seam from `busbar-substrate-values`, SD-8.)
 
 use crate::codec::egress_prep::EgressPrep;
 use crate::codec::translate::{TranslateCodec, TranslateReqInput, TranslateReqReject};
@@ -36,9 +34,7 @@ fn a_request() -> InvokeReqHandle {
 }
 
 /// A handle that does not override the JSON egress write cannot write itself onto ANY dialect, and
-/// says so. It used to answer with an empty body, which is not this request — it is a DIFFERENT
-/// request forwarded upstream in the caller's name, whose first symptom is the backend's complaint
-/// about a body busbar invented.
+
 #[test]
 fn the_write_default_is_unrepresentable_and_names_the_dialect() {
     let mut handle = a_request();
@@ -60,7 +56,7 @@ fn the_write_default_is_unrepresentable_and_names_the_dialect() {
 }
 
 /// A codec whose read yields a handle that keeps the write default — the shape the translate seam
-/// must refuse rather than forward.
+
 struct DefaultWriteCodec;
 
 impl OperationHandler for DefaultWriteCodec {
@@ -87,7 +83,7 @@ impl OperationHandler for DefaultWriteCodec {
 }
 
 /// The seam turns the unrepresentable write into the SAME refusal the pre-write representability
-/// guard raises — a 4xx carrying the reason — instead of handing the router an empty body to send.
+
 #[test]
 fn the_translate_seam_refuses_an_unrepresentable_write() {
     let body = serde_json::json!({"tool": "search"});

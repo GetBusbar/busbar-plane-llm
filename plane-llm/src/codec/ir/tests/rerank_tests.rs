@@ -7,15 +7,12 @@ use super::*;
 
 #[test]
 fn rerank_resp_billing_is_flat() {
-    // Rerank has no token meter on either wire; a response reporting no search units is the flat
-    // marker.
     let resp = RerankResp::default();
     assert_eq!(resp.billing(), Some(Billing::Flat));
 }
 
 /// ITEM 134: the search units Cohere billed REACH THE PRICE. `billing()` hardcoded `Flat` and
-/// discarded the count it had correctly read, so a 5,000-document rerank billed like a 1-document
-/// one. The count now leaves as the open class `search_units`, exactly as billed.
+
 #[test]
 fn rerank_resp_billing_counts_search_units_as_an_open_class() {
     let resp = RerankResp {
@@ -30,8 +27,6 @@ fn rerank_resp_billing_counts_search_units_as_an_open_class() {
         })
     );
 }
-
-// ── IrFacts projection (close-non-chat-gate-blindness) ───────────────────────────────────────────
 
 use busbar_contract::ir::facts::{ContentItem, IrFacts};
 use busbar_contract::operation::OpVerb;

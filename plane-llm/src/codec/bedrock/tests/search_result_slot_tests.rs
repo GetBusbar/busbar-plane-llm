@@ -2,18 +2,12 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE SEARCH-RESULT SLOT: a Converse `searchResult` block
-//! (request content and `toolResult` content) is caller-supplied RAG content. The Bedrock reader
-//! used to have no arm for it, so the block vanished on every translate. It now reads into the same
-//! slot an Anthropic `search_result` reads into (`IrBlock::search_result`), so the passage, its
-//! source and title and the `citations` switch translate both ways, and a Bedrock->Bedrock relay
-//! re-emits the caller's original block.
 
 use super::*;
 use serde_json::{json, Value};
 
 /// The production REQUEST translate steps (reader -> egress seam -> writer). The egress seam is the
-/// CROSS-protocol one and runs only when the dialects differ, as in production: it clears `extra`,
-/// where the reader parks a same-dialect hop's verbatim blocks.
+
 fn xreq(ingress: &'static str, egress: &str, body: &Value) -> Value {
     let ingress_p = crate::codec::proto_codec::protocol_for(ingress).expect("ingress");
     let egress_p = crate::codec::proto_codec::protocol_for(egress).expect("egress");
@@ -195,7 +189,7 @@ fn a_dialect_without_the_block_still_reads_the_passage_and_its_source() {
 }
 
 /// RED ARM: the provenance citation IS the slot. Strip it and the block no longer re-emits as a
-/// search result on either side, so a reader that dropped the citation would fail the tests above.
+
 #[test]
 fn dropping_the_citation_loses_the_search_result_block() {
     let mut ir = BedrockReader.read_request(&bedrock_body()).expect("read");

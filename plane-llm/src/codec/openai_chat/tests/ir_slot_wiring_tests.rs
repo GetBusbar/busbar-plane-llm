@@ -2,15 +2,12 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR-slot WIRING tests for the OpenAI Chat dialect: the Chat reader FILLS the typed
-//! slots of ir-slots-landed.md and the Chat writer EMITS them, buffered and streamed. Requests go
-//! through the production cross-protocol seam (`chat_prepare_for_egress`, which clears `extra`), so
-//! a member that only rode `extra` before is proven to cross in its typed slot.
 
 use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
 use serde_json::{json, Value};
 
 /// Chat body → Chat reader → the cross-protocol egress seam → Chat writer. The seam clears `extra`,
-/// exactly as on an OpenAI-client → foreign-lane hop, so only what the typed IR carries survives.
+
 fn through_seam(body: &Value) -> Value {
     let mut req = super::OpenAiReader.read_request(body).expect("body reads");
     crate::codec::chat_handle::chat_prepare_for_egress(
@@ -53,11 +50,8 @@ fn text(t: &str, refusal: bool) -> crate::codec::ir::IrBlock {
     }
 }
 
-// ── IR-02 / OAI-12: the exact refusal carry ──────────────────────────────────────────────────────
-
 /// OAI-12 (IR-02). The Chat reader flags `message.refusal` as the refusal block, and the writer
-/// puts EXACTLY the flagged text in `message.refusal` and the rest in `content` — no longer every
-/// text block by stop reason (a Responses turn with an answer part and a refusal part, `completed`).
+
 #[test]
 fn oai12_refusal_block_is_carried_exactly() {
     let body = json!({
@@ -92,7 +86,7 @@ fn oai12_refusal_block_is_carried_exactly() {
 }
 
 /// OAI-12 (IR-02), stream. `delta.refusal` opens a text block flagged `refusal: true`, and the Chat
-/// stream writer writes that block's deltas back as `delta.refusal`, not `delta.content`.
+
 #[test]
 fn oai12_stream_refusal_is_carried_exactly() {
     let reader = super::OpenAiReader;
@@ -142,11 +136,8 @@ fn oai12_stream_refusal_is_carried_exactly() {
     );
 }
 
-// ── IR-04 / OAI-03: service tiers in the IR tier vocabulary ──────────────────────────────────────
-
 /// OAI-03 (IR-04). The request `service_tier` crosses in the typed slot — every OpenAI tier,
-/// `flex` and `scale` included — and the SERVED `flex`/`scale` tier on a response is carried in the
-/// IR tier vocabulary and written back.
+
 #[test]
 fn oai03_flex_and_scale_tiers_cross() {
     for tier in ["auto", "default", "flex", "scale", "priority"] {
@@ -174,10 +165,8 @@ fn oai03_flex_and_scale_tiers_cross() {
     }
 }
 
-// ── SHR-03: one OpenAI Files namespace ───────────────────────────────────────────────────────────
-
 /// SHR-03. A Responses `input_file.file_id` (vendor tag `responses`) reaches a Chat lane as
-/// `file.file_id` — the same OpenAI Files namespace.
+
 #[test]
 fn shr03_responses_file_id_reaches_chat() {
     let req = crate::codec::ir::IrRequest {
@@ -205,10 +194,8 @@ fn shr03_responses_file_id_reaches_chat() {
     );
 }
 
-// ── The other Chat request slots ─────────────────────────────────────────────────────────────────
-
 /// IR-03 / IR-05 / IR-06 / IR-07. `metadata`, `store`, `safety_identifier`, `prompt_cache_key` and
-/// `verbosity` cross the seam in their typed slots.
+
 #[test]
 fn ir03_05_06_07_request_scalars_cross() {
     let members = json!({
@@ -225,11 +212,9 @@ fn ir03_05_06_07_request_scalars_cross() {
 }
 
 /// IR-19. `modalities` crosses; `audio` is written only beside the caller's own `audio` member (a
-/// cross-protocol `audio` ask would 400 without a voice), so through the seam only `text` remains.
+
 #[test]
 fn ir19_modalities_cross() {
-    // The caller's Chat `modalities` + `audio` members as a client sends them — golden input data,
-    // kept in a fixture so the dialect's own `audio` member fields are data rather than code.
     let members: Value = serde_json::from_str(include_str!("fixtures/chat_audio_member.json"))
         .expect("the audio member fixture is JSON");
     let ir = super::OpenAiReader
@@ -268,7 +253,6 @@ fn ir11_web_search_options_cross() {
     let out = through_seam(&chat_body(json!({"web_search_options": wso.clone()})));
     assert_eq!(out["web_search_options"], wso, "{out}");
 
-    // A kind Chat has no built-in for is dropped and reported.
     let req = crate::codec::ir::IrRequest {
         hosted_tools: vec![crate::codec::ir::IrHostedTool::CodeExecution],
         ..Default::default()
@@ -304,7 +288,7 @@ fn ir10_allowed_tools_cross() {
 }
 
 /// IR-14. A `developer` system turn is written back as `developer`; mixed roles fall back to
-/// `system`.
+
 #[test]
 fn ir14_developer_role_crosses() {
     let body = json!({"model": "gpt-5", "messages": [
@@ -338,7 +322,7 @@ fn ir08_image_detail_crosses() {
 }
 
 /// Same-dialect fidelity. A member the typed slot cannot hold exactly (a non-string metadata value,
-/// an unknown tier word) still re-serializes verbatim OpenAI→OpenAI, and never crosses the seam.
+
 #[test]
 fn unrepresentable_slot_members_relay_verbatim_on_the_same_dialect() {
     let body = chat_body(json!({"metadata": {"n": 1}, "service_tier": "turbo"}));
@@ -354,13 +338,8 @@ fn unrepresentable_slot_members_relay_verbatim_on_the_same_dialect() {
     assert!(out.get("service_tier").is_none(), "{out}");
 }
 
-// ── IR-09 / OAI-10: reasoning off, and the effort above high ─────────────────────────────────────
-
 /// OAI-10 (IR-09). `reasoning_effort: "none"` is reasoning switched OFF — not "no ask" — so a
-/// foreign writer can state it (`thinking:{type:"disabled"}`, `thinkingBudget: 0`); `xhigh` is the
-/// IR's `XHigh`.
-/// The Chat writer never turns `Off` into an enable ask, and an OpenAI-origin re-serialize keeps
-/// the caller's word.
+
 #[test]
 fn oai10_none_is_reasoning_off() {
     let body = chat_body(json!({"reasoning_effort": "none"}));
@@ -369,7 +348,6 @@ fn oai10_none_is_reasoning_off() {
     let same = super::openai_writer().write_request(crate::codec::test_host::HOST, &ir);
     assert_eq!(same["reasoning_effort"], json!("none"), "{same}");
 
-    // Through the seam (`extra` cleared) the Chat writer omits it rather than writing `"low"`.
     let out = through_seam(&body);
     assert!(out.get("reasoning_effort").is_none(), "{out}");
 

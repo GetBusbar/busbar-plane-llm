@@ -2,12 +2,11 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The open-class table (owner LEDGER-100): every class is named once, the tail's declaration is
-//! this table, and a zero count is no hit on its class.
 
 use super::*;
 
 /// Every class is named exactly once: two spellings of one class, or one class under two names,
-/// would split one reported count across two prices.
+
 #[test]
 fn every_open_class_is_named_once() {
     let mut names: Vec<&str> = OPEN_CLASSES.iter().map(|(c, _)| *c).collect();
@@ -24,7 +23,7 @@ fn every_open_class_is_named_once() {
 }
 
 /// No open class is in the token family: a token-family class counts toward a `tokens:` cap, and
-/// the caps count exactly the itemized tokens they counted in 1.5.5.
+
 #[test]
 fn no_open_class_counts_toward_a_token_cap() {
     for (class, family) in OPEN_CLASSES {
@@ -37,7 +36,7 @@ fn no_open_class_counts_toward_a_token_cap() {
 }
 
 /// Every guardrail count lands in a declared open class, and no two counts share one (AWS prices
-/// each policy's units at its own rate).
+
 #[test]
 fn every_guardrail_count_has_its_own_declared_class() {
     let declared: Vec<&str> = OPEN_CLASSES.iter().map(|(c, _)| *c).collect();

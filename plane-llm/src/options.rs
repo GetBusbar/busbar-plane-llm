@@ -119,9 +119,7 @@ const fn query(name: &'static str, check: Check) -> WireOption {
 }
 
 /// Anthropic Messages API, `anthropic-version: 2023-06-01`. Docs: <https://docs.anthropic.com/en/api/versioning>
-/// (`anthropic-version`), <https://docs.anthropic.com/en/api/beta-headers> (`anthropic-beta`,
-/// comma-separated), <https://docs.anthropic.com/en/api/messages>. `x-api-key` and `authorization`
-/// are credentials and on no list.
+
 pub const ANTHROPIC: &[WireOption] = &[
     header(
         "anthropic-version",
@@ -131,10 +129,7 @@ pub const ANTHROPIC: &[WireOption] = &[
 ];
 
 /// OpenAI Chat Completions and Responses, and Azure OpenAI, which serves both. Docs:
-/// <https://platform.openai.com/docs/api-reference/authentication> (`OpenAI-Organization`,
-/// `OpenAI-Project`), <https://learn.microsoft.com/azure/ai-foundry/openai/reference> (the Azure
-/// `api-version` query parameter). The two selectors are the operator's tenant, so they are forced.
-/// `authorization` and `api-key` are credentials.
+
 pub const OPENAI: &[WireOption] = &[
     forced_header("OpenAI-Organization", Check::Token),
     forced_header("OpenAI-Project", Check::Token),
@@ -142,11 +137,7 @@ pub const OPENAI: &[WireOption] = &[
 ];
 
 /// Gemini API (`generativelanguage.googleapis.com` v1beta) and Vertex AI, through Google's API system
-/// parameters. Docs: <https://cloud.google.com/apis/docs/system-parameters> (`X-Goog-User-Project`,
-/// `X-Goog-Quota-User`, `X-Goog-Request-Reason`, `X-Server-Timeout`). `X-Goog-User-Project` names the
-/// project the operator is billed under, so it is forced. `key`, `x-goog-api-key` and `authorization`
-/// are credentials. The response-shaping parameters (`alt`, `fields`, `prettyPrint`, `callback`) are on
-/// no list: busbar reads the answer in the shape it asked for.
+
 pub const GEMINI: &[WireOption] = &[
     forced_header("X-Goog-User-Project", Check::Token),
     header("X-Goog-Quota-User", Check::Text),
@@ -155,10 +146,7 @@ pub const GEMINI: &[WireOption] = &[
 ];
 
 /// Amazon Bedrock runtime: the `InvokeModel` / `InvokeModelWithResponseStream` request headers, which
-/// reach a model served over the invoke envelope (Converse takes the same settings in its body:
-/// `guardrailConfig`, `performanceConfig`, `serviceTier`). Docs:
-/// <https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html>. The SigV4
-/// fields (`authorization`, `x-amz-date`, `x-amz-content-sha256`, `x-amz-security-token`) are credentials.
+
 pub const BEDROCK: &[WireOption] = &[
     invoke_header(
         "X-Amzn-Bedrock-Trace",
@@ -177,7 +165,7 @@ pub const BEDROCK: &[WireOption] = &[
 ];
 
 /// Cohere v2 Chat. Docs: <https://docs.cohere.com/reference/chat> (`X-Client-Name`). `authorization`
-/// is the credential.
+
 pub const COHERE: &[WireOption] = &[header("X-Client-Name", Check::Text)];
 
 /// The options the far end of `dialect` accepts; none for a dialect the plane does not speak.
@@ -194,8 +182,7 @@ pub fn catalogue(dialect: &str) -> &'static [WireOption] {
 }
 
 /// busbar's own provider keys: the kernel's (the destination, the credential and its auth binding,
-/// the health probe, the metadata carve-outs) and this plane's (the dialect, the error map, the lane
-/// capabilities). Anything else in a provider's block must be on its dialect's list.
+
 pub const BUSBAR_KEYS: &[&str] = &[
     "api_key",
     "protocol",
@@ -216,7 +203,7 @@ pub const BUSBAR_KEYS: &[&str] = &[
 ];
 
 /// Credential and auth fields, which no option sets: busbar presents the provider's `api_key`
-/// under its `auth` style, and no static setting replaces it.
+
 const CREDENTIALS: &[&str] = &[
     "authorization",
     "proxy-authorization",
@@ -233,7 +220,7 @@ const CREDENTIALS: &[&str] = &[
 ];
 
 /// Hop-by-hop and connection-level fields (RFC 9110 §7.6.1), which the transport writes for each
-/// connection and no option sets.
+
 const HOP_BY_HOP: &[&str] = &[
     "connection",
     "keep-alive",
@@ -263,7 +250,7 @@ pub struct SetOption {
 }
 
 /// The entry on `list` that `key` names: a head field without regard to case, a query parameter
-/// exactly.
+
 fn find(list: &'static [WireOption], key: &str) -> Option<&'static WireOption> {
     list.iter().find(|o| match o.place {
         Place::Header => o.name.eq_ignore_ascii_case(key),
@@ -378,12 +365,7 @@ pub fn accepted(dialect: &str) -> String {
 }
 
 /// READ ONE PROVIDER'S OPTIONS: every key of its block that is not one of [`BUSBAR_KEYS`],
-/// judged against the list of `dialect`, the dialect the provider speaks.
-///
-/// # Errors
-///
-/// The refusal, naming the provider and the key: a credential or auth field, a hop-by-hop field, a
-/// name not on the dialect's list (with the list), or a value of the wrong type.
+
 pub fn read(
     provider: &str,
     dialect: &str,

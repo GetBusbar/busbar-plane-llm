@@ -15,7 +15,7 @@ fn response_carries_multiple_typed_vectors_losslessly() {
         .insert(EncFmt::Float, VectorData::Float(vec![0.1, 0.2]));
     item.vectors
         .insert(EncFmt::Int8, VectorData::Int(vec![1, 2]));
-    // Both encodings coexist — a flat Vec<f32> would drop the int8 vector.
+
     assert_eq!(item.vectors.len(), 2);
     assert!(matches!(item.vectors[&EncFmt::Int8], VectorData::Int(_)));
 }
@@ -44,8 +44,6 @@ fn billing_maps_token_usage_or_none() {
     assert!(EmbeddingsResp::default().billing().is_none());
 }
 
-// ── IrFacts projection (close-non-chat-gate-blindness) ───────────────────────────────────────────
-
 use busbar_contract::ir::facts::{ContentItem, IrFacts, OPAQUE_CONTENT_MARKER};
 use busbar_contract::operation::OpVerb;
 
@@ -61,12 +59,12 @@ fn embeddings_projects_input_strings_and_title_as_screenable_text() {
     };
     assert_eq!(IrFacts::verb(&req), OpVerb::EMBEDDINGS);
     assert!(!IrFacts::wants_stream(&req));
-    // input strings AND the Gemini retrieval title are all screenable.
+
     assert_eq!(
         screened(&req.content()),
         vec!["first input", "second input", "doc title"]
     );
-    // The size signal is a sum over the SAME items, never a second walk.
+
     let shape = req.shape();
     assert_eq!(
         shape.text_chars,
@@ -79,8 +77,6 @@ fn embeddings_projects_input_strings_and_title_as_screenable_text() {
 
 #[test]
 fn embeddings_title_is_screened_when_present() {
-    // The forcing-function witness for the `title` field: a request carrying ONLY a title
-    // still surfaces it to a gate — a projection that dropped the field would fail here.
     let req = EmbeddingsReq {
         title: Some("SECRET-TITLE".into()),
         ..Default::default()
@@ -90,7 +86,6 @@ fn embeddings_title_is_screened_when_present() {
 
 #[test]
 fn embeddings_image_and_token_inputs_are_opaque_not_empty() {
-    // Image references embed as opaque (present-but-unscreenable), never silently nothing.
     let img = EmbeddingsReq {
         input: EmbInput::Images(vec!["data:image/png;base64,AAAA".into()]),
         ..Default::default()

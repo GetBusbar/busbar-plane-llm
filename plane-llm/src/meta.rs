@@ -1,5 +1,4 @@
 //! What this plane declares about itself: its key, its operation classes, its `busbar --help`
-//! rows and its provider keys. The door ([`crate::plane_door`]) states them.
 
 use busbar_contract::ids::OpClassId;
 
@@ -7,7 +6,7 @@ use busbar_contract::ids::OpClassId;
 pub const KEY: &str = "llm";
 
 /// The operation classes a unit of this plane can be: the classes that price a unit, so no wider than
-/// what is billed. The draft names one at the decode step and the audit step is checked against it.
+
 pub const OP_CLASSES: &[OpClassId] = &[
     OpClassId::new("chat"),
     OpClassId::new("embeddings"),
@@ -26,7 +25,7 @@ macro_rules! help_tagline {
 }
 
 /// The one-line description `busbar --help` opens with (`busbar <version> — <this>`), byte for byte
-/// as printed (shadow-oracle cells `cli__--help` / `cli__-h`). It names this plane, which owns it.
+
 pub const HELP_TAGLINE: &str = help_tagline!();
 
 /// [`HELP_ENDPOINTS`]'s text, spelled once for it and for [`CLI_HELP_TEXT`].
@@ -47,13 +46,11 @@ macro_rules! help_endpoints {
 }
 
 /// This plane's lines in the `ENDPOINTS` block of `busbar --help` (the doors its dialects answer on),
-/// byte for byte as printed (shadow-oracle cells `cli__--help` / `cli__-h`), no trailing newline: the
-/// root splices them between two lines it owns.
+
 pub const HELP_ENDPOINTS: &str = help_endpoints!();
 
 /// The same rows as the door's tail states them (`PlaneTail::cli_help`), in the contract's grammar
-/// (`busbar_contract::abi::plane::cli_help`): tagline row, then `ENDPOINTS`. The host reads them off
-/// the door, so a dropped-in build prints the same help as a linked one.
+
 pub const CLI_HELP_TEXT: &str = concat!(
     "\u{1e}tagline\u{1f}",
     help_tagline!(),
@@ -62,14 +59,7 @@ pub const CLI_HELP_TEXT: &str = concat!(
 );
 
 /// The provider keys this plane owns, per form of a `providers:` entry, stated in its Statement's
-/// extensions under `busbar_contract::provider_keys::EXT_PROVIDER_KEYS` in the contract's neutral
-/// shape vocabulary, so the kernel parses an entry without holding one of these names.
-///
-/// Each form's keys follow that form's grammar order (catalog definition, operator deployment, whole
-/// resolved entry), without the kernel's own keys; each says whether it must be written, and each
-/// form whether it refuses a key it does not name. No form refuses one here: a key that is not
-/// busbar's is a provider option, judged against the provider's dialect list ([`crate::options`]),
-/// which refuses one on no list in its own words. The kernel reads these neutral shapes while parsing provider entries.
+
 pub const PROVIDER_KEYS: &str = r#"{
   "catalog": {
     "deny_unknown": false,
@@ -149,8 +139,7 @@ mod provider_grammar_fixture {
         );
         assert_eq!(super::PROVIDER_KEYS, text);
         let statement = crate::plane_door::STATEMENT;
-        // Compare the export's wiring to its canonical backing slice without dereferencing an
-        // ABI pointer. The descriptor itself is parsed through that safe static slice below.
+
         let exported = crate::plane_door::EXTENSIONS;
         assert_eq!(statement.extensions.ptr, exported.as_ptr());
         assert_eq!(statement.extensions.len, exported.len());

@@ -2,9 +2,7 @@ use crate::codec::bedrock::bedrock_response_to_eventstream;
 use crate::codec::ir::{IrBlock, IrResponse, IrRole, IrUsage};
 
 /// A bedrock-ingress ConverseStream request answered by a BUFFERED (non-SSE) 2xx is rewrapped
-/// into the native binary eventstream frame sequence — not an `application/json` Converse body
-/// the AWS SDK's stream decoder cannot parse. Assert the synthesized bytes decode into the
-/// expected native ConverseStream frame sequence (messageStart … messageStop, metadata).
+
 #[test]
 fn buffered_response_wraps_into_converse_stream_frames() {
     let ir = IrResponse {
@@ -32,13 +30,10 @@ fn buffered_response_wraps_into_converse_stream_frames() {
     let mut bytes = bedrock_response_to_eventstream(crate::codec::test_host::HOST, &ir, Some(42));
     assert!(!bytes.is_empty(), "must emit eventstream frames");
 
-    // Decode the frames using the same decoder the wire uses.
     let frames = crate::codec::eventstream::drain_frames(&mut bytes);
     let names: Vec<&str> = frames.iter().map(|(t, _)| t.as_str()).collect();
     assert_eq!(names.first(), Some(&"messageStart"));
-    // A TEXT block emits NO `contentBlockStart` (the ConverseStream `ContentBlockStart$start` union
-    // models only `toolUse`); it opens implicitly with its first `contentBlockDelta` and closes with
-    // `contentBlockStop`.
+
     assert!(
         !names.contains(&"contentBlockStart"),
         "a text-only response must emit no contentBlockStart frame; got {names:?}"
@@ -46,7 +41,7 @@ fn buffered_response_wraps_into_converse_stream_frames() {
     assert!(names.contains(&"contentBlockDelta"));
     assert!(names.contains(&"contentBlockStop"));
     assert!(names.contains(&"messageStop"));
-    // The trailing metadata frame carries token usage.
+
     let metadata = frames
         .iter()
         .find(|(t, _)| t == "metadata")
@@ -55,10 +50,7 @@ fn buffered_response_wraps_into_converse_stream_frames() {
     assert_eq!(payload["usage"]["inputTokens"], 11);
     assert_eq!(payload["usage"]["outputTokens"], 7);
     assert_eq!(payload["usage"]["totalTokens"], 18);
-    // A real ConverseStream `metadata` event ALWAYS carries `metrics.latencyMs`
-    // (the SDK surfaces it via `ConverseStreamMetadataEvent::metrics()`). The buffered-synthesis
-    // path must inject it too — `None` here would be a deterministic proxy tell. Mirrors the
-    // live StreamTranslate path assertion in proto/mod.rs.
+
     assert_eq!(
         payload["metrics"]["latencyMs"].as_u64(),
         Some(42),
@@ -67,10 +59,7 @@ fn buffered_response_wraps_into_converse_stream_frames() {
 }
 
 /// The `IrBlock::ToolUse` arm of `bedrock_response_to_eventstream`
-/// must synthesize native ConverseStream tool-use framing — a `contentBlockStart` carrying
-/// `start.toolUse.{toolUseId,name}` and a `contentBlockDelta` carrying `delta.toolUse.input` — so a
-/// native AWS SDK ConverseStream client receiving a buffered cross-protocol tool-call completion can
-/// decode it. The happy-path test only exercises a `Text` block; this covers the tool arm.
+
 #[test]
 fn buffered_tool_use_wraps_into_converse_stream_tool_frames() {
     let ir = IrResponse {
@@ -104,7 +93,6 @@ fn buffered_tool_use_wraps_into_converse_stream_tool_frames() {
     let mut bytes = bedrock_response_to_eventstream(crate::codec::test_host::HOST, &ir, Some(7));
     let frames = crate::codec::eventstream::drain_frames(&mut bytes);
 
-    // contentBlockStart must carry the tool identity nested under start.toolUse.
     let start = frames
         .iter()
         .find(|(t, _)| t == "contentBlockStart")
@@ -120,7 +108,6 @@ fn buffered_tool_use_wraps_into_converse_stream_tool_frames() {
         "tool start carries name: {start_payload}"
     );
 
-    // contentBlockDelta must carry the serialized tool input under delta.toolUse.input.
     let delta = frames
         .iter()
         .find(|(t, _)| t == "contentBlockDelta")
@@ -138,12 +125,7 @@ fn buffered_tool_use_wraps_into_converse_stream_tool_frames() {
 }
 
 /// A MULTI-block buffered cross-protocol completion (the
-/// canonical 'assistant says something then calls a tool') must emit a DISTINCT, monotonically
-/// increasing `contentBlockIndex` per block — 0 for block 0, 1 for block 1, 2 for block 2. A real
-/// AWS Bedrock ConverseStream keys its per-block streaming reassembly off that index; a collision
-/// or failure to advance (e.g. a refactor replacing `.enumerate()` with a fixed `0`) would make
-/// the SDK merge or misorder blocks — silent content corruption. The single-block tests above
-/// cannot catch this because index 0 is correct trivially.
+
 #[test]
 fn buffered_multi_block_assigns_distinct_monotonic_content_block_indices() {
     let ir = IrResponse {
@@ -182,12 +164,6 @@ fn buffered_multi_block_assigns_distinct_monotonic_content_block_indices() {
     let frames = crate::codec::eventstream::drain_frames(&mut bytes);
     let names: Vec<&str> = frames.iter().map(|(t, _)| t.as_str()).collect();
 
-    // (a) Frame ordering: messageStart, then per-block frames, then messageStop, then metadata —
-    // the native ConverseStream envelope. The blocks are [Text, ToolUse, Text]: only the ToolUse
-    // block emits a `contentBlockStart` (the `ContentBlockStart$start` union models only `toolUse`);
-    // each Text block opens implicitly with its `contentBlockDelta` and closes with
-    // `contentBlockStop`. So the block-frame sequence is delta/stop, then start/delta/stop, then
-    // delta/stop.
     assert_eq!(names.first(), Some(&"messageStart"), "frames: {names:?}");
     let block_frames: Vec<&str> = names
         .iter()
@@ -231,10 +207,6 @@ fn buffered_multi_block_assigns_distinct_monotonic_content_block_indices() {
         "all content blocks precede messageStop: {names:?}"
     );
 
-    // (b) contentBlockIndex is distinct and monotonically increasing across blocks: every
-    // content* frame carries the index of its block — 0,0 (Text) then 1,1,1 (ToolUse) then 2,2
-    // (Text) in emission order. Collect the index off each content frame and assert the per-block
-    // grouping.
     let block_indices: Vec<u64> = frames
         .iter()
         .filter(|(t, _)| t.starts_with("contentBlock"))
@@ -253,10 +225,7 @@ fn buffered_multi_block_assigns_distinct_monotonic_content_block_indices() {
 }
 
 /// A buffered cross-protocol completion whose IR carried a
-/// ToolUse block but NO explicit `stop_reason` must synthesize `messageStop.stopReason ==
-/// "tool_use"`, not the old unconditional `end_turn`. A native Bedrock Converse reports `tool_use`
-/// for a tool-call turn, and an AWS SDK consumer keys agentic control flow off it — defaulting to
-/// `end_turn` would silently break the tool re-invocation loop.
+
 #[test]
 fn buffered_tool_use_with_absent_stop_reason_defaults_to_tool_use() {
     let ir = IrResponse {
@@ -269,7 +238,7 @@ fn buffered_tool_use_with_absent_stop_reason_defaults_to_tool_use() {
             input: serde_json::json!({"city": "Paris"}),
             cache_control: None,
         }],
-        // The hazard: upstream omitted a stop reason on the cross-protocol 2xx.
+
         stop_reason: None,
         usage: IrUsage {
             input_tokens: 5,
@@ -302,8 +271,7 @@ fn buffered_tool_use_with_absent_stop_reason_defaults_to_tool_use() {
 }
 
 /// The companion to the test above — a TEXT-only completion
-/// with an absent `stop_reason` must STILL default to `end_turn` (no tool call → no tool_use). This
-/// guards against an over-broad fix that would mislabel a plain text completion as `tool_use`.
+
 #[test]
 fn buffered_text_only_with_absent_stop_reason_defaults_to_end_turn() {
     let ir = IrResponse {
@@ -342,7 +310,7 @@ fn buffered_text_only_with_absent_stop_reason_defaults_to_end_turn() {
 }
 
 /// An EXPLICIT `stop_reason` always wins over the
-/// content-derived default — a ToolUse block alongside an explicit `end_turn` keeps `end_turn`.
+
 #[test]
 fn buffered_explicit_stop_reason_overrides_content_default() {
     let ir = IrResponse {

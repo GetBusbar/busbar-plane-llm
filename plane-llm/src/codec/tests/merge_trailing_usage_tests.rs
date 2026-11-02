@@ -16,27 +16,20 @@ fn usage(i: u64, o: u64, cc: Option<u64>, cr: Option<u64>) -> IrUsage {
     }
 }
 
-// 1.4.0 (streaming-billing): the terminal-usage fold merges a trailing usage-only chunk into
-// the deferred terminal delta. A non-zero/Some trailing field OVERRIDES; a zero/None trailing field
-// LEAVES the accumulator intact so a protocol that already carried usage on its terminal delta is
-// never clobbered by an absent trailing chunk. (Billing reads the merged accumulator.)
 #[test]
 fn trailing_nonzero_overrides_zero_leaves_intact() {
-    // A terminal delta that carried zeros gets the real counts from the trailing usage chunk.
     let mut acc = usage(0, 0, None, None);
     merge_trailing_usage(&mut acc, &usage(120, 45, Some(7), Some(9)));
     assert_eq!((acc.input_tokens, acc.output_tokens), (120, 45));
     assert_eq!(acc.cache_creation_input_tokens, Some(7));
     assert_eq!(acc.cache_read_input_tokens, Some(9));
 
-    // A terminal delta that ALREADY carried usage is NOT clobbered by an absent/zero trailing chunk.
     let mut acc = usage(200, 80, Some(3), Some(5));
     merge_trailing_usage(&mut acc, &usage(0, 0, None, None));
     assert_eq!((acc.input_tokens, acc.output_tokens), (200, 80));
     assert_eq!(acc.cache_creation_input_tokens, Some(3));
     assert_eq!(acc.cache_read_input_tokens, Some(5));
 
-    // Field-by-field: only the non-zero/Some trailing fields win; the rest are preserved.
     let mut acc = usage(200, 0, Some(3), None);
     merge_trailing_usage(&mut acc, &usage(0, 90, None, Some(11)));
     assert_eq!(
@@ -57,9 +50,7 @@ fn trailing_nonzero_overrides_zero_leaves_intact() {
 }
 
 /// EVERY `IrUsageDetail` bucket rides the Some-wins fold, not just the handful that had a bug filed
-/// against them. The fold is written as a no-`..` destructure of the detail struct precisely so a
-/// future field cannot be added without landing here; this test pins the current full census so a
-/// silently-dropped bucket is a red test rather than an attribution hole a customer finds on a bill.
+
 #[test]
 fn trailing_detail_merge_is_exhaustive_over_every_bucket() {
     let full = crate::codec::ir::IrUsageDetail {
@@ -94,14 +85,12 @@ fn trailing_detail_merge_is_exhaustive_over_every_bucket() {
             },
             ..Default::default()
         }),
-        // Bedrock's guardrail policy units ride the stream's trailing `metadata` frame only, under
-        // their open classes (LEDGER-100); a fold that dropped them would bill the streamed turn
-        // less than its buffered twin.
+
         open_units: std::collections::BTreeMap::from([(
             crate::codec::ir::open_class::GUARDRAIL_TOPIC_POLICY_UNITS_CLASS.to_string(),
             14,
         )]),
-        // A residual (a count a reader could not class) rides the same way, for its audit row.
+
         residual_units: std::collections::BTreeMap::from([("unclassed.count".to_string(), 17)]),
     };
     let mut acc = usage(0, 0, None, None);
@@ -113,8 +102,6 @@ fn trailing_detail_merge_is_exhaustive_over_every_bucket() {
         "every trailing detail bucket must land on the accumulator"
     );
 
-    // The mirror direction: a trailing chunk with NO detail never clobbers what the accumulator
-    // already carried, for every bucket.
     let mut acc = usage(50, 20, None, None);
     acc.detail = full.clone();
     merge_trailing_usage(&mut acc, &usage(0, 0, None, None));
@@ -125,11 +112,7 @@ fn trailing_detail_merge_is_exhaustive_over_every_bucket() {
 }
 
 /// A STALE STATED-TOTAL GAP IS NEVER BILLED (LEDGER-100 makes the gap the billed open class
-/// `unitemized_tokens`, REV-334 note 5). A Gemini stream restates its counters on every
-/// usage-bearing chunk: an early chunk whose total ran ahead of its itemized counts carries a gap
-/// note, and a following chunk whose counters reconcile carries none. The fold keeps the LAST chunk's
-/// check, so the turn bills no remainder its final total does not state. A chunk with no counters
-/// checked nothing and keeps the note.
+
 #[test]
 fn a_following_reconciled_frame_clears_an_earlier_gap() {
     let gap = crate::codec::ir::UsageIdentityNote {
@@ -140,7 +123,7 @@ fn a_following_reconciled_frame_clears_an_earlier_gap() {
     };
     let mut acc = usage(20, 10, None, None);
     acc.detail.usage_identity_note = Some(gap.clone());
-    // A counter-less chunk keeps the note.
+
     merge_trailing_usage(&mut acc, &usage(0, 0, None, None));
     assert_eq!(acc.detail.usage_identity_note, Some(gap));
     assert_eq!(
@@ -149,7 +132,7 @@ fn a_following_reconciled_frame_clears_an_earlier_gap() {
             .get(crate::codec::ir::open_class::UNITEMIZED_TOKENS_CLASS),
         Some(&10)
     );
-    // The final chunk restates the counters and they reconcile: no gap, no remainder billed.
+
     merge_trailing_usage(&mut acc, &usage(20, 20, None, None));
     assert_eq!(acc.detail.usage_identity_note, None);
     assert!(!acc

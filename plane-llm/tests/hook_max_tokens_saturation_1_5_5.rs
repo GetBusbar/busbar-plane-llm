@@ -2,14 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The size signal a hook sees for an output cap above `u32::MAX`, as 1.5.5 projected it.
-//!
-//! In 1.5.5 the hook projection read the cap from the caller's body and saturated it
-//! (`max_tokens_for`: `u32::try_from(n).unwrap_or(u32::MAX)`), under the dialect's own key
-//! (`max_output_tokens` for the responses dialect, `max_tokens` for every other), and the v1.5.5
-//! hook tests pinned it: `max_tokens_saturates_not_wraps` expected `Some(u32::MAX)` for
-//! `5_000_000_000`, and `max_tokens_signal_is_dialect_aware_for_responses` expected `Some(u32::MAX)`
-//! for `u64::MAX`. The plane's hook projection (`project`) reads it so; the IR's cap is the far
-//! end's, which a reader drops when it cannot carry it, and it is not the hook signal.
 
 use busbar_plane_llm::exchange::arrive::arrive;
 use busbar_plane_llm::exchange::project::{max_tokens_for, project};

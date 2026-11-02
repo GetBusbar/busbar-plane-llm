@@ -1,12 +1,5 @@
 //! ITEM 133 — A PRESENT-BUT-UNREADABLE BILLED COUNT IS REFUSED ON ITS OWN; IT IS NEVER LEDGERED AS
-//! ZERO, AND IT REFUSES NOTHING ELSE.
-//!
-//! The Cohere reader used to read every billed count as `.and_then(read_count_u64).unwrap_or(0)`,
-//! so a stringified `"1500"` from a compatible self-hosted backend reached the ledger as ZERO tokens
-//! for work that happened. Each usage field is now judged on its own: the unreadable one is REFUSED
-//! (warned loudly, it bills nothing, nothing stands in for it) and the readable ones bill as stated,
-//! on the buffered read, the streamed `message-end` and the truncated-tail recovery alike. An ABSENT
-//! count keeps its meaning — zero — and still reads.
+
 use super::*;
 
 fn body(usage: serde_json::Value) -> serde_json::Value {
@@ -101,14 +94,6 @@ fn truncated_recovery_refuses_a_stringified_count_and_recovers_the_readable_ones
     assert_eq!((u.input, u.output), (0, 9));
 }
 
-// ── ITEM 133 REMAINDER: `billed_units.search_units` / `billed_units.classifications` ─────────────
-//
-// These two rode the lenient `.and_then(read_count_u64)` after the rest of the bucket was fixed, so
-// a present-but-unreadable spelling became `None` — indistinguishable from "not reported" — and the
-// unit silently vanished. Absent or `null` keeps meaning `None`; a readable count is the count; an
-// unreadable one is REFUSED on its own, loudly, on every path: it bills nothing and the readable
-// counts beside it bill.
-
 const BILLED_UNIT_FIELDS: [&str; 2] = ["search_units", "classifications"];
 
 fn billed_units(field: &str, value: serde_json::Value) -> serde_json::Value {
@@ -192,13 +177,6 @@ fn truncated_recovery_refuses_an_unreadable_billed_unit_on_its_own() {
         .expect("a null billed unit still recovers");
     assert_eq!((u.input, u.output), (10, 5));
 }
-
-// ── RERANK AND EMBEDDINGS ──────────────────────────────────────────────────────
-//
-// The leaf answers judge their billed count the same way the chat table does: an unreadable one is
-// refused ON ITS OWN, it bills nothing, and the answer is served. Refusing the whole answer turned a
-// delivered answer into a 500 with no usage, where v1.5.5's `.and_then(Value::as_u64)` served it
-// (v1.5.5 `handlers/cohere.rs:267-275`, `:409-413`).
 
 #[test]
 fn rerank_response_refuses_unreadable_search_units_on_its_own() {

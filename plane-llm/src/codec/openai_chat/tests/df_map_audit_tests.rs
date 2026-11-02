@@ -1,5 +1,5 @@
 //! DF-MAP audit: what the Chat reader now maps into the IR's answer
-//! slots, and the reader-tolerance fix for a replayed custom-tool call.
+
 use super::super::proto_codec::protocol_for;
 use serde_json::json;
 
@@ -25,7 +25,7 @@ fn read(body: &serde_json::Value) -> crate::codec::ir::IrResponse {
 }
 
 /// Ruling 3 (F2 reader tolerance): a replayed custom-tool call is a valid native message; the reader
-/// used to refuse the whole request (400) because the call has no `function` member.
+
 #[test]
 fn a_replayed_custom_tool_call_is_not_refused() {
     let body = json!({"model": "m", "messages": [

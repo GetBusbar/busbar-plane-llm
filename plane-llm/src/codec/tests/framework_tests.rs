@@ -2,14 +2,12 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The framework items' own proofs, moved with them: the duration rendering is byte-identical
-//! (swept), an image output holds both of its forms, and a head field is the first legal value
-//! under its name.
 
 use super::{duration_seconds_to_wire, head_field, ImageOutput};
 use busbar_contract::Count;
 
 /// A 64-bit xorshift, so the sweep draws from integers and the proof of exactness does not itself
-/// rest on a double.
+
 struct Xorshift(u64);
 
 impl Xorshift {
@@ -29,10 +27,7 @@ fn decimal_text(micros: i128) -> String {
 }
 
 /// THE BYTE-IDENTITY CLAIM, SWEPT.
-///
-/// `duration_seconds_to_wire` must produce THE SAME DOUBLE as parsing the original decimal text,
-/// bit for bit — otherwise a response busbar echoes would carry different bytes than it carried
-/// before the quantity became exact, and that is an oracle divergence dressed up as a refactor.
+
 #[test]
 fn the_wire_rendering_is_the_same_double_the_text_used_to_parse_to() {
     let mut checked = 0usize;
@@ -47,7 +42,7 @@ fn the_wire_rendering_is_the_same_double_the_text_used_to_parse_to() {
             parsed.to_bits(),
             "`{text}` renders to a different double than it parses to"
         );
-        // And the JSON both sides would emit is the same bytes, which is the claim that matters.
+
         assert_eq!(
             serde_json::to_string(&serde_json::json!({ "seconds": rendered }))
                 .expect("a finite number serializes"),
@@ -56,18 +51,17 @@ fn the_wire_rendering_is_the_same_double_the_text_used_to_parse_to() {
         );
     };
 
-    // Every micro-second in the first hundredth of a second: the fine structure.
     for micros in 0..10_000i128 {
         check(micros);
         checked += 1;
     }
-    // Realistic audio durations, out to a thousand hours, drawn from the integer generator.
+
     let mut rng = Xorshift(0xDEAD_BEEF_CAFE_F00D);
     for _ in 0..100_000 {
         check(i128::from(rng.step() % 3_600_000_000));
         checked += 1;
     }
-    // The boundaries a renderer trips on: whole seconds, and one micro either side of them.
+
     for whole in 0..1_000i128 {
         for delta in -1..=1i128 {
             let micros = whole * 1_000_000 + delta;
@@ -87,14 +81,7 @@ fn image_output_is_additive_b64_and_url_coexist() {
         url: Some("https://example/img.png".into()),
         ..Default::default()
     };
-    // BOTH PRESENT IS A SHAPE THIS TYPE CAN HOLD, and the construction above compiling is the whole
-    // of that proof — a one-of (an enum, or a single field) could not have been written. Restating
-    // `img.b64.is_some() && img.url.is_some()` after building it with both was an assertion on the
-    // fixture's own literal: it could not fail, whatever `ImageOutput` did.
-    //
-    // The two fields are independent storage, not two spellings of one slot: an output carrying only
-    // the URL is a DIFFERENT value from one carrying only the inline payload, and both differ from
-    // the one carrying both. A single-slot representation would collapse at least two of the three.
+
     let b64_only = ImageOutput {
         b64: img.b64.clone(),
         ..Default::default()
@@ -109,8 +96,7 @@ fn image_output_is_additive_b64_and_url_coexist() {
 }
 
 /// A claims predicate reads a head field by name in any case, and the first field whose value is
-/// a legal header value is the one it reads: an earlier field carrying a control byte is passed
-/// over, exactly as a header map built from the same fields would never have held it.
+
 #[test]
 fn a_head_field_is_the_first_legal_value_under_its_name_in_any_case() {
     let fields: &[(&[u8], &[u8])] = &[

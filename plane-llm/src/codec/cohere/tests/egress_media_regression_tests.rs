@@ -2,9 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Regression net: a top-level `IrBlock::Media` (document/audio/video) on Cohere egress must be
-//! dropped WITH the standard drop-with-warn `warn!`, never silently — the IR Media contract. The
-//! Cohere `/chat` message-content shape carries only text and `image_url` parts, so a document
-//! attachment (e.g. an Anthropic→Cohere hop) has no slot and is deliberately, observably dropped.
 
 use super::*;
 use busbar_test_kit::warn_capture::WarnCapture;
@@ -39,7 +36,6 @@ fn anthropic_to_cohere_document_media_warns_not_silent() {
         w.write_request(crate::codec::test_host::HOST, &ir)
     });
 
-    // The document block is NOT projected onto the wire (Cohere has no content slot for it)...
     let msgs = out["messages"].as_array().expect("messages array");
     let user = msgs.last().expect("a user message");
     let dump = serde_json::to_string(user).unwrap();
@@ -48,7 +44,6 @@ fn anthropic_to_cohere_document_media_warns_not_silent() {
         "the document Media must not leak onto the Cohere message content: {dump}"
     );
 
-    // ...but the drop is OBSERVABLE: the standard drop-with-warn fired, naming the kind.
     assert!(
         cap.contains("dropping attachment on Cohere egress"),
         "a dropped top-level Media block must warn (drop-with-warn, never silently): {:?}",

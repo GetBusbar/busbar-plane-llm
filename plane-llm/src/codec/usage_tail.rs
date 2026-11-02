@@ -2,9 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Usage recovery from a response whose transport ended early. The relay retains the original
-//! prefix while it is within its cap, so root-member custody is provable even if the root never
-//! closes. A headless tail cannot prove whether a `usage` key belongs to the response or a tool's
-//! payload and is never a billing source. Over-cap relays already report no usage.
 
 /// Skip only JSON whitespace.
 fn whitespace(buf: &[u8], mut at: usize) -> usize {
@@ -18,7 +15,7 @@ fn whitespace(buf: &[u8], mut at: usize) -> usize {
 }
 
 /// Locate one complete value lexically. The caller validates that exact span as JSON before
-/// advancing, so matching delimiters alone never authenticate a malformed prefix.
+
 fn complete_value_end(buf: &[u8], start: usize) -> Option<usize> {
     let first = *buf.get(start)?;
     let mut depth = 0usize;
@@ -62,10 +59,7 @@ fn complete_value_end(buf: &[u8], start: usize) -> Option<usize> {
 }
 
 /// Recover a complete object-valued root `key` from the original response prefix. Every earlier
-/// root value is structurally located and validated before advancing, so nested tool objects,
-/// strings and a headless tail cannot impersonate usage. An incomplete later member does not
-/// erase a report already received; a complete duplicate root member follows JSON's last-wins rule.
-/// `key` includes JSON quotes, as existing dialect callers spell it.
+
 pub fn isolate_tail_usage_object(tail: &[u8], key: &[u8]) -> Option<serde_json::Value> {
     let expected: String = serde_json::from_slice(key).ok()?;
     let mut at = whitespace(tail, 0);
@@ -114,16 +108,15 @@ pub fn isolate_tail_usage_object(tail: &[u8], key: &[u8]) -> Option<serde_json::
 mod root_tests;
 
 /// The longest string value [`StopKeyScanner`] reads. A stop-reason token is a short enum member
-/// (`ERROR`, `MALFORMED_FUNCTION_CALL`); a longer value is not one, and reading it would cost work
-/// proportional to the body.
+
 const MAX_TOKEN_BYTES: usize = 64;
 
 /// The longest stop-reason key (quotes included) [`StopKeyScanner`] looks for; the bound lets it
-/// carry its state inline.
+
 pub const MAX_STOP_KEY_BYTES: usize = 32;
 
 /// The deepest container nesting [`StopKeyScanner`] tracks kinds of. A stop field sits a few levels
-/// deep; a deeper body is still scanned but its deeper containers are never the stop field's.
+
 const MAX_TRACKED_DEPTH: u16 = 64;
 
 /// A dialect's non-stream stop-reason field, located structurally: member `key` (quotes included,
@@ -182,7 +175,7 @@ pub struct StopKeyScanner {
 
 impl StopKeyScanner {
     /// A scanner for `key`. `None` for an empty or unquoted key, one longer than
-    /// [`MAX_STOP_KEY_BYTES`], or a depth of `0`.
+
     pub fn new(key: StopKey) -> Option<Self> {
         let k = key.key;
         let well_formed = k.len() > 2
@@ -262,7 +255,6 @@ impl StopKeyScanner {
             }
             self.closed_match = false;
             if c == b':' {
-                // The member this scanner looks for: its value decides the answer.
                 self.state = ScanState::BeforeQuote;
                 return;
             }

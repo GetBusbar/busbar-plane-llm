@@ -1,5 +1,5 @@
 //! Gemini citation offsets (UTF-8 bytes on the wire, characters in the IR) and the
-//! `citationMetadata` / `groundingMetadata` read and write.
+
 use super::{
     FIELD_CITATION_METADATA, FIELD_CITATION_SOURCES, FIELD_END_INDEX, FIELD_PARTS,
     FIELD_RETRIEVED_CONTEXT, FIELD_START_INDEX, FIELD_THOUGHT, FIELD_URI,
@@ -7,26 +7,16 @@ use super::{
 use crate::codec::keys;
 
 /// Byte-to-character offset index for one response text, built in one ordered pass over
-/// `char_indices()` and answering each citation offset by binary search.
-///
-/// Gemini's `CitationSource`/`groundingSupports` offsets are BYTES; the IR's `start_index`/`end_index`
-/// are CHARACTERS. Counting a prefix per offset walked the whole text once per number
-/// (O(sources x text_len)); the index is built once per read and each lookup is O(log n).
-///
-/// Results equal converting each offset independently, including both promised degradations: a
-/// negative or past-the-end offset clamps to `[0, text.len()]`, and a mid-codepoint offset
-/// (malformed or adversarial) resolves to the nearest earlier boundary instead of panicking.
+
 pub(super) struct GeminiCharIndex<'a> {
     text: &'a str,
     /// Byte offset of character `k * CHAR_MARK_STRIDE` for every such character, ascending. A lookup
-    /// binary-searches the marks and walks at most one stride, so it holds one `usize` per stride.
     marks: std::borrow::Cow<'a, [usize]>,
 }
 
 /// Characters between two marks of a [`GeminiCharIndex`].
 pub(super) const CHAR_MARK_STRIDE: usize = 64;
 
-// Characters an index walked, for the work-bound tests. Per thread so parallel tests cannot see each other's.
 #[cfg(test)]
 thread_local! {
     pub(super) static CHARS_WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -40,8 +30,7 @@ fn walked(n: usize) {
 }
 
 /// Extend the marks of an append-only text by `appended`, the bytes now following the `base` bytes
-/// already indexed (`chars` characters). The stream reader and writer call it per text delta, so the
-/// anchor text is indexed once in total, not once per citation chunk.
+
 pub(super) fn extend_char_marks(
     marks: &mut Vec<usize>,
     chars: &mut usize,
@@ -70,7 +59,7 @@ impl<'a> GeminiCharIndex<'a> {
     }
 
     /// The index over a stream's anchor text whose marks were kept as it grew
-    /// ([`extend_char_marks`]); no walk of the text.
+
     pub(super) fn from_marks(text: &'a str, marks: &'a [usize]) -> Self {
         Self {
             text,
@@ -81,7 +70,7 @@ impl<'a> GeminiCharIndex<'a> {
     /// The character offset for a wire byte offset.
     pub(super) fn char_offset(&self, byte_idx: i64) -> i64 {
         let target = (byte_idx.max(0) as usize).min(self.text.len());
-        // The last mark at or before `target` (the first is byte 0 for any non-empty text).
+
         let k = self.marks.partition_point(|&s| s <= target);
         if k == 0 {
             return 0;
@@ -89,8 +78,7 @@ impl<'a> GeminiCharIndex<'a> {
         let base = self.marks[k - 1];
         let mut before = (k - 1) * CHAR_MARK_STRIDE;
         let mut boundary = target == self.text.len();
-        // Count character starts strictly below `target`; a start equal to it proves a boundary.
-        // If not, the containing character was counted, so drop it to land on the earlier boundary.
+
         let mut steps = 0usize;
         for (b, _) in self.text[base..].char_indices() {
             steps += 1;
@@ -110,7 +98,7 @@ impl<'a> GeminiCharIndex<'a> {
     }
 
     /// The byte offset of a character offset (inverse; `gemini_char_offset_to_byte`'s answer): a
-    /// negative offset clamps to 0, one at or past the character count to `text.len()`.
+
     pub(super) fn byte_offset(&self, char_idx: i64) -> i64 {
         let c = char_idx.max(0) as usize;
         let Some(&base) = self.marks.get(c / CHAR_MARK_STRIDE) else {
@@ -126,17 +114,7 @@ impl<'a> GeminiCharIndex<'a> {
 }
 
 /// Map a candidate's `citationMetadata.citationSources[]` to neutral [`crate::codec::ir::IrCitation`]s.
-/// A source is a grounding/web-search reference with `startIndex`/`endIndex` (BYTES per Google's
-/// `CitationSource`, converted to CHARACTERS here), `uri`, `title` and `license`. It maps to the
-/// neutral fields (uri to url, indices to start/end, title) and the source object is stashed
-/// verbatim in `raw` so a same-protocol path re-emits the unconverted original (see
-/// `write_gemini_citation`'s raw short-circuit). The neutral `kind` is `web_search_result_location`,
-/// used for answer-text spans; each foreign writer projects only the fields its wire can carry.
-/// Empty when there is no citation metadata.
-///
-/// `anchor_text` is the text the offsets index into: the candidate's full text when buffered, the
-/// answer streamed so far (`StreamDecodeState::streamed_text`) on a stream (GEM-16). `None` leaves
-/// the wire bytes.
+
 pub(super) fn read_gemini_citations(
     candidate: &serde_json::Value,
     anchor_text: Option<&str>,
@@ -145,7 +123,7 @@ pub(super) fn read_gemini_citations(
 }
 
 /// The stream's read: `text` is the answer streamed so far and `marks` the index kept as it grew
-/// ([`extend_char_marks`]), so a citation chunk converts without walking the answer.
+
 pub(super) fn read_gemini_streamed_citations(
     candidate: &serde_json::Value,
     text: &str,
@@ -157,7 +135,7 @@ pub(super) fn read_gemini_streamed_citations(
         text: Some(text),
         index: std::cell::OnceCell::from(GeminiCharIndex::from_marks(text, marks)),
     };
-    // citationSources is cumulative; groundingChunks is incremental. They cannot share a watermark.
+
     let legacy = serde_json::json!({
         (FIELD_CITATION_METADATA): candidate.get(FIELD_CITATION_METADATA)
     });
@@ -228,7 +206,6 @@ pub(super) fn read_gemini_streamed_citations(
         .and_then(|v| v.as_array())
         .is_none_or(Vec::is_empty)
     {
-        // Newly announced sources without a support are provenance once; never replay the registry.
         let candidate = serde_json::json!({(FIELD_GROUNDING_METADATA): {(FIELD_GROUNDING_CHUNKS): accepted_chunks}});
         out.extend(grounding_citations_at(&candidate, &anchor, None, None));
     }
@@ -323,12 +300,10 @@ impl GeminiCitationState {
 
     fn byte_offset(&self, part: usize, offset: i64, end: bool) -> Option<i64> {
         let Some(spans) = self.parts.get(&part) else {
-            // A metadata-first chunk has no text anchor yet, matching the earlier read path.
             return (part == 0 && self.parts.is_empty()).then_some(offset);
         };
         let offset = usize::try_from(offset.max(0)).ok()?;
-        // At a discontiguous fragment boundary, a start belongs to the next fragment while an
-        // exclusive end belongs to the preceding one.
+
         let span = spans
             .get(spans.partition_point(|s| {
                 if end {
@@ -358,7 +333,7 @@ fn chunk_size(value: &serde_json::Value) -> usize {
 }
 
 /// The text a candidate's offsets convert against, indexed on first use (once for both citation
-/// slots) or already indexed by the stream. No text leaves the wire bytes.
+
 struct Anchor<'a> {
     text: Option<&'a str>,
     index: std::cell::OnceCell<GeminiCharIndex<'a>>,
@@ -387,11 +362,9 @@ fn read_citations_at(
         .and_then(|m| m.get(FIELD_CITATION_SOURCES))
         .and_then(|s| s.as_array());
     let Some(sources) = sources else {
-        // No `citationMetadata`, but a grounded answer carries its sources in the other slot: fall
-        // through to it (returning empty stripped every grounded answer's sources for foreign clients).
         return grounding_citations_at(candidate, anchor, None, None);
     };
-    // One pass over the anchor text for the whole candidate, not one per offset.
+
     let char_index = anchor.index();
     let mut out: Vec<crate::codec::ir::IrCitation> = sources
         .iter()
@@ -403,7 +376,7 @@ fn read_citations_at(
                     raw_start.map(|b| idx.char_offset(b)),
                     raw_end.map(|b| idx.char_offset(b)),
                 ),
-                // No anchor text: leave the raw wire value (bytes) rather than mislabel it as characters.
+
                 None => (raw_start, raw_end),
             };
             crate::codec::ir::IrCitation {
@@ -427,8 +400,7 @@ fn read_citations_at(
             }
         })
         .collect();
-    // A response can carry both slots (a grounded answer that also cites its own corpus): append, so
-    // neither set is dropped.
+
     out.extend(grounding_citations_at(candidate, anchor, None, None));
     out
 }
@@ -455,24 +427,7 @@ impl std::io::Write for ByteCount {
 }
 
 /// Map a candidate's `groundingMetadata` to neutral [`crate::codec::ir::IrCitation`]s. It is where a
-/// Google-Search-grounded answer puts its sources (`citationMetadata` is the older corpus slot and
-/// is absent on a grounded answer). Unread, a grounded answer reached a foreign client unattributed.
-/// Every protocol models a citation, so the sources have a place on all five foreign egresses.
-///
-/// `groundingChunks[]` are the sources (`{web: {uri, title}}`, or `{retrievedContext: {…}}` for a
-/// Vertex datastore); `groundingSupports[]` say which span each backs
-/// (`{segment: {startIndex, endIndex, text}, groundingChunkIndices: [i, …]}`). One citation is
-/// emitted per (support, chunk) pair so the span survives; with no supports at all (Google omits
-/// them on some replies) one per chunk is emitted without a span, since a source with no offsets is
-/// still provenance.
-///
-/// `raw` is `None` on purpose: a grounding chunk is not a `citationSources[]` entry, and parking it
-/// there would make `write_gemini_citation`'s raw short-circuit re-emit a grounding object in the
-/// citation slot on a foreign-to-Gemini hop. Same-protocol Gemini traffic is a verbatim passthrough
-/// that never reaches a writer.
-///
-/// Production reads arrive through [`read_gemini_citations`], which indexes the anchor text once for
-/// both slots; this entry reads the grounding slot alone, for tests.
+
 #[cfg(test)]
 pub(super) fn read_gemini_grounding_citations(
     candidate: &serde_json::Value,
@@ -500,19 +455,12 @@ fn grounding_citations_at(
         return Vec::new();
     }
 
-    // Serialized size of a chunk, counted without building the string, per (support, chunk) pair the
-    // budget below admits (so measuring is itself bounded).
     let chunk_bytes = |chunk: &serde_json::Value| -> usize {
         let mut n = ByteCount(0);
         let _ = serde_json::to_writer(&mut n, chunk);
         n.0
     };
 
-    // `{web: {uri, title}}` and `{retrievedContext: {uri, title}}` carry the same two fields; read
-    // whichever is present. A Vertex `web` chunk can also carry `domain` (undeclared by the pinned
-    // generativelanguage discovery document). `IrCitation` has no field for it (adding one touches
-    // every dialect's citation sites), so the original chunk is stashed in `raw` at each push site and
-    // `write_gemini_citation` re-derives `domain` from it.
     let chunk_source = |chunk: &serde_json::Value| -> (Option<String>, Option<String>) {
         let inner = chunk
             .get(keys::WEB)
@@ -531,9 +479,7 @@ fn grounding_citations_at(
                 .map(str::to_string),
         )
     };
-    // Grounding segments name a Part, with byte offsets inside that Part. The corpus citation
-    // slot above instead names offsets in the whole answer. Convert the two coordinate systems
-    // separately, including non-text/thought Parts in the wire's partIndex numbering.
+
     let parts = candidate
         .get(keys::CONTENT)
         .and_then(|c| c.get(FIELD_PARTS))
@@ -619,12 +565,11 @@ fn grounding_citations_at(
             else {
                 continue;
             };
-            // A chunk named twice by one support yields the same citation: clone it once.
+
             if !seen.insert(i) {
                 continue;
             }
-            // The clones (the chunk in `raw`, the cited text) are bounded per candidate, so a support
-            // listing many large chunks cannot multiply the body into memory.
+
             cloned_bytes = cloned_bytes
                 .saturating_add(chunk_bytes(chunk))
                 .saturating_add(cited_text.as_ref().map_or(0, String::len));
@@ -645,17 +590,13 @@ fn grounding_citations_at(
                 start_index: start,
                 end_index: end,
                 encrypted_index: None,
-                // Stash the original chunk (not only its inner object) so `write_gemini_citation` can
-                // re-derive `domain` (see `chunk_source`). This does not trigger its byte-exact
-                // short-circuit, which needs `uri`/`startIndex`/`endIndex` at the `raw` top level,
-                // which a `{web: ...}` / `{retrievedContext: ...}` chunk never has.
+
                 raw: Some(chunk.clone()),
                 ..Default::default()
             });
         }
     }
     if supports.is_empty() {
-        // Sources with no support spans are still provenance (each chunk cloned once, same budget).
         for chunk in chunks {
             cloned_bytes = cloned_bytes.saturating_add(chunk_bytes(chunk));
             if cloned_bytes > MAX_GROUNDING_CLONE_BYTES {
@@ -684,25 +625,11 @@ fn grounding_citations_at(
 }
 
 /// Attach a candidate's `citationMetadata.citationSources[]` to the right Text block(s) of `content`,
-/// with indices relative to that block's own text. Buffered path only (the stream reader converts
-/// against its streamed text).
-///
-/// Google's offsets are bytes into the candidate's full output text, the concatenation of every text
-/// part in order, not any single part. A candidate can split its output across several text parts
-/// (each its own `IrBlock::Text`). Anchoring on only the first Text block and attaching everything
-/// to it clamped any citation in a later part to the first part's length and attached it to the
-/// wrong block.
-///
-/// So this converts against the full concatenated text, finds the Text block whose cumulative
-/// character span contains the citation's start, and re-expresses `start_index`/`end_index` relative
-/// to it, matching the per-block contract of Anthropic's `char_location`
-/// ([`crate::codec::ir::IrCitation`]). A start past every block (an out-of-range upstream value)
-/// falls back to the last text block, mirroring `GeminiCharIndex::char_offset`'s clamp.
+
 pub(super) fn attach_gemini_citations_to_text_blocks(
     candidate: &serde_json::Value,
     content: &mut [crate::codec::ir::IrBlock],
 ) {
-    // Every Text block's content-array index and its own text, in candidate order.
     let text_positions: Vec<(usize, String)> = content
         .iter()
         .enumerate()
@@ -712,11 +639,9 @@ pub(super) fn attach_gemini_citations_to_text_blocks(
         })
         .collect();
     if text_positions.is_empty() {
-        return; // No text block to anchor against (e.g. a tool-only turn) — nothing to attach.
+        return;
     }
 
-    // The candidate's full text, the anchor for Google's byte offsets: every text part concatenated
-    // in order with no separator.
     let full_text: String = text_positions.iter().map(|(_, t)| t.as_str()).collect();
 
     let citations = read_gemini_citations(candidate, Some(&full_text));
@@ -724,8 +649,6 @@ pub(super) fn attach_gemini_citations_to_text_blocks(
         return;
     }
 
-    // Cumulative character start of each Text block within `full_text`, to map a candidate-relative
-    // index to (owning block, block-relative index).
     let mut block_char_ranges: Vec<(usize, i64, i64)> = Vec::with_capacity(text_positions.len());
     let mut cursor: i64 = 0;
     for (content_idx, text) in &text_positions {
@@ -739,11 +662,9 @@ pub(super) fn attach_gemini_citations_to_text_blocks(
         let owner = block_char_ranges
             .iter()
             .find(|&&(_, s, e)| start >= s && start < e)
-            // An out-of-range start (or one exactly at the end of the last block) falls back to the
-            // last text block rather than being dropped.
             .or_else(|| block_char_ranges.last());
         let Some(&(content_idx, block_start, _)) = owner else {
-            continue; // Unreachable (text_positions non-empty guarantees at least one range).
+            continue;
         };
         let mut relative = citation;
         relative.start_index = relative.start_index.map(|s| s - block_start);
@@ -770,15 +691,7 @@ pub(super) fn native_citation_source(
 }
 
 /// Map a neutral [`crate::codec::ir::IrCitation`] to a Gemini `citationSources[]` entry.
-///
-/// Same-protocol fidelity: a `raw` that is a Gemini source (has a `uri` or the index fields) is
-/// re-emitted verbatim, so Gemini to IR to Gemini is byte-exact (`raw` holds the original byte
-/// offsets, so no conversion runs). A foreign `raw` (e.g. an Anthropic citation object) or none is
-/// ignored and a source is built from neutral source metadata and the caller's resolved byte span.
-///
-/// `span` is an answer-text span already resolved against its block and converted to candidate-
-/// wide bytes. Document/page/block offsets alone never qualify. An absent span keeps source
-/// metadata without inventing answer coordinates; a wholly unrepresentable citation is audited.
+
 pub(super) fn write_gemini_citation(
     c: &crate::codec::ir::IrCitation,
     span: Option<(i64, i64)>,
@@ -804,12 +717,7 @@ pub(super) fn write_gemini_citation(
     if let Some(t) = &c.title {
         obj.insert(keys::TITLE.to_string(), serde_json::json!(t));
     }
-    // `domain` has no home in `citationSources[]` (only `groundingChunks[].web` carries one) and
-    // `IrCitation` has no field for it (see `chunk_source` in `read_gemini_grounding_citations`). A
-    // grounding-origin citation stashes the original `{web: ...}` / `{retrievedContext: ...}` chunk in
-    // `raw` (the short-circuit above does not fire on it: no top-level `uri`/`startIndex`/`endIndex`).
-    // Re-derive `domain` from it and re-emit as a sibling key so it survives the hop. Present only
-    // when the source carried one, so an ordinary citation stays byte-identical.
+
     if let Some(d) = c
         .raw
         .as_ref()
@@ -833,8 +741,7 @@ pub(super) fn write_gemini_citation(
 }
 
 /// A grounded candidate's `groundingMetadata.groundingChunks[].web` as the IR's hosted web-search
-/// record (DF-MAP item 2): each web chunk's `uri` and `title` as a result. `None` with no web chunk
-/// (a Vertex `retrievedContext` datastore chunk is not a web search).
+
 pub(super) fn read_grounding_record(
     candidate: &serde_json::Value,
 ) -> Option<crate::codec::ir::IrBlock> {

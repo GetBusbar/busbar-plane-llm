@@ -4,24 +4,7 @@ use super::*;
 use crate::codec::usage_count::{read_usage, CountRead, CountSlot, UsageCount};
 
 /// Gemini's usage counts, as data. `cachedContentTokenCount` is a slice inside `promptTokenCount`, so
-/// it is subtracted (saturating) there and carried as `cache_read_input_tokens`, as Bedrock's and
-/// Anthropic's cache reads are. `toolUsePromptTokenCount` is additive beside the prompt (see
-/// [`GEMINI_USAGE_ADDITIVE_TERMS`]: 32 tool-use tokens against an 18-token prompt) and counted at the
-/// input rate, so it is added to `input_tokens` and recorded as attribution. Thinking tokens are
-/// output: `candidatesTokenCount` counts only the visible answer and 2.5-series reasoning arrives in
-/// the additive `thoughtsTokenCount` (Google's `totalTokenCount` is prompt + candidates + thoughts),
-/// so it is added to `output_tokens` (what it means for every other provider) and recorded as the
-/// reasoning sub-bucket; the writer writes the whole output as `candidatesTokenCount`. Audio entries
-/// of the per-modality lists are attribution slices.
-///
-/// The ledger records what Google reports. Every count the pinned wire lock
-/// (`testing/llm-conformance/wire/gemini.wire.json`) declares under `usageMetadata` is itemized into
-/// an existing meter class: prompt to input, `cachedContentTokenCount` to cache read (out of the
-/// prompt), `toolUsePromptTokenCount` to input, candidates and `thoughtsTokenCount` to output.
-/// `totalTokenCount` is Google's sum, not a unit, and changes no itemized count; a total above the
-/// parts is the open class `unitemized_tokens`, which `gemini_usage_identity_note` WARNs naming. The
-/// plane decides units only; the rate card prices them. Streaming frames, the buffered response and
-/// truncated-body recovery read this one table, so all count alike.
+
 pub(super) const USAGE: &[UsageCount] = &[
     (
         CountSlot::Input,
@@ -76,9 +59,7 @@ pub(super) const USAGE: &[UsageCount] = &[
 ];
 
 /// A Gemini response (or stream frame) to IR usage: `usageMetadata` through [`USAGE`], plus what
-/// rides beside the counts: the identity cross-check against Google's `totalTokenCount` (`None` when
-/// they agree), `usageMetadata.trafficType` (informational, ON_DEMAND vs PROVISIONED) and the
-/// top-level `createTime` (a sibling of `usageMetadata`).
+
 pub(super) fn read_gemini_usage(
     data: &serde_json::Value,
 ) -> Result<crate::codec::ir::IrUsage, IrError> {
@@ -91,7 +72,7 @@ pub(super) fn read_gemini_usage(
         .map(str::to_string);
     usage.detail.create_time = read_gemini_create_time(data);
     usage.detail.by_modality = u.and_then(read_by_modality);
-    // The tier that served the turn.
+
     usage.detail.service_tier = u
         .and_then(|u| u.get(FIELD_SERVICE_TIER))
         .and_then(|v| v.as_str())
@@ -115,7 +96,7 @@ const MODALITY_IMAGE: &str = "IMAGE";
 const MODALITY_VIDEO: &str = "VIDEO";
 
 /// `usageMetadata.{prompt,candidates,cache}TokensDetails[]{modality,tokenCount}` -> the IR's
-/// by-modality split (presentation only, never billed). `None` when no list is present.
+
 fn read_by_modality(u: &serde_json::Value) -> Option<crate::codec::ir::IrUsageByModality> {
     if !MODALITY_LISTS.iter().any(|l| u.get(*l).is_some()) {
         return None;
@@ -166,13 +147,11 @@ pub(super) fn write_by_modality(
 }
 
 /// [`read_gemini_usage`] for a fixture the test already knows carries readable counts. Test-only:
-/// production goes through the refusing form, never through a read that could default a count.
+
 #[cfg(test)]
 pub(super) fn gemini_usage(data: &serde_json::Value) -> crate::codec::ir::IrUsage {
     read_gemini_usage(data).expect("test fixture carries readable usage counts")
 }
-
-// Usage counts.
 
 /// This dialect's label on a refused usage count.
 pub(super) const COUNT_LABEL: &str = "gemini";

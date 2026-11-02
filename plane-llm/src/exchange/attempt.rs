@@ -1,13 +1,4 @@
 //! One attempt's far-end request, sans I/O: the verb, target, head fields and body the plane answers
-//! an ATTEMPT piece with. The kernel joins the target onto the member's base URL, adds the credential
-//! fields (its one auth call) and sends it.
-//!
-//! The request assembly for one hop, in order: the stream intent read off the caller's body, the
-//! pristine short-circuit (a same-dialect body the far end would receive unchanged goes out as the
-//! caller's bytes), cross-dialect translation and per-far-end rewrites, the usage opt-in for a
-//! streamed request whose far end reports usage only when asked, the far end's path, and the head
-//! fields a native client of the far end sends. Credentials, timing, the breaker and the audit record
-//! of a dropped control are the kernel's; a dropped control returns to the caller of [`build`] to record.
 
 use std::borrow::Cow;
 
@@ -150,8 +141,7 @@ pub fn translate_reject(envelope: &'static str, reject: TranslateReqReject) -> A
 }
 
 /// Whether a caller's body is JSON, by the arrival's own rule: a path-model arrival always is (its
-/// model and stream were spliced into it), a body-model one when its content type says so or names
-/// none.
+
 fn relays_json(ingress: &str, content_type: &str) -> bool {
     decl(ingress).is_some_and(|d| d.has_model_in_url)
         || content_type.starts_with(APPLICATION_JSON)
@@ -159,7 +149,7 @@ fn relays_json(ingress: &str, content_type: &str) -> bool {
 }
 
 /// The members a far end at a `path_base` needs reshaped, read off its own writer: each member the
-/// reshape removes and each it sets (Claude-on-Vertex: no `model`, an `anthropic_version`).
+
 fn path_base_members(far: &ProtocolDecl) -> Vec<(String, Option<Vec<u8>>)> {
     let mut probe = serde_json::json!({ "model": "" });
     let reshaped = far
@@ -180,8 +170,7 @@ fn path_base_members(far: &ProtocolDecl) -> Vec<(String, Option<Vec<u8>>)> {
 }
 
 /// The common relay, proved without allocating: a body-model object that carries none of busbar's
-/// router keys and already names the lane's wire model (its last `model`, as a last-wins reader
-/// sees it). `false` means "splice and see"; a body that is not an object needs no splice.
+
 fn needs_no_splice(lane: FarShape<'_>, hop_bytes: &[u8]) -> bool {
     let wire = lane.wire_model.as_bytes();
     let plain = !wire.iter().any(|c| *c == b'"' || *c == b'\\' || *c < 0x20);
@@ -208,10 +197,7 @@ fn needs_no_splice(lane: FarShape<'_>, hop_bytes: &[u8]) -> bool {
 }
 
 /// The relay of one same-dialect body: the caller's bytes with the governed splices only, each a
-/// byte-level member edit (`busbar_contract::spans`), never a re-serialization (dialect fidelity).
-/// Governed members: busbar's router keys (never a far end's); for a path-model far end the `model`
-/// and `stream` the arrival spliced in (both ride the URL); for a body-model far end the mapped
-/// `model`, and a `path_base` far end's reshape. A non-object body goes out as sent.
+
 #[must_use]
 pub fn relay_request<'a>(
     lane: FarShape<'_>,
@@ -290,8 +276,7 @@ fn static_name(name: &str) -> &'static str {
 }
 
 /// THE TRANSLATION OF ONE HOP'S BODY for the far end `lane`: `body` is the caller's JSON (`None`
-/// for an opaque body; never read within one dialect, which relays `hop_bytes` with its governed
-/// splices, [`relay_request`]), `hop_bytes` the caller's bytes.
+
 #[allow(clippy::too_many_arguments)]
 #[must_use]
 pub fn translate_request<'a>(
@@ -465,7 +450,7 @@ fn translate_into<'a>(
 }
 
 /// The far end's path for `operation` on `lane`: the provider's fixed path, else the far end's
-/// dialect's own path for the wire model and the stream intent.
+
 #[must_use]
 pub fn upstream_path(lane: &Lane, operation: OpVerb, stream: bool) -> Option<String> {
     let rh = decl(lane.dialect).and_then(|d| d.handler)?;
@@ -504,7 +489,7 @@ pub fn uri_encode_path(path: &str) -> String {
 }
 
 /// The path as it goes on the wire and as a request signature canonicalises it: an unreserved path
-/// is both; any other is percent-encoded on the wire and encoded twice for the signature.
+
 #[must_use]
 pub fn wire_and_canonical_path(url_path: &str) -> (String, String) {
     let (path, query) = match url_path.split_once('?') {
@@ -528,12 +513,7 @@ pub fn wire_and_canonical_path(url_path: &str) -> (String, String) {
 }
 
 /// Whether busbar governs the request header `name` (case-insensitive) for any dialect. The union,
-/// not the arrival dialect's row: busbar reads its caller's credential from any of these carriers
-/// whatever the dialect, so a name another dialect declares a credential is never handed a far end.
-/// Plus every credential carrier the contract governs
-/// ([`NEVER_KEPT`](busbar_contract::abi::host::conn::connector::NEVER_KEPT): `cookie`,
-/// `proxy-authorization`, ...), which no dialect declares but which carries the caller's secret
-/// (CREDENTIAL-LOCKDOWN H8; THREAT_MODEL T3).
+
 #[must_use]
 pub fn governed(name: &str) -> bool {
     DIALECTS
@@ -544,7 +524,7 @@ pub fn governed(name: &str) -> bool {
 }
 
 /// Whether busbar governs the request query parameter `name` for a caller of `dialect` (its
-/// credential parameters, declared as data in the dialect table).
+
 #[must_use]
 pub fn governed_query(dialect: &str, name: &str) -> bool {
     crate::dialect::dialect(dialect).is_some_and(|d| d.governed_query.contains(&name))
@@ -554,14 +534,9 @@ pub fn governed_query(dialect: &str, name: &str) -> bool {
 const SIGNED_SCHEME: &str = "request-signature";
 
 /// The far end's target with the caller's own query on a same-dialect attempt (busbar is invisible to
-/// upstreams): each caller parameter in the caller's order and spelling, except those the dialect
-/// governs ([`governed_query`]) and those the target already sets (busbar's stream framing). `None`
-/// when nothing is added.
+
 #[must_use]
 pub fn with_caller_query(dialect: &str, target: &str, caller_query: &str) -> Option<String> {
-    // A far end that checks a request signature reads the query into it. Until the signer signs
-    // the canonical query (the auth plugin and the kernel's interim copy land it together, with one
-    // shared vector), a signed dialect's attempt carries none rather than one its signature omits.
     if crate::dialect::dialect(dialect).is_some_and(|d| d.egress_scheme == SIGNED_SCHEME) {
         return None;
     }
@@ -586,8 +561,7 @@ pub fn with_caller_query(dialect: &str, target: &str, caller_query: &str) -> Opt
 }
 
 /// The provider's static head-field options for `lane` ([`crate::options`]) as `(name, value)`, split
-/// by precedence: the operator's defaults (a same-dialect caller's own value of the name replaces
-/// them) and the forced ones (sent whatever the caller sent; the dialect governs them).
+
 #[must_use]
 pub fn option_fields(lane: &Lane) -> (Vec<HeadField>, Vec<HeadField>) {
     let (forced, defaults): (Vec<_>, Vec<_>) = lane
@@ -604,8 +578,7 @@ pub fn option_fields(lane: &Lane) -> (Vec<HeadField>, Vec<HeadField>) {
 }
 
 /// Native static fields and option defaults, followed by the separately returned forced options.
-/// Organic requests overlay caller values before appending the forced fields; probes have no
-/// caller overlay. Both use the same provider version/tenant settings and field order.
+
 pub(crate) fn default_head_fields(
     lane: &Lane,
     standard: [HeadField; 3],
@@ -632,9 +605,7 @@ pub(crate) fn default_head_fields(
 }
 
 /// The target with the provider's static query options for `lane` ([`crate::options`]): a default is
-/// added unless the target already has the name (a same-dialect caller's value, or busbar's stream
-/// framing); a forced one replaces any value the target carries. A far end that checks a request
-/// signature takes none, as it takes no caller query ([`with_caller_query`]).
+
 #[must_use]
 pub fn with_option_query(lane: &Lane, target: &str) -> String {
     let opts: Vec<&SetOption> = lane
@@ -689,18 +660,11 @@ fn legal_field_value(v: &[u8]) -> bool {
 }
 
 /// The `accept` field: busbar's own answer framing (the operation's single answer or its dialect's
-/// stream framing), written on every far request and never replaced by a same-dialect caller's value
-/// (the oracle's same-dialect cells carry busbar's `application/json`, not the caller's `*/*`).
+
 const ACCEPT: &str = "accept";
 
 /// The head fields a native client of `lane`'s dialect sends, then, when the caller speaks that
-/// dialect, every field the caller sent except those busbar governs ([`governed`]): busbar is
-/// invisible to upstreams. The caller's value of a name replaces busbar's native default; per-connection
-/// mechanics are the kernel's to drop as it writes the head. A translated route forwards no caller
-/// field (none maps between dialects).
-///
-/// `user-agent`: a translated route writes the far dialect's declared `egress_user_agent`; a
-/// same-dialect route carries the caller's own, or the far dialect's declared fingerprint if none.
+
 fn head_fields(
     lane: &Lane,
     handler: &dyn OperationHandler,
@@ -738,21 +702,15 @@ fn head_fields(
             .to_vec(),
     );
     let content_type = ("content-type".to_string(), content_type.into_bytes());
-    // The provider's static options: its defaults, which a same-dialect caller's own value
-    // replaces below, and its forced ones (tenant and billing selectors), which go out last on
-    // every route, the caller's being governed.
-    // A native client's user-agent, never a UA-less request; a same-dialect
-    // caller's own replaces it below.
+
     let user_agent = ("user-agent".to_string(), user_agent.as_bytes().to_vec());
-    // The dialect's declared static fields first; a same-dialect caller's own value replaces one below.
-    // An operator's default of a static field's name (`anthropic-version`) replaces the declared
-    // value in place.
+
     let (mut fields, forced) = default_head_fields(lane, [content_type, user_agent, accept]);
     if arrived.dialect != egress {
         fields.extend(forced);
         return Ok(fields);
     }
-    // The caller's fields, in the order the caller sent them; a repeated name keeps every value.
+
     let forwarded: Vec<(String, Vec<u8>)> = caller
         .iter()
         .filter_map(|(name, value)| {
@@ -766,9 +724,7 @@ fn head_fields(
 }
 
 /// The caller's forwarded fields laid over busbar's own as an `http::HeaderMap` lays them (one
-/// position per name, where first inserted): a name busbar already writes keeps its position and takes
-/// the caller's values; a new name is appended in the caller's order; all values of a repeated name
-/// stay together at its position.
+
 fn forward_over(
     own: Vec<(String, Vec<u8>)>,
     forwarded: Vec<(String, Vec<u8>)>,
@@ -801,10 +757,7 @@ fn forward_over(
 }
 
 /// Build one attempt's far-end request for `member` of `pool`.
-///
-/// # Errors
-///
-/// The caller's refusal when the request cannot be written for this far end.
+
 pub fn build(
     host: &dyn busbar_contract::codec::CodecHost,
     arrived: &Arrived,
@@ -866,7 +819,7 @@ pub fn build(
         body_is_json,
         intent.wants_stream,
     )?;
-    // THE INVOKE ENVELOPE around the carried dialect's request ([`super::invoke`]).
+
     let (fields, body, pristine) = if lane.invoke {
         let (fields, beta) = super::invoke::fields(fields, intent.wants_stream);
         let body = super::invoke::body(&body, &beta).ok_or_else(|| internal(ingress))?;
@@ -889,7 +842,7 @@ pub const DETAIL_STREAM_OPTIONS_NOT_OBJECT: &str =
     "Invalid type for 'stream_options': expected an object.";
 
 /// A streamed request to a far end that reports usage only when asked is asked, unless the caller
-/// asked already: the governed METERING edit (`stream_options.include_usage`), a byte splice.
+
 fn inject_stream_usage(
     ingress: &'static str,
     lane: &Lane,
@@ -920,13 +873,7 @@ const STREAM_OPTIONS: &str = "stream_options";
 const INCLUDE_USAGE: &str = "include_usage";
 
 /// Ask a streamed request for its usage: `stream_options.include_usage = true`, the object made when
-/// absent or null. A byte-level splice (every other byte stays): the member is set where it stands, or
-/// inserted after the opening brace. `Err` returns the payload verbatim when `stream_options` is not
-/// an object (the caller refuses rather than bill it blind); a non-object payload goes out unchanged.
-///
-/// # Errors
-///
-/// The payload, verbatim, when its `stream_options` is not an object.
+
 pub fn try_inject_stream_include_usage(payload: Vec<u8>) -> Result<Vec<u8>, Vec<u8>> {
     let Some(top) = spans::members(&payload, 0) else {
         return Ok(payload);

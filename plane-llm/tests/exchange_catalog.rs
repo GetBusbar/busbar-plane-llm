@@ -2,10 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE LIST-MODELS CATALOG: `GET /v1/models` and
-//! `GET /v1beta/models` are the plane's CATALOG claims, answered with no unit, and the plane renders
-//! the kernel's names in the envelope of the dialect the request names, byte for byte as the
-//! previous release answered (the oracle's `neutrality|models-empty|surface` cell holds the same
-//! bytes on the served binary).
 
 use busbar_contract::abi::plane::{CLAIM_CATALOG, CLAIM_EXACT};
 use busbar_plane_llm::exchange::catalog::{render_listing, BETA_PATH, PATH};
@@ -30,9 +26,7 @@ fn body(path: &str, pairs: &[(&str, &str)]) -> String {
 }
 
 /// THE 1.5.5 BYTES, PER DIALECT, FOR AN EMPTY LIST: a request naming no dialect is answered in the
-/// residual default's envelope; the anthropic fingerprint header and the gemini key header steer
-/// the envelope on `/v1/models`; the `/v1beta` path names the gemini envelope. RED arm: a renderer
-/// that ignored the fingerprint, or the path, answers the wrong envelope's bytes.
+
 #[test]
 fn an_empty_listing_is_the_previous_releases_bytes_in_each_dialect() {
     let openai = r#"{"data":[],"object":"list"}"#;
@@ -45,7 +39,7 @@ fn an_empty_listing_is_the_previous_releases_bytes_in_each_dialect() {
     );
     assert_eq!(body(PATH, &[("x-goog-api-key", "k")]), gemini);
     assert_eq!(body(BETA_PATH, &[]), gemini);
-    // An incidental header steers nothing.
+
     assert_eq!(body(PATH, &[("x-unrelated", "1")]), openai);
 }
 
@@ -65,8 +59,7 @@ fn the_names_are_rendered_in_the_order_the_kernel_hands_them() {
 }
 
 /// THE CATALOG ROUTES ARE CLAIMED: `GET` on each listing path, exact, flagged `CLAIM_CATALOG` so
-/// the kernel answers it with no unit. RED arm: without the flag the kernel would mint a unit and
-/// audit a listing the previous release never audited.
+
 #[test]
 fn the_listing_paths_are_exact_catalog_claims_on_get() {
     let all = claims();

@@ -3,8 +3,6 @@
 
 //! Tests for `crates/busbar/src/handlers/cohere.rs`.
 
-//! The seventh operation, round-tripped through the IR: cohere <-> bedrock are the two rerank
-//! wires, and their result shapes are identical, so translation must be exact both ways.
 use super::super::super::bedrock::handler::BedrockRequestHandler;
 use super::*;
 use serde_json::Value;
@@ -20,7 +18,7 @@ fn cohere_wire() -> Vec<u8> {
 }
 
 /// cohere ingress -> bedrock egress: query/documents/top_n cross; api_version added; the
-/// {text} object form normalizes to a bare string.
+
 #[test]
 fn cohere_request_reaches_bedrock() {
     let rh = CohereRequestHandler;
@@ -62,7 +60,6 @@ fn bedrock_request_and_response_round_trip() {
     assert_eq!(v["query"], "q");
     assert_eq!(v["documents"], json!(["a", "b"]));
 
-    // Response: cohere wire -> IR -> bedrock wire preserves index + relevance_score exactly.
     let resp = serde_json::to_vec(&json!({
         "id": "r1",
         "results": [
@@ -171,8 +168,6 @@ fn embeddings_read_response_reads_base64_vectors() {
 
 #[test]
 fn embeddings_response_roundtrips_int8_not_dropped() {
-    // int8/uint8/binary/ubinary arrive as integer arrays and must NOT be dropped on the
-    // response leg (they used to yield count=0 -> empty embeddings).
     let body = serde_json::to_vec(&json!({
         "id": "x",
         "embeddings": {"int8": [[1, 2, 3], [4, 5, 6]]}
@@ -186,7 +181,7 @@ fn embeddings_response_roundtrips_int8_not_dropped() {
         r.embeddings[0].vectors.get(&EncFmt::Int8),
         Some(VectorData::Int(_))
     ));
-    // write_response re-emits the int8 key, not an empty float array.
+
     let out = super::super::super::leaf_codec::embeddings_write_response("cohere", &ir);
     let v: Value = serde_json::from_slice(&out.bytes).unwrap();
     assert!(v["embeddings"]["int8"].is_array(), "int8 key emitted: {v}");
@@ -228,7 +223,7 @@ fn embeddings_write_response_emits_base64_key_not_swallowed_by_empty_float() {
     let out = super::super::super::leaf_codec::embeddings_write_response("cohere", &ir);
     let v: Value = serde_json::from_slice(&out.bytes).unwrap();
     assert_eq!(v["embeddings"]["base64"], json!(["AAAA"]));
-    // A base64-only response must NOT emit an empty `float` array that swallows it.
+
     assert!(v["embeddings"].get("float").is_none());
 }
 
@@ -250,7 +245,7 @@ fn embeddings_write_response_emits_float_key() {
     assert!(v["embeddings"].get("float").is_some());
     let row = v["embeddings"]["float"][0].as_array().expect("float row");
     assert_eq!(row.len(), 2);
-    // f32 round-trip: compare with tolerance rather than exact f64 literals.
+
     assert!((row[0].as_f64().unwrap() - 0.1).abs() < 1e-6);
     assert!((row[1].as_f64().unwrap() - 0.2).abs() < 1e-6);
 }
@@ -287,8 +282,6 @@ fn embeddings_read_request_rejects_missing_texts() {
 
 #[test]
 fn embeddings_read_request_maps_all_encoding_types_not_just_base64() {
-    // Every Cohere embedding_type must map to its IR variant, not collapse to Float. int8/
-    // uint8/binary/ubinary were silently downgraded before (only base64 was handled).
     for (wire, want) in [
         ("float", EncFmt::Float),
         ("base64", EncFmt::Base64),
@@ -314,8 +307,6 @@ fn embeddings_read_request_maps_all_encoding_types_not_just_base64() {
 
 #[test]
 fn embeddings_write_request_carries_output_dimension_and_truncate() {
-    // Cohere was the lone embeddings writer dropping these; they must reach the wire so a
-    // Matryoshka (output_dimension) or explicit truncate request is honored.
     use crate::codec::ir::embeddings::{EmbeddingsReq, EncFmt};
     let ir = EmbeddingsReq {
         model: "embed-v4.0".into(),
@@ -333,7 +324,7 @@ fn embeddings_write_request_carries_output_dimension_and_truncate() {
 }
 
 /// A client top_n larger than u32::MAX must DROP to None (omitted), never silently wrap to a
-/// bogus small value — the checked-narrowing contract for all client-supplied counts.
+
 #[test]
 fn oversized_top_n_drops_to_none_not_wrapped() {
     let body = serde_json::to_vec(&json!({
@@ -351,10 +342,9 @@ fn oversized_top_n_drops_to_none_not_wrapped() {
 }
 
 /// Protocols without a rerank surface have NO handler: the universal no-handler 404 covers
-/// ingress and egress alike (the deletion-switch symmetry).
+
 #[test]
 fn no_rerank_handler_on_the_other_four() {
-    // Each dialect's cell, read off this plane's own declaration.
     for proto in ["openai", "anthropic", "gemini", "responses"] {
         let rh = crate::codec::decl_of(proto)
             .and_then(|d| d.handler)
@@ -366,12 +356,8 @@ fn no_rerank_handler_on_the_other_four() {
     }
 }
 
-// carryable-flatten #12: cohere rerank dropped `return_documents` (request) and `results[].document`
-// (response echo). Both are Cohere-native and the shared reader means Bedrock too. Carry them via new
-// IR fields. Fails pre-fix: the writer never emitted return_documents, and the document echo was lost.
 #[test]
 fn cohere_rerank_return_documents_round_trips_the_document() {
-    // Request: return_documents:true must survive read -> IR -> write.
     let req = serde_json::to_vec(&json!({
         "model": "rerank-v3.5",
         "query": "q",
@@ -390,7 +376,6 @@ fn cohere_rerank_return_documents_round_trips_the_document() {
         "return_documents must be emitted: {v}"
     );
 
-    // Response: results[].document.{text} must survive read -> IR -> write.
     let resp = serde_json::to_vec(&json!({
         "id": "r1",
         "results": [
@@ -410,9 +395,7 @@ fn cohere_rerank_return_documents_round_trips_the_document() {
 }
 
 /// MONEY BUG regression: Cohere *specs* `meta.billed_units.search_units` as a JSON number, but the
-/// wire carries it as a FLOAT (`3.0`), not a bare integer. `Value::as_u64()` returns `None` for a
-/// float-backed number even when it is exactly `3.0`, so the rerank search-unit charge was silently
-/// dropped to `None` (not even a billed `0` — the field vanished) instead of the real count.
+
 #[test]
 fn read_rerank_response_search_units_survives_as_float_on_the_wire() {
     let resp = serde_json::to_vec(&json!({
@@ -430,8 +413,7 @@ fn read_rerank_response_search_units_survives_as_float_on_the_wire() {
 }
 
 /// MONEY BUG regression: same float-encoded-count defect as `search_units` above, but on
-/// `meta.billed_units.input_tokens` in an embeddings response — the count busbar bills the caller
-/// for.
+
 #[test]
 fn read_embeddings_response_usage_survives_as_float_on_the_wire() {
     let resp = serde_json::to_vec(&json!({

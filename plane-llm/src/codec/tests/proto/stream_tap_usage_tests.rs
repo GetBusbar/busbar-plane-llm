@@ -2,21 +2,13 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The same-proto `StreamTranslate` A-tap unit checks RELOCATED HERE from `busbar-core`'s
-//! `test_support/tests/tests.rs::test_stream_inspection_tap_usage_parsing`. They drive the
-//! witnessed `StreamTranslate` directly — usage extraction and the
-//! terminal-error abnormal-end signal — which names codec vocabulary a neutral crate's tests must
-//! not, so they live beside the codec. The core-subject half (that `forward()` delivers a
-//! byte-identical stream) stays in `busbar-core`. Byte-identical assertions.
 
 use super::*;
 
 /// Tests that the same-proto `StreamTranslate`:
-/// (a) extracts billed usage from message_start/message_delta events (`translate.usage()`)
-/// (b) sets `terminal_error()` on a genuine SSE error frame (the breaker abnormal-end signal)
+
 #[test]
 fn test_stream_inspection_tap_usage_parsing() {
-    // Test 1: the A-tap extracts usage from Anthropic-style events (input on message_start, output
-    // on message_delta — the start-usage backfill the A-tap reads AFTER).
     let mut t = StreamTranslate::new_same_proto("anthropic").expect("same-proto translator");
     let _ = t.feed(crate::codec::test_host::HOST, b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"role\":\"assistant\",\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}\n\n");
     let _ = t.feed(crate::codec::test_host::HOST, b"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n\n");
@@ -28,14 +20,12 @@ fn test_stream_inspection_tap_usage_parsing() {
     let u = t.usage().expect("A-tap captured usage");
     assert_eq!(u.input_tokens, 10, "input_tokens should be 10");
     assert_eq!(u.output_tokens, 5, "output_tokens should be 5");
-    // A clean stream (no error frame) must leave terminal_error None — the signal the stream-end
-    // arm uses to distinguish a clean close from an aborted one.
+
     assert!(
         t.terminal_error().is_none(),
         "a clean stream (no error frame) must leave terminal_error None"
     );
 
-    // Test 2: a genuine SSE error frame DOES set terminal_error (the abnormal-end signal).
     let mut err_t = StreamTranslate::new_same_proto("anthropic").expect("translator");
     let _ = err_t.feed(crate::codec::test_host::HOST, b"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"boom\"}}\n\n");
     assert!(
@@ -45,18 +35,13 @@ fn test_stream_inspection_tap_usage_parsing() {
 }
 
 /// A bare CR is one of the three line terminators the event-stream grammar names, and the frame
-/// scanner already frames such a stream correctly. The Anthropic same-protocol fast path decides
-/// whether a frame is worth parsing from the borrowed `event:`-name probe; while that probe split on
-/// LF alone it returned the whole frame body as the name, which matches none of the usage-bearing
-/// event names, so every `message_start`/`message_delta` of a bare-CR stream was skipped and the
-/// request billed ZERO tokens. Drive the real translator on a bare-CR framing and require usage.
+
 #[test]
 fn same_proto_anthropic_bare_cr_frames_still_tap_usage() {
     let mut t = StreamTranslate::new_same_proto("anthropic").expect("same-proto translator");
     let _ = t.feed(crate::codec::test_host::HOST, b"event: message_start\rdata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"role\":\"assistant\",\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}\r\r");
     let _ = t.feed(crate::codec::test_host::HOST, b"event: message_delta\rdata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\r\r");
-    // A lone trailing CR is not yet knowable (the LF that would pair it may still be in flight), so
-    // the stream closes on a terminator the scanner can complete — exactly as a real one does.
+
     let _ = t.feed(
         crate::codec::test_host::HOST,
         b"event: message_stop\rdata: {\"type\":\"message_stop\"}\r\n\r\n",
@@ -70,10 +55,7 @@ fn same_proto_anthropic_bare_cr_frames_still_tap_usage() {
 }
 
 /// The same-protocol A-tap must carry the usage DETAIL sub-buckets, not just the four totals. The
-/// trailing `include_usage` chunk of an OpenAI stream carries the identical `usage` object the
-/// buffered response does, and the reader decodes every sub-bucket off it; the A-tap that feeds
-/// billing and the client-visible usage object must not drop them, or the same request reports its
-/// attribution at `stream:false` and a hard absent at `stream:true`.
+
 #[test]
 fn same_proto_tap_carries_usage_detail_sub_buckets() {
     let mut t = StreamTranslate::new_same_proto("openai").expect("same-proto translator");
@@ -119,9 +101,7 @@ fn same_proto_tap_carries_usage_detail_sub_buckets() {
 }
 
 /// Cohere reports usage TWICE — a raw `tokens` bucket and a separately-metered `billed_units`
-/// bucket. A same-protocol Cohere STREAM reports them only on the terminal `message-end` usage; the
-/// A-tap carries the billed bucket as attribution and ledgers the raw counts, as 1.5.5 did and as
-/// its buffered twin does.
+
 #[test]
 fn same_proto_tap_carries_cohere_billed_units() {
     let mut t = StreamTranslate::new_same_proto("cohere").expect("same-proto translator");
@@ -157,7 +137,7 @@ fn same_proto_tap_carries_cohere_billed_units() {
         Some(3),
         "streamed Cohere must carry billed_units.classifications"
     );
-    // The raw counts are the ledgered ones, as 1.5.5 billed them, and as its buffered twin does.
+
     let ledgered = u.to_token_usage();
     assert_eq!(
         (ledgered.input, ledgered.output),
@@ -167,10 +147,7 @@ fn same_proto_tap_carries_cohere_billed_units() {
 }
 
 /// A stream that ends before its terminal `message_delta` (the far end cut it, or the caller left)
-/// still bills what the far end REPORTED so far (#62). Anthropic reports the prompt's input tokens
-/// on `message_start` alone; the billing source `usage()` must carry them as soon as they arrive,
-/// on the same-protocol tap and the cross-protocol translator alike, not only once a terminal delta
-/// backfills them. Without it a 100k-token prompt whose stream is abandoned mid-answer bills zero.
+
 #[test]
 fn anthropic_stream_start_usage_bills_before_the_terminal_delta() {
     let start = b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"usage\":{\"input_tokens\":100000,\"cache_read_input_tokens\":7,\"output_tokens\":1}}}\n\n";
@@ -199,8 +176,6 @@ fn anthropic_stream_start_usage_bills_before_the_terminal_delta() {
     assert_eq!(u.output_tokens, 1);
     assert_eq!(u.cache_read_input_tokens, Some(7));
 
-    // The terminal delta, when it does arrive, still wins with its cumulative output count and the
-    // start's input count is kept (the same totals the completed stream billed before).
     let _ = cross.feed(crate::codec::test_host::HOST, b"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":42}}\n\n");
     let u = cross.usage().expect("usage after the terminal delta");
     assert_eq!(u.input_tokens, 100000);

@@ -2,58 +2,18 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Cross-protocol TRANSLATE-PATH byte-parity goldens for the OTHER high-traffic dialect pairs.
-//!
-//! `translate_parity_golden_tests.rs` pins the single anthropic⇄openai pair. This file extends that
-//! corpus to the remaining pairs across all six dialects (anthropic `a`, openai chat `o`, gemini `g`,
-//! responses `r`, bedrock `b`, cohere `c`), so every important ingress→egress translation among them
-//! has a frozen, reviewable "correct bytes" reference. It replays the SAME production step list the
-//! sibling file documents and generates its goldens the SAME way (`BUSBAR_BLESS_GOLDEN=1`), so this
-//! is a pure extension of that fidelity wall, not a new mechanism.
-//!
-//! Pairs covered here (client `x`, backend `y` → `req_xy` request goldens, `resp_yx` response
-//! goldens), chosen so each dialect appears as BOTH a request reader/writer AND a response
-//! reader/writer at least once across this file and its sibling. The four high-traffic dialects:
-//!
-//!   * {anthropic, gemini}   client anthropic  → `req_a2g`, `resp_g2a`
-//!   * {openai, gemini}      client openai     → `req_o2g`, `resp_g2o`
-//!   * {openai, responses}   client openai     → `req_o2r`, `resp_r2o`
-//!   * {responses, anthropic} client responses → `req_r2a`, `resp_a2r`
-//!   * {gemini, responses}   client gemini     → `req_g2r`, `resp_r2g`
-//!
-//! The bedrock/cohere tier, each paired with anthropic AND openai in both directions (bedrock and
-//! cohere are the only remaining ingresses/egresses; the matrix in `docs/protocols.md` marks every
-//! chat cell "translated", so no pair here is intentionally lossy — field-level drops like Cohere
-//! `documents` or a Bedrock guardrail `trace` are captured as-emitted), plus the meaningful `b`⇄`c`
-//! cross:
-//!
-//!   * bedrock ingress  → `req_b2a`, `req_b2o`, `req_b2c`   bedrock egress  → `req_a2b`, `req_o2b`, `req_c2b`
-//!   * cohere  ingress  → `req_c2a`, `req_c2o`, `req_c2b`   cohere  egress  → `req_a2c`, `req_o2c`, `req_b2c`
-//!   * bedrock backend  → `resp_b2a`, `resp_b2o`, `resp_b2c`   bedrock client → `resp_a2b`, `resp_o2b`, `resp_c2b`
-//!   * cohere  backend  → `resp_c2a`, `resp_c2o`, `resp_c2b`   cohere  client → `resp_a2c`, `resp_o2c`, `resp_b2c`
-//!
-//! REQUEST goldens are FULLY DETERMINISTIC — the request writers mint no random ids — so they are
-//! compared byte-exact with no normalization. RESPONSE goldens carry the ingress writer's synthesized
-//! id(s) (the ONLY nondeterministic bytes), which are shape-asserted and then NORMALIZED to a fixed
-//! token before comparison, exactly as the sibling file normalizes the anthropic `msg_...` id. Each
-//! ingress writer mints its own native id shape (anthropic `msg_01…`, openai `chatcmpl-…`, responses
-//! `resp_…` plus per-item `msg_/fc_/rs_`, gemini an unprefixed `responseId`, cohere a bare
-//! RFC-4122 UUIDv4); the bedrock response writer mints none in the JSON body, so it is a no-op.
-//!
-//! Regenerating goldens (ONLY for an intentional wire-shape change):
-//!   `BUSBAR_BLESS_GOLDEN=1 cargo test -p busbar-core translate_parity_cross_pairs` then commit the
-//!   diff.
 
 use super::translate_parity_golden_tests::check_golden;
 use serde_json::{json, Value};
 
 /// The lane wire model stamped on the egress request (mirrors `rewrite_model_if_needed`); shared with
-/// the sibling file's convention. Deterministic, which is all the byte-golden needs.
+
 const LANE_MODEL: &str = "gpt-4o-mini";
 /// Fixed epoch handed to `prepare_for_ingress` for the synthesized `created` boundary signal.
 const FIXED_NOW: u64 = 1_752_000_000;
 
 /// The production REQUEST translate steps for an arbitrary `ingress`→`egress` lane, byte-for-byte.
-/// Mirrors `translate_request_a2o` in the sibling file exactly, parameterized on the two protocols.
+
 fn translate_request(ingress: &'static str, egress: &str, body: &str) -> Vec<u8> {
     let ingress_p = crate::codec::proto_codec::protocol_for(ingress).expect("ingress protocol");
     let egress_p = crate::codec::proto_codec::protocol_for(egress).expect("egress protocol");
@@ -85,7 +45,7 @@ fn translate_request(ingress: &'static str, egress: &str, body: &str) -> Vec<u8>
 }
 
 /// Shape-assert an ingress-synthesized id at `obj[key]` (`<prefix><base62 tail>`) and normalize it to
-/// a fixed token, so everything else is compared byte-exact. No-op when the key is absent.
+
 fn normalize_id(obj: &mut serde_json::Map<String, Value>, key: &str, prefix: &str) {
     if let Some(id) = obj.get(key).and_then(Value::as_str).map(str::to_owned) {
         assert!(
@@ -101,12 +61,7 @@ fn normalize_id(obj: &mut serde_json::Map<String, Value>, key: &str, prefix: &st
 }
 
 /// Normalize the Cohere response writer's synthesized `id`. Unlike the other ingress writers'
-/// `<prefix><base62>` tokens, the Cohere writer mints a bare RFC-4122 UUIDv4 (`synthesize_cohere_id`
-/// in `busbar-llm/src/cohere/mod.rs`): an 8-4-4-4-12 lowercase-hex string with the version nibble
-/// forced to `4` and the variant nibble in `{8,9,a,b}`. The generic `normalize_id` cannot express
-/// that shape (its tail must be pure alphanumeric, but a UUID carries hyphens), so this dialect gets
-/// its own shape assertion, then the id is replaced with a fixed all-zero v4 so everything else
-/// stays byte-comparable.
+
 fn normalize_cohere_id(obj: &mut serde_json::Map<String, Value>) {
     if let Some(id) = obj.get("id").and_then(Value::as_str).map(str::to_owned) {
         let b = id.as_bytes();
@@ -132,8 +87,7 @@ fn normalize_cohere_id(obj: &mut serde_json::Map<String, Value>) {
 }
 
 /// Normalize whatever id(s) the given `ingress` response writer synthesizes. The sibling file's
-/// anthropic case is `msg_01<24 base62>`; the others are their own native shapes. Bedrock mints none,
-/// so it is a deliberate no-op; gemini mints only an unprefixed `responseId` token.
+
 fn normalize_ingress_ids(ingress: &str, out: &mut Value) {
     let Some(obj) = out.as_object_mut() else {
         return;
@@ -141,17 +95,13 @@ fn normalize_ingress_ids(ingress: &str, out: &mut Value) {
     match ingress {
         "anthropic" => normalize_id(obj, "id", "msg_01"),
         "openai" => normalize_id(obj, "id", "chatcmpl-"),
-        // Cohere mints a bare UUIDv4 (no prefix, embedded hyphens) — its own normalizer, not the
-        // generic `<prefix><base62>` one.
+
         "cohere" => normalize_cohere_id(obj),
-        // Gemini synthesizes a top-level `responseId` (an unprefixed base62 token) on a
-        // cross-protocol egress; no other field is nondeterministic.
+
         "gemini" => normalize_id(obj, "responseId", ""),
         "responses" => {
             normalize_id(obj, "id", "resp_");
-            // Every `output[]` item carries a synthesized item-level `id` (`msg_`/`fc_`/`rs_`) that
-            // the IR has no carrier for — distinct from a passed-through `call_id`, which is NOT
-            // touched. Normalize each so a tool-call or reasoning item stays byte-comparable.
+
             if let Some(items) = obj.get_mut("output").and_then(Value::as_array_mut) {
                 for item in items {
                     let Some(item_obj) = item.as_object_mut() else {
@@ -181,13 +131,13 @@ fn normalize_ingress_ids(ingress: &str, out: &mut Value) {
                 }
             }
         }
-        // bedrock synthesizes no id in the JSON body — nothing to normalize.
+
         _ => {}
     }
 }
 
 /// The production RESPONSE translate steps for an arbitrary `egress`→`ingress` lane, byte-for-byte,
-/// with the ingress writer's synthesized id(s) normalized. Mirrors `translate_response_o2a`.
+
 fn translate_response(egress: &str, ingress: &'static str, body: &str) -> Vec<u8> {
     let egress_p = crate::codec::proto_codec::protocol_for(egress).expect("egress protocol");
     let ingress_p = crate::codec::proto_codec::protocol_for(ingress).expect("ingress protocol");
@@ -206,13 +156,6 @@ fn translate_response(egress: &str, ingress: &'static str, body: &str) -> Vec<u8
     normalize_ingress_ids(ingress, &mut out);
     crate::codec::json::to_vec(&out).expect("serializes")
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// INPUT CORPORA — hand-written bodies in the SOURCE dialect (the ingress dialect for a request, the
-// egress/backend dialect for a response). Only the INPUTS are hand-written; every expected OUTPUT
-// under tests/golden/ is blessed from the real translate path above. Bodies are adapted from the
-// vetted fixtures in `roundtrip_fidelity_tests.rs` so each is known to parse.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// OpenAI Chat REQUEST bodies (client=openai): plain, sampling+system+tools+strict, attachments.
 const OPENAI_REQUEST_CORPUS: &[(&str, &str)] = &[
@@ -308,10 +251,7 @@ const RESPONSES_RESPONSE_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// Bedrock Converse REQUEST bodies (client=bedrock): plain, system+inferenceConfig+toolConfig,
-/// image/document/video attachments. Adapted from `roundtrip_bedrock_request` /
-/// `bedrock_document_is_modelled_without_double_emitting`. Bedrock is a path-model protocol, so the
-/// body carries no `model`/`stream` (those ride the URL) — the reader takes `messages`/`system`/
-/// `inferenceConfig`/`toolConfig` only.
+
 const BEDROCK_REQUEST_CORPUS: &[(&str, &str)] = &[
     (
         "plain",
@@ -328,9 +268,7 @@ const BEDROCK_REQUEST_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// Cohere v2 chat REQUEST bodies (client=cohere): plain, sampling+system+tools+tool_choice,
-/// tool-result document. Cohere is a body-model protocol; its sampling controls are `p`/`k`/
-/// `stop_sequences` and `tool_choice` is a top-level enum string. Adapted from
-/// `cohere_tool_result_document_is_not_stringified`.
+
 const COHERE_REQUEST_CORPUS: &[(&str, &str)] = &[
     (
         "plain",
@@ -347,8 +285,7 @@ const COHERE_REQUEST_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// Bedrock Converse RESPONSE bodies (backend=bedrock): plain+usage, tool_use, reasoningContent. The
-/// buffered reader decodes `text`/`toolUse`/`reasoningContent`/`image` blocks and a `stopReason`;
-/// adapted from `test_read_response_decode` / `test_read_write_response_roundtrip`.
+
 const BEDROCK_RESPONSE_CORPUS: &[(&str, &str)] = &[
     (
         "plain",
@@ -365,8 +302,7 @@ const BEDROCK_RESPONSE_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// Cohere v2 chat RESPONSE bodies (backend=cohere): plain+search_units usage, tool_use, tool_plan
-/// (reasoning), citations. Adapted from `cohere_search_units_reach_the_ir`, `test_read_response`,
-/// `cohere_tool_plan_is_reasoning_not_visible_text`, `cohere_response_citations_reach_a_foreign_client`.
+
 const COHERE_RESPONSE_CORPUS: &[(&str, &str)] = &[
     (
         "plain",
@@ -387,7 +323,7 @@ const COHERE_RESPONSE_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// OpenAI Chat RESPONSE bodies (backend=openai) for the `resp_o2b`/`resp_o2c` writer lanes: plain,
-/// tool_calls, reasoning_content. A compact slice of the sibling file's private `RESPONSE_CORPUS`.
+
 const OPENAI_RESPONSE_CORPUS: &[(&str, &str)] = &[
     (
         "plain",
@@ -404,17 +340,11 @@ const OPENAI_RESPONSE_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// The anthropic REQUEST corpus is already vetted in the sibling file; reuse it verbatim for the
-/// `a2g` lane rather than duplicate it.
 use super::translate_parity_golden_tests::REQUEST_CORPUS as ANTHROPIC_REQUEST_CORPUS;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// REQUEST goldens (deterministic; no normalization).
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
 fn req_anthropic_to_gemini() {
     for (name, body) in ANTHROPIC_REQUEST_CORPUS {
-        // The sibling names are `req_a2o_<x>.json`; rename the `a2o` stem to `a2g` for this lane.
         let stem = name.strip_prefix("req_a2o_").expect("sibling naming");
         let out = translate_request("anthropic", "gemini", body);
         check_golden(&format!("req_a2g_{stem}"), &out);
@@ -452,10 +382,6 @@ fn req_gemini_to_responses() {
         check_golden(&format!("req_g2r_{name}.json"), &out);
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// RESPONSE goldens (ingress-synthesized ids normalized).
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
 fn resp_gemini_to_anthropic() {
@@ -496,12 +422,6 @@ fn resp_responses_to_gemini() {
         check_golden(&format!("resp_r2g_{name}.json"), &out);
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// BEDROCK / COHERE TIER — request goldens (deterministic; no normalization).
-// Each of `b`/`c` appears as request reader (b2*/c2*) AND request writer (*2b/*2c), paired with
-// anthropic AND openai, plus the meaningful `b`⇄`c` cross.
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
 fn req_bedrock_to_anthropic() {
@@ -584,12 +504,6 @@ fn req_openai_to_cohere() {
         check_golden(&format!("req_o2c_{name}.json"), &out);
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// BEDROCK / COHERE TIER — response goldens.
-// bedrock ingress synthesizes no id (no-op normalization); cohere ingress synthesizes a UUIDv4
-// (normalized by `normalize_cohere_id`).
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
 fn resp_bedrock_to_anthropic() {

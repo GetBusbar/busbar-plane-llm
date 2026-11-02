@@ -21,7 +21,7 @@ fn anthropic_off() -> crate::codec::ir::IrRequest {
 }
 
 /// Item 12: a lane declaring `reasoning_none` gets `reasoning_effort: "none"` for an Off ask; the
-/// default lane keeps today's bytes (omitted).
+
 #[test]
 fn item12_off_is_reasoning_effort_none_on_a_declaring_lane() {
     let w = protocol_for("openai").unwrap();
@@ -44,8 +44,6 @@ fn item12_off_is_reasoning_effort_none_on_a_declaring_lane() {
     );
     assert!(out.get("reasoning_effort").is_none(), "{out}");
 }
-
-// ───────────────────────── item 11: OpenAI custom / grammar tools ─────────────────────────
 
 fn chat_with_custom_tool() -> serde_json::Value {
     json!({
@@ -87,7 +85,7 @@ fn to_egress(egress: &str, body: &serde_json::Value) -> serde_json::Value {
 }
 
 /// Item 11 (OAI-09): a Chat custom (grammar) tool reaches a Responses lane as the flat Responses
-/// custom tool, beside the function tool; the seam no longer drops it.
+
 #[test]
 fn item11_chat_custom_tool_reaches_a_responses_lane() {
     let out = to_egress("responses", &chat_with_custom_tool());
@@ -101,7 +99,7 @@ fn item11_chat_custom_tool_reaches_a_responses_lane() {
 }
 
 /// Item 11: a lane with no custom tool (Anthropic) drops it and reports the drop; an OpenAI-origin
-/// IR writes it back in the Chat spelling.
+
 #[test]
 fn item11_custom_tool_dropped_and_reported_where_not_representable() {
     let out = to_egress("anthropic", &chat_with_custom_tool());

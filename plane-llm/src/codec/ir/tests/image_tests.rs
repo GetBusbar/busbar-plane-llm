@@ -17,7 +17,7 @@ fn geometry_conventions_are_parallel_not_collapsed() {
         }),
         ..Default::default()
     };
-    // all three can be set — a codec picks its provider's convention without losing the others.
+
     assert!(req.aspect_ratio.is_some() && req.image_size_tier.is_some() && req.size.is_some());
 }
 
@@ -30,7 +30,7 @@ fn billing_prefers_tokens_else_per_image() {
         }),
         ..Default::default()
     };
-    // Image tokens are recorded, never billed (1.5.5 billed no image token).
+
     match tokenized.billing() {
         Some(Billing::Tokens(t)) => {
             assert_eq!((t.input, t.output), (0, 0));
@@ -67,22 +67,13 @@ fn variation_op_needs_no_prompt() {
     assert!(req.prompt.is_none());
 }
 
-// ── IrFacts projection + the new-String-field forcing function ───────────────────────────────────────────────────────
-
 use busbar_contract::ir::facts::{ContentItem, IrFacts, OPAQUE_CONTENT_MARKER};
 use busbar_contract::operation::OpVerb;
 
 use crate::codec::test_host::screened;
 
 /// THE NEW-STRING-FIELD FORCING FUNCTION for `ImageReq`.
-///
-/// A per-family projection has no compiler exhaustiveness check on a STRUCT's fields (unlike the
-/// `IrReq` enum's arms), so a `String` field added later could silently go unprojected and re-blind a
-/// gate — the exact hole this change closes. This test constructs `ImageReq` with EVERY field named
-/// explicitly (NO `..Default::default()`), so adding a field is a COMPILE ERROR here that forces the
-/// author to this test, its comment, and a projection decision. Each caller-text field carries a
-/// unique sentinel and is asserted screenable; each binary input is asserted opaque (and its bytes
-/// asserted NOT to leak). If you add a `String` field: project it in `image.rs` and assert it here.
+
 #[test]
 fn image_projection_covers_every_text_field() {
     let req = ImageReq {
@@ -118,14 +109,14 @@ fn image_projection_covers_every_text_field() {
     assert_eq!(IrFacts::verb(&req), OpVerb::IMAGE);
     let items = req.content();
     let text = screened(&items).join("\u{0}");
-    // Every caller-authored text field is screenable.
+
     for expected in ["PROMPT-TXT", "NEG-TXT", "MASK-TXT", "WEIGHTED-TXT"] {
         assert!(
             text.contains(expected),
             "gate cannot see image text field: {expected}"
         );
     }
-    // The two binary inputs are opaque, present-but-unscreenable — and their bytes never leak.
+
     let opaque = items
         .iter()
         .filter(|i| matches!(i, ContentItem::Opaque { .. }))
@@ -139,6 +130,6 @@ fn image_projection_covers_every_text_field() {
         .iter()
         .filter(|i| matches!(i, ContentItem::Opaque { .. }))
         .all(|i| i.screenable_text() == OPAQUE_CONTENT_MARKER));
-    // Fields that are NOT caller free-text (geometry/quality/provenance) contribute nothing.
+
     assert!(!text.contains("gs://bucket"));
 }

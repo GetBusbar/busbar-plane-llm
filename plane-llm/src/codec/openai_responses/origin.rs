@@ -462,8 +462,6 @@ mod tests {
                 "response.incomplete.response.output[].content[].type=refusal",
             ),
         ] {
-            // Status-absent compatibility input reaches the existing snapshot path for all three
-            // event names. A genuine status=failed must still take its earlier error return below.
             let mut state = StreamDecodeState::default();
             let events = ResponsesReader.read_response_events(host, event_type, &frame, &mut state);
             let index = opened_index(&events);

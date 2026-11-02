@@ -2,11 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Embeddings IR, cross-protocol across OpenAI, Cohere, Gemini, Bedrock (not Anthropic: no embeddings
-//! API). Token-metered: `Billing::Tokens`.
-//!
-//! Losslessness crux: one response can carry several typed vectors at once (Cohere/Titan return float
-//! and int8/binary), so vectors are keyed by encoding in [`EmbeddingItem::vectors`]; a flat
-//! `Vec<f32>` would drop the others.
 
 use busbar_contract::billing::{Billing, TokenUsage};
 use busbar_contract::ir::SourceScopedExtra;
@@ -44,7 +39,7 @@ pub enum EmbInput {
     /// Cohere/Gemini/Bedrock accept image input for embedding; no 1.5.0 ingress reader constructs
     /// this variant yet, but the superset IR must be able to express it once one does.
     #[allow(dead_code)]
-    Images(Vec<String>), // data-URI / base64 refs
+    Images(Vec<String>),
 }
 
 impl Default for EmbInput {
@@ -58,29 +53,21 @@ impl Default for EmbInput {
 pub struct EmbeddingsReq {
     pub model: String,
     pub input: EmbInput,
-    pub input_type: Option<String>, // Cohere/Bedrock semantic role (search_document/query/…)
-    pub task_type: Option<String>,  // Gemini task type — kept DISTINCT from input_type
-    pub title: Option<String>,      // Gemini RETRIEVAL_DOCUMENT
-    pub dimensions: Option<u32>,    // OpenAI/Cohere/Gemini/Titan (one canonical field)
-    pub encoding_formats: Vec<EncFmt>, // Vec: Cohere/Titan may request several at once
-    pub truncate: Option<String>, // NONE/START/END (Cohere/Bedrock); Gemini autoTruncate maps here
-    pub max_tokens: Option<u32>,  // Cohere
-    pub normalize: Option<bool>,  // Titan v2
-    pub user: Option<String>,     // OpenAI
-    pub priority: Option<i32>,    // Cohere
+    pub input_type: Option<String>,
+    pub task_type: Option<String>,
+    pub title: Option<String>,
+    pub dimensions: Option<u32>,
+    pub encoding_formats: Vec<EncFmt>,
+    pub truncate: Option<String>,
+    pub max_tokens: Option<u32>,
+    pub normalize: Option<bool>,
+    pub user: Option<String>,
+    pub priority: Option<i32>,
     pub extra: SourceScopedExtra,
 }
 
 /// The embeddings family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`], the
-/// family-blind seam the shared pipeline (hook/gate/tap) reads a request through. It lives with the IR
-/// (one IR, one walk, one file; see [`busbar_contract::ir::invoke`]'s header), not in `facts.rs`, which
-/// carries the chat walk.
-///
-/// Every caller-authored text field is a [`busbar_contract::ir::facts::ContentItem::Text`] so a
-/// `prompt: ro` screening gate sees it (embeddings requests were gate-blind): each `input` string and
-/// the Gemini retrieval `title`. Present but unscreenable inputs (a pre-tokenized array, an image
-/// reference) project [`busbar_contract::ir::facts::ContentItem::Opaque`], never nothing.
-/// `input_type`/`task_type`/`truncate`/`dimensions` are roles, not free text.
+
 impl busbar_contract::ir::facts::IrFacts for EmbeddingsReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::EMBEDDINGS
@@ -112,8 +99,7 @@ impl busbar_contract::ir::facts::IrFacts for EmbeddingsReq {
                     });
                 }
             }
-            // Pre-tokenized input is content busbar cannot render back to screenable text — one
-            // opaque marker per array, present-but-unscreenable rather than silently empty.
+
             EmbInput::Tokens(arrays) => {
                 for _ in arrays {
                     out.push(ContentItem::Opaque {
@@ -124,7 +110,7 @@ impl busbar_contract::ir::facts::IrFacts for EmbeddingsReq {
                     });
                 }
             }
-            // Image references embed as binary/opaque input: present-but-unscreenable.
+
             EmbInput::Images(images) => {
                 for _ in images {
                     out.push(ContentItem::Opaque {
@@ -136,8 +122,7 @@ impl busbar_contract::ir::facts::IrFacts for EmbeddingsReq {
                 }
             }
         }
-        // The Gemini RETRIEVAL_DOCUMENT title is caller free-text, read+written on the
-        // Gemini retrieval path, so a gate must see it.
+
         if let Some(title) = &self.title {
             out.push(ContentItem::Text {
                 author: "user",
@@ -155,7 +140,7 @@ pub struct EmbeddingItem {
     pub index: usize,
     /// Keyed by encoding — the losslessness crux (multi-encoding responses keep every vector).
     pub vectors: BTreeMap<EncFmt, VectorData>,
-    pub shape: Option<Vec<u32>>, // Gemini
+    pub shape: Option<Vec<u32>>,
 }
 
 /// Embeddings response IR.
@@ -163,9 +148,9 @@ pub struct EmbeddingItem {
 pub struct EmbeddingsResp {
     pub id: Option<String>,
     pub model: Option<String>,
-    pub object_kind: Option<String>, // "list" / "embeddings_floats"
+    pub object_kind: Option<String>,
     pub embeddings: Vec<EmbeddingItem>,
-    pub input_echo: Option<Vec<String>>, // Cohere/Bedrock `texts`
+    pub input_echo: Option<Vec<String>>,
     pub usage: Option<TokenUsage>,
     pub extra: SourceScopedExtra,
 }

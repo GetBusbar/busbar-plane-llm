@@ -2,17 +2,6 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR-18 signature-provenance envelope (architect ruling).
-//!
-//! A reasoning signature is valid only for the model family that minted it ([`IrSignatureOrigin`]).
-//! The IR carries the origin beside the bytes; on the client wire it has nowhere to live (Responses
-//! `encrypted_content`, Gemini `thoughtSignature`, Anthropic/Bedrock `signature` are bare strings). A
-//! Claude signature sent back through a Responses stream's `encrypted_content` would be read as that
-//! dialect's own blob, and the Anthropic egress would drop it as foreign, breaking Claude thinking continuity.
-//!
-//! So a foreign-origin signature written into a client carrier is wrapped in an opaque envelope
-//! `bbsig1:<origin>:<base64url(signature)>`, and every reader unwraps it, restoring the bytes and
-//! origin. A genuine vendor blob never carries the prefix, so an un-prefixed carrier is read as the
-//! vendor's own, as before.
 
 use super::IrSignatureOrigin;
 
@@ -43,8 +32,7 @@ impl IrSignatureOrigin {
 }
 
 /// Wrap `signature` (minted by `origin`) for a carrier with no provenance field. Idempotent: an
-/// existing envelope is returned unchanged, so a pass that runs twice (buffered prep, then
-/// buffered-to-stream synthesis) never nests envelopes.
+
 pub fn wrap(origin: IrSignatureOrigin, signature: &str) -> String {
     if unwrap(signature).is_some() {
         return signature.to_string();
@@ -57,7 +45,7 @@ pub fn wrap(origin: IrSignatureOrigin, signature: &str) -> String {
 }
 
 /// Unwrap an envelope: `Some((origin, original signature))`, or `None` when `carried` is not a
-/// well-formed envelope (then it is the carrier dialect's own blob, read as before).
+
 pub fn unwrap(carried: &str) -> Option<(IrSignatureOrigin, String)> {
     let rest = carried.strip_prefix(ENVELOPE_PREFIX)?;
     let (word, payload) = rest.split_once(':')?;
@@ -67,7 +55,7 @@ pub fn unwrap(carried: &str) -> Option<(IrSignatureOrigin, String)> {
 }
 
 /// READER helper: a signature read off a carrier whose own family is `own`. An envelope yields the
-/// original bytes and the origin it recorded; anything else is the carrier family's own blob.
+
 pub fn read_carried(
     carried: String,
     own: Option<IrSignatureOrigin>,
@@ -93,8 +81,7 @@ pub fn read_carried_opt(
 }
 
 /// Client-writer helper: the string for a client carrier for a signature minted by `origin`, where
-/// `accepts` says which origins the carrier's family reads as its own. A foreign origin is wrapped;
-/// an own or unknown origin (the pre-slot behaviour) is written as is.
+
 pub fn for_client(
     signature: &str,
     origin: Option<IrSignatureOrigin>,
@@ -143,7 +130,7 @@ fn b64url_decode(s: &str) -> Option<Vec<u8>> {
         for i in 0..produced {
             out.push(((n >> (16 - 8 * i)) & 0xff) as u8);
         }
-        // Canonical form only: the unused low bits of a short final chunk must be zero.
+
         let used_bits = 6 * chunk.len();
         let kept_bits = 8 * produced;
         if used_bits > kept_bits {
