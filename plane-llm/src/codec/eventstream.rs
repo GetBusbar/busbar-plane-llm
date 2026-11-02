@@ -188,10 +188,11 @@ fn drain_frames_signaled_counted(
         let headers = &rem[PRELUDE_LEN..PRELUDE_LEN + headers_len];
         let parsed = parse_frame_headers(headers);
         let event_type = event_type_from_headers(&parsed);
-        let error = (parsed.message_type.as_deref() == Some(MSG_TYPE_ERROR)).then(|| FrameError {
-            code: parsed.error_code,
-            message: parsed.error_message,
-        });
+        let error =
+            (parsed.message_type.as_deref() == Some(MSG_TYPE_ERROR)).then_some(FrameError {
+                code: parsed.error_code,
+                message: parsed.error_message,
+            });
         let payload = rem[PRELUDE_LEN + headers_len..total_len - CRC_BYTES].to_vec();
         out.push(DecodedFrame {
             event_type,

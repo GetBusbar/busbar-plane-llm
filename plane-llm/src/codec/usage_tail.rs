@@ -32,8 +32,7 @@ fn complete_value_end(buf: &[u8], start: usize) -> Option<usize> {
             .map_or(buf.len(), |n| start + n);
         return (end > start).then_some(end);
     }
-    for i in start..buf.len() {
-        let c = buf[i];
+    for (i, &c) in buf.iter().enumerate().skip(start) {
         if in_str {
             if escape {
                 escape = false;

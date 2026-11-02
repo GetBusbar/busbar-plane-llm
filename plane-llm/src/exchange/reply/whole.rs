@@ -200,7 +200,7 @@ pub fn translate(
     }
     let recovered_usage = refused
         .as_ref()
-        .and_then(|_| egress_op)
+        .and(egress_op)
         .and_then(|handler| handler.recover_response_billing(host, bytes));
     Whole {
         refused,

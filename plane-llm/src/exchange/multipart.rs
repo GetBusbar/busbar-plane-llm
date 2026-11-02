@@ -207,7 +207,7 @@ pub(crate) fn multipart_field<'a>(
     transcription_fields(content_type, body)
         .into_iter()
         .filter(|field| field.name == name)
-        .last()
+        .next_back()
         .map(|field| field.value)
 }
 
