@@ -1331,7 +1331,7 @@ mod door_units {
             last.status, 500,
             "no financial success is fabricated: {last:?}"
         );
-        assert_eq!(last.fault, busbar_contract::abi::plane::FAULT_TRANSIENT);
+        assert_eq!(last.fault, busbar_contract::abi::transport::FAULT_TRANSIENT);
         assert!(
             last.more && !last.done,
             "the error body remains pending: {last:?}"
