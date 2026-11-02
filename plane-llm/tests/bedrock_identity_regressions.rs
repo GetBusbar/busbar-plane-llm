@@ -358,18 +358,75 @@ fn anthropic_search_source_crosses_to_bedrock_without_union_conflict() {
     assert!(!cap.contains("union"));
     assert!(!cap.contains("opaque:source#7"));
 }
+// Native bytes use Reply's relay path; Whole is deliberately the translation entry.
 #[test]
 fn native_images_and_citation_responses_retain_literal_bytes() {
-    for (op, body) in [
+    use busbar_plane_llm::exchange::{
+        arrive::Arrived,
+        attempt::StreamIntent,
+        reply::{At, Reply, ReplyCtx},
+        shaping::Lane,
+    };
+    for (operation, body) in [
         (OpVerb::IMAGE, b"{ \"images\" : [\"QQ==\"] }".to_vec()),
         (
             OpVerb::CHAT,
             serde_json::to_vec_pretty(&bedrock_response(bedrock_citation())).unwrap(),
         ),
     ] {
-        let (whole, cap) = translate("bedrock", "bedrock", op, &body);
-        assert_eq!(whole.answer.body, body);
-        assert!(whole.dropped.is_empty());
+        let arrived = Arrived {
+            dialect: "bedrock",
+            operation,
+            model: "model".into(),
+            content_type: "application/json".into(),
+            body: b"{}".to_vec(),
+            parsed: Some(json!({})),
+            path: "/model/model/converse".into(),
+            query: None,
+            path_model: None,
+        };
+        let lane = Lane {
+            model: "model".into(),
+            provider: "p".into(),
+            dialect: "bedrock",
+            path: None,
+            path_base: None,
+            options: vec![],
+            upstream_model: None,
+            default_max_tokens: None,
+            context_max: None,
+            reasoning: false,
+            prompt_caching: false,
+            caps: Default::default(),
+            error_map: Default::default(),
+            statics: &[],
+            invoke: false,
+        };
+        let ctx = ReplyCtx {
+            arrived: &arrived,
+            lane: &lane,
+            intent: StreamIntent {
+                wants_stream: false,
+                client_include_usage: false,
+            },
+            passthrough: false,
+            translate_cap: 65536,
+        };
+        let cap = WarnCapture::default();
+        let piece = tracing::subscriber::with_default(cap.clone(), || {
+            Reply::new(&Host, &ctx, 200, &[(b"content-type", b"application/json")]).feed(
+                &Host,
+                &ctx,
+                &body,
+                true,
+                At {
+                    now_s: 1,
+                    elapsed_ms: None,
+                },
+            )
+        });
+        assert_eq!(piece.bytes.as_ref(), body);
+        assert!(piece.dropped.is_empty());
         assert!(!cap.contains("ir.images[].url"));
     }
 }
