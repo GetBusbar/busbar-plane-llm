@@ -1,8 +1,8 @@
 //! Gemini citation offsets (UTF-8 bytes on the wire, characters in the IR) and the
 //! `citationMetadata` / `groundingMetadata` read and write.
 use super::{
-    FIELD_CITATION_METADATA, FIELD_CITATION_SOURCES, FIELD_END_INDEX, FIELD_RETRIEVED_CONTEXT,
-    FIELD_START_INDEX, FIELD_URI,
+    FIELD_CITATION_METADATA, FIELD_CITATION_SOURCES, FIELD_END_INDEX, FIELD_PARTS,
+    FIELD_RETRIEVED_CONTEXT, FIELD_START_INDEX, FIELD_THOUGHT, FIELD_URI,
 };
 use crate::codec::keys;
 

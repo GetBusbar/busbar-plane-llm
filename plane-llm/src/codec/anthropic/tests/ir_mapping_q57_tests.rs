@@ -190,6 +190,31 @@ fn ant03_file_image_source_is_a_vendor_handle_not_empty_base64() {
     );
 }
 
+/// URL and hosted-file image branches retain diagnostic origins and native cache controls.
+#[test]
+fn image_url_and_vendor_sources_keep_their_native_block_origins() {
+    let content = json!([
+        {"type":"image", "source":{"type":"url", "url":"https://example.invalid/a.png"},
+            "cache_control":{"type":"ephemeral"}},
+        {"type":"image", "source":{"type":"file", "file_id":"file-native"},
+            "cache_control":{"type":"ephemeral"}}
+    ]);
+    let body = json!({"model":"m", "max_tokens":100,
+        "messages":[{"role":"user", "content":content}]});
+    let protocol = protocol_for("anthropic").unwrap();
+    let ir = protocol.reader().read_request(&body).unwrap();
+    assert_eq!(ir.block_origins.messages[0].len(), 2);
+    for origin in &ir.block_origins.messages[0] {
+        let source = origin.source.expect("each native image retains its source");
+        assert_eq!(source.dialect, "anthropic");
+        assert_eq!(source.path, "messages[].content[].type=image");
+    }
+    let back = protocol
+        .writer()
+        .write_request(crate::codec::test_host::HOST, &ir);
+    assert_eq!(back.pointer("/messages/0/content"), Some(&content));
+}
+
 /// ANT-04: Anthropic `tools[].strict` is read and reaches OpenAI's `function.strict`.
 #[test]
 fn ant04_tool_strict_is_read() {

@@ -389,14 +389,17 @@ pub(super) fn read_block_with_origin(
                 // which this protocol re-emits verbatim and every other writer drops with a warn.
                 let src_type = src_obj.get(keys::TYPE).and_then(|v| v.as_str());
                 if src_type.is_some_and(|t| t != keys::URL && t != keys::BASE64) {
-                    return Ok(crate::codec::ir::IrBlock::Image {
-                        source: crate::codec::ir::IrImageSource::Vendor {
-                            vendor: VENDOR_NAME,
-                            value: source.clone(),
+                    return Ok((
+                        crate::codec::ir::IrBlock::Image {
+                            source: crate::codec::ir::IrImageSource::Vendor {
+                                vendor: VENDOR_NAME,
+                                value: source.clone(),
+                            },
+                            cache_control,
+                            detail: None,
                         },
-                        cache_control,
-                        detail: None,
-                    });
+                        origin,
+                    ));
                 }
                 if src_type == Some(keys::URL) {
                     let url = src_obj
@@ -404,11 +407,14 @@ pub(super) fn read_block_with_origin(
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    return Ok(crate::codec::ir::IrBlock::Image {
-                        source: crate::codec::ir::IrImageSource::Url(url),
-                        cache_control,
-                        detail: None,
-                    });
+                    return Ok((
+                        crate::codec::ir::IrBlock::Image {
+                            source: crate::codec::ir::IrImageSource::Url(url),
+                            cache_control,
+                            detail: None,
+                        },
+                        origin,
+                    ));
                 }
                 // A present non-string `media_type` is the caller's error, not read as "".
                 let media_type = match src_obj.get(super::MEDIA_TYPE) {
