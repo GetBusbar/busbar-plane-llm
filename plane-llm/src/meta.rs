@@ -69,7 +69,7 @@ pub const CLI_HELP_TEXT: &str = concat!(
 /// resolved entry), without the kernel's own keys; each says whether it must be written, and each
 /// form whether it refuses a key it does not name. No form refuses one here: a key that is not
 /// busbar's is a provider option, judged against the provider's dialect list ([`crate::options`]),
-/// which refuses one on no list in its own words. Read by nothing yet: the kernel keeps it at its door fold.
+/// which refuses one on no list in its own words. The kernel reads these neutral shapes while parsing provider entries.
 pub const PROVIDER_KEYS: &str = r#"{
   "catalog": {
     "deny_unknown": false,
@@ -79,8 +79,8 @@ pub const PROVIDER_KEYS: &str = r#"{
       {"name": "max_output_key", "shape": {"one-of": ["max_tokens", "max_completion_tokens"]}, "required": false},
       {"name": "anthropic_adaptive_thinking", "shape": "bool", "required": false},
       {"name": "native_structured_output", "shape": "bool", "required": false},
-      {"name": "model_capabilities", "shape": {"list": {"table": {
-        "deny_unknown": true,
+      {"name": "model_capabilities", "nullable": false, "shape": {"list": {"table": {
+        "name": "ModelCapabilities", "deny_unknown": true,
         "keys": [
           {"name": "models", "shape": {"list": "str"}, "required": true},
           {"name": "max_output_key", "shape": {"one-of": ["max_tokens", "max_completion_tokens"]}, "required": false},
@@ -101,7 +101,7 @@ pub const PROVIDER_KEYS: &str = r#"{
       {"name": "anthropic_adaptive_thinking", "shape": "bool", "required": false},
       {"name": "native_structured_output", "shape": "bool", "required": false},
       {"name": "model_capabilities", "shape": {"list": {"table": {
-        "deny_unknown": true,
+        "name": "ModelCapabilities", "deny_unknown": true,
         "keys": [
           {"name": "models", "shape": {"list": "str"}, "required": true},
           {"name": "max_output_key", "shape": {"one-of": ["max_tokens", "max_completion_tokens"]}, "required": false},
@@ -121,8 +121,8 @@ pub const PROVIDER_KEYS: &str = r#"{
       {"name": "max_output_key", "shape": {"one-of": ["max_tokens", "max_completion_tokens"]}, "required": false},
       {"name": "anthropic_adaptive_thinking", "shape": "bool", "required": false},
       {"name": "native_structured_output", "shape": "bool", "required": false},
-      {"name": "model_capabilities", "shape": {"list": {"table": {
-        "deny_unknown": true,
+      {"name": "model_capabilities", "nullable": false, "shape": {"list": {"table": {
+        "name": "ModelCapabilities", "deny_unknown": true,
         "keys": [
           {"name": "models", "shape": {"list": "str"}, "required": true},
           {"name": "max_output_key", "shape": {"one-of": ["max_tokens", "max_completion_tokens"]}, "required": false},
