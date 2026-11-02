@@ -178,7 +178,7 @@ fn malformed_openai_tool_arguments_refuse_anthropic_without_losing_reported_work
     assert_eq!(refused["error"]["type"], "api_error", "{refused}");
     assert_eq!(
         refused["error"]["message"],
-        "Anthropic tool input must be a JSON object"
+        "An internal error occurred while processing the response."
     );
     assert!(refused.get("content").is_none(), "{refused}");
     assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (50, 20));
