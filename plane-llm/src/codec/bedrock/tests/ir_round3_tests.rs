@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR mapping: the Bedrock lane-capability and service-tier cases.
+use crate::codec::egress_prep::LaneCaps;
 use crate::codec::proto_codec::protocol_for;
-use busbar_contract::ir::egress_prep::LaneCaps;
 use serde_json::json;
 
 fn anthropic_off() -> crate::codec::ir::IrRequest {

@@ -771,7 +771,7 @@ fn gemini_cached_content_warns_naming_truncation_and_billing() {
         "cachedContent must ride extra (unmodeled key)"
     );
 
-    let prep = busbar_contract::ir::egress_prep::EgressPrep {
+    let prep = crate::codec::egress_prep::EgressPrep {
         thought_signature_fill: false,
         ingress_protocol: "gemini",
         egress_requires_max_tokens: false,

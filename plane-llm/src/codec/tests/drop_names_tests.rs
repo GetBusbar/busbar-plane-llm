@@ -9,9 +9,9 @@
 //! for keeps the slot's name.
 
 use super::tests::prep;
+use crate::codec::egress_prep::EgressPrep;
 use crate::codec::proto_codec::protocol_for;
 use crate::codec::translate::{TranslateCodec as _, TranslateReqInput};
-use busbar_contract::ir::egress_prep::EgressPrep;
 use busbar_contract::operation::OpVerb;
 use busbar_test_kit::warn_capture::WarnCapture;
 use serde_json::{json, Value};

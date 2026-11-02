@@ -77,7 +77,7 @@ fn translate_request_a2o(body: &str) -> Vec<u8> {
     let mut req = ir;
     crate::codec::chat_handle::chat_prepare_for_egress(
         &mut req,
-        &busbar_contract::ir::egress_prep::EgressPrep {
+        &crate::codec::egress_prep::EgressPrep {
             thought_signature_fill: false,
             ingress_protocol: "anthropic",
             egress_requires_max_tokens: openai.decl().is_some_and(|d| d.requires_max_tokens),

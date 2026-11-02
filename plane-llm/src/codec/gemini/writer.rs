@@ -121,7 +121,7 @@ impl ProtocolWriter for GeminiWriter {
         _host: &dyn busbar_contract::codec::CodecHost,
         req: &crate::codec::ir::IrRequest,
         model: &str,
-        _caps: &busbar_contract::ir::egress_prep::LaneCaps,
+        _caps: &crate::codec::egress_prep::LaneCaps,
     ) -> serde_json::Value {
         let mut out = serde_json::Map::new();
 

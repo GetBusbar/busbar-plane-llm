@@ -11,8 +11,8 @@
 
 use std::borrow::Cow;
 
+use crate::codec::egress_prep::EgressPrep;
 use busbar_contract::codec::{EgressCtx, EgressWire, IngressReject, OperationHandler};
-use busbar_contract::ir::egress_prep::EgressPrep;
 use busbar_contract::operation::OpVerb;
 use busbar_contract::protocol::{
     HeadFields, ProtocolDecl, APPLICATION_JSON, KIND_API_ERROR, KIND_INVALID_REQUEST,
@@ -611,14 +611,23 @@ pub(crate) fn default_head_fields(
     standard: [HeadField; 3],
 ) -> (Vec<HeadField>, Vec<HeadField>) {
     let (defaults, forced) = option_fields(lane);
-    let mut fields: Vec<HeadField> = lane.statics.iter().map(|(n, v)| {
-        let value = defaults.iter().find(|(d, _)| n.eq_ignore_ascii_case(d))
-            .map_or_else(|| v.as_bytes().to_vec(), |(_, d)| d.clone());
-        ((*n).to_string(), value)
-    }).collect();
+    let mut fields: Vec<HeadField> = lane
+        .statics
+        .iter()
+        .map(|(n, v)| {
+            let value = defaults
+                .iter()
+                .find(|(d, _)| n.eq_ignore_ascii_case(d))
+                .map_or_else(|| v.as_bytes().to_vec(), |(_, d)| d.clone());
+            ((*n).to_string(), value)
+        })
+        .collect();
     fields.extend(standard);
-    fields.extend(defaults.into_iter()
-        .filter(|(d, _)| !lane.statics.iter().any(|(n, _)| n.eq_ignore_ascii_case(d))));
+    fields.extend(
+        defaults
+            .into_iter()
+            .filter(|(d, _)| !lane.statics.iter().any(|(n, _)| n.eq_ignore_ascii_case(d))),
+    );
     (fields, forced)
 }
 

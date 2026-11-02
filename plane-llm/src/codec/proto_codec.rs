@@ -11,7 +11,7 @@ use busbar_contract::http::StatusCode;
 // A dialect fact looked up by name is read off the plane's own declaration table
 // (`crate::codec::decl_of`); the declaration shape is the contract's.
 /// A lane's request-shape capabilities, handed to [`ProtocolWriter::write_request_for_lane`].
-use busbar_contract::ir::egress_prep::LaneCaps;
+use crate::codec::egress_prep::LaneCaps;
 use busbar_contract::protocol::{ArrayStreamFramer, DialectCodec, IrError};
 
 // The six dialect names, plane-local. File-local consts so a bare `PROTO_ANTHROPIC` resolves

@@ -35,7 +35,7 @@ fn xreq(ingress: &'static str, egress: &str, body: &Value) -> Value {
 fn prepare(req: &mut crate::codec::ir::IrRequest, ingress: &'static str, max_tokens: bool) {
     crate::codec::chat_handle::chat_prepare_for_egress(
         req,
-        &busbar_contract::ir::egress_prep::EgressPrep {
+        &crate::codec::egress_prep::EgressPrep {
             thought_signature_fill: false,
             ingress_protocol: ingress,
             egress_requires_max_tokens: max_tokens,

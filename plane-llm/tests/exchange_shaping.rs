@@ -5,7 +5,7 @@
 
 use serde_json::json;
 
-use busbar_contract::ir::egress_prep::MaxOutputKey;
+use busbar_plane_llm::codec::egress_prep::MaxOutputKey;
 use busbar_plane_llm::exchange::shaping::*;
 use serde_json::Value;
 

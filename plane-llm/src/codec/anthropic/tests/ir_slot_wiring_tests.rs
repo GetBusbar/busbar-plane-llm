@@ -19,11 +19,11 @@ fn read(body: &Value) -> crate::codec::ir::IrRequest {
 /// seam, so only the TYPED slots reach the writer — the path a foreign ingress takes.
 fn egress(
     mut req: crate::codec::ir::IrRequest,
-    caps: &busbar_contract::ir::egress_prep::LaneCaps,
+    caps: &crate::codec::egress_prep::LaneCaps,
 ) -> Value {
     super::super::chat_handle::chat_prepare_for_egress(
         &mut req,
-        &busbar_contract::ir::egress_prep::EgressPrep {
+        &crate::codec::egress_prep::EgressPrep {
             thought_signature_fill: false,
             ingress_protocol: "openai",
             egress_requires_max_tokens: true,

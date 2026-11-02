@@ -4244,9 +4244,9 @@ fn test_remap_tool_call_index_is_0_based_per_call() {
 /// end-to-end there (the response is not funneled through the IR).
 #[test]
 fn test_n_gt_1_clamped_to_one_on_cross_protocol_egress() {
-    use busbar_contract::ir::egress_prep::EgressPrep;
+    use crate::codec::egress_prep::EgressPrep;
 
-    fn prep() -> EgressPrep<'static> {
+    fn prep() -> EgressPrep {
         EgressPrep {
             thought_signature_fill: false,
             ingress_protocol: "openai",

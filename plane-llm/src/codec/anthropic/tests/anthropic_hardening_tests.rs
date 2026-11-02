@@ -2949,7 +2949,7 @@ fn write_request_projects_response_format_to_native_output_config() {
         crate::codec::test_host::HOST,
         &req,
         "claude-opus-5",
-        &busbar_contract::ir::egress_prep::LaneCaps {
+        &crate::codec::egress_prep::LaneCaps {
             native_structured_output: true,
             ..Default::default()
         },

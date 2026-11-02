@@ -29,7 +29,7 @@ fn cross(ingress: &str, egress: &str, body: &Value) -> Value {
         .expect("read");
     crate::codec::chat_handle::chat_prepare_for_egress(
         &mut req,
-        &busbar_contract::ir::egress_prep::EgressPrep {
+        &crate::codec::egress_prep::EgressPrep {
             thought_signature_fill: false,
             ingress_protocol: "x",
             egress_requires_max_tokens: false,
@@ -231,7 +231,7 @@ fn bedrock_output_config_effort_crosses_as_the_reasoning_ask() {
         .read_request(&body)
         .expect("read");
     req.extra.clear();
-    let adaptive = busbar_contract::ir::egress_prep::LaneCaps {
+    let adaptive = crate::codec::egress_prep::LaneCaps {
         anthropic_adaptive_thinking: true,
         ..Default::default()
     };

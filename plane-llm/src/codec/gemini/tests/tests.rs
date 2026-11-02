@@ -6275,7 +6275,7 @@ fn test_outage_cross_protocol_tool_use_gets_sentinel_thought_signature() {
     };
     super::super::chat_handle::chat_prepare_for_egress(
         &mut ir_req,
-        &busbar_contract::ir::egress_prep::EgressPrep {
+        &crate::codec::egress_prep::EgressPrep {
             thought_signature_fill: true,
             ingress_protocol: "openai",
             egress_requires_max_tokens: false,
@@ -6331,7 +6331,7 @@ fn test_prepare_for_egress_does_not_overwrite_real_thought_signature() {
     };
     super::super::chat_handle::chat_prepare_for_egress(
         &mut ir_req,
-        &busbar_contract::ir::egress_prep::EgressPrep {
+        &crate::codec::egress_prep::EgressPrep {
             thought_signature_fill: true,
             ingress_protocol: "gemini",
             egress_requires_max_tokens: false,
@@ -6378,7 +6378,7 @@ fn test_vertex_lane_gets_no_sentinel_thought_signature() {
     };
     super::super::chat_handle::chat_prepare_for_egress(
         &mut ir_req,
-        &busbar_contract::ir::egress_prep::EgressPrep {
+        &crate::codec::egress_prep::EgressPrep {
             thought_signature_fill: false,
             ingress_protocol: "openai",
             egress_requires_max_tokens: false,
@@ -6432,7 +6432,7 @@ fn test_prepare_for_egress_fills_only_missing_signatures_in_parallel_calls() {
     };
     super::super::chat_handle::chat_prepare_for_egress(
         &mut ir_req,
-        &busbar_contract::ir::egress_prep::EgressPrep {
+        &crate::codec::egress_prep::EgressPrep {
             thought_signature_fill: true,
             ingress_protocol: "gemini",
             egress_requires_max_tokens: false,
