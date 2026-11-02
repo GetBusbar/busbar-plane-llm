@@ -1907,12 +1907,7 @@ responses stream type=response.output_item.done.item.type=web_search_call.action
 responses stream type=response.output_item.done.item.type=web_search_call.action.type=search
 responses stream type=response.output_item.done.item.type=web_search_call.action.type=search.queries
 responses stream type=response.output_item.done.item.type=web_search_call.action.type=search.sources
-responses stream type=response.output_text.annotation.added.annotation.type=container_file_citation
-responses stream type=response.output_text.annotation.added.annotation.type=container_file_citation.container_id
-responses stream type=response.output_text.annotation.added.annotation.type=file_citation
-responses stream type=response.output_text.annotation.added.annotation.type=file_path
 responses stream type=response.output_text.annotation.added.annotation_index
-responses stream type=response.refusal.done
 responses stream type=response.shell_call_command.added
 responses stream type=response.shell_call_command.added.command
 responses stream type=response.shell_call_command.added.command_index

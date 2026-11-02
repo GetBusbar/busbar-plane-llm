@@ -853,6 +853,15 @@ fn streamed_citations_reach_openai_and_cohere_clients() {
     assert_eq!(ann["url_citation"]["start_index"], 0);
 
     let cohere = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
+    // Cohere's offsets address the concatenated emitted answer, so the direct writer must
+    // receive the text anchor before a citation delta, as the real reader supplies it.
+    cohere.writer.write_response_event(
+        crate::codec::test_host::HOST,
+        &crate::codec::ir::IrStreamEvent::BlockDelta {
+            index: 0,
+            delta: crate::codec::ir::IrDelta::TextDelta("quoted".to_string()),
+        },
+    );
     let (_, frame) = cohere
         .writer
         .write_response_event(crate::codec::test_host::HOST, &ev)
@@ -887,8 +896,7 @@ fn streamed_citations_reach_openai_and_cohere_clients() {
 /// WRITER emitted citations — so a citation INTO Cohere worked and a citation OUT of Cohere
 /// vanished. That asymmetry is the tell that it was a missing reader rather than a translation
 /// limit: `IrCitation` already existed and both sides already spoke it. A customer running Cohere
-/// RAG behind an Anthropic-dialect client got an ungrounded answer with the sources stripped, which
-/// is a compliance problem, not a cosmetic one.
+/// RAG behind a client whose wire represents the source should retain its provenance.
 #[test]
 fn cohere_response_citations_reach_a_foreign_client() {
     let cohere = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
@@ -925,17 +933,17 @@ fn cohere_response_citations_reach_a_foreign_client() {
     assert_eq!(citations[0].end_index, Some(5));
     assert_eq!(citations[0].url.as_deref(), Some("https://atlas"));
 
-    // Cross-protocol: an Anthropic-dialect client sees the grounding rather than a bare assertion.
-    let anthropic = crate::codec::proto_codec::protocol_for("anthropic").expect("anthropic");
-    let out = anthropic
+    // Chat can represent the answer's URL and span without native Anthropic encrypted state.
+    let openai = crate::codec::proto_codec::protocol_for("openai").expect("openai");
+    let out = openai
         .writer
         .write_response(crate::codec::test_host::HOST, &ir);
-    assert!(
-        out["content"][0]["citations"]
-            .as_array()
-            .is_some_and(|a| !a.is_empty()),
-        "the citation must survive the hop to an Anthropic client: {out}"
-    );
+    let source = &out["choices"][0]["message"]["annotations"][0]["url_citation"];
+    assert_eq!(source["url"], "https://atlas", "{out}");
+    assert_eq!(source["title"], "Atlas", "{out}");
+    assert_eq!(source["start_index"], 0, "{out}");
+    assert_eq!(source["end_index"], 5, "{out}");
+    assert_unrepresentable_anthropic_citation_is_audited(&ir, "cohere");
 
     // Same-protocol: the source object round-trips verbatim out of `raw`.
     let back = cohere
@@ -1158,8 +1166,8 @@ fn gemini_grounding_metadata_reaches_a_foreign_client() {
     assert_eq!(citations[0].url.as_deref(), Some("https://atlas"));
     assert_eq!(citations[0].title.as_deref(), Some("Atlas"));
 
-    // CROSS-PROTOCOL both ways out: an OpenAI client sees an annotation, an Anthropic client a
-    // citation. Neither receives a bare unattributed paragraph.
+    // Chat carries the URL/span as an annotation. Anthropic needs an encrypted index that the
+    // Gemini source never supplied, so that separate projection must report the loss.
     let openai = crate::codec::proto_codec::protocol_for("openai").expect("openai");
     let out = openai
         .writer
@@ -1181,15 +1189,37 @@ fn gemini_grounding_metadata_reaches_a_foreign_client() {
         "the emitted annotation must round-trip back into an IR citation: {out}"
     );
     assert_eq!(recovered[0].url.as_deref(), Some("https://atlas"));
-    let anthropic = crate::codec::proto_codec::protocol_for("anthropic").expect("anthropic");
-    let out = anthropic
-        .writer
-        .write_response(crate::codec::test_host::HOST, &ir);
+    assert_unrepresentable_anthropic_citation_is_audited(&ir, "gemini");
+}
+
+fn assert_unrepresentable_anthropic_citation_is_audited(
+    ir: &crate::codec::ir::IrResponse,
+    upstream: &str,
+) {
+    let (out, dropped) = crate::codec::drops::scope(
+        crate::codec::drops::Seam {
+            direction: crate::codec::drops::Direction::Response,
+            ingress: "anthropic",
+            egress: upstream,
+        },
+        || {
+            crate::codec::proto_codec::protocol_for("anthropic")
+                .unwrap()
+                .writer()
+                .write_response(crate::codec::test_host::HOST, ir)
+        },
+    );
+    assert_eq!(out["content"][0]["text"], "Paris is the capital.", "{out}");
+    assert!(out["content"][0]["citations"].is_null(), "{out}");
+    assert!(!out.to_string().contains("encrypted_index"), "{out}");
+    assert_eq!(out["usage"]["input_tokens"], ir.usage.input_tokens, "{out}");
+    assert_eq!(
+        out["usage"]["output_tokens"], ir.usage.output_tokens,
+        "{out}"
+    );
     assert!(
-        out["content"][0]["citations"]
-            .as_array()
-            .is_some_and(|a| !a.is_empty()),
-        "the grounding source must reach an Anthropic client: {out}"
+        !dropped.is_empty(),
+        "{upstream}: citation loss must be audited"
     );
 }
 
@@ -1544,7 +1574,11 @@ fn buffered_citations_reach_a_bedrock_client() {
     let c = &block["citationsContent"]["citations"][0];
     assert_eq!(c["title"], "Atlas", "{out}");
     assert_eq!(c["sourceContent"][0]["text"], "Paris", "{out}");
-    assert_eq!(c["location"]["documentChar"]["start"], 0, "{out}");
+    assert_eq!(c["location"]["web"]["url"], "https://atlas", "{out}");
+    assert!(
+        c["location"].get("documentChar").is_none(),
+        "answer offsets must not become document coordinates: {out}"
+    );
 }
 
 /// A text block with NO citations keeps the plain `{"text": …}` shape.

@@ -891,14 +891,38 @@ fn coh17_citations_without_a_text_part_still_reach_the_client() {
         },
         "usage": {"tokens": {"input_tokens": 3, "output_tokens": 1}}
     });
-    let out = translate_response("cohere", "anthropic", &body);
-    let cited = out["content"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .any(|b| b["type"] == "text" && b["citations"][0]["cited_text"] == "hello");
-    assert!(cited, "COH-17: {out}");
-    assert_eq!(out["content"][1]["type"], json!("tool_use"), "{out}");
+    // Bedrock can carry the quoted source without an Anthropic-only encrypted search index.
+    let out = translate_response("cohere", "bedrock", &body);
+    let content = &out["output"]["message"]["content"];
+    assert_eq!(
+        content[0]["citationsContent"]["content"][0]["text"], "",
+        "{out}"
+    );
+    assert_eq!(
+        content[0]["citationsContent"]["citations"][0]["sourceContent"][0]["text"], "hello",
+        "{out}"
+    );
+    assert_eq!(content[1]["toolUse"]["name"], "f", "{out}");
+    assert_eq!(out["usage"]["inputTokens"], 3, "{out}");
+    assert_eq!(out["usage"]["outputTokens"], 1, "{out}");
+
+    let (out, dropped) = crate::codec::drops::scope(
+        crate::codec::drops::Seam {
+            direction: crate::codec::drops::Direction::Response,
+            ingress: "anthropic",
+            egress: "cohere",
+        },
+        || translate_response("cohere", "anthropic", &body),
+    );
+    assert!(out["content"][0]["citations"].is_null(), "{out}");
+    assert_eq!(out["content"][1]["type"], "tool_use", "{out}");
+    assert_eq!(out["usage"]["input_tokens"], 3, "{out}");
+    assert_eq!(out["usage"]["output_tokens"], 1, "{out}");
+    assert!(!out.to_string().contains("encrypted_index"), "{out}");
+    assert!(
+        !dropped.is_empty(),
+        "unrepresentable citation loss must be audited"
+    );
 }
 
 /// COH-18: a foreign text document (OpenAI `file` part, text/plain) is lifted into Cohere's

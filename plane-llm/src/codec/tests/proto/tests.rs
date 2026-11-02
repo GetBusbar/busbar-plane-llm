@@ -1412,10 +1412,8 @@ fn cohere_read_response_surfaces_tool_plan_as_reasoning_not_visible_text() {
     );
 }
 
-/// An unparseable/streaming-partial tool arg is stored as
-/// `Value::String(raw)`; EVERY string-args writer (OpenAI Chat, Responses, Cohere) must emit it
-/// VERBATIM, not JSON-encode it a second time. Covers Responses AND Cohere;
-/// OpenAI Chat already routed through the helper.
+/// Responses retains partial string arguments verbatim. Cohere refuses malformed JSON, while
+/// retaining a represented JSON string's original spacing instead of encoding it a second time.
 #[test]
 fn string_args_writers_emit_raw_tool_args_verbatim() {
     let raw = "not valid json {";
@@ -1468,7 +1466,18 @@ fn string_args_writers_emit_raw_tool_args_verbatim() {
 
     // Cohere: message.tool_calls[].function.arguments (bind to a local, as above).
     let coh_w = CohereWriter;
-    let coh = coh_w.write_response(crate::codec::test_host::HOST, &ir);
+    assert!(coh_w
+        .try_write_response(crate::codec::test_host::HOST, &ir)
+        .is_err());
+    let valid_raw = " { \"city\" : \"Paris\" } ";
+    let mut valid = ir.clone();
+    let crate::codec::ir::IrBlock::ToolUse { input, .. } = &mut valid.content[0] else {
+        panic!("tool call fixture")
+    };
+    *input = serde_json::Value::String(valid_raw.into());
+    let coh = coh_w
+        .try_write_response(crate::codec::test_host::HOST, &valid)
+        .unwrap();
     let coh_args = coh
         .get("message")
         .and_then(|m| m.get("tool_calls"))
@@ -1479,7 +1488,10 @@ fn string_args_writers_emit_raw_tool_args_verbatim() {
         .and_then(|f| f.get("arguments"))
         .and_then(|a| a.as_str())
         .expect("cohere function arguments");
-    assert_eq!(coh_args, raw, "Cohere must emit raw string args verbatim");
+    assert_eq!(
+        coh_args, valid_raw,
+        "Cohere must emit represented raw string args verbatim"
+    );
 }
 
 /// Regression: Cohere is a free-form-tool-id

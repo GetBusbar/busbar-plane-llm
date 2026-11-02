@@ -17,8 +17,8 @@
 
 use super::*;
 
-/// The client dialects that can carry a citation on the wire, streamed and buffered.
-const CITING_CLIENTS: [&str; 5] = ["anthropic", "bedrock", "gemini", "responses", "cohere"];
+/// These URL sources have a native representation without an Anthropic encrypted search index.
+const CITING_CLIENTS: [&str; 4] = ["bedrock", "gemini", "responses", "cohere"];
 
 const TEXT: &str = "The sky is blue. It scatters.";
 const URL_A: &str = "https://example.com/sky";
@@ -183,9 +183,9 @@ const MARKS: [&str; 4] = [URL_A, "Why the sky is blue", URL_B, "Rayleigh scatter
 /// reader, because the client is a native SDK: a Responses client finds the annotations on
 /// `content_part.done`/`output_item.done`/`response.completed`, a Gemini client reads every
 /// chunk's `citationMetadata`, a Bedrock client reads the event-stream payload JSON. A citation's
-/// URL or title on the wire is the content a client can show; a dialect that has no member for one
-/// of them (Anthropic's `char_location`, Bedrock's `documentChar` carry no URL) drops it on BOTH
-/// legs, which this comparison allows — stream ≡ non-stream is the invariant pinned here.
+/// URL or title on the wire is the content a client can show. The Anthropic projection is checked
+/// separately for audited loss because these sources supply no native encrypted search index.
+/// For representable targets, stream ≡ non-stream is the invariant pinned here.
 fn carried(wire: &[u8]) -> Vec<&'static str> {
     let text = String::from_utf8_lossy(wire);
     MARKS.iter().copied().filter(|m| text.contains(m)).collect()
@@ -237,6 +237,67 @@ fn assert_carriage(upstream: &str, stream: &[u8], body: &serde_json::Value) {
              answer carries (1.5.5 dropped a streamed {upstream} upstream's citations)"
         );
     }
+    // A foreign URL citation has no Anthropic encrypted_index. Both legs must keep the
+    // answer/accounting while auditing the unrepresentable citation, never inventing that state.
+    let ir = protocol_for(upstream)
+        .unwrap()
+        .reader()
+        .read_response(crate::codec::test_host::HOST, body)
+        .unwrap();
+    let (buffered, dropped) = crate::codec::drops::scope(
+        crate::codec::drops::Seam {
+            direction: crate::codec::drops::Direction::Response,
+            ingress: "anthropic",
+            egress: upstream,
+        },
+        || {
+            protocol_for("anthropic")
+                .unwrap()
+                .writer()
+                .write_response(crate::codec::test_host::HOST, &ir)
+        },
+    );
+    assert_eq!(buffered["content"][0]["text"], TEXT, "{buffered}");
+    assert_eq!(buffered["usage"]["input_tokens"], 5, "{buffered}");
+    assert_eq!(buffered["usage"]["output_tokens"], 7, "{buffered}");
+    assert!(
+        carried(buffered.to_string().as_bytes()).is_empty(),
+        "{buffered}"
+    );
+    assert!(
+        !buffered.to_string().contains("encrypted_index"),
+        "{buffered}"
+    );
+    assert!(
+        !dropped.is_empty(),
+        "{upstream}: buffered citation loss is audited"
+    );
+    let mut translated = StreamTranslate::new("anthropic", upstream).unwrap();
+    let mut wire = translated.feed(crate::codec::test_host::HOST, stream);
+    wire.extend(translated.finish(crate::codec::test_host::HOST));
+    assert!(
+        carried(&wire).is_empty(),
+        "{}",
+        String::from_utf8_lossy(&wire)
+    );
+    let text = String::from_utf8(wire).unwrap();
+    let answer: String = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter_map(|data| serde_json::from_str::<serde_json::Value>(data).ok())
+        .filter_map(|frame| frame["delta"]["text"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(answer, TEXT, "{text}");
+    assert!(
+        !text.contains("citations_delta") && !text.contains("encrypted_index"),
+        "{text}"
+    );
+    let usage = translated.usage().unwrap();
+    assert_eq!((usage.input_tokens, usage.output_tokens), (5, 7));
+    assert!(
+        !translated.dropped().is_empty(),
+        "{upstream}: streamed citation loss is audited"
+    );
 }
 
 #[test]

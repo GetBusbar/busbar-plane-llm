@@ -197,7 +197,7 @@ fn streamed_writer_media_drops_reach_the_existing_audit_paths() {
             stream
                 .dropped()
                 .iter()
-                .filter(|path| path.as_str() == "candidates[].content.parts[].inlineData")
+                .filter(|path| path.as_str() == "candidates[].content.parts[]")
                 .count(),
             1,
             "{ingress}: {:?}",
@@ -1050,6 +1050,16 @@ fn leaf_usage_taps_preserve_exact_counts_when_the_payload_is_malformed() {
 fn distinct_dropped_block_kinds_have_distinct_audit_paths() {
     use crate::codec::drops::{self, Direction, Dropped, Seam};
     use busbar_test_kit::warn_capture::WarnCapture;
+    let request = crate::codec::proto_codec::protocol_for("anthropic")
+        .unwrap()
+        .reader()
+        .read_request(&json!({"model":"m", "max_tokens":32, "messages":[
+            {"role":"user", "content":[
+                {"type":"image", "source":{"type":"url", "url":"https://example.invalid/a.png"}},
+                {"type":"document", "source":{"type":"text", "media_type":"text/plain", "data":"document"}}
+            ]}
+        ]}))
+        .unwrap();
     let capture = WarnCapture::default();
     let (_, paths) = tracing::subscriber::with_default(capture.clone(), || {
         drops::scope(
@@ -1059,12 +1069,15 @@ fn distinct_dropped_block_kinds_have_distinct_audit_paths() {
                 egress: "cohere",
             },
             || {
-                for member in [drops::IMAGE, drops::DOCUMENT, drops::IMAGE] {
-                    drops::note(Dropped::member(
-                        member,
-                        &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                        "dropped",
-                    ));
+                for (member, index) in [(drops::IMAGE, 0), (drops::DOCUMENT, 1), (drops::IMAGE, 0)]
+                {
+                    drops::with_block_origin(request.block_origins.messages[0].get(index), || {
+                        drops::note(Dropped::member(
+                            member,
+                            &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                            "dropped",
+                        ));
+                    });
                 }
             },
         )
@@ -1078,6 +1091,25 @@ fn distinct_dropped_block_kinds_have_distinct_audit_paths() {
     );
     assert_eq!(capture.count("path=messages[].content[].type=image"), 1);
     assert_eq!(capture.count("path=messages[].content[].type=document"), 1);
+    let (_, paths) = drops::scope(
+        Seam {
+            direction: Direction::Request,
+            ingress: "anthropic",
+            egress: "cohere",
+        },
+        || {
+            drops::note(Dropped::member(
+                drops::IMAGE,
+                &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                "dropped",
+            ))
+        },
+    );
+    assert_eq!(
+        paths,
+        ["ir.block.kind=image"],
+        "missing provenance stays explicit"
+    );
 }
 
 #[test]

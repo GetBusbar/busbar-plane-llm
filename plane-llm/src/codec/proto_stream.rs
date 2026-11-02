@@ -242,8 +242,20 @@ impl StreamTranslate {
             data,
             &mut self.decode,
         );
+        let failed_before_frame = self.upstream_error;
         for ev in events {
-            self.translate_ir_event(host, ingress_name, ev, out);
+            // Keep the reader's same-frame failure close, without allowing a later upstream
+            // frame to resume output after an error. A stop carries no success delta.
+            if !failed_before_frame
+                && self.upstream_error
+                && !self.message_stopped
+                && matches!(ev, crate::codec::ir::IrStreamEvent::MessageStop)
+            {
+                self.message_stopped = true;
+                self.emit_ir_event(host, &ev, out);
+            } else {
+                self.translate_ir_event(host, ingress_name, ev, out);
+            }
         }
     }
 
@@ -328,8 +340,8 @@ impl StreamTranslate {
         // message is recorded so the stream-end arms treat the stream as failed (no token billing,
         // breaker transient), from the reader's structured decode, not a brace-scan of output bytes.
         if let crate::codec::ir::IrStreamEvent::Error(err) = &ev {
+            self.close_open_blocks(host, out);
             self.upstream_error = true;
-            self.open_blocks.clear();
             self.pending_terminal = None;
             self.pending_stop = false;
             self.terminal_error = Some(

@@ -1295,14 +1295,10 @@ fn same_proto_bedrock_malformed_prelude_emits_only_valid_frames_not_garbage() {
     );
 }
 
-/// HIGH-1 (wire-correctness): a single Gemini stream chunk batching N `citationSources[]` becomes
-/// ONE `IrDelta::CitationsDelta(vec of N)`. On Gemini EGRESS → Anthropic INGRESS, that MUST NOT be
-/// flushed as ONE Anthropic `content_block_delta` whose body is a JSON ARRAY of N citation frames
-/// (a native Anthropic SDK `JSON.parse`s ONE object per `data:` line and crashes on an array).
-/// Every `citations_delta` event on the wire must be EXACTLY ONE citation object; a 3-source
-/// Gemini chunk must yield THREE separate single-object `citations_delta` events.
+/// Gemini URL sources have no Anthropic encrypted search index. A multi-citation batch must
+/// report that loss while keeping the text and provider work, without inventing opaque state.
 #[test]
-fn stream_gemini_multi_citation_yields_separate_single_object_anthropic_events() {
+fn stream_gemini_multi_citation_without_anthropic_state_is_audited() {
     // ingress = anthropic (the client), egress = gemini (the backend): `feed` consumes Gemini SSE
     // and emits Anthropic SSE.
     let mut st = StreamTranslate::new("anthropic", "gemini").expect("translator");
@@ -1311,11 +1307,12 @@ fn stream_gemini_multi_citation_yields_separate_single_object_anthropic_events()
 
 "#;
     let mut out = st.feed(crate::codec::test_host::HOST, chunk);
+    out.extend_from_slice(&st.feed(crate::codec::test_host::HOST,
+        b"data: {\"usageMetadata\":{\"promptTokenCount\":7,\"candidatesTokenCount\":9,\"totalTokenCount\":16}}\n\n"));
     out.extend_from_slice(&st.finish(crate::codec::test_host::HOST));
     let text = String::from_utf8(out).expect("anthropic SSE is utf-8");
 
-    // Collect every `data:` line whose parsed body is a `citations_delta` content_block_delta.
-    let mut citation_bodies: Vec<serde_json::Value> = Vec::new();
+    let mut answer = String::new();
     for line in text.lines() {
         let Some(json) = line.strip_prefix("data:") else {
             continue;
@@ -1323,42 +1320,25 @@ fn stream_gemini_multi_citation_yields_separate_single_object_anthropic_events()
         let Ok(body) = serde_json::from_str::<serde_json::Value>(json.trim()) else {
             continue;
         };
-        // INVARIANT: a `citations_delta` event body is NEVER a JSON array — always one object.
         assert!(
             !body.is_array(),
             "no SSE event body may be a JSON array (a native Anthropic SDK crashes on it): {body}"
         );
-        if body.pointer("/delta/type").and_then(|t| t.as_str()) == Some("citations_delta") {
-            // Each citation event carries exactly ONE `citation` object, never an array.
-            let citation = body
-                .pointer("/delta/citation")
-                .expect("a citations_delta carries a single `citation`");
-            assert!(
-                citation.is_object(),
-                "the `citation` field must be a single object, not an array: {citation}"
-            );
-            citation_bodies.push(body);
+        assert_ne!(
+            body.pointer("/delta/type").and_then(|t| t.as_str()),
+            Some("citations_delta"),
+            "unrepresentable source cannot become a native citation: {body}"
+        );
+        if let Some(delta) = body.pointer("/delta/text").and_then(|text| text.as_str()) {
+            answer.push_str(delta);
         }
     }
 
-    assert_eq!(
-        citation_bodies.len(),
-        3,
-        "3 Gemini citationSources → 3 separate single-object Anthropic citations_delta events"
-    );
-    // The three carry the three distinct sources, in order.
-    let urls: Vec<&str> = citation_bodies
-        .iter()
-        .filter_map(|b| b.pointer("/delta/citation/url").and_then(|u| u.as_str()))
-        .collect();
-    assert_eq!(
-        urls,
-        vec![
-            "https://example.com/a",
-            "https://example.com/b",
-            "https://example.com/c"
-        ]
-    );
+    assert_eq!(answer, "answer text", "{text}");
+    assert!(!text.contains("encrypted_index"), "{text}");
+    assert!(!st.dropped().is_empty(), "citation loss must be audited");
+    let usage = st.usage().unwrap();
+    assert_eq!((usage.input_tokens, usage.output_tokens), (7, 9));
 }
 
 /// CF6 (wire-conformance): the same Gemini multi-citation fan-out, but egressing into the COHERE v2

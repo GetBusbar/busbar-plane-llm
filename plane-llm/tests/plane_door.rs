@@ -229,7 +229,9 @@ fn the_tail_prices_cheapest_with_the_default_input_output_blend() {
 /// exactly one outbound need naming it.
 #[test]
 fn every_dialects_default_style_is_stated_and_every_style_has_its_one_outbound_need() {
-    assert_eq!(check_needs(NEEDS), Ok(()));
+    // SAFETY: NEEDS and every nested string/header list belong to this plane's static
+    // declaration and remain initialized and readable throughout the check.
+    assert_eq!(unsafe { check_needs(NEEDS) }, Ok(()));
     assert_eq!(STATEMENT.needs_len(), NEEDS.len());
     assert_eq!(TAIL.dialect_auth_len(), DIALECTS.len());
     for (i, d) in DIALECTS.iter().enumerate() {
