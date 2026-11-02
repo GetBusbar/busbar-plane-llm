@@ -43,7 +43,7 @@ use busbar_contract::upstream::StatusClass;
 // `busbar_contract::protocol::*` glob when netted.
 #[allow(unused_imports)]
 use super::proto_codec::*;
-use busbar_contract::ir::egress_prep::LaneCaps;
+use crate::codec::egress_prep::LaneCaps;
 // Named explicitly: a `test-support` build of busbar-core re-exports a second copy of these items
 // through the `busbar_contract::protocol::*` glob, and a bare use would be ambiguous.
 #[allow(unused_imports)]

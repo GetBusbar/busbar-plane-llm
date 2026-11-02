@@ -21,7 +21,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use busbar_contract::ir::egress_prep::{LaneCaps, MaxOutputKey};
+use crate::codec::egress_prep::{LaneCaps, MaxOutputKey};
 use serde::Deserialize;
 use serde_json::Value;
 

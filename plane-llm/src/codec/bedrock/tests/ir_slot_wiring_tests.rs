@@ -15,7 +15,7 @@ fn xreq_lane(ingress: &'static str, body: &Value, model: &str, caps: LaneCaps) -
     let mut req = ingress_p.reader().read_request(body).expect("read_request");
     crate::codec::chat_handle::chat_prepare_for_egress(
         &mut req,
-        &busbar_contract::ir::egress_prep::EgressPrep {
+        &crate::codec::egress_prep::EgressPrep {
             thought_signature_fill: false,
             ingress_protocol: ingress,
             egress_requires_max_tokens: false,

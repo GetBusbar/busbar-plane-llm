@@ -604,7 +604,7 @@ fn cache_breakpoints_gated_by_lane_capability_on_bedrock() {
                    "cache_control": {"type": "ephemeral"}}]
     });
 
-    let prep = |allowed: bool| busbar_contract::ir::egress_prep::EgressPrep {
+    let prep = |allowed: bool| crate::codec::egress_prep::EgressPrep {
         thought_signature_fill: false,
         ingress_protocol: "anthropic",
         egress_requires_max_tokens: false,

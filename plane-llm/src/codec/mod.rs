@@ -38,6 +38,9 @@ pub mod ir;
 /// reading an answer and writing it. They are public because the plane is a different crate.
 pub mod chat_handle;
 
+/// This plane's request preparation context and dialect writer capabilities.
+pub mod egress_prep;
+
 /// The six leaf-op `IrHandle`s (embeddings/image/rerank/moderation/transcription/speech), writing
 /// themselves onto the peer dialect via the `leaf_codec` `(op,proto)` dispatchers.
 pub mod leaf_handles;

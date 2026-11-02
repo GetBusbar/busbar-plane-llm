@@ -15,7 +15,7 @@ fn prepared(ingress: &'static str, body: &Value) -> crate::codec::ir::IrRequest 
         .expect("request reads");
     super::super::chat_handle::chat_prepare_for_egress(
         &mut req,
-        &busbar_contract::ir::egress_prep::EgressPrep {
+        &crate::codec::egress_prep::EgressPrep {
             thought_signature_fill: false,
             ingress_protocol: ingress,
             egress_requires_max_tokens: true,
@@ -45,7 +45,7 @@ fn xreq_lane(
     ingress: &'static str,
     egress: &str,
     body: &Value,
-    caps: &busbar_contract::ir::egress_prep::LaneCaps,
+    caps: &crate::codec::egress_prep::LaneCaps,
 ) -> Value {
     let req = prepared(ingress, body);
     protocol_for(egress)
@@ -56,8 +56,8 @@ fn xreq_lane(
 
 /// A lane of the newest Claude generation: declares adaptive thinking AND native structured
 /// outputs (the shipped catalog's model patterns turn both on for Opus 4.7+/5.x, Sonnet 5, Fable).
-pub(super) fn newest_lane() -> busbar_contract::ir::egress_prep::LaneCaps {
-    busbar_contract::ir::egress_prep::LaneCaps {
+pub(super) fn newest_lane() -> crate::codec::egress_prep::LaneCaps {
+    crate::codec::egress_prep::LaneCaps {
         anthropic_adaptive_thinking: true,
         native_structured_output: true,
         ..Default::default()
@@ -754,7 +754,7 @@ fn openai_json_object_onto_a_default_anthropic_lane_is_dropped_and_reported() {
 /// as the dropped control `response_format` (the caller's `response_format on anthropic` audit row).
 #[test]
 fn native_structured_output_lane_drops_schema_less_json_and_reports_it() {
-    let native = busbar_contract::ir::egress_prep::LaneCaps {
+    let native = crate::codec::egress_prep::LaneCaps {
         native_structured_output: true,
         ..Default::default()
     };

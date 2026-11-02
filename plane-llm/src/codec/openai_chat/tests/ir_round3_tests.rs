@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR mapping: the OpenAI Chat custom-tool and reasoning-`none` cases.
+use crate::codec::egress_prep::LaneCaps;
 use crate::codec::proto_codec::protocol_for;
-use busbar_contract::ir::egress_prep::LaneCaps;
 use serde_json::json;
 
 fn anthropic_off() -> crate::codec::ir::IrRequest {
@@ -67,7 +67,7 @@ fn to_egress(egress: &str, body: &serde_json::Value) -> serde_json::Value {
         .expect("read");
     crate::codec::chat_handle::chat_prepare_for_egress(
         &mut ir,
-        &busbar_contract::ir::egress_prep::EgressPrep {
+        &crate::codec::egress_prep::EgressPrep {
             thought_signature_fill: false,
             ingress_protocol: "openai",
             egress_requires_max_tokens: true,

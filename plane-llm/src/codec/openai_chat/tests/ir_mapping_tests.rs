@@ -19,7 +19,7 @@ fn xreq(ingress: &'static str, egress: &str, body: &Value) -> Value {
         .expect("ingress body reads");
     crate::codec::chat_handle::chat_prepare_for_egress(
         &mut req,
-        &busbar_contract::ir::egress_prep::EgressPrep {
+        &crate::codec::egress_prep::EgressPrep {
             thought_signature_fill: false,
             ingress_protocol: ingress,
             egress_requires_max_tokens: egress_p.decl().is_some_and(|d| d.requires_max_tokens),
@@ -730,8 +730,8 @@ fn oai07_legacy_function_calling_request_maps() {
 /// — as `max_completion_tokens`; a lane that declares nothing receives `max_tokens`.
 #[test]
 fn oai01_lane_max_output_key_decides_the_cross_protocol_spelling() {
+    use crate::codec::egress_prep::{LaneCaps, MaxOutputKey};
     use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
-    use busbar_contract::ir::egress_prep::{LaneCaps, MaxOutputKey};
     let completion_lane = LaneCaps {
         max_output_key: MaxOutputKey::MaxCompletionTokens,
         ..LaneCaps::default()

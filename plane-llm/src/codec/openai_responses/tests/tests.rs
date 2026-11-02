@@ -7520,7 +7520,7 @@ fn test_hosted_tools_dropped_cross_protocol() {
     let mut req = ir;
     super::super::chat_handle::chat_prepare_for_egress(
         &mut req,
-        &busbar_contract::ir::egress_prep::EgressPrep {
+        &crate::codec::egress_prep::EgressPrep {
             thought_signature_fill: false,
             ingress_protocol: "openai-responses",
             egress_requires_max_tokens: false,

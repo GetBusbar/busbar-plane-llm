@@ -25,7 +25,7 @@ impl ProtocolWriter for CohereWriter {
         _host: &dyn busbar_contract::codec::CodecHost,
         req: &crate::codec::ir::IrRequest,
         _model: &str,
-        _caps: &busbar_contract::ir::egress_prep::LaneCaps,
+        _caps: &crate::codec::egress_prep::LaneCaps,
     ) -> serde_json::Value {
         let mut out = serde_json::Map::new();
         let mut messages_arr: Vec<serde_json::Value> = Vec::new();

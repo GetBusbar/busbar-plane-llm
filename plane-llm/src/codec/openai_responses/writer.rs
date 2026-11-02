@@ -81,7 +81,7 @@ impl ProtocolWriter for ResponsesWriter {
         host: &dyn busbar_contract::codec::CodecHost,
         req: &crate::codec::ir::IrRequest,
         model: &str,
-        caps: &busbar_contract::ir::egress_prep::LaneCaps,
+        caps: &crate::codec::egress_prep::LaneCaps,
     ) -> serde_json::Value {
         self.try_write_request_for_lane(host, req, model, caps)
             .unwrap_or_else(|_| self.encoding_failure(host))
@@ -92,7 +92,7 @@ impl ProtocolWriter for ResponsesWriter {
         host: &dyn busbar_contract::codec::CodecHost,
         req: &crate::codec::ir::IrRequest,
         _model: &str,
-        caps: &busbar_contract::ir::egress_prep::LaneCaps,
+        caps: &crate::codec::egress_prep::LaneCaps,
     ) -> Result<serde_json::Value, IrError> {
         let mut out = serde_json::Map::new();
         let mut input_arr: Vec<serde_json::Value> = Vec::new();

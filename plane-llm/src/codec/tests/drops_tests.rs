@@ -8,10 +8,10 @@
 //! names too much (or a reader that substitutes) fails here.
 
 use super::*;
+use crate::codec::egress_prep::EgressPrep;
 use crate::codec::proto_codec::protocol_for;
 use crate::codec::translate::{TranslateCodec as _, TranslateReqInput};
 use busbar_contract::codec::EgressWire;
-use busbar_contract::ir::egress_prep::EgressPrep;
 use busbar_contract::operation::OpVerb;
 use busbar_test_kit::warn_capture::WarnCapture;
 use serde_json::{json, Value};
@@ -22,9 +22,11 @@ const SEAM: Seam<'static> = Seam {
     egress: "anthropic",
 };
 
-pub(super) fn prep(ingress: &str) -> EgressPrep<'_> {
+pub(super) fn prep(ingress: &str) -> EgressPrep {
     EgressPrep {
-        ingress_protocol: ingress,
+        ingress_protocol: crate::codec::decl_of(ingress)
+            .expect("known fixture dialect")
+            .name,
         egress_requires_max_tokens: true,
         lane_default_max_tokens: None,
         global_default_max_tokens: 4096,
@@ -973,7 +975,7 @@ fn egress_dropped_controls_reports_the_right_controls_per_dialect() {
     assert!(default_lane.egress_dropped_controls("openai").is_empty());
     let native_lane = crate::codec::chat_handle::ChatReqHandle(
         ir,
-        busbar_contract::ir::egress_prep::LaneCaps {
+        crate::codec::egress_prep::LaneCaps {
             native_structured_output: true,
             ..Default::default()
         },

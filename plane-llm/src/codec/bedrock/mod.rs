@@ -18,8 +18,8 @@ use busbar_contract::upstream::StatusClass;
 #[allow(unused_imports)]
 // used standalone; redundant with the `busbar_contract::protocol::*` glob when netted into core
 use super::proto_codec::*;
+use crate::codec::egress_prep::LaneCaps;
 use crate::codec::usage_count::{CountRead, CountSlot, UsageCount};
-use busbar_contract::ir::egress_prep::LaneCaps;
 // Explicit import so it binds to this crate's own `proto_codec`, not the `busbar_contract::protocol::*` glob.
 #[allow(unused_imports)]
 use super::proto_codec::{Protocol, ProtocolReader, ProtocolWriter, StreamFraming};

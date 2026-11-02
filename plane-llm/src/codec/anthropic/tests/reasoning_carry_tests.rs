@@ -3,8 +3,8 @@
 //! (read the ask, project it) plus the gate itself, the clamp, and the sampling-knob omission.
 use super::super::proto_codec::{Protocol, ProtocolReader, ProtocolWriter};
 use super::{anthropic_writer, AnthropicReader};
+use crate::codec::egress_prep::{EgressPrep, LaneCaps};
 use crate::codec::ir::{IrReasoningAsk, IrReasoningEffort};
-use busbar_contract::ir::egress_prep::{EgressPrep, LaneCaps};
 
 /// A lane that declares adaptive thinking (Opus 4.7+/5.x, Sonnet 5, Fable). Every word-form
 /// assertion below that expects `thinking:{type:"adaptive"}` is about such a lane; a lane that

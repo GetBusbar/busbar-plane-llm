@@ -4,14 +4,14 @@
 //! The chat `IrHandle`: the request/response handle `ChatOperation` yields. Wraps the concrete
 //! `crate::codec::ir::{IrRequest,IrResponse}` and carries chat's cross-protocol prep and write,
 //! keyed by the peer protocol string: the handle writes itself onto the target dialect via
-//! `super::proto_codec::protocol_for(proto).writer()`, with no downcast.
+//! `super::proto_codec::protocol_for(proto).writer()`, without downcasting the request handle.
 
 use crate::codec::drops::{self, Dropped};
+use crate::codec::egress_prep::EgressPrep;
 use crate::codec::ir::{IrReasoningAsk, IrRequest, IrResponse};
 use busbar_contract::billing::Billing;
 use busbar_contract::codec::{CodecError, IngressReject, OperationHandler};
 use busbar_contract::codec::{EgressWire, TranslatedResponse};
-use busbar_contract::ir::egress_prep::EgressPrep;
 use busbar_contract::ir::facts::IrFacts;
 use busbar_contract::ir::handle::sealed::Sealed;
 use busbar_contract::ir::handle::IrHandle;
@@ -376,10 +376,7 @@ pub fn chat_usage(r: &IrResponse) -> Option<Billing> {
 
 /// The chat request handle: the request, plus the egress lane's declared capabilities, which the
 /// seam hands over in the [`EgressPrep`] and the egress write passes to the writer.
-pub struct ChatReqHandle(
-    pub IrRequest,
-    pub busbar_contract::ir::egress_prep::LaneCaps,
-);
+pub struct ChatReqHandle(pub IrRequest, pub crate::codec::egress_prep::LaneCaps);
 /// The chat response handle: the response, and the translation cap its plane enforces
 /// ([`IrHandle::apply_translate_cap`]; [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`]
 /// until set), which bounds what a writer accumulates when re-emitting the response as a stream.
@@ -398,9 +395,15 @@ impl IrHandle for ChatReqHandle {
     fn facts(&self) -> Box<dyn IrFacts + Send + Sync> {
         Box::new(self.0.clone())
     }
-    fn prepare_for_egress(&mut self, prep: &EgressPrep) {
+    fn prepare_for_egress(&mut self, context: &dyn std::any::Any) -> Result<(), CodecError> {
+        let prep = context.downcast_ref::<EgressPrep>().ok_or_else(|| {
+            CodecError::Malformed(
+                "LLM request preparation requires this plane's EgressPrep context".into(),
+            )
+        })?;
         chat_prepare_for_egress(&mut self.0, prep);
         self.1 = prep.lane_caps;
+        Ok(())
     }
     fn egress_dropped_controls(&self, egress_proto: &str) -> Vec<&'static str> {
         super::proto_codec::protocol_for(egress_proto)

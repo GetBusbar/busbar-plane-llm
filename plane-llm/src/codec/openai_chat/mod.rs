@@ -19,8 +19,8 @@ use busbar_contract::upstream::StatusClass;
 // `busbar_contract::protocol::*` glob when netted.
 #[allow(unused_imports)]
 use super::proto_codec::*;
+use crate::codec::egress_prep::{LaneCaps, MaxOutputKey};
 use crate::codec::usage_count::{CountRead, CountSlot, UsageCount};
-use busbar_contract::ir::egress_prep::{LaneCaps, MaxOutputKey};
 // Named explicitly so it binds to this crate's `proto_codec` rather than the glob.
 #[allow(unused_imports)]
 use super::proto_codec::{Protocol, ProtocolReader, ProtocolWriter, StreamFraming};

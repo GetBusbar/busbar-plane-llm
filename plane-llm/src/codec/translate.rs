@@ -8,11 +8,11 @@
 //! every codec cell, and the values its two directions read from and answer with. The cell traits are
 //! contract shapes (`busbar_contract::codec`); nothing here names the host.
 
+use crate::codec::egress_prep::EgressPrep;
 use busbar_contract::billing::Billing;
 use busbar_contract::codec::{
     CodecError, EgressWire, IngressReject, OperationHandler, TranslatedResponse,
 };
-use busbar_contract::ir::egress_prep::EgressPrep;
 use busbar_contract::ir::facts::IrFacts;
 use serde_json::Value;
 
@@ -82,7 +82,7 @@ pub trait TranslateCodec: OperationHandler {
     ///     representability guard, collect dropped controls, egress `write_request_value` (`Some` is a
     ///     JSON body the router still post-shapes; `None` is `set_model` + `write_request` bytes).
     ///
-    /// `prep` is the router-built neutral param bag; `model` is the resolved lane wire model.
+    /// `prep` is this plane's resolved preparation context; `model` is the resolved lane wire model.
     fn translate_request(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -99,7 +99,10 @@ pub trait TranslateCodec: OperationHandler {
                 let mut ir = self
                     .read_request(bytes, content_type)
                     .map_err(TranslateReqReject::Ingress)?;
-                ir.prepare_for_egress(prep);
+                ir.prepare_for_egress(prep)
+                    .map_err(|CodecError::Malformed(reason)| {
+                        TranslateReqReject::Unrepresentable(reason)
+                    })?;
                 // The opaque caller resolves and 404-checks `egress`, so it is always `Some`; the guard avoids a panic.
                 let egress_proto = egress_proto.ok_or(TranslateReqReject::EgressUnsupported)?;
                 ir.egress_representable(egress_proto)
@@ -130,7 +133,10 @@ pub trait TranslateCodec: OperationHandler {
                     let mut ir = self
                         .read_request_value(v)
                         .map_err(TranslateReqReject::Ingress)?;
-                    ir.prepare_for_egress(prep);
+                    ir.prepare_for_egress(prep)
+                        .map_err(|CodecError::Malformed(reason)| {
+                            TranslateReqReject::Unrepresentable(reason)
+                        })?;
                     // Content blocks the caller's dialect has and its reader does not model.
                     crate::codec::proto_codec::with_reader(prep.ingress_protocol, |r| {
                         crate::codec::drops::note_unmodelled_blocks(
