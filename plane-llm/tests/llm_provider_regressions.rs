@@ -93,6 +93,24 @@ fn sse(frames: &[Value]) -> Vec<u8> {
 }
 
 #[test]
+fn cohere_bounds_same_dialect_answer_keeps_native_bytes_and_usage() {
+    let body = br#"{ "id" : "cohere-native", "finish_reason" : "COMPLETE", "message" : { "role" : "assistant", "content" : [{ "type" : "text", "text" : "hi" }] }, "usage" : { "tokens" : { "input_tokens" : 11, "output_tokens" : 13 }, "billed_units" : { "input_tokens" : 7, "output_tokens" : 9 } } }"#;
+    let piece = answer(
+        &Host(true),
+        "cohere",
+        "cohere",
+        OpVerb::CHAT,
+        false,
+        false,
+        body,
+    );
+    assert_eq!(piece.bytes.as_ref(), body);
+    assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (11, 13));
+    assert!(piece.dropped.is_empty(), "{piece:?}");
+    assert!(piece.fault.is_none(), "{piece:?}");
+}
+
+#[test]
 fn malformed_streamed_arguments_refuse_at_normal_stop_and_transport_eof_with_usage() {
     for finish in [Some("tool_calls"), Some("length"), None] {
         for arguments in ["{\"recipient\":", "{bad}"] {

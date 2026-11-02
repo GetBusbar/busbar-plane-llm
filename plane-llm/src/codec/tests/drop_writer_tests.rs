@@ -690,3 +690,170 @@ fn text_only_tool_writers_report_the_actual_child_and_preserve_adjacent_text() {
         assert_eq!(wire["messages"], control["messages"]);
     }
 }
+
+fn cohere_bounds_body(parameter: &str, requested: f64) -> Value {
+    let mut body = json!({"model":"m", "max_tokens":16,
+        "messages":[{"role":"user", "content":"hi"}]});
+    body[parameter] = json!(requested);
+    body
+}
+
+fn cohere_bounds_wire(parameter: &str, value: f64) -> Value {
+    let mut wire = json!({"max_tokens":16, "messages":[{"role":"user", "content":"hi"}]});
+    wire[if parameter == "top_p" { "p" } else { parameter }] = json!(value);
+    wire
+}
+
+fn cohere_bounds_cross_dialect(parameter: &str, cases: &[(f64, f64)]) {
+    for &(requested, clamped) in cases {
+        let body = cohere_bounds_body(parameter, requested);
+        let (wire, audited, cap) = translate_body("openai", "cohere", &body);
+        assert_eq!(wire, cohere_bounds_wire(parameter, clamped), "{body}");
+        assert_eq!(audited, [parameter], "{body}");
+        let warnings = cap.messages();
+        assert_eq!(warnings.len(), 1, "{body}: {warnings:?}");
+        let warning = &warnings[0];
+        for field in [
+            format!("path={parameter}"),
+            format!("parameter={parameter}"),
+            format!("requested_value={requested}"),
+            format!("clamped_value={clamped}"),
+            "direction=request".into(),
+            "ingress=openai".into(),
+            "egress=cohere".into(),
+            "diag=BUSBAR-7085".into(),
+        ] {
+            assert!(warning.contains(&field), "missing {field}: {warning}");
+        }
+        assert!(!warning.contains("temperature"), "{warning}");
+    }
+}
+
+#[test]
+fn cohere_bounds_cross_dialect_top_p_is_warned_and_audited() {
+    cohere_bounds_cross_dialect("top_p", &[(0.0, 0.01), (1.0, 0.99)]);
+}
+
+#[test]
+fn cohere_bounds_cross_dialect_frequency_penalty_is_warned_and_audited() {
+    cohere_bounds_cross_dialect("frequency_penalty", &[(-0.5, 0.0), (1.5, 1.0)]);
+}
+
+#[test]
+fn cohere_bounds_cross_dialect_presence_penalty_is_warned_and_audited() {
+    cohere_bounds_cross_dialect("presence_penalty", &[(-0.5, 0.0), (1.5, 1.0)]);
+}
+
+#[test]
+fn cohere_bounds_valid_endpoints_interior_and_absence_do_not_warn_or_audit() {
+    for (parameter, values) in [
+        ("top_p", [0.01, 0.5, 0.99]),
+        ("frequency_penalty", [0.0, 0.5, 1.0]),
+        ("presence_penalty", [0.0, 0.5, 1.0]),
+    ] {
+        for requested in values {
+            let body = cohere_bounds_body(parameter, requested);
+            let (wire, audited, cap) = translate_body("openai", "cohere", &body);
+            assert_eq!(wire, cohere_bounds_wire(parameter, requested), "{body}");
+            assert!(audited.is_empty(), "{body}: {audited:?}");
+            assert!(cap.messages().is_empty(), "{body}: {:?}", cap.messages());
+        }
+    }
+    let body = json!({"model":"m", "max_tokens":16,
+        "messages":[{"role":"user", "content":"hi"}]});
+    let (wire, audited, cap) = translate_body("openai", "cohere", &body);
+    assert_eq!(
+        wire,
+        json!({"max_tokens":16, "messages":[{"role":"user", "content":"hi"}]})
+    );
+    assert!(audited.is_empty(), "{audited:?}");
+    assert!(cap.messages().is_empty(), "{:?}", cap.messages());
+}
+
+#[test]
+fn cohere_bounds_direct_writer_diagnostics_name_the_actual_parameter_and_values() {
+    for (parameter, cases) in [
+        ("top_p", [(0.0, 0.01), (1.0, 0.99)]),
+        ("frequency_penalty", [(-0.5, 0.0), (1.5, 1.0)]),
+        ("presence_penalty", [(-0.5, 0.0), (1.5, 1.0)]),
+    ] {
+        for (requested, clamped) in cases {
+            let body = cohere_bounds_body(parameter, requested);
+            let ir = protocol_for("openai")
+                .unwrap()
+                .reader()
+                .read_request(&body)
+                .unwrap();
+            let cap = WarnCapture::default();
+            let wire = tracing::subscriber::with_default(cap.clone(), || {
+                protocol_for("cohere")
+                    .unwrap()
+                    .writer()
+                    .write_request(crate::codec::test_host::HOST, &ir)
+            });
+            assert_eq!(wire, cohere_bounds_wire(parameter, clamped), "{body}");
+            let warnings = cap.messages();
+            assert_eq!(warnings.len(), 1, "{body}: {warnings:?}");
+            let warning = &warnings[0];
+            for field in [
+                format!("parameter={parameter}"),
+                format!("requested_value={requested}"),
+                format!("clamped_value={clamped}"),
+            ] {
+                assert!(warning.contains(&field), "missing {field}: {warning}");
+            }
+            assert!(!warning.contains("temperature"), "{warning}");
+        }
+    }
+}
+
+#[test]
+fn cohere_bounds_temperature_diagnostic_keeps_its_compatibility_fields() {
+    let body = cohere_bounds_body("temperature", 1.8);
+    let ir = protocol_for("openai")
+        .unwrap()
+        .reader()
+        .read_request(&body)
+        .unwrap();
+    let cap = WarnCapture::default();
+    let wire = tracing::subscriber::with_default(cap.clone(), || {
+        protocol_for("cohere")
+            .unwrap()
+            .writer()
+            .write_request(crate::codec::test_host::HOST, &ir)
+    });
+    assert_eq!(wire, cohere_bounds_wire("temperature", 1.0));
+    let warnings = cap.messages();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    for field in [
+        "parameter=temperature",
+        "requested_temperature=1.8",
+        "clamped_temperature=1",
+    ] {
+        assert!(
+            warnings[0].contains(field),
+            "missing {field}: {}",
+            warnings[0]
+        );
+    }
+}
+
+#[test]
+fn cohere_bounds_same_dialect_request_relay_preserves_native_bytes() {
+    let bytes = br#"{ "model" : "m", "messages" : [{ "role" : "user", "content" : "hi" }], "p" : 1.0, "frequency_penalty" : 1.5, "presence_penalty" : -0.5 }"#;
+    let far = crate::exchange::shaping::FarShape {
+        dialect: "cohere",
+        wire_model: "m",
+        default_max_tokens: None,
+        prompt_caching: false,
+        caps: Default::default(),
+        path_base: None,
+    };
+    let cap = WarnCapture::default();
+    let relayed = tracing::subscriber::with_default(cap.clone(), || {
+        crate::exchange::attempt::relay_request(far, "application/json", bytes)
+    });
+    assert_eq!(relayed.bytes.as_ref(), bytes);
+    assert!(relayed.pristine);
+    assert!(cap.messages().is_empty(), "{:?}", cap.messages());
+}
