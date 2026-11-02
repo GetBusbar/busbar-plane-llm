@@ -1193,7 +1193,9 @@ fn response_to_ir_events_with_origins(
                 });
                 events.push(IrStreamEvent::BlockDelta {
                     index,
-                    delta: IrDelta::InputJsonDelta(input.to_string()),
+                    delta: IrDelta::InputJsonDelta(
+                        crate::codec::dialect::tool_arguments_to_string(input),
+                    ),
                 });
                 events.push(IrStreamEvent::BlockStop { index });
                 index += 1;
