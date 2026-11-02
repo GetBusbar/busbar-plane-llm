@@ -1044,7 +1044,7 @@ fn bedrock_media_content_block(
         });
         if name.is_some() && usable.is_none() {
             crate::codec::drops::writer_drop!(
-                crate::codec::drops::member("name"),
+                crate::codec::drops::block(kind.as_str()),
                 &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
                 [],
                 "replacing an unrepresentable Bedrock document name with the existing neutral attachment label"

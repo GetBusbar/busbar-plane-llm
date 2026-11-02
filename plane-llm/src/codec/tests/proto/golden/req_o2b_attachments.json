@@ -1,1 +1,1 @@
-{"messages":[{"content":[{"text":"transcribe this"},{"document":{"format":"pdf","name":"spec.pdf","source":{"bytes":"JVBERi0="}}}],"role":"user"}]}
+{"messages":[{"content":[{"text":"transcribe this"},{"document":{"format":"pdf","name":"attachment","source":{"bytes":"JVBERi0="}}}],"role":"user"}]}

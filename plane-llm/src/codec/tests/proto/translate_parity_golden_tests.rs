@@ -184,7 +184,7 @@ const RESPONSE_CORPUS: &[(&str, &str)] = &[
     ),
     (
         "resp_o2a_tool_calls.json",
-        r#"{"id":"chatcmpl-def456","object":"chat.completion","created":1752000001,"model":"gpt-4o-mini","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_XYZ","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}},{"id":"call_ZZZ","type":"function","function":{"name":"get_time","arguments":"not json"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":50,"completion_tokens":20,"total_tokens":70}}"#,
+        r#"{"id":"chatcmpl-def456","object":"chat.completion","created":1752000001,"model":"gpt-4o-mini","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_XYZ","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}},{"id":"call_ZZZ","type":"function","function":{"name":"get_time","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":50,"completion_tokens":20,"total_tokens":70}}"#,
     ),
     (
         "resp_o2a_cached_usage.json",
@@ -218,4 +218,47 @@ fn translate_parity_golden_response_openai_to_anthropic() {
         let actual = translate_response_o2a(body);
         check_golden(name, &actual);
     }
+}
+
+/// The original v1.5.5 corpus used malformed string arguments on its second call. An Anthropic
+/// tool input is an object, so that original body is a conversion refusal, not a success golden.
+#[test]
+fn malformed_openai_tool_arguments_refuse_anthropic_conversion_without_inventing_input() {
+    let valid = RESPONSE_CORPUS
+        .iter()
+        .find(|(name, _)| *name == "resp_o2a_tool_calls.json")
+        .unwrap()
+        .1;
+    let mut body: serde_json::Value = serde_json::from_str(valid).unwrap();
+    body["choices"][0]["message"]["tool_calls"][1]["function"]["arguments"] =
+        serde_json::json!("not json");
+    let openai = crate::codec::proto_codec::protocol_for("openai").unwrap();
+    let anthropic = crate::codec::proto_codec::protocol_for("anthropic").unwrap();
+    let mut ir = openai
+        .reader()
+        .read_response(crate::codec::test_host::HOST, &body)
+        .unwrap();
+    crate::codec::chat_handle::chat_prepare_for_ingress(&mut ir, "anthropic", FIXED_NOW);
+    let error = anthropic
+        .writer()
+        .try_write_response(crate::codec::test_host::HOST, &ir)
+        .unwrap_err();
+    assert_eq!(
+        error.provider_signal.as_deref(),
+        Some("Anthropic tool input must be a JSON object")
+    );
+    assert_eq!((ir.usage.input_tokens, ir.usage.output_tokens), (50, 20));
+    let refused = anthropic
+        .writer()
+        .write_response(crate::codec::test_host::HOST, &ir);
+    assert_eq!(refused["type"], "error", "{refused}");
+    assert_eq!(refused["error"]["type"], "api_error", "{refused}");
+    assert_eq!(
+        refused["error"]["message"],
+        "Anthropic tool input must be a JSON object"
+    );
+    assert!(
+        refused.get("content").is_none() && refused.get("id").is_none(),
+        "{refused}"
+    );
 }

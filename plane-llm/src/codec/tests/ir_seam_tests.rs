@@ -1304,6 +1304,32 @@ fn bedrock_unrepresentable_document_names_use_the_existing_neutral_label() {
         written["messages"][0]["content"][0]["document"]["name"],
         "Q3 Report-(final)[2]"
     );
+
+    let native = json!({"model":"m", "messages":[{"role":"user", "content":[{
+        "type":"file", "file":{"file_data":"data:application/pdf;base64,JVBERi0=", "filename":"spec.pdf"}
+    }]}]});
+    let openai = crate::codec::proto_codec::protocol_for("openai").unwrap();
+    let request = openai.reader().read_request(&native).unwrap();
+    let capture = WarnCapture::default();
+    let (written, dropped) = tracing::subscriber::with_default(capture.clone(), || {
+        crate::codec::drops::scope(
+            crate::codec::drops::Seam {
+                direction: crate::codec::drops::Direction::Request,
+                ingress: "openai",
+                egress: "bedrock",
+            },
+            || {
+                protocol
+                    .writer()
+                    .write_request(crate::codec::test_host::HOST, &request)
+            },
+        )
+    });
+    let document = &written["messages"][0]["content"][0]["document"];
+    assert_eq!(document["name"], "attachment", "{written}");
+    assert_eq!(document["source"]["bytes"], "JVBERi0=", "{written}");
+    assert_eq!(dropped, ["messages[].content[].type=file"]);
+    assert!(capture.contains("neutral attachment label"));
 }
 
 #[test]

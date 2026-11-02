@@ -153,6 +153,38 @@ fn malformed_whole_arguments_cannot_become_an_empty_call_in_a_synthesized_stream
 }
 
 #[test]
+fn malformed_openai_tool_arguments_refuse_anthropic_without_losing_reported_work() {
+    let body = serde_json::to_vec(&json!({"id":"chatcmpl-native", "model":"m",
+        "choices":[{"index":0, "message":{"role":"assistant", "content":null,
+            "tool_calls":[{"id":"call-native", "type":"function", "function":{
+                "name":"send", "arguments":"not json"}}]}, "finish_reason":"tool_calls"}],
+        "usage":{"prompt_tokens":50, "completion_tokens":20, "total_tokens":70}}))
+    .unwrap();
+    let piece = answer(
+        &Host(true),
+        "anthropic",
+        "openai",
+        OpVerb::CHAT,
+        false,
+        false,
+        &body,
+    );
+    assert!(
+        piece.head.as_ref().is_some_and(|head| head.status >= 500),
+        "{piece:?}"
+    );
+    let refused: Value = serde_json::from_slice(&piece.bytes).unwrap();
+    assert_eq!(refused["type"], "error", "{refused}");
+    assert_eq!(refused["error"]["type"], "api_error", "{refused}");
+    assert_eq!(
+        refused["error"]["message"],
+        "Anthropic tool input must be a JSON object"
+    );
+    assert!(refused.get("content").is_none(), "{refused}");
+    assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (50, 20));
+}
+
+#[test]
 fn refused_embedding_vectors_keep_provider_usage_without_compacting_coordinates() {
     for embedding in [
         json!({}),
