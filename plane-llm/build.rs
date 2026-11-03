@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-changed=tests/blackbox");
 
     println!(
         "cargo::metadata=cells={}",
@@ -20,6 +21,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         "cargo::metadata=driver={}",
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?)
             .join("tests/on_driver")
+            .display()
+    );
+    println!(
+        "cargo::metadata=blackbox={}",
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?)
+            .join("tests/blackbox")
             .display()
     );
     Ok(())

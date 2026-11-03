@@ -1,0 +1,107 @@
+{
+  "_comment": "Exact donor dist/default/tests/law7_direct_model_route.rs::a_direct_routing_config_is_served_as_one_naming_the_planes_verb. This fresh case is the pooled half; both require the same exact serialized HTTP response, preserving the donor direct==pooled byte predicate as well as full JSON equality. Only ports, temporary paths and the signing/admin credential rig are substituted. The existing blackbox runner supplies raw HTTP, whole-JSON and exact-body predicates; the call retains the donor 30-second bound.",
+  "case": "law7_model_route_with_pools",
+  "credentials": {
+    "signing_key": true
+  },
+  "files": {
+    "config.yaml": "listen: \"127.0.0.1:{data_port}\"\nadmin_listen: \"127.0.0.1:{admin_port}\"\nadvanced:\n  allow_destinations: [\"127.0.0.1\"]\nstore: {module: memory}\nadmin_require_mtls: false\nidentity-providers:\n  admin-tokens:\n    module: admin-tokens\n    token: { env: BUSBAR_ADMIN_TOKEN }\nauth:\n  chain:\n    - keys\n  signing_key: { file: \"{signing_key_file}\" }\n  admin_auth:\n    - admin-tokens\nproviders:\n  mock:\n    api_key: { env: MOCK_KEY }\nmodels:\n  test-model:\n    provider: mock\npools:\n  everyone:\n    members:\n      - model: test-model\n",
+    "providers.yaml": "mock:\n  protocol: anthropic\n  base_url: \"{upstream_url}\"\n"
+  },
+  "requires": {
+    "features": [
+      "auth-admin-tokens"
+    ],
+    "sections": [
+      "pools"
+    ]
+  },
+  "schema": "blackbox/1",
+  "steps": [
+    {
+      "boot": {
+        "expect": "listening",
+        "listening": [
+          "data",
+          "admin"
+        ],
+        "within_secs": 30
+      }
+    },
+    {
+      "mint": {
+        "body": {
+          "name": "law7-direct"
+        },
+        "path": "/api/v1/admin/keys"
+      }
+    },
+    {
+      "call": {
+        "bearer": "{minted}",
+        "body": "{\"model\":\"test-model\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+        "body_eq": "{\"content\":[{\"text\":\"served\",\"type\":\"text\"}],\"id\":\"msg_law7_direct\",\"model\":\"test-model\",\"role\":\"assistant\",\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"type\":\"message\",\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "json_eq": {
+          "": {
+            "content": [
+              {
+                "text": "served",
+                "type": "text"
+              }
+            ],
+            "id": "msg_law7_direct",
+            "model": "test-model",
+            "role": "assistant",
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "type": "message",
+            "usage": {
+              "input_tokens": 3,
+              "output_tokens": 1
+            }
+          }
+        },
+        "method": "POST",
+        "path": "/test-model/v1/messages",
+        "port": "data",
+        "status": 200,
+        "within_secs": 30
+      }
+    }
+  ],
+  "upstream": {
+    "http": {
+      "body": {
+        "content": [
+          {
+            "text": "served",
+            "type": "text"
+          }
+        ],
+        "id": "msg_law7_direct",
+        "model": "test-model",
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 1
+        }
+      },
+      "status": 200
+    }
+  },
+  "vars": {
+    "BUSBAR_ADMIN_TOKEN": "{admin_token}",
+    "BUSBAR_CONFIG": "{dir}/config.yaml",
+    "BUSBAR_PROVIDERS": "{dir}/providers.yaml",
+    "MOCK_KEY": "x"
+  }
+}
