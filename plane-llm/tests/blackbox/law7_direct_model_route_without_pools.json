@@ -33,7 +33,8 @@
         "body": {
           "name": "law7-direct"
         },
-        "path": "/api/v1/admin/keys"
+        "path": "/api/v1/admin/keys",
+        "within_secs": 30
       }
     },
     {
