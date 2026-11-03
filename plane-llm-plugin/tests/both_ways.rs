@@ -473,13 +473,24 @@ fn assert_the_planes_answers(t: &[String]) {
         ANSWER,
         "the narrow reply drains whole: {all}"
     );
-    let declined = &t[t.len() - 9];
+    let mut refusals = t.iter().filter(|line| line.starts_with("refusal "));
+    let declined = refusals.next().expect("the declined arrival's refusal");
     assert!(
         declined.starts_with("refusal Ready {")
             && declined.contains("content-type=application/json"),
         "{all}"
     );
-    assert!(t[t.len() - 8].starts_with("refusal Ready {"), "{all}");
+    assert!(
+        refusals
+            .next()
+            .expect("the kernel's refusal")
+            .starts_with("refusal Ready {"),
+        "{all}"
+    );
+    assert!(
+        refusals.next().is_none(),
+        "the original two refusal checks remain distinct: {all}"
+    );
     assert_eq!(t[t.len() - 7], "serve Refused", "{all}");
     assert_eq!(t[t.len() - 6], "project Refused", "{all}");
     assert_eq!(t[t.len() - 5], "tick Ready next=0", "{all}");
