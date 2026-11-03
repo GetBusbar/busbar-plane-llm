@@ -663,15 +663,21 @@ fn whole_piece<'a>(
     }
 
     wire::relay_far_head(ctx.arrived.dialect, &mut w.answer.fields, far_head);
-    let units = Units::of(
-        wire::token_usage_of(&w.usage).as_ref(),
-        wire::open_units_of(&w.usage),
-    );
+    // A recovered provider report remains on Whole for observation, but an undelivered
+    // buffered translation abort is not billable (M3 parity). Streaming usage is settled
+    // on its separate path, including reports received before a midstream abort or cancel.
+    let units = if w.end == whole::WholeEnd::NotTranslatable {
+        Units::default()
+    } else {
+        Units::of(
+            wire::token_usage_of(&w.usage).as_ref(),
+            wire::open_units_of(&w.usage),
+        )
+    };
     let keeps_reported_usage = matches!(
         w.end,
         whole::WholeEnd::Delivered | whole::WholeEnd::FailedGeneration
-    ) || (w.end == whole::WholeEnd::NotTranslatable
-        && w.usage.is_some());
+    );
     let dropped = match w.end {
         whole::WholeEnd::Delivered => std::mem::take(&mut w.dropped),
         _ => Vec::new(),

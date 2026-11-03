@@ -4670,7 +4670,7 @@ fn an_openai_whole_answer_reads_as_an_anthropic_message_naming_the_serving_model
 }
 
 #[test]
-fn malformed_anthropic_answer_keeps_reported_usage_at_the_reply_boundary() {
+fn malformed_anthropic_answer_keeps_observation_but_bills_no_translate_abort() {
     let far = br#"{"role":"assistant","content":"malformed","usage":{"input_tokens":17,"output_tokens":9}}"#;
     let w = whole::translate(HOST, &ctx("openai", "anthropic", false, false), 200, far);
     assert_eq!(w.end, WholeEnd::NotTranslatable);
@@ -4723,10 +4723,20 @@ fn malformed_anthropic_answer_keeps_reported_usage_at_the_reply_boundary() {
     );
     let piece = reply.feed(HOST, &reply_ctx, far, true, AT);
     assert_eq!(piece.head.unwrap().status, 500);
-    assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (17, 9));
+    assert_eq!(
+        piece.units,
+        Units::default(),
+        "an undelivered translate-abort bills nothing"
+    );
     assert!(
-        reply.partial(),
-        "reported work survives a failed output and a later leave"
+        !reply.partial(),
+        "a provider report alone is not a delivered buffered answer"
+    );
+    let cancelled = reply.cut(HOST, &reply_ctx, false);
+    assert_eq!(
+        cancelled.units,
+        Units::default(),
+        "a later leave cannot restore aborted billing"
     );
 }
 
@@ -4923,7 +4933,7 @@ fn failed_responses_usage_is_observed_while_same_and_cross_dialect_refunds_stay_
 }
 
 #[test]
-fn responses_content_parse_failure_recovery_still_keeps_reported_work() {
+fn responses_content_parse_failure_keeps_observation_without_billing_abort() {
     let far = br#"{"status":"completed","output":"unreadable content","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}"#;
     let observed = chat_handler("responses")
         .extract_usage(HOST, "responses", far)
@@ -4949,4 +4959,58 @@ fn responses_content_parse_failure_recovery_still_keeps_reported_work() {
         no_report.usage, None,
         "recovery uses only structurally located provider usage"
     );
+
+    let arrived = arrival("openai", false);
+    let far_lane = lane("responses");
+    let reply_ctx = ReplyCtx {
+        arrived: &arrived,
+        lane: &far_lane,
+        intent: stream_intent(chat_handler("openai"), arrived.parsed.as_ref()),
+        passthrough: false,
+        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+    };
+    let mut reply = Reply::new(HOST, &reply_ctx, 200, JSON_HEAD);
+    let end = reply.feed(HOST, &reply_ctx, far, true, AT);
+    assert_eq!(end.head.unwrap().status, 500);
+    assert_eq!(
+        end.units,
+        Units::default(),
+        "recovered usage is not a billable delivery"
+    );
+    assert!(!reply.partial());
+    assert_eq!(reply.cut(HOST, &reply_ctx, false).units, Units::default());
+}
+
+#[test]
+fn buffered_reported_usage_is_billable_only_after_a_delivered_translation() {
+    let far = br#"{"id":"msg_control","type":"message","role":"assistant","model":"claude","content":[{"type":"text","text":"delivered"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":7,"output_tokens":3}}"#;
+    let arrived = arrival("openai", false);
+    let far_lane = lane("anthropic");
+    let context = ReplyCtx {
+        arrived: &arrived,
+        lane: &far_lane,
+        intent: stream_intent(chat_handler("openai"), arrived.parsed.as_ref()),
+        passthrough: false,
+        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+    };
+    let mut delivered = Reply::new(HOST, &context, 200, JSON_HEAD);
+    let end = delivered.feed(HOST, &context, far, true, AT);
+    assert_eq!(end.head.unwrap().status, 200);
+    assert_eq!((end.units.tokens_in, end.units.tokens_out), (7, 3));
+    assert!(delivered.partial(), "the translated answer was delivered");
+
+    let mut cancelled = Reply::new(HOST, &context, 200, JSON_HEAD);
+    let pending = cancelled.feed(HOST, &context, far, false, AT);
+    assert_eq!(pending.units, Units::default());
+    assert!(
+        !cancelled.partial(),
+        "buffered bytes have not reached the caller"
+    );
+    let end = cancelled.cut(HOST, &context, false);
+    assert_eq!(
+        end.units,
+        Units::default(),
+        "a cancelled non-stream partial bills zero"
+    );
+    assert!(!cancelled.partial());
 }
