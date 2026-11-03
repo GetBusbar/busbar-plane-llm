@@ -200,6 +200,33 @@ fn arrive_with(
     )
 }
 
+fn unauthenticated_refusal(p: &Plugin<Plane>, target: &'static [u8], expected: u32) -> String {
+    let (mut reply, mut fields, mut buf) = ([0_u8; 512], [z::<OutField>(); 4], [0_u8; 256]);
+    let mut frame: Frame<RefusalIn, RefusalOut> = Frame::new(z(), z());
+    (frame.input.head, frame.out.head) = (in_head(), out_head());
+    (frame.input.cause, frame.input.reason, frame.input.status) = (
+        REFUSAL_KERNEL,
+        busbar_plane_llm::refusal::reason::UNAUTHENTICATED,
+        401,
+    );
+    frame.input.target = text(target);
+    frame.input.text = text(b"unauthenticated");
+    (frame.input.reply_buf, frame.input.reply_cap) = (reply.as_mut_ptr(), reply.len());
+    (frame.input.fields_buf, frame.input.fields_cap) = (fields.as_mut_ptr(), fields.len());
+    (frame.input.arena_buf, frame.input.arena_cap) = (buf.as_mut_ptr(), buf.len());
+    let called = p.call(slot::REFUSAL, &mut frame);
+    assert_eq!(called.outcome, Outcome::Ready);
+    assert_eq!(
+        frame.out.status, expected,
+        "the ABI must carry the rendered status"
+    );
+    format!(
+        "unauthenticated status={} {}",
+        frame.out.status,
+        String::from_utf8_lossy(&reply[..frame.out.reply_written as usize])
+    )
+}
+
 fn refusal(p: &Plugin<Plane>, unit: u64, plane_code: u32, target: &'static [u8]) -> String {
     let (mut reply, mut fields, mut buf) = ([0_u8; 512], [z::<OutField>(); 4], [0_u8; 256]);
     let mut r: Frame<RefusalIn, RefusalOut> = Frame::new(z(), z());
@@ -304,6 +331,14 @@ fn script(p: &Plugin<Plane>) -> Vec<String> {
 
     t.push(refusal(p, 8, 1, b"/nowhere"));
     t.push(refusal(p, 0, 0, b"/v1/messages"));
+    t.push(unauthenticated_refusal(
+        p,
+        b"/v1beta/models/m:generateContent",
+        400,
+    ));
+    t.push(unauthenticated_refusal(p, b"/v1/chat/completions", 401));
+    t.push(unauthenticated_refusal(p, b"/v1/messages", 401));
+    t.push(unauthenticated_refusal(p, b"/model/m/converse", 403));
 
     let mut s: Frame<ServeIn, ServeOut> = Frame::new(z(), z());
     (s.input.head, s.out.head) = (in_head(), out_head());

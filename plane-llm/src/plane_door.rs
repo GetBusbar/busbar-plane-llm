@@ -1602,6 +1602,7 @@ slot!(
         };
         let (mut reply, mut fields, mut arena) =
             (input.reply_buf(), input.fields_buf(), input.arena_buf());
+        out.set(|o| &o.status, u32::from(rendered.status));
         reply.extend(&rendered.body);
         for (name, value) in &rendered.fields {
             fields.push(OutField {
