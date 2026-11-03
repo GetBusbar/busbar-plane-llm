@@ -657,7 +657,7 @@ fn a_json_array_caller_reads_its_stream_as_one_array() {
 
 use busbar_plane_llm::exchange::arrive::Arrived;
 use busbar_plane_llm::exchange::attempt::stream_intent;
-use busbar_plane_llm::exchange::reply::{At, Fault, Reply, ReplyCtx, Verdict};
+use busbar_plane_llm::exchange::reply::{At, Fault, Reply, ReplyCtx, Units, Verdict};
 use busbar_plane_llm::exchange::shaping::Lane;
 
 fn lane(dialect: &'static str) -> Lane {
