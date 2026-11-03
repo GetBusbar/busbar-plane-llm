@@ -964,3 +964,77 @@ fn the_kernels_refusals_are_the_previous_releases_writing_in_every_dialect() {
         }
     }
 }
+
+#[test]
+fn authentication_before_arrival_uses_the_paths_declared_status() {
+    for (dialect, expected) in [
+        ("gemini", 400),
+        ("bedrock", 403),
+        ("openai", 401),
+        ("anthropic", 401),
+        ("responses", 401),
+        ("cohere", 401),
+        ("some-future-proto", 401),
+    ] {
+        let envelope = if dialect == "some-future-proto" {
+            dialect
+        } else {
+            envelope_for(target_of(dialect))
+        };
+        let rendered = kernel_refusal(
+            HOST,
+            envelope,
+            reason::UNAUTHENTICATED,
+            401,
+            "unauthenticated",
+            0,
+        );
+        assert_eq!(rendered.status, expected, "{dialect}");
+        if dialect == "gemini" {
+            let body = body_of(&rendered);
+            assert_eq!(body["error"]["code"], 400);
+            assert_eq!(body["error"]["status"], "INVALID_ARGUMENT");
+            assert_eq!(
+                body["error"]["message"],
+                "API key not valid. Please pass a valid API key."
+            );
+        }
+    }
+}
+
+#[test]
+fn authentication_status_fallback_does_not_replace_other_refusal_statuses() {
+    for dialect in ["gemini", "openai", "anthropic"] {
+        let frozen = kernel_refusal(HOST, dialect, reason::GROUP_FROZEN, 403, "group frozen", 0);
+        assert_eq!(
+            frozen.status, 403,
+            "{dialect}: a non-authentication refusal is unchanged"
+        );
+        let challenge = kernel_refusal(
+            HOST,
+            dialect,
+            reason::CHALLENGE_EXHAUSTED,
+            503,
+            "challenge exhausted",
+            0,
+        );
+        assert_eq!(
+            challenge.status, 503,
+            "{dialect}: the host's challenge status remains selected"
+        );
+    }
+    for dialect in ["openai", "anthropic", "some-future-proto"] {
+        let explicit = kernel_refusal(
+            HOST,
+            dialect,
+            reason::UNAUTHENTICATED,
+            418,
+            "unauthenticated",
+            0,
+        );
+        assert_eq!(
+            explicit.status, 418,
+            "{dialect}: no declared override replaces the host fallback"
+        );
+    }
+}

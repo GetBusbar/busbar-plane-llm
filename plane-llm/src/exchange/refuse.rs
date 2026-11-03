@@ -151,6 +151,18 @@ pub fn kernel_refusal(
 ) -> Rendered {
     let spelling = reason_of(reason).map_or("", |r| r.as_str());
     if is_authentication(spelling) {
+        // Before arrival the host may know only its default dialect. Once the path
+        // identifies this envelope, honor its explicitly declared authentication status.
+        let status = crate::dialect::DIALECTS
+            .iter()
+            .position(|d| d.name == envelope)
+            .and_then(|dialect| {
+                crate::refusal::REFUSAL_STATUSES.iter().find(|row| {
+                    row.reason == reason && usize::try_from(row.dialect).ok() == Some(dialect)
+                })
+            })
+            .and_then(|row| u16::try_from(row.status).ok())
+            .unwrap_or(status);
         let d = decl(envelope);
         let kind = d.map_or(busbar_contract::protocol::KIND_AUTHENTICATION, |d| {
             d.auth_failure_status_and_kind.1
