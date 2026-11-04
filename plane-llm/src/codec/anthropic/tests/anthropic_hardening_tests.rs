@@ -27,7 +27,7 @@ fn stop_reason_egress_never_leaks_foreign_tokens() {
 /// `x-api-key` verbatim, a forwarded caller token as a bearer.
 #[test]
 fn egress_scheme_is_the_declared_credential_family_table() {
-    use busbar_contract::protocol::{CredentialFamily, CredentialHeader as H};
+    use crate::codec::protocol::{CredentialFamily, CredentialHeader as H};
     let Some(EgressScheme::Static {
         families,
         own,
@@ -3826,7 +3826,7 @@ fn unmodelled_block_is_left_out_of_the_ir_and_spliced_back_same_dialect() {
 
 #[test]
 fn the_tails_api_key_parameters_restate_the_credential_family_table() {
-    use busbar_contract::protocol::CredentialHeader as H;
+    use crate::codec::protocol::CredentialHeader as H;
     let Some(EgressScheme::Static {
         families,
         own,

@@ -5,9 +5,9 @@
 //! carriers, the duration rendering, and the error kinds, signals and head reader its dialects
 //! share.
 
-use busbar_contract::codec::{Cell, OperationHandler};
+use crate::codec::cells::{Cell, OperationHandler};
+use crate::codec::protocol::HeadFields;
 use busbar_contract::operation::OpVerb;
-use busbar_contract::protocol::HeadFields;
 use busbar_contract::{Count, SlabBytes};
 
 /// The row lookup every [`RequestHandler::operation_handler`] is, stated once. Rows are

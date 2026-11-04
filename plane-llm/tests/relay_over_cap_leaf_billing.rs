@@ -115,7 +115,7 @@ fn image_usage_takes_priority_over_array_counts_even_when_oversized() {
             );
             for chunk in [1, 17, body.len()] {
                 let end = delivered(protocol, OpVerb::IMAGE, body.as_bytes(), 128, chunk);
-                assert!(end.open_units.get("images").is_none());
+                assert!(!end.open_units.contains_key("images"));
                 if usage.contains("TokenCount") || usage.contains("input_tokens") {
                     let tokens = end
                         .usage

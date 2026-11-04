@@ -7,7 +7,7 @@
 //! stripper of the same-protocol verbatim writer, and the dropped provider-metadata report.
 
 use crate::codec::framework::ERR_TYPE_SERVER_ERROR;
-use busbar_contract::protocol::{
+use crate::codec::protocol::{
     sse_line_spans, ERR_TYPE_API_ERROR, ERR_TYPE_AUTHENTICATION, ERR_TYPE_INSUFFICIENT_QUOTA,
     ERR_TYPE_INVALID_REQUEST, ERR_TYPE_NOT_FOUND, ERR_TYPE_PERMISSION, ERR_TYPE_RATE_LIMIT,
 };
@@ -83,8 +83,8 @@ pub fn warn_dropped<'a>(dropped: impl IntoIterator<Item = &'a str>, warn: &DropW
 /// The refusal a dialect reader returns for bytes it cannot read as its own shape: a client error
 /// with the `ir_parse` lane signal, one constructor so every reader refuses alike.
 #[must_use]
-pub fn ir_parse_error() -> busbar_contract::protocol::IrError {
-    busbar_contract::protocol::IrError {
+pub fn ir_parse_error() -> crate::codec::protocol::IrError {
+    crate::codec::protocol::IrError {
         class: busbar_contract::upstream::StatusClass::ClientError,
         provider_signal: Some(crate::codec::framework::SIGNAL_IR_PARSE.to_string()),
         retry_after: None,
@@ -148,7 +148,7 @@ pub const BASE62_REJECT_THRESHOLD: u8 = 248;
 /// by rejection sampling: a bare `byte % 62` over-represents residues 0..7 by ~25%, a statistical tell
 /// against a native id, so a byte `>= BASE62_REJECT_THRESHOLD` is discarded.
 pub(crate) fn fill_base62(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     out: &mut [u8],
     alphabet: &[u8; 62],
 ) -> bool {

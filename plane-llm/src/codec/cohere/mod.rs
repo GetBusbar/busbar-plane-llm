@@ -5,8 +5,8 @@
 
 use crate::codec::ir::IrStreamEvent;
 use crate::codec::keys;
+use crate::codec::protocol::*;
 use busbar_contract::http::StatusCode;
-use busbar_contract::protocol::*;
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
 #[cfg(test)]
@@ -34,10 +34,10 @@ pub fn protocol() -> Protocol {
 /// Router detection: the v2/v1 chat paths (`/v2/chat`, `/v1/chat`, rung 8) and the v2 embed/rerank
 /// paths (`/v2/embed`, `/v2/rerank`, rung 9).
 fn claims(
-    _h: busbar_contract::protocol::HeadFields<'_>,
+    _h: crate::codec::protocol::HeadFields<'_>,
     path: &str,
-) -> Option<busbar_contract::protocol::ClaimStrength> {
-    use busbar_contract::protocol::ClaimStrength;
+) -> Option<crate::codec::protocol::ClaimStrength> {
+    use crate::codec::protocol::ClaimStrength;
     if path.ends_with("/v2/chat") || path.ends_with("/v1/chat") {
         return Some(ClaimStrength(8));
     }
@@ -48,9 +48,9 @@ fn claims(
 }
 
 /// Headerless residual detection: an exact `/v2/chat` names Cohere (rung 50).
-fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrength> {
+fn residual_claims(path: &str) -> Option<crate::codec::protocol::ClaimStrength> {
     if path == "/v2/chat" {
-        return Some(busbar_contract::protocol::ClaimStrength(50));
+        return Some(crate::codec::protocol::ClaimStrength(50));
     }
     None
 }
@@ -66,7 +66,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
         busbar_contract::operation::OpVerb::RERANK,
     ],
     head_keys: super::proto_codec::LLM_CHAT_HEAD_KEYS,
-    streaming_content_type: Some(busbar_contract::protocol::TEXT_EVENT_STREAM),
+    streaming_content_type: Some(crate::codec::protocol::TEXT_EVENT_STREAM),
     array_stream_shim_key: None,
 
     native_tool_id_prefix: None,
@@ -93,14 +93,14 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     has_model_in_url: false,
     auth_failure_status_and_kind: (
         busbar_contract::http::StatusCode::UNAUTHORIZED.as_u16(),
-        busbar_contract::protocol::ERR_TYPE_AUTHENTICATION,
+        crate::codec::protocol::ERR_TYPE_AUTHENTICATION,
     ),
     ingress_relays_amzn_headers: false,
     ingress_relayed_response_header_names: &[],
     auth_failure_message: "invalid api token",
     uses_array_stream_shim: false,
     has_native_path_not_found: false,
-    egress_stream_accept: busbar_contract::protocol::TEXT_EVENT_STREAM,
+    egress_stream_accept: crate::codec::protocol::TEXT_EVENT_STREAM,
 
     models_list_envelope: None,
     claims: Some(claims),
@@ -231,8 +231,7 @@ impl CohereCitationBudget {
     fn charge(&mut self, bytes: usize, items: usize) -> Result<(), IrError> {
         self.bytes = self.bytes.saturating_add(bytes);
         self.items = self.items.saturating_add(items);
-        if self.bytes > busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT
-            || self.items > 65536
+        if self.bytes > crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT || self.items > 65536
         {
             return Err(crate::codec::dialect::ir_parse_error());
         }
@@ -1011,7 +1010,7 @@ fn format_uuid_layout(bytes: &[u8; 16]) -> String {
 /// ids are bare RFC-4122 UUIDv4s, so this emits a proper v4: all 128 bits from the host CSPRNG, the
 /// version nibble forced to `4` and the variant bits to `10xx`, with no embedded timestamp (an
 /// earlier `secs << 32` layout leaked the server clock).
-fn synthesize_cohere_id(host: &dyn busbar_contract::codec::CodecHost) -> Result<String, IrError> {
+fn synthesize_cohere_id(host: &dyn crate::codec::cells::CodecHost) -> Result<String, IrError> {
     let mut bytes = [0u8; 16];
     if !host.fill_entropy(&mut bytes) {
         return Err(entropy_error());
@@ -1232,7 +1231,7 @@ pub const CohereWriter: CohereWriter = CohereWriter {
         answer_chars: 0,
         citation_bytes: 0,
         citation_truncated: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     }),
 };
 

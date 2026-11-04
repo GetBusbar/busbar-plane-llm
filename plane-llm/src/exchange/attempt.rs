@@ -3,13 +3,13 @@
 
 use std::borrow::Cow;
 
+use crate::codec::cells::{EgressCtx, EgressWire, IngressReject, OperationHandler};
 use crate::codec::egress_prep::EgressPrep;
-use busbar_contract::codec::{EgressCtx, EgressWire, IngressReject, OperationHandler};
-use busbar_contract::operation::OpVerb;
-use busbar_contract::protocol::{
+use crate::codec::protocol::{
     HeadFields, ProtocolDecl, APPLICATION_JSON, KIND_API_ERROR, KIND_INVALID_REQUEST,
     KIND_NOT_FOUND,
 };
+use busbar_contract::operation::OpVerb;
 use serde_json::Value;
 
 use super::arrive::Arrived;
@@ -296,7 +296,7 @@ fn static_name(name: &str) -> &'static str {
 #[allow(clippy::too_many_arguments)]
 #[must_use]
 pub fn translate_request<'a>(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ingress: &str,
     operation: OpVerb,
     lane: FarShape<'_>,
@@ -332,7 +332,7 @@ pub fn translate_request<'a>(
 
 #[allow(clippy::too_many_arguments)]
 fn translate_into<'a>(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     t: &mut Translation<'a>,
     ingress: &str,
     envelope: &'static str,
@@ -745,10 +745,10 @@ fn head_fields(
     if !legal_field_value(content_type.as_bytes()) {
         return Err(internal(arrived.dialect));
     }
-    let user_agent = far.map_or(busbar_contract::protocol::EGRESS_UA_DEFAULT, |d| {
+    let user_agent = far.map_or(crate::codec::protocol::EGRESS_UA_DEFAULT, |d| {
         d.egress_user_agent
     });
-    let stream_accept = far.map_or(busbar_contract::protocol::TEXT_EVENT_STREAM, |d| {
+    let stream_accept = far.map_or(crate::codec::protocol::TEXT_EVENT_STREAM, |d| {
         d.egress_stream_accept
     });
     let accept = (
@@ -817,7 +817,7 @@ fn forward_over(
 
 /// Build one attempt's far-end request for `member` of `pool`.
 pub fn build(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     arrived: &Arrived,
     caller: HeadFields<'_>,
     shaping: &Shaping,

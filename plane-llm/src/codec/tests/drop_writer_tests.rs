@@ -51,7 +51,7 @@ fn answer(egress: &str, ingress: &str, body: &Value) -> (Vec<String>, Diagnostic
         request: None,
         now_s: 1,
         elapsed_ms: None,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let bytes = serde_json::to_vec(body).unwrap();
     let (cap, cap_subscriber) = warnings();
@@ -297,7 +297,7 @@ fn refused_natively(ingress: &str, egress: &str, body: &Value) {
         matches!(
             out,
             Err(crate::codec::translate::TranslateReqReject::Ingress(
-                busbar_contract::codec::IngressReject::BadRequest(_)
+                crate::codec::cells::IngressReject::BadRequest(_)
             ))
         ),
         "{ingress} -> {egress}: wrong-typed input to a mapped field is refused in the caller's \

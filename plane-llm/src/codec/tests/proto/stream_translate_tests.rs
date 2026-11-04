@@ -4206,13 +4206,13 @@ fn test_gemini_protocol_resolves() {
         "/v1beta/models/gemini-pro:generateContent"
     );
 
-    let raw = busbar_contract::protocol::CredentialHeader::Raw {
+    let raw = crate::codec::protocol::CredentialHeader::Raw {
         header: "x-goog-api-key",
         trim_start: false,
     };
     assert!(matches!(
         decl_for("gemini").expect("gemini declares itself").egress_scheme,
-        Some(busbar_contract::protocol::EgressScheme::Static { families: [], own, passthrough })
+        Some(crate::codec::protocol::EgressScheme::Static { families: [], own, passthrough })
             if own == raw && passthrough == raw
     ));
 
@@ -4247,10 +4247,10 @@ fn test_bedrock_and_responses_register() {
     assert_eq!(responses.name_static(), "responses");
     assert_eq!(responses.writer().upstream_path(), "/v1/responses");
 
-    let bearer = busbar_contract::protocol::CredentialHeader::Bearer;
+    let bearer = crate::codec::protocol::CredentialHeader::Bearer;
     assert!(matches!(
         decl_for("responses").expect("responses declares itself").egress_scheme,
-        Some(busbar_contract::protocol::EgressScheme::Static { families: [], own, passthrough })
+        Some(crate::codec::protocol::EgressScheme::Static { families: [], own, passthrough })
             if own == bearer && passthrough == bearer
     ));
 
@@ -4728,7 +4728,7 @@ fn test_buffered_as_stream_remaps_tool_ids_exactly_once() {
         crate::codec::test_host::HOST,
         "anthropic",
         &ir,
-        busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     )
     .expect("anthropic is SSE-framed, so the shared synthesizer answers");
     let out = String::from_utf8(bytes).expect("utf-8 SSE");

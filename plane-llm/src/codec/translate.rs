@@ -7,11 +7,11 @@
 //! [`TranslateCodec`](crate::codec::translate::TranslateCodec) entrypoint, blanket-implemented for
 //! every codec cell, and the values its two directions read from and answer with.
 
-use crate::codec::egress_prep::EgressPrep;
-use busbar_contract::billing::Billing;
-use busbar_contract::codec::{
+use crate::codec::cells::{
     CodecError, EgressWire, IngressReject, OperationHandler, TranslatedResponse,
 };
+use crate::codec::egress_prep::EgressPrep;
+use busbar_contract::billing::Billing;
 use busbar_contract::ir::facts::IrFacts;
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -75,7 +75,7 @@ pub trait TranslateCodec: OperationHandler {
     /// `prep` is this plane's resolved preparation context; `model` is the resolved lane wire model.
     fn translate_request(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         input: TranslateReqInput<'_>,
         egress_proto: Option<&str>,
         prep: &EgressPrep,
@@ -199,7 +199,7 @@ pub trait TranslateCodec: OperationHandler {
     #[allow(clippy::too_many_arguments)]
     fn translate_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         input: TranslateRespInput<'_>,
 
         ingress_serves_op: bool,
@@ -251,7 +251,7 @@ pub trait TranslateCodec: OperationHandler {
 /// Render a response already decoded by the whole-answer seam, retaining its original billing.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_response_ir(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ir: &mut dyn busbar_contract::ir::handle::IrHandle,
     ingress_serves_op: bool,
     ingress_protocol: &str,

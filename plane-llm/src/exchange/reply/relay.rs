@@ -4,9 +4,9 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
+use crate::codec::cells::{OperationHandler, UsageTapFault};
+use crate::codec::protocol::ArrayStreamFramer;
 use busbar_contract::billing::{Billing, TokenUsage};
-use busbar_contract::codec::{OperationHandler, UsageTapFault};
-use busbar_contract::protocol::ArrayStreamFramer;
 use serde_json::Value;
 
 #[path = "root_usage.rs"]
@@ -284,7 +284,7 @@ impl Relay {
     /// captured independently with bounded memory and original-root custody.
     pub fn feed<'a>(
         &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         chunk: &'a [u8],
     ) -> (Fed<'a>, bool) {
         self.first_byte = true;
@@ -309,11 +309,9 @@ impl Relay {
             let available = cap.saturating_sub(self.nonstream_buf.len());
             self.nonstream_buf
                 .extend_from_slice(&chunk[..chunk.len().min(available)]);
-            if chunk.len() > available {
-                if !self.nonstream_buf_truncated {
-                    self.nonstream_buf_truncated = true;
-                    truncated_now = true;
-                }
+            if chunk.len() > available && !self.nonstream_buf_truncated {
+                self.nonstream_buf_truncated = true;
+                truncated_now = true;
             }
         }
         if let Some(framer) = self.json_array.as_mut() {
@@ -324,7 +322,7 @@ impl Relay {
     }
 
     /// END the relay cleanly: the far end's body is complete.
-    pub fn end(&mut self, host: &dyn busbar_contract::codec::CodecHost) -> End {
+    pub fn end(&mut self, host: &dyn crate::codec::cells::CodecHost) -> End {
         let tail = self
             .translate
             .as_mut()
@@ -511,7 +509,7 @@ impl Relay {
 
     /// CUT the relay: the far end's transport failed (`transport`), or the stream's ceiling
     /// expired.
-    pub fn cut(&mut self, host: &dyn busbar_contract::codec::CodecHost, transport: bool) -> Cut {
+    pub fn cut(&mut self, host: &dyn crate::codec::cells::CodecHost, transport: bool) -> Cut {
         let had_first = self.first_byte;
         if had_first && self.far_is_stream {
             let usage = self.streamed_usage();
@@ -604,7 +602,7 @@ impl Relay {
 /// failure the far end stated (a Responses `status: "failed"`), not as a body the reader could not
 /// read (`ir_parse`: bad JSON, a shape it does not know, or a usage count it refuses).
 fn far_reported_failure(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     protocol: &str,
     buf: &[u8],
 ) -> bool {

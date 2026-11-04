@@ -710,7 +710,7 @@ impl ProtocolReader for ResponsesReader {
 
     fn read_response_events(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         event_type: &str,
         data: &serde_json::Value,
         state: &mut crate::codec::ir::StreamDecodeState,
@@ -826,39 +826,38 @@ impl ProtocolReader for ResponsesReader {
                         }
                     } else if item_obj.get(keys::TYPE).and_then(|t| t.as_str())
                         == Some(ITEM_TYPE_REASONING)
+                        && data.get(OUTPUT_INDEX).and_then(|i| i.as_u64()).is_some()
                     {
-                        if data.get(OUTPUT_INDEX).and_then(|i| i.as_u64()).is_some() {
-                            let Some(idx) = wire_index(data, OUTPUT_INDEX) else {
-                                out.push(invalid_stream_index());
-                                return out;
-                            };
-                            let already_open = state.open_tools.contains(&idx)
-                                || state.open_tools.contains(&(idx + TEXT_INDEX_KEY_OFFSET));
-                            if !already_open
-                                && !state.responses_closed.contains(&idx)
-                                && state.open_tools.len() >= MAX_OPEN_TOOLS
-                            {
-                                out.push(invalid_stream_index());
-                                return out;
-                            }
-                            if !already_open
-                                && !state.responses_closed.contains(&idx)
-                                && state.open_tools.len() < MAX_OPEN_TOOLS
-                            {
-                                state.open_tools.insert(idx);
-                                state.block_origins.insert(
-                                    idx,
-                                    crate::codec::ir::IrBlockOrigin::at(&origin::STREAM_REASONING),
-                                );
-                                out.push(IrStreamEvent::BlockStart {
-                                    index: idx,
+                        let Some(idx) = wire_index(data, OUTPUT_INDEX) else {
+                            out.push(invalid_stream_index());
+                            return out;
+                        };
+                        let already_open = state.open_tools.contains(&idx)
+                            || state.open_tools.contains(&(idx + TEXT_INDEX_KEY_OFFSET));
+                        if !already_open
+                            && !state.responses_closed.contains(&idx)
+                            && state.open_tools.len() >= MAX_OPEN_TOOLS
+                        {
+                            out.push(invalid_stream_index());
+                            return out;
+                        }
+                        if !already_open
+                            && !state.responses_closed.contains(&idx)
+                            && state.open_tools.len() < MAX_OPEN_TOOLS
+                        {
+                            state.open_tools.insert(idx);
+                            state.block_origins.insert(
+                                idx,
+                                crate::codec::ir::IrBlockOrigin::at(&origin::STREAM_REASONING),
+                            );
+                            out.push(IrStreamEvent::BlockStart {
+                                index: idx,
 
-                                    block: crate::codec::ir::IrBlockMeta::Thinking {
-                                        kind: data.get(ITEM).and_then(super::slots::reasoning_kind),
-                                    },
-                                    refusal: false,
-                                });
-                            }
+                                block: crate::codec::ir::IrBlockMeta::Thinking {
+                                    kind: data.get(ITEM).and_then(super::slots::reasoning_kind),
+                                },
+                                refusal: false,
+                            });
                         }
                     }
                 }
@@ -1022,19 +1021,17 @@ impl ProtocolReader for ResponsesReader {
                     .and_then(|d| d.as_str())
                     .unwrap_or("")
                     .to_string();
-                if !delta.is_empty() {
-                    if data.get(OUTPUT_INDEX).and_then(|i| i.as_u64()).is_some() {
-                        let Some(idx) = wire_index(data, OUTPUT_INDEX) else {
-                            out.push(invalid_stream_index());
-                            return out;
-                        };
+                if !delta.is_empty() && data.get(OUTPUT_INDEX).and_then(|i| i.as_u64()).is_some() {
+                    let Some(idx) = wire_index(data, OUTPUT_INDEX) else {
+                        out.push(invalid_stream_index());
+                        return out;
+                    };
 
-                        if state.open_tools.contains(&idx) {
-                            out.push(IrStreamEvent::BlockDelta {
-                                index: idx,
-                                delta: crate::codec::ir::IrDelta::InputJsonDelta(delta),
-                            });
-                        }
+                    if state.open_tools.contains(&idx) {
+                        out.push(IrStreamEvent::BlockDelta {
+                            index: idx,
+                            delta: crate::codec::ir::IrDelta::InputJsonDelta(delta),
+                        });
                     }
                 }
             }
@@ -1302,7 +1299,7 @@ impl ProtocolReader for ResponsesReader {
 
     fn read_response(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         body: &serde_json::Value,
     ) -> Result<crate::codec::ir::IrResponse, IrError> {
         let obj = body.as_object().ok_or_else(ir_parse_error)?;

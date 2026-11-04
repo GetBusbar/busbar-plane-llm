@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 
 use crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH;
+use crate::codec::protocol::{HeadFields, KIND_AUTHENTICATION};
 use busbar_contract::operation::OpVerb;
-use busbar_contract::protocol::{HeadFields, KIND_AUTHENTICATION};
 use busbar_contract::upstream::{CanonicalSignal, Disposition, RawUpstreamError, StatusClass};
 
 use super::super::decl;
@@ -27,7 +27,7 @@ pub struct FarError<'a> {
 /// The request-id head field a caller of `ingress` reads, forwarding the far end's own id (the
 /// first head field the caller's dialect relays) when it sent one.
 pub(crate) fn request_id_field(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ingress: &str,
     far_head: HeadFields<'_>,
 ) -> Option<(String, Vec<u8>)> {
@@ -147,7 +147,7 @@ pub fn relay_verbatim(ingress: &str, far: &FarError<'_>) -> Rendered {
 /// into the caller's envelope (a foreign error body is never relayed); within one, verbatim.
 #[must_use]
 pub fn relay(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ingress: &str,
     egress: &str,
     far: &FarError<'_>,
@@ -163,7 +163,7 @@ pub fn relay(
 /// and the far end's own message (else the generic one); within one, verbatim.
 #[must_use]
 pub fn client_fault(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ingress: &str,
     egress: &str,
     class: StatusClass,
@@ -187,7 +187,7 @@ pub fn client_fault(
 /// The caller dialect's own authentication refusal, for a far end that refused the deployment's
 /// credential: its native status, kind and vendor sentence, never the far end's status or body.
 #[must_use]
-pub fn auth_failure(host: &dyn busbar_contract::codec::CodecHost, ingress: &str) -> Rendered {
+pub fn auth_failure(host: &dyn crate::codec::cells::CodecHost, ingress: &str) -> Rendered {
     let d = decl(ingress);
     let (status, kind) = d.map_or((401, KIND_AUTHENTICATION), |d| {
         d.auth_failure_status_and_kind
@@ -214,7 +214,7 @@ pub struct Judged {
 /// credential (the kernel's fact), whose 401 or 403 is the caller's and is relayed unjudged.
 #[must_use]
 pub fn judge(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ingress: &str,
     egress: &str,
     operation: OpVerb,

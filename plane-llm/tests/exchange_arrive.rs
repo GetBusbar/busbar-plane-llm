@@ -210,8 +210,8 @@ fn a_dialect_path_takes_post_only_and_an_unknown_path_is_not_found_first() {
     );
 }
 
-use busbar_contract::codec::OperationHandler;
 use busbar_contract::operation::OpVerb;
+use busbar_plane_llm::codec::cells::OperationHandler;
 use busbar_plane_llm::exchange::attempt::build;
 use busbar_plane_llm::exchange::refuse::{declined, kernel_refusal, model_not_found, render};
 use busbar_plane_llm::exchange::reply::whole::{self, WholeCtx, WholeEnd};
@@ -223,7 +223,7 @@ use serde_json::json;
 /// mints one (the same one every time), and no clock.
 struct FixedHost;
 
-impl busbar_contract::codec::CodecHost for FixedHost {
+impl busbar_plane_llm::codec::cells::CodecHost for FixedHost {
     fn fill_entropy(&self, out: &mut [u8]) -> bool {
         out.fill(7);
         true
@@ -234,7 +234,7 @@ impl busbar_contract::codec::CodecHost for FixedHost {
     }
 }
 
-const HOST: &dyn busbar_contract::codec::CodecHost = &FixedHost;
+const HOST: &dyn busbar_plane_llm::codec::cells::CodecHost = &FixedHost;
 
 fn body_json(bytes: &[u8]) -> Value {
     busbar_plane_llm::codec::json::parse(bytes).expect("JSON")
@@ -285,7 +285,7 @@ fn gemini_from_openai<'a>(a: &'a Arrived, model: &'a str, json_array: bool) -> W
         request: a.parsed.as_ref(),
         now_s: 1_752_000_000,
         elapsed_ms: Some(12),
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     }
 }
 

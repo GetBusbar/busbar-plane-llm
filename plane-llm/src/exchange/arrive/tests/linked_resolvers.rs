@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-use busbar_contract::codec::RequestHandler;
+use crate::codec::cells::RequestHandler;
 use serde_json::Value;
 use std::sync::LazyLock;
 

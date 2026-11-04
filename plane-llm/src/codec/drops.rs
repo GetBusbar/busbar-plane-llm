@@ -1072,7 +1072,7 @@ pub fn note_unmapped(carried: &Carried, root: &str, body: &Value) {
 /// walk names what the caller's dialect will not get, once per path per stream (paths already
 /// dropped ride `state.dropped`, read for the audit at stream end).
 pub fn read_stream_frame(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     seam: Seam<'_>,
     reader: &dyn crate::codec::proto_codec::ProtocolReader,
     event_type: &str,

@@ -843,7 +843,7 @@ fn test_synthesized_id_is_valid_uuid_v4() {
 #[test]
 fn test_synthesized_id_does_not_leak_timestamp() {
     struct FixedHost(u64);
-    impl busbar_contract::codec::CodecHost for FixedHost {
+    impl crate::codec::cells::CodecHost for FixedHost {
         fn fill_entropy(&self, out: &mut [u8]) -> bool {
             out.fill(0x2a);
             true
@@ -883,7 +883,7 @@ fn test_synthesized_ids_are_unique() {
 /// A well-formed credential produces a single `Authorization: Bearer <key>` header.
 #[test]
 fn test_auth_headers_valid_key_emits_bearer() {
-    let Some(busbar_contract::protocol::EgressScheme::Static {
+    let Some(crate::codec::protocol::EgressScheme::Static {
         families,
         own,
         passthrough,
@@ -892,10 +892,10 @@ fn test_auth_headers_valid_key_emits_bearer() {
         panic!("cohere declares a static credential scheme");
     };
     assert!(families.is_empty());
-    assert_eq!(own, busbar_contract::protocol::CredentialHeader::Bearer);
+    assert_eq!(own, crate::codec::protocol::CredentialHeader::Bearer);
     assert_eq!(
         passthrough,
-        busbar_contract::protocol::CredentialHeader::Bearer
+        crate::codec::protocol::CredentialHeader::Bearer
     );
     assert!(
         crate::codec::cohere::DECL.egress_auth_headers.is_none(),
@@ -1062,7 +1062,7 @@ fn test_huge_tool_frame_index_rejected_below_sentinel() {
 fn test_stream_error_emits_native_message_end_not_error_event() {
     let writer = CohereWriter;
 
-    let infra = IrStreamEvent::Error(busbar_contract::protocol::IrError {
+    let infra = IrStreamEvent::Error(crate::codec::protocol::IrError {
         class: busbar_contract::upstream::StatusClass::ServerError,
         provider_signal: Some("internal_server_error".to_string()),
         retry_after: None,
@@ -1133,7 +1133,7 @@ fn test_stream_error_emits_native_message_end_not_error_event() {
         "emitted message-end must decode back to a generic `error` stop, got {decoded:?}"
     );
 
-    let toxic = IrStreamEvent::Error(busbar_contract::protocol::IrError {
+    let toxic = IrStreamEvent::Error(crate::codec::protocol::IrError {
         class: busbar_contract::upstream::StatusClass::ClientError,
         provider_signal: Some("content_filter_safety".to_string()),
         retry_after: None,
@@ -1154,7 +1154,7 @@ fn test_stream_error_emits_native_message_end_not_error_event() {
         "toxic error message-end must not carry a top-level `message` field"
     );
 
-    let bare = IrStreamEvent::Error(busbar_contract::protocol::IrError {
+    let bare = IrStreamEvent::Error(crate::codec::protocol::IrError {
         class: busbar_contract::upstream::StatusClass::ServerError,
         provider_signal: None,
         retry_after: None,

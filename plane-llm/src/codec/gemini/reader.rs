@@ -492,7 +492,7 @@ impl ProtocolReader for GeminiReader {
 
     fn read_response_events(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _event_type: &str,
         data: &serde_json::Value,
         state: &mut crate::codec::ir::StreamDecodeState,
@@ -512,7 +512,7 @@ impl ProtocolReader for GeminiReader {
                 .and_then(|m| m.as_str())
                 .map(String::from)
                 .or_else(|| status_str.map(String::from));
-            out.push(IrStreamEvent::Error(busbar_contract::protocol::IrError {
+            out.push(IrStreamEvent::Error(crate::codec::protocol::IrError {
                 class,
                 provider_signal: message,
                 retry_after: None,
@@ -688,7 +688,7 @@ impl ProtocolReader for GeminiReader {
                                     }
 
                                     if state.streamed_text.len().saturating_add(text.len())
-                                        <= busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT
+                                        <= crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT
                                     {
                                         let answer_start = state.streamed_text.len();
                                         let char_start = state.streamed_chars;
@@ -989,7 +989,7 @@ impl ProtocolReader for GeminiReader {
 
     fn read_response(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         body: &serde_json::Value,
     ) -> Result<crate::codec::ir::IrResponse, IrError> {
         let obj = body.as_object().ok_or_else(ir_parse_error)?;

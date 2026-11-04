@@ -6,7 +6,7 @@
 //! signature whose region is a pure function of the host — and carry no builder, so the lane key is
 //! presented by the host's egress-auth unit and never passes through this plane.
 
-use busbar_contract::protocol::{CredentialHeader, EgressScheme, ProtocolDecl};
+use crate::codec::protocol::{CredentialHeader, EgressScheme, ProtocolDecl};
 
 fn fixture() -> serde_json::Value {
     let path =

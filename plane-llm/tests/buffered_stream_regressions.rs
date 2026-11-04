@@ -1,8 +1,8 @@
 //! A requested stream served from a whole upstream body, through the actual reply path.
 
-use busbar_contract::codec::CodecHost;
 use busbar_contract::operation::OpVerb;
-use busbar_contract::protocol::HeadFields;
+use busbar_plane_llm::codec::cells::CodecHost;
+use busbar_plane_llm::codec::protocol::HeadFields;
 use busbar_plane_llm::exchange::arrive::Arrived;
 use busbar_plane_llm::exchange::attempt::StreamIntent;
 use busbar_plane_llm::exchange::reply::{At, Piece, Reply, ReplyCtx};

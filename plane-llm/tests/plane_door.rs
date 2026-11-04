@@ -552,7 +552,7 @@ fn every_open_class_becomes_one_reported_count_at_its_tail_index() {
 }
 
 /// The declaration of the dialect named `name`, from the one table the plane serves through.
-fn decl_named(name: &str) -> Option<&'static busbar_contract::protocol::ProtocolDecl> {
+fn decl_named(name: &str) -> Option<&'static busbar_plane_llm::codec::protocol::ProtocolDecl> {
     busbar_plane_llm::codec::DECLS
         .iter()
         .copied()

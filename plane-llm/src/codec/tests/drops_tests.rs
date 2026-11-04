@@ -6,11 +6,11 @@
 //! the seam's audit; nothing is put in a dropped block's place.
 
 use super::*;
+use crate::codec::cells::EgressWire;
 use crate::codec::egress_prep::EgressPrep;
 use crate::codec::proto_codec::protocol_for;
 use crate::codec::translate::{TranslateCodec as _, TranslateReqInput};
 use crate::codec_diagnostics::{diagnostic_texts, warnings, DiagnosticEvents};
-use busbar_contract::codec::EgressWire;
 use busbar_contract::operation::OpVerb;
 
 use serde_json::{json, Value};
@@ -497,7 +497,7 @@ fn answer(egress: &str, ingress: &str, body: &Value) -> (String, Vec<String>, Di
         request: None,
         now_s: 1,
         elapsed_ms: None,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let bytes = serde_json::to_vec(body).unwrap();
     let (cap, cap_subscriber) = warnings();

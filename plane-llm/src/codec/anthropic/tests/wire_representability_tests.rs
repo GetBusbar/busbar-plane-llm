@@ -227,7 +227,7 @@ fn non_object_tool_input_refuses_whole_response_and_nested_request_history() {
 
 #[test]
 fn refused_response_keeps_the_upstream_billable_usage() {
-    use busbar_contract::codec::{OperationHandler, TranslatedResponse};
+    use crate::codec::cells::{OperationHandler, TranslatedResponse};
     let body = json!({"id":"chatcmpl_1", "model":"m", "choices":[{"index":0,
         "message":{"role":"assistant", "tool_calls":[{"id":"call_1", "type":"function",
             "function":{"name":"weather", "arguments":"not json"}}]}, "finish_reason":"tool_calls"}],

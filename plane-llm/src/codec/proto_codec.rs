@@ -9,7 +9,7 @@ use busbar_contract::http::StatusCode;
 
 /// A lane's request-shape capabilities, handed to [`ProtocolWriter::write_request_for_lane`].
 use crate::codec::egress_prep::LaneCaps;
-use busbar_contract::protocol::{ArrayStreamFramer, DialectCodec, IrError};
+use crate::codec::protocol::{ArrayStreamFramer, DialectCodec, IrError};
 
 pub const PROTO_ANTHROPIC: &str = "anthropic";
 pub const PROTO_OPENAI: &str = "openai";
@@ -30,12 +30,12 @@ pub(crate) fn entropy_error() -> IrError {
 
 /// Preserve a writer failure across the contract's infallible buffered-stream handle seam.
 pub(crate) struct CheckedEntropy<'a> {
-    host: &'a dyn busbar_contract::codec::CodecHost,
+    host: &'a dyn crate::codec::cells::CodecHost,
     failed: std::sync::atomic::AtomicBool,
 }
 
 impl<'a> CheckedEntropy<'a> {
-    pub(crate) fn new(host: &'a dyn busbar_contract::codec::CodecHost) -> Self {
+    pub(crate) fn new(host: &'a dyn crate::codec::cells::CodecHost) -> Self {
         Self {
             host,
             failed: std::sync::atomic::AtomicBool::new(false),
@@ -46,7 +46,7 @@ impl<'a> CheckedEntropy<'a> {
     }
 }
 
-impl busbar_contract::codec::CodecHost for CheckedEntropy<'_> {
+impl crate::codec::cells::CodecHost for CheckedEntropy<'_> {
     fn fill_entropy(&self, out: &mut [u8]) -> bool {
         if self.failed() || !self.host.fill_entropy(out) {
             self.failed
@@ -97,7 +97,7 @@ pub trait ProtocolReader: Send + Sync {
     fn extract_error_with_head(
         &self,
         status: StatusCode,
-        _head: busbar_contract::protocol::HeadFields<'_>,
+        _head: crate::codec::protocol::HeadFields<'_>,
         body: &[u8],
     ) -> busbar_contract::upstream::RawUpstreamError {
         self.extract_error(status, body)
@@ -159,7 +159,7 @@ pub trait ProtocolReader: Send + Sync {
     /// Read a single response/stream event from already-de-framed SSE data.
     fn read_response_event(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         event_type: &str,
         data: &serde_json::Value,
     ) -> Option<IrStreamEvent> {
@@ -174,7 +174,7 @@ pub trait ProtocolReader: Send + Sync {
     /// from it).
     fn read_response_events(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         event_type: &str,
         data: &serde_json::Value,
         state: &mut crate::codec::ir::StreamDecodeState,
@@ -189,7 +189,7 @@ pub trait ProtocolReader: Send + Sync {
     /// Read a whole (non-streaming) response from wire JSON.
     fn read_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         body: &serde_json::Value,
     ) -> Result<crate::codec::ir::IrResponse, IrError>;
 
@@ -244,7 +244,7 @@ pub trait ProtocolWriter: Send + Sync {
     /// THE REQUEST WRITE: an IR request for a known egress lane, its resolved wire `model` (`""`
     fn write_request_for_lane(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         req: &crate::codec::ir::IrRequest,
         model: &str,
         caps: &LaneCaps,
@@ -253,7 +253,7 @@ pub trait ProtocolWriter: Send + Sync {
     /// The model-blind, default-capabilities write.
     fn write_request(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         req: &crate::codec::ir::IrRequest,
     ) -> serde_json::Value {
         self.write_request_for_lane(host, req, "", &LaneCaps::default())
@@ -328,7 +328,7 @@ pub trait ProtocolWriter: Send + Sync {
     /// Write a response/stream event to wire (event_type, data).
     fn write_response_event(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Option<(String, serde_json::Value)>;
 
@@ -336,7 +336,7 @@ pub trait ProtocolWriter: Send + Sync {
     /// one wire frame per event.
     fn write_response_events(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Vec<(String, serde_json::Value)> {
         self.write_response_event(host, ev).into_iter().collect()
@@ -346,7 +346,7 @@ pub trait ProtocolWriter: Send + Sync {
     /// successful frames; the stream seam records the failure and continues metering upstream.
     fn try_write_response_events(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Result<Vec<(String, serde_json::Value)>, IrError> {
         Ok(self.write_response_events(host, ev))
@@ -354,7 +354,7 @@ pub trait ProtocolWriter: Send + Sync {
 
     fn try_write_request_for_lane(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         req: &crate::codec::ir::IrRequest,
         model: &str,
         caps: &LaneCaps,
@@ -364,7 +364,7 @@ pub trait ProtocolWriter: Send + Sync {
 
     fn try_write_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> Result<serde_json::Value, IrError> {
         Ok(self.write_response(host, resp))
@@ -372,7 +372,7 @@ pub trait ProtocolWriter: Send + Sync {
 
     /// Render a local encoding refusal independently of stream identity. A dialect's optional
     /// error correlation id may be absent when its entropy is unavailable.
-    fn encoding_failure(&self, host: &dyn busbar_contract::codec::CodecHost) -> serde_json::Value {
+    fn encoding_failure(&self, host: &dyn crate::codec::cells::CodecHost) -> serde_json::Value {
         self.write_error(host, 500, "server_error", "identifier entropy unavailable")
     }
 
@@ -380,7 +380,7 @@ pub trait ProtocolWriter: Send + Sync {
     /// protocols whose stream signals errors with an out-of-band exception frame.
     fn write_response_exception(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _err: &IrError,
     ) -> Option<(String, String)> {
         None
@@ -390,7 +390,7 @@ pub trait ProtocolWriter: Send + Sync {
     /// event, the streaming sibling of [`Self::write_error`].
     fn write_error_frame(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         err: &IrError,
     ) -> Option<(String, serde_json::Value)> {
         match self.try_write_response_events(host, &IrStreamEvent::Error(err.clone())) {
@@ -412,7 +412,7 @@ pub trait ProtocolWriter: Send + Sync {
     /// Write a whole (non-streaming) response to wire JSON.
     fn write_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> serde_json::Value;
 
@@ -420,7 +420,7 @@ pub trait ProtocolWriter: Send + Sync {
     /// client on the vendor's SDK gets the typed exception it expects.
     fn write_error(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _status: u16,
         kind: &str,
         message: &str,
@@ -437,7 +437,7 @@ pub trait ProtocolWriter: Send + Sync {
     /// ([`crate::codec::write_error_envelope`]), for a caller that may not read a random source.
     fn write_error_from_entropy(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         status: u16,
         kind: &str,
         message: &str,
@@ -450,7 +450,7 @@ pub trait ProtocolWriter: Send + Sync {
     /// response, given the built `envelope` and canonical `kind`.
     fn attach_error_response_headers(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _headers: &mut busbar_contract::http::HeaderMap,
         _kind: &str,
         _envelope: &serde_json::Value,
@@ -462,7 +462,7 @@ pub trait ProtocolWriter: Send + Sync {
     /// frames: a `ConverseStream` decoder cannot parse a bare JSON body.
     fn wrap_buffered_as_stream(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _ir: &crate::codec::ir::IrResponse,
         _elapsed_ms: Option<u64>,
     ) -> Option<Vec<u8>> {
@@ -477,7 +477,7 @@ pub trait ProtocolWriter: Send + Sync {
     /// protocol's ingress path, or `None`.
     fn ingress_response_request_id(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _upstream_request_id: Option<&str>,
     ) -> Option<(&'static str, String)> {
         None
@@ -485,13 +485,13 @@ pub trait ProtocolWriter: Send + Sync {
 
     /// The one-token "ping" probe request (`ir_encode::ping_request`) through this dialect's own
     /// `write_request`, so the probe matches a real request.
-    fn probe_request(&self, host: &dyn busbar_contract::codec::CodecHost) -> serde_json::Value {
+    fn probe_request(&self, host: &dyn crate::codec::cells::CodecHost) -> serde_json::Value {
         self.write_request(host, &crate::codec::ir_encode::ping_request())
     }
 
     /// A minimal protocol-correct request body for an active health probe of `model`: the one-token
     /// ping serialized through [`Self::probe_request`], so no per-protocol probe code is needed.
-    fn probe_body(&self, host: &dyn busbar_contract::codec::CodecHost, model: &str) -> Vec<u8> {
+    fn probe_body(&self, host: &dyn crate::codec::cells::CodecHost, model: &str) -> Vec<u8> {
         let mut body = self.probe_request(host);
         let _ = self.rewrite_model_if_needed(&mut body, model);
         crate::codec::json::to_vec(&body).unwrap_or_default()
@@ -744,7 +744,7 @@ impl Protocol {
 
     /// This protocol's declaration (the constant facts core reads by field). Always `Some` for a
     /// registered codec protocol; the `Option` mirrors [`crate::codec::decl_of`].
-    pub fn decl(&self) -> Option<&'static busbar_contract::protocol::ProtocolDecl> {
+    pub fn decl(&self) -> Option<&'static crate::codec::protocol::ProtocolDecl> {
         crate::codec::decl_of(self.name)
     }
 
@@ -768,7 +768,7 @@ pub fn protocol_for(name: &str) -> Option<Protocol> {
 /// own module.
 pub struct DialectEntry {
     /// The dialect's declaration (its name is the registry key).
-    pub decl: &'static busbar_contract::protocol::ProtocolDecl,
+    pub decl: &'static crate::codec::protocol::ProtocolDecl,
     /// Build the dialect's wire codec: a fresh instance per resolution ([`protocol_for`]).
     pub protocol: fn() -> Protocol,
     /// Hand a fresh writer, built on the stack, to the callback ([`with_writer`]).
@@ -827,7 +827,7 @@ pub fn protocol_error(
 pub fn protocol_error_with_head(
     name: &str,
     status: u16,
-    head: busbar_contract::protocol::HeadFields<'_>,
+    head: crate::codec::protocol::HeadFields<'_>,
     body: &[u8],
 ) -> busbar_contract::upstream::RawUpstreamError {
     with_reader(name, |r| {
@@ -849,7 +849,7 @@ pub const fn dialect_ref(name: &'static str) -> DialectRef {
 }
 
 impl DialectCodec for DialectRef {
-    fn probe_body(&self, host: &dyn busbar_contract::codec::CodecHost, model: &str) -> Vec<u8> {
+    fn probe_body(&self, host: &dyn crate::codec::cells::CodecHost, model: &str) -> Vec<u8> {
         with_writer(self.0, |w| w.probe_body(host, model)).unwrap_or_default()
     }
     fn apply_rewrite_to_ingress_body(
@@ -868,7 +868,7 @@ impl DialectCodec for DialectRef {
     }
     fn ingress_response_request_id(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         upstream_request_id: Option<&str>,
     ) -> Option<(&'static str, String)> {
         with_writer(self.0, |w| {
@@ -878,7 +878,7 @@ impl DialectCodec for DialectRef {
     }
     fn write_error(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         status: u16,
         kind: &str,
         message: &str,
@@ -890,14 +890,14 @@ impl DialectCodec for DialectRef {
     }
     fn write_response_exception(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         err: &IrError,
     ) -> Option<(String, String)> {
         with_writer(self.0, |w| w.write_response_exception(host, err)).flatten()
     }
     fn write_error_frame(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         err: &IrError,
     ) -> Option<(String, serde_json::Value)> {
         with_writer(self.0, |w| w.write_error_frame(host, err)).flatten()
@@ -910,7 +910,7 @@ impl DialectCodec for DialectRef {
     }
     fn error_response_fields(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         kind: &str,
         envelope: &serde_json::Value,
     ) -> Vec<(String, Vec<u8>)> {

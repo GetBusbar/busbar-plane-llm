@@ -4,9 +4,9 @@
 //! Semantics and a hardware-instruction probe for caller-sized drop collections.
 
 use super::*;
+use crate::codec::cells::EgressWire;
 use crate::codec::translate::{TranslateCodec as _, TranslateReqInput};
 use crate::codec_diagnostics::{diagnostic_texts, warnings};
-use busbar_contract::codec::EgressWire;
 use busbar_contract::operation::OpVerb;
 
 use serde_json::json;

@@ -7,13 +7,13 @@ use crate::codec::dialect::*;
 use crate::codec::framework::ERR_TYPE_OVERLOADED;
 use crate::codec::ir::IrStreamEvent;
 use crate::codec::keys;
-use crate::codec::usage_count::read_count_u64;
-use busbar_contract::http::StatusCode;
-use busbar_contract::protocol::*;
-use busbar_contract::protocol::{
+use crate::codec::protocol::*;
+use crate::codec::protocol::{
     ERR_TYPE_AUTHENTICATION, ERR_TYPE_INVALID_REQUEST, ERR_TYPE_NOT_FOUND, ERR_TYPE_PERMISSION,
     ERR_TYPE_RATE_LIMIT,
 };
+use crate::codec::usage_count::read_count_u64;
+use busbar_contract::http::StatusCode;
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
 use busbar_contract::upstream::StatusClass;
@@ -71,11 +71,11 @@ fn models_list_envelope(names: &[&str]) -> serde_json::Value {
 
 /// Router detection, stated here so core folds it without naming Gemini: the unique `x-goog-api-key`
 fn claims(
-    h: busbar_contract::protocol::HeadFields<'_>,
+    h: crate::codec::protocol::HeadFields<'_>,
     path: &str,
-) -> Option<busbar_contract::protocol::ClaimStrength> {
+) -> Option<crate::codec::protocol::ClaimStrength> {
     use crate::codec::framework::head_field;
-    use busbar_contract::protocol::ClaimStrength;
+    use crate::codec::protocol::ClaimStrength;
     if head_field(h, FIELD_X_GOOG_API_KEY).is_some() {
         return Some(ClaimStrength(3));
     }
@@ -107,8 +107,8 @@ const GEMINI_RESIDUAL_ACTIONS: [&str; 7] = [
 /// Headerless residual detection: the whole `/v1beta/models…` surface is Gemini-only (rung 10), and
 /// a `/v1/models/{id}` whose last segment carries a Gemini action suffix is Gemini (rung 20,
 /// tighter than the OpenAI `/v1/models/` catch at rung 25).
-fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrength> {
-    use busbar_contract::protocol::ClaimStrength;
+fn residual_claims(path: &str) -> Option<crate::codec::protocol::ClaimStrength> {
+    use crate::codec::protocol::ClaimStrength;
     if path.starts_with("/v1beta/models") {
         return Some(ClaimStrength(10));
     }
@@ -138,7 +138,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
         busbar_contract::operation::OpVerb::SPEECH,
     ],
     head_keys: super::proto_codec::LLM_CHAT_HEAD_KEYS,
-    streaming_content_type: Some(busbar_contract::protocol::TEXT_EVENT_STREAM),
+    streaming_content_type: Some(crate::codec::protocol::TEXT_EVENT_STREAM),
     array_stream_shim_key: Some(GEMINI_JSON_ARRAY_SHIM_KEY),
 
     native_tool_id_prefix: None,
@@ -172,7 +172,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     auth_failure_message: GEMINI_BAD_KEY_MESSAGE,
     uses_array_stream_shim: true,
     has_native_path_not_found: true,
-    egress_stream_accept: busbar_contract::protocol::TEXT_EVENT_STREAM,
+    egress_stream_accept: crate::codec::protocol::TEXT_EVENT_STREAM,
     models_list_envelope: Some(models_list_envelope),
     claims: Some(claims),
     residual_claims: Some(residual_claims),
@@ -637,7 +637,7 @@ const RESPONSE_ID_REJECT_THRESHOLD: u8 = crate::codec::dialect::BASE62_REJECT_TH
 /// Mint a Gemini-shaped `responseId` where the backend supplied none (cross-protocol). A native id
 /// is an opaque mixed-case alphanumeric token with no hyphen, hex-only class or embedded timestamp;
 /// a `{:x}-{:x}` timestamp-and-counter form was distinguishable and leaked the host clock.
-fn synth_response_id(host: &dyn busbar_contract::codec::CodecHost) -> Option<String> {
+fn synth_response_id(host: &dyn crate::codec::cells::CodecHost) -> Option<String> {
     let mut token = [b'0'; RESPONSE_ID_TOKEN_LEN];
     let mut filled = 0usize;
 
@@ -1375,7 +1375,7 @@ struct GeminiStream {
     /// This stream's translation cap: the byte ceiling one open tool's streamed `args` may reach
     /// (see the `InputJsonDelta` arm of `write_response_event`), set by the plane
     /// ([`crate::codec::proto_codec::ProtocolWriter::set_translate_cap`]); until then
-    /// [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`].
+    /// [`crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT`].
     translate_cap: usize,
 }
 
@@ -1415,7 +1415,7 @@ pub const GeminiWriter: GeminiWriter = GeminiWriter {
             chars: 0,
             marks: Vec::new(),
         },
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     }),
 };
 

@@ -78,7 +78,7 @@ fn buffered_provider_generation_errors_remain_failed_in_responses() {
 
 #[test]
 fn buffered_responses_failed_usage_is_observable_without_masking_failure() {
-    use busbar_contract::codec::OperationHandler;
+    use crate::codec::cells::OperationHandler;
     let host = crate::codec::test_host::HOST;
     let handler = crate::codec::chat_handle::ChatOperation("responses");
     for (code, class) in [
@@ -1165,7 +1165,7 @@ fn test_temperature_fidelity() {
 
 #[test]
 fn test_auth_headers() {
-    let Some(busbar_contract::protocol::EgressScheme::Static {
+    let Some(crate::codec::protocol::EgressScheme::Static {
         families,
         own,
         passthrough,
@@ -1174,10 +1174,10 @@ fn test_auth_headers() {
         panic!("responses declares a static credential scheme");
     };
     assert!(families.is_empty());
-    assert_eq!(own, busbar_contract::protocol::CredentialHeader::Bearer);
+    assert_eq!(own, crate::codec::protocol::CredentialHeader::Bearer);
     assert_eq!(
         passthrough,
-        busbar_contract::protocol::CredentialHeader::Bearer
+        crate::codec::protocol::CredentialHeader::Bearer
     );
     assert!(
         crate::codec::openai_responses::DECL
@@ -8152,7 +8152,7 @@ fn writer_accumulators_are_bounded_in_entry_count() {
 /// cap — one open index fed an unbounded run of fragments was previously unbounded in BYTES.
 #[test]
 fn writer_tool_arguments_stop_growing_at_the_translate_cap() {
-    let cap = busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
+    let cap = crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
     let writer = ResponsesWriter;
     writer.record_tool_meta(0, "call_x", "lookup");
     writer.mark_tool_open(0);
@@ -8219,7 +8219,7 @@ fn writer_logprob_accumulator_is_bounded_in_entries_and_bytes() {
         "logprob_accum admits exactly MAX_OPEN_TOOLS distinct items"
     );
 
-    let cap = busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
+    let cap = crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
     let writer = ResponsesWriter;
     let batch: Vec<_> = (0..64).map(|_| lp("b".repeat(16 * 1024))).collect();
     let weight: usize = batch.iter().map(logprob_bytes).sum();
@@ -8274,7 +8274,7 @@ fn writer_citation_accumulator_keeps_its_held_weight() {
         "a citation weighs its strings and its compact raw entry"
     );
 
-    let cap = busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
+    let cap = crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
     let writer = ResponsesWriter;
     let batch: Vec<_> = (0..8).map(|_| citation.clone()).collect();
     let weight = one * batch.len();
@@ -8501,7 +8501,7 @@ fn logprob_weight_survives_refusal_clone_take_and_reset() {
 
 #[test]
 fn item_identity_entropy_callback_can_reenter_and_first_insert_wins() {
-    use busbar_contract::codec::CodecHost;
+    use crate::codec::cells::CodecHost;
     struct Fixed;
     impl CodecHost for Fixed {
         fn fill_entropy(&self, out: &mut [u8]) -> bool {
@@ -8544,7 +8544,7 @@ fn item_identity_entropy_callback_can_reenter_and_first_insert_wins() {
 
 #[test]
 fn failed_item_entropy_is_not_cached_or_substituted() {
-    use busbar_contract::codec::CodecHost;
+    use crate::codec::cells::CodecHost;
     struct Failed;
     impl CodecHost for Failed {
         fn fill_entropy(&self, out: &mut [u8]) -> bool {

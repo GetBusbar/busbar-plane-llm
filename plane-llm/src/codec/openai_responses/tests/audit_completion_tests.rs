@@ -60,7 +60,8 @@ fn quota_exhaustion_is_billing_in_buffered_and_streamed_failures() {
                 .read_response(crate::codec::test_host::HOST, &failed)
                 .unwrap_err();
             assert_eq!(error.class, expected);
-            let events = reader_read_response_events(
+            let events = ResponsesReader.read_response_events(
+                crate::codec::test_host::HOST,
                 EVT_RESPONSE_FAILED,
                 &serde_json::json!({"response":failed}),
                 &mut StreamDecodeState::default(),

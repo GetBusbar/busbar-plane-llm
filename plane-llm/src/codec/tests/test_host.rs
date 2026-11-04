@@ -5,7 +5,7 @@
 //! provided for this crate's own test binary by the test itself — so the codec's tests prove the
 //! codec's own seam and never reach the host crate.
 
-use busbar_contract::codec::CodecHost;
+use crate::codec::cells::CodecHost;
 use busbar_contract::upstream::{CanonicalSignal, RawUpstreamError, StatusClass};
 
 /// THE TEST HOST'S [`CodecHost`]: the OS CSPRNG and the system clock in whole seconds — the services

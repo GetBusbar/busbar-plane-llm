@@ -87,7 +87,7 @@ fn item17_generated_image_streams_to_a_gemini_client() {
             crate::codec::test_host::HOST,
             "gemini",
             &ir,
-            busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+            crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
         )
         .expect("synthesized"),
     )
@@ -110,7 +110,7 @@ fn item17_generated_image_streams_to_a_gemini_client() {
             crate::codec::test_host::HOST,
             "anthropic",
             &ir,
-            busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+            crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
         )
         .expect("synthesized"),
     )

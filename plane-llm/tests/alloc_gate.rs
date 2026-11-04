@@ -48,7 +48,7 @@ fn served_generation() -> busbar_plane_llm::exchange::shaping::Shaping {
 /// Host inputs for forwarding: deterministic stack-only entropy and no clock.
 struct ForwardHost;
 
-impl busbar_contract::codec::CodecHost for ForwardHost {
+impl busbar_plane_llm::codec::cells::CodecHost for ForwardHost {
     fn fill_entropy(&self, out: &mut [u8]) -> bool {
         out.fill(7);
         true
@@ -59,7 +59,7 @@ impl busbar_contract::codec::CodecHost for ForwardHost {
     }
 }
 
-const HOST: &dyn busbar_contract::codec::CodecHost = &ForwardHost;
+const HOST: &dyn busbar_plane_llm::codec::cells::CodecHost = &ForwardHost;
 
 /// A canned far-end chat completion (the 1.5.5 gate's upstream answer).
 const FAR_OK: &[u8] = br#"{"id":"chatcmpl-gate","object":"chat.completion","created":0,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
@@ -74,7 +74,7 @@ fn one_forward(shaping: &busbar_plane_llm::exchange::shaping::Shaping, body: &[u
 fn one_forward_with_host(
     shaping: &busbar_plane_llm::exchange::shaping::Shaping,
     body: &[u8],
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn busbar_plane_llm::codec::cells::CodecHost,
 ) -> u16 {
     use busbar_plane_llm::exchange::attempt::{build, stream_intent};
     use busbar_plane_llm::exchange::reply::{At, Reply, ReplyCtx};
@@ -93,7 +93,7 @@ fn one_forward_with_host(
             .map(|h| stream_intent(h, arrived.parsed.as_ref()))
             .unwrap_or_default(),
         passthrough: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let head: &[(&[u8], &[u8])] = &[(b"content-type", b"application/json")];
     let mut reply = Reply::new(host, &ctx, 200, head);
@@ -163,7 +163,7 @@ fn small_and_4000_message_stream_requests_complete_successfully() {
 #[test]
 fn buffered_stream_synthesis_still_refuses_failed_entropy() {
     struct NoEntropy;
-    impl busbar_contract::codec::CodecHost for NoEntropy {
+    impl busbar_plane_llm::codec::cells::CodecHost for NoEntropy {
         fn fill_entropy(&self, _: &mut [u8]) -> bool {
             false
         }
@@ -191,7 +191,7 @@ fn resolving_every_dialect_by_name_adds_no_allocation_overhead() {
         body: &serde_json::Value,
     ) {
         let codec = decl_of(name)
-            .and_then(busbar_contract::protocol::ProtocolDecl::dialect)
+            .and_then(busbar_plane_llm::codec::protocol::ProtocolDecl::dialect)
             .unwrap_or_else(|| panic!("{name} declares a codec"));
 
         let _ = codec.requested_candidate_count(body);
@@ -201,7 +201,7 @@ fn resolving_every_dialect_by_name_adds_no_allocation_overhead() {
         });
         let resolved = count_forward_allocations(|| {
             let codec = decl_of(name)
-                .and_then(busbar_contract::protocol::ProtocolDecl::dialect)
+                .and_then(busbar_plane_llm::codec::protocol::ProtocolDecl::dialect)
                 .expect("declared");
             let _ = codec.requested_candidate_count(body);
         });

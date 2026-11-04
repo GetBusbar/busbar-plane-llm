@@ -1,7 +1,8 @@
 //! The LLM plane: what bytes mean, for six dialects of one protocol, served through its door
 //! ([`plane_door::door`]) over the dialect codecs ([`codec`]).
 
-#![forbid(unsafe_code)]
+#![cfg_attr(not(test), forbid(unsafe_code))]
+#![cfg_attr(test, deny(unsafe_code))]
 #![deny(missing_docs)]
 
 #[allow(missing_docs)]

@@ -1,9 +1,9 @@
 use super::*;
 
 /// The `created` stamped when the answer carries none: the host's wall clock via the
-/// [`CodecHost`](busbar_contract::codec::CodecHost) (the plane reads no clock of its own), or `0`
+/// [`CodecHost`](crate::codec::cells::CodecHost) (the plane reads no clock of its own), or `0`
 /// (what an unstamped Responses answer carries) when the host holds none.
-fn host_now(host: &dyn busbar_contract::codec::CodecHost) -> u64 {
+fn host_now(host: &dyn crate::codec::cells::CodecHost) -> u64 {
     host.wall_clock_now().unwrap_or(0)
 }
 
@@ -44,7 +44,7 @@ impl ProtocolWriter for OpenAiWriter {
 
     fn write_request_for_lane(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         req: &crate::codec::ir::IrRequest,
         _model: &str,
         caps: &LaneCaps,
@@ -500,7 +500,7 @@ impl ProtocolWriter for OpenAiWriter {
 
     fn write_response_event(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Option<(String, serde_json::Value)> {
         match self.try_write_response_events(host, ev) {
@@ -511,7 +511,7 @@ impl ProtocolWriter for OpenAiWriter {
 
     fn try_write_response_events(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Result<Vec<(String, serde_json::Value)>, IrError> {
         let frame = match ev {
@@ -745,7 +745,7 @@ impl ProtocolWriter for OpenAiWriter {
     /// Native error envelope, served as `application/json`:
     fn write_error(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         status: u16,
         kind: &str,
         message: &str,
@@ -761,11 +761,11 @@ impl ProtocolWriter for OpenAiWriter {
             ERR_TYPE_SERVER_ERROR | "internal_error" | "internal_server_error" => {
                 ERR_TYPE_SERVER_ERROR
             }
-            busbar_contract::protocol::KIND_API_ERROR => busbar_contract::protocol::KIND_API_ERROR,
+            crate::codec::protocol::KIND_API_ERROR => crate::codec::protocol::KIND_API_ERROR,
 
             ERR_TYPE_INSUFFICIENT_QUOTA => ERR_TYPE_INSUFFICIENT_QUOTA,
 
-            busbar_contract::protocol::KIND_OVERLOADED
+            crate::codec::protocol::KIND_OVERLOADED
             | ERR_TYPE_OVERLOADED
             | "service_unavailable"
             | "unavailable"
@@ -798,7 +798,7 @@ impl ProtocolWriter for OpenAiWriter {
 
     fn write_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> serde_json::Value {
         self.try_write_response(host, resp)
@@ -807,7 +807,7 @@ impl ProtocolWriter for OpenAiWriter {
 
     fn try_write_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> Result<serde_json::Value, IrError> {
         let mut obj = serde_json::Map::new();

@@ -34,7 +34,7 @@ pub use crate::codec::dialect::{
     SSE_DONE_SENTINEL,
 };
 pub use crate::codec::framework::SIGNAL_IR_PARSE;
-pub use busbar_contract::protocol::{find_frame_terminator, IrError};
+pub use crate::codec::protocol::{find_frame_terminator, IrError};
 
 pub use crate::codec::decl_of as decl_for;
 
@@ -73,7 +73,7 @@ pub fn array_stream_shim_keys() -> &'static [&'static str] {
 /// nor the lane names one.
 pub use crate::exchange::shaping::DEFAULT_MAX_TOKENS;
 
-pub use busbar_contract::protocol::{ArrayStreamFramer, DialectCodec};
+pub use crate::codec::protocol::{ArrayStreamFramer, DialectCodec};
 pub use busbar_contract::upstream::{CanonicalSignal, StatusClass};
 
 #[path = "adversarial_tests.rs"]

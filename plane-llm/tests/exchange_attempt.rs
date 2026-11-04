@@ -18,7 +18,7 @@ use busbar_plane_llm::exchange::shaping::Shaping;
 use serde_json::Value;
 
 /// The handle every codec call here is handed.
-const HOST: &dyn busbar_contract::codec::CodecHost = &TestHost;
+const HOST: &dyn busbar_plane_llm::codec::cells::CodecHost = &TestHost;
 
 fn shaping() -> Shaping {
     Shaping::from_settings(&json!({
@@ -593,8 +593,8 @@ fn a_same_dialect_callers_accept_never_replaces_busbars_own() {
     assert_eq!(field(&r, "accept"), [b"text/event-stream".as_slice()]);
 }
 
-use busbar_contract::codec::IngressReject;
 use busbar_contract::operation::OpVerb;
+use busbar_plane_llm::codec::cells::IngressReject;
 use busbar_plane_llm::exchange::reply::whole::{self, WholeCtx, WholeEnd};
 use busbar_plane_llm::exchange::shaping::Lane;
 
@@ -961,7 +961,7 @@ fn whole_ctx<'a>(a: &'a Arrived, egress: &'a str, model: &'a str) -> WholeCtx<'a
         request: a.parsed.as_ref(),
         now_s: 1_752_000_000,
         elapsed_ms: Some(12),
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     }
 }
 

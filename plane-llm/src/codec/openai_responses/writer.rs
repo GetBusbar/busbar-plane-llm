@@ -25,7 +25,7 @@ impl ProtocolWriter for ResponsesWriter {
         self.store_translate_cap(cap);
     }
 
-    fn encoding_failure(&self, host: &dyn busbar_contract::codec::CodecHost) -> serde_json::Value {
+    fn encoding_failure(&self, host: &dyn crate::codec::cells::CodecHost) -> serde_json::Value {
         let message = if self.accumulation_failed.load(Ordering::Relaxed) {
             ACCUMULATION_FAILURE_MSG
         } else {
@@ -76,7 +76,7 @@ impl ProtocolWriter for ResponsesWriter {
 
     fn write_request_for_lane(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         req: &crate::codec::ir::IrRequest,
         model: &str,
         caps: &crate::codec::egress_prep::LaneCaps,
@@ -87,7 +87,7 @@ impl ProtocolWriter for ResponsesWriter {
 
     fn try_write_request_for_lane(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         req: &crate::codec::ir::IrRequest,
         _model: &str,
         caps: &crate::codec::egress_prep::LaneCaps,
@@ -539,7 +539,7 @@ impl ProtocolWriter for ResponsesWriter {
 
     fn write_response_event(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Option<(String, serde_json::Value)> {
         self.write_response_events(host, ev).into_iter().next()
@@ -547,7 +547,7 @@ impl ProtocolWriter for ResponsesWriter {
 
     fn write_response_events(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Vec<(String, serde_json::Value)> {
         self.try_write_response_events(host, ev)
@@ -556,7 +556,7 @@ impl ProtocolWriter for ResponsesWriter {
 
     fn try_write_response_events(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Result<Vec<(String, serde_json::Value)>, IrError> {
         let opening = matches!(ev, IrStreamEvent::MessageStart { .. })
@@ -1200,7 +1200,7 @@ impl ProtocolWriter for ResponsesWriter {
 
     fn write_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> serde_json::Value {
         self.try_write_response(host, resp)
@@ -1209,7 +1209,7 @@ impl ProtocolWriter for ResponsesWriter {
 
     fn try_write_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> Result<serde_json::Value, IrError> {
         if resp.audio.is_some() {
@@ -1409,7 +1409,7 @@ impl ProtocolWriter for ResponsesWriter {
     /// Native Responses error envelope, the OpenAI shape SDKs decode into `APIError`:
     fn write_error(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _status: u16,
         kind: &str,
         message: &str,
@@ -1422,7 +1422,7 @@ impl ProtocolWriter for ResponsesWriter {
             "rate_limit" | ERR_TYPE_RATE_LIMIT => ERR_TYPE_RATE_LIMIT,
             ERR_TYPE_SERVER_ERROR | "internal" | "internal_error" => ERR_TYPE_SERVER_ERROR,
 
-            busbar_contract::protocol::KIND_OVERLOADED
+            crate::codec::protocol::KIND_OVERLOADED
             | ERR_TYPE_OVERLOADED
             | "service_unavailable"
             | "unavailable" => ERR_TYPE_SERVER_ERROR,
@@ -1432,7 +1432,7 @@ impl ProtocolWriter for ResponsesWriter {
             | "connect"
             | "5xx"
             | "transient"
-            | busbar_contract::protocol::KIND_API_ERROR => ERR_TYPE_SERVER_ERROR,
+            | crate::codec::protocol::KIND_API_ERROR => ERR_TYPE_SERVER_ERROR,
 
             crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH | "bad_request" => {
                 ERR_TYPE_INVALID_REQUEST

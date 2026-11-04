@@ -226,14 +226,14 @@ fn invalid_base64_transcription_is_unrepresentable_before_dispatch() {
     });
     assert!(matches!(
         handle.write_egress_request(crate::codec::test_host::HOST, "openai", "m"),
-        busbar_contract::codec::EgressWire::Unrepresentable { .. }
+        crate::codec::cells::EgressWire::Unrepresentable { .. }
     ));
     assert!(handle.write_egress_request_bytes("openai", "m").is_empty());
 }
 
 #[test]
 fn invalid_or_missing_speech_audio_refuses_both_writes_and_keeps_exact_billing() {
-    use busbar_contract::codec::TranslatedResponse;
+    use crate::codec::cells::TranslatedResponse;
     use busbar_contract::ir::handle::IrHandle;
     let billing = Billing::Tokens(busbar_contract::billing::TokenUsage {
         input: 17,
@@ -440,7 +440,7 @@ fn transcription_egress_field_strips_crlf_injection() {
 /// upstream in the caller's name.
 #[test]
 fn a_transcription_whose_audio_carries_the_delimiter_is_refused_at_the_seam() {
-    use busbar_contract::codec::EgressWire;
+    use crate::codec::cells::EgressWire;
     use busbar_contract::ir::handle::IrHandle;
     let smuggled = b"RIFF\r\n------busbaraudioMIME\r\nContent-Disposition: form-data; \
                      name=\"model\"\r\n\r\nwhisper-large-v3\r\n";
@@ -757,7 +757,7 @@ fn image_response_usage_is_recorded_never_billed() {
         other => panic!("gpt-image-1 usage is recorded on a zero token line, got {other:?}"),
     }
 
-    let tapped = busbar_contract::codec::OperationHandler::extract_usage(
+    let tapped = crate::codec::cells::OperationHandler::extract_usage(
         &super::OpenAiImage,
         crate::codec::test_host::HOST,
         "openai",

@@ -18,7 +18,7 @@ use common::TestHost;
 use serde_json::{json, Value};
 
 /// The handle every codec call here is handed.
-const HOST: &dyn busbar_contract::codec::CodecHost = &TestHost;
+const HOST: &dyn busbar_plane_llm::codec::cells::CodecHost = &TestHost;
 
 /// A Bedrock provider (its own dialect, SigV4), one model served over it in Converse and one over
 /// the invoke envelope, and an Anthropic provider for the carried dialect's own lane.
@@ -275,7 +275,7 @@ fn a_streamed_answer_meters_the_carried_dialects_usage() {
         lane,
         intent: stream_intent(handler_of(&a).expect("a handler"), a.parsed.as_ref()),
         passthrough: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let head: &[(&[u8], &[u8])] = &[(b"content-type", invoke::EVENTSTREAM.as_bytes())];
     let mut reply = Reply::new(HOST, &ctx, 200, head);

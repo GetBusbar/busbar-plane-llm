@@ -15,7 +15,7 @@ use busbar_plane_llm::exchange::attempt::{build, governed, FarRequest};
 use busbar_plane_llm::exchange::shaping::Shaping;
 use busbar_plane_llm::options::{catalogue, Place, Precedence};
 
-const HOST: &dyn busbar_contract::codec::CodecHost = &TestHost;
+const HOST: &dyn busbar_plane_llm::codec::cells::CodecHost = &TestHost;
 
 /// One provider `far` with `block`, serving model `m` (its own `protocol` when given) in pool `p`.
 fn settings(block: Value, model_protocol: Option<&str>) -> Value {

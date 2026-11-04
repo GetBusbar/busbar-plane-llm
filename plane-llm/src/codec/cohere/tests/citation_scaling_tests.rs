@@ -162,7 +162,7 @@ fn readers_reject_expansion_and_response_usage_is_recoverable() {
 fn citation_budget_is_cumulative_and_item_bounded() {
     let mut budget = CohereCitationBudget::default();
     budget
-        .charge(busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT, 1)
+        .charge(crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT, 1)
         .unwrap();
     assert!(budget.charge(1, 1).is_err());
     let mut budget = CohereCitationBudget::default();

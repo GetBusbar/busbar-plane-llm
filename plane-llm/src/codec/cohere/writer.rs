@@ -19,7 +19,7 @@ impl ProtocolWriter for CohereWriter {
 
     fn write_request_for_lane(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         req: &crate::codec::ir::IrRequest,
         _model: &str,
         _caps: &crate::codec::egress_prep::LaneCaps,
@@ -506,7 +506,7 @@ impl ProtocolWriter for CohereWriter {
 
     fn write_response_event(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Option<(String, serde_json::Value)> {
         match ev {
@@ -791,7 +791,7 @@ impl ProtocolWriter for CohereWriter {
 
     fn write_response_events(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Vec<(String, serde_json::Value)> {
         if let IrStreamEvent::BlockDelta {
@@ -835,7 +835,7 @@ impl ProtocolWriter for CohereWriter {
 
     fn write_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> serde_json::Value {
         self.try_write_response(host, resp)
@@ -844,7 +844,7 @@ impl ProtocolWriter for CohereWriter {
 
     fn try_write_response_events(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Result<Vec<(String, serde_json::Value)>, IrError> {
         match ev {
@@ -883,7 +883,7 @@ impl ProtocolWriter for CohereWriter {
 
     fn try_write_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> Result<serde_json::Value, IrError> {
         let mut out = serde_json::Map::new();
@@ -1063,7 +1063,7 @@ impl ProtocolWriter for CohereWriter {
     /// body — it has no typed `error.type`/`code` field the way OpenAI/Anthropic do.
     fn write_error(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _status: u16,
         _kind: &str,
         message: &str,

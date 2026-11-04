@@ -514,7 +514,7 @@ impl Shaping {
     #[must_use]
     pub fn translate_cap(&self) -> usize {
         self.request_body_max_bytes
-            .unwrap_or(busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT)
+            .unwrap_or(crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT)
     }
 
     /// The far end a pool member names.

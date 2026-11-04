@@ -282,7 +282,7 @@ fn bedrock_exception_ends_stream_index_lifetime() {
         block: IrBlockMeta::Text,
         refusal: false,
     });
-    let error = busbar_contract::protocol::IrError {
+    let error = crate::codec::protocol::IrError {
         class: busbar_contract::upstream::StatusClass::ServerError,
         provider_signal: Some("upstream failed".into()),
         retry_after: None,
@@ -549,7 +549,7 @@ fn bedrock_thinking_is_written_for_no_lane_model() {
     let write = |model: &str| {
         let mut h = crate::codec::chat_handle::ChatReqHandle(ir.clone(), Default::default());
         match h.write_egress_request(crate::codec::test_host::HOST, "bedrock", model) {
-            busbar_contract::codec::EgressWire::Json(v) => v,
+            crate::codec::cells::EgressWire::Json(v) => v,
             _ => panic!("chat writes JSON"),
         }
     };
@@ -1011,7 +1011,7 @@ fn bedrock_video_names_never_become_unsupported_wire_members() {
 
 #[test]
 fn leaf_usage_taps_preserve_exact_counts_when_the_payload_is_malformed() {
-    use busbar_contract::codec::RequestHandler;
+    use crate::codec::cells::RequestHandler;
     use busbar_contract::operation::OpVerb;
     let cohere = crate::codec::cohere::handler::CohereRequestHandler;
     let bedrock = crate::codec::bedrock::handler::BedrockRequestHandler;
@@ -1746,7 +1746,8 @@ fn gemini_interleaved_media_keeps_dense_bedrock_and_cohere_text_indices() {
 
 #[test]
 fn malformed_leaf_recovery_keeps_full_billing_variants() {
-    use busbar_contract::{billing::Billing, codec::RequestHandler, operation::OpVerb};
+    use crate::codec::cells::RequestHandler;
+    use busbar_contract::{billing::Billing, operation::OpVerb};
     let cohere = crate::codec::cohere::handler::CohereRequestHandler;
     let bedrock = crate::codec::bedrock::handler::BedrockRequestHandler;
     let handlers: [(&str, &dyn RequestHandler); 2] = [("cohere", &cohere), ("bedrock", &bedrock)];

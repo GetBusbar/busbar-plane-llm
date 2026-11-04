@@ -1,12 +1,10 @@
 //! A far end's success answer taken whole: a non-stream answer from a far end of another dialect
 //! (written as the caller's own stream when the caller asked for one).
 
+use crate::codec::cells::{OperationHandler, TranslatedResponse};
+use crate::codec::protocol::{APPLICATION_JSON, KIND_API_ERROR, KIND_NOT_FOUND, TEXT_EVENT_STREAM};
 use busbar_contract::billing::Billing;
-use busbar_contract::codec::{OperationHandler, TranslatedResponse};
 use busbar_contract::operation::OpVerb;
-use busbar_contract::protocol::{
-    APPLICATION_JSON, KIND_API_ERROR, KIND_NOT_FOUND, TEXT_EVENT_STREAM,
-};
 use serde_json::Value;
 
 use super::super::attempt::DETAIL_ENDPOINT_UNSUPPORTED_OPERATION;
@@ -101,7 +99,7 @@ pub struct WholeCtx<'a> {
 }
 
 /// The caller's error for an answer that could not be relayed.
-fn internal(host: &dyn busbar_contract::codec::CodecHost, ingress: &str, status: u16) -> Rendered {
+fn internal(host: &dyn crate::codec::cells::CodecHost, ingress: &str, status: u16) -> Rendered {
     render(
         host,
         ingress,
@@ -114,7 +112,7 @@ fn internal(host: &dyn busbar_contract::codec::CodecHost, ingress: &str, status:
 
 /// A delivered answer: the far end's status, the content type, the caller's request id.
 fn delivered(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ctx: &WholeCtx<'_>,
     status: u16,
     content_type: &[u8],
@@ -142,20 +140,20 @@ fn whole(end: WholeEnd, usage: Option<Billing>, answer: Rendered) -> Whole {
 
 /// The body over the translation cap: our limit, not the far end's fault, and nothing delivered.
 #[must_use]
-pub fn over_cap(host: &dyn busbar_contract::codec::CodecHost, ingress: &str) -> Whole {
+pub fn over_cap(host: &dyn crate::codec::cells::CodecHost, ingress: &str) -> Whole {
     whole(WholeEnd::OverCap, None, internal(host, ingress, 500))
 }
 
 /// The far end's body stopped short of its end: a failed transfer, nothing delivered.
 #[must_use]
-pub fn cut(host: &dyn busbar_contract::codec::CodecHost, ingress: &str) -> Whole {
+pub fn cut(host: &dyn crate::codec::cells::CodecHost, ingress: &str) -> Whole {
     whole(WholeEnd::Cut, None, internal(host, ingress, 502))
 }
 
 /// TRANSLATE A WHOLE ANSWER: the far end's 2xx `status` and its whole body.
 #[must_use]
 pub fn translate(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ctx: &WholeCtx<'_>,
     status: u16,
     bytes: &[u8],
@@ -207,7 +205,7 @@ pub fn translate(
 /// An opaque body bridged at the byte level; `None` falls through to the JSON path, `Err` is the
 /// far end's dialect refusing the body.
 fn opaque(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ctx: &WholeCtx<'_>,
     status: u16,
     egress_op: Option<&'static dyn OperationHandler>,
@@ -258,7 +256,7 @@ fn opaque(
 /// A JSON body translated; `None` when no body could be written, `Err` the far end's dialect
 /// refusing the body.
 fn json(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ctx: &WholeCtx<'_>,
     status: u16,
     eh: &dyn OperationHandler,
@@ -288,7 +286,7 @@ fn json(
 }
 
 fn json_inner(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ctx: &WholeCtx<'_>,
     status: u16,
     eh: &dyn OperationHandler,

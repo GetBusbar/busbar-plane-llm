@@ -11,8 +11,8 @@ use busbar_contract::http::StatusCode;
 use crate::codec::dialect::{bearer_error_code, CODE_INVALID_API_KEY};
 use crate::codec::framework::ERR_TYPE_OVERLOADED;
 use crate::codec::framework::ERR_TYPE_SERVER_ERROR;
-use busbar_contract::protocol::*;
-use busbar_contract::protocol::{
+use crate::codec::protocol::*;
+use crate::codec::protocol::{
     ERR_TYPE_AUTHENTICATION, ERR_TYPE_INSUFFICIENT_QUOTA, ERR_TYPE_INVALID_REQUEST,
     ERR_TYPE_NOT_FOUND, ERR_TYPE_PERMISSION, ERR_TYPE_RATE_LIMIT,
 };
@@ -45,19 +45,19 @@ pub fn protocol() -> Protocol {
 
 /// Router detection for `/v1/responses` (rung 10).
 fn claims(
-    _h: busbar_contract::protocol::HeadFields<'_>,
+    _h: crate::codec::protocol::HeadFields<'_>,
     path: &str,
-) -> Option<busbar_contract::protocol::ClaimStrength> {
+) -> Option<crate::codec::protocol::ClaimStrength> {
     if path.ends_with("/v1/responses") {
-        return Some(busbar_contract::protocol::ClaimStrength(10));
+        return Some(crate::codec::protocol::ClaimStrength(10));
     }
     None
 }
 
 /// Headerless residual detection: an exact `/v1/responses` (rung 60).
-fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrength> {
+fn residual_claims(path: &str) -> Option<crate::codec::protocol::ClaimStrength> {
     if path == "/v1/responses" {
-        return Some(busbar_contract::protocol::ClaimStrength(60));
+        return Some(crate::codec::protocol::ClaimStrength(60));
     }
     None
 }
@@ -70,7 +70,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     handler: Some(&handler::ResponsesRequestHandler),
     verbs: &[busbar_contract::operation::OpVerb::CHAT],
     head_keys: super::proto_codec::LLM_CHAT_HEAD_KEYS,
-    streaming_content_type: Some(busbar_contract::protocol::TEXT_EVENT_STREAM),
+    streaming_content_type: Some(crate::codec::protocol::TEXT_EVENT_STREAM),
     array_stream_shim_key: None,
     native_tool_id_prefix: Some("call_"),
     ingress_auth: IngressAuth::Bearer,
@@ -95,14 +95,14 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     has_model_in_url: false,
     auth_failure_status_and_kind: (
         busbar_contract::http::StatusCode::UNAUTHORIZED.as_u16(),
-        busbar_contract::protocol::ERR_TYPE_AUTHENTICATION,
+        crate::codec::protocol::ERR_TYPE_AUTHENTICATION,
     ),
     ingress_relays_amzn_headers: false,
     ingress_relayed_response_header_names: &[],
     auth_failure_message: AUTH_FAILURE_MSG,
     uses_array_stream_shim: false,
     has_native_path_not_found: false,
-    egress_stream_accept: busbar_contract::protocol::TEXT_EVENT_STREAM,
+    egress_stream_accept: crate::codec::protocol::TEXT_EVENT_STREAM,
 
     models_list_envelope: None,
     claims: Some(claims),
@@ -346,7 +346,7 @@ const ACCUMULATION_FAILURE_MSG: &str = "Responses stream accumulation limit exce
 /// Fill a fixed-width base62 token entirely from the OS CSPRNG, with no counter overlay (a counter
 /// leaves constant high digits, a fingerprint a native random id never carries).
 fn synth_token<const N: usize>(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
 ) -> Result<String, IrError> {
     struct MinWidth<const M: usize>;
     impl<const M: usize> MinWidth<M> {
@@ -366,7 +366,7 @@ fn synth_token<const N: usize>(
 /// Mint a fresh per-output-item id (`msg_…`, `fc_…`) for the streaming writer, since IR block events
 /// carry only the integer `output_index`.
 fn synthesize_item_id(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     prefix: &str,
 ) -> Result<String, IrError> {
     Ok(format!(
@@ -510,7 +510,7 @@ fn read_responses_reasoning_effort(word: &str) -> Option<crate::codec::ir::IrRea
 
 /// Synthesize a `resp_<opaque base62>` id for cross-protocol responses where the backend supplied
 /// none.
-fn synthesize_response_id(host: &dyn busbar_contract::codec::CodecHost) -> Result<String, IrError> {
+fn synthesize_response_id(host: &dyn crate::codec::cells::CodecHost) -> Result<String, IrError> {
     Ok(format!(
         "{}{}",
         RESPONSE_ID_PREFIX,
@@ -679,7 +679,7 @@ fn is_response_error_code(signal: &str) -> bool {
 }
 
 /// Keep a native ResponseError code; otherwise project the IR class into that closed enum.
-fn responses_error_code(err: &busbar_contract::protocol::IrError) -> String {
+fn responses_error_code(err: &crate::codec::protocol::IrError) -> String {
     if let Some(s) = err.provider_signal.as_deref() {
         if is_response_error_code(s) {
             return s.to_string();
@@ -1262,7 +1262,7 @@ pub struct ResponsesWriter {
     accumulation_failed: AtomicBool,
     /// Byte ceiling for any one per-item accumulator ([`Self::accum_byte_cap`]), set by the plane
     /// ([`crate::codec::proto_codec::ProtocolWriter::set_translate_cap`]); until then
-    /// [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`].
+    /// [`crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT`].
     translate_cap: AtomicUsize,
     /// All per-stream state behind one lock (`ResponsesStream`).
     stream: StreamCell<ResponsesStream>,
@@ -1366,7 +1366,7 @@ pub const ResponsesWriter: ResponsesWriter = ResponsesWriter {
     started: AtomicBool::new(false),
     failed: AtomicBool::new(false),
     accumulation_failed: AtomicBool::new(false),
-    translate_cap: AtomicUsize::new(busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT),
+    translate_cap: AtomicUsize::new(crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT),
     stream: StreamCell::new(ResponsesStream::NEW),
 };
 
@@ -1473,14 +1473,14 @@ impl ResponsesWriter {
 
     /// The captured `created_at`, else the current unix time (never set, or poisoned lock). Replay
     /// keeps every event's `created_at` identical, as a native stream does.
-    pub fn carried_created_at(&self, host: &dyn busbar_contract::codec::CodecHost) -> u64 {
+    pub fn carried_created_at(&self, host: &dyn crate::codec::cells::CodecHost) -> u64 {
         let carried = self.stream().created_at;
         carried.unwrap_or_else(|| self.default_created_at(host))
     }
 
     /// The `created_at` for an answer that carries none: the host's wall clock
     /// (`CodecHost::wall_clock_now`, as the Chat writer stamps).
-    pub(crate) fn default_created_at(&self, host: &dyn busbar_contract::codec::CodecHost) -> u64 {
+    pub(crate) fn default_created_at(&self, host: &dyn crate::codec::cells::CodecHost) -> u64 {
         host.wall_clock_now().unwrap_or(UNSTAMPED_CREATED_AT)
     }
 
@@ -1876,7 +1876,7 @@ impl ResponsesWriter {
     /// while the id itself stays opaque.
     fn item_id_for(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         prefix: &'static str,
         index: usize,
     ) -> Result<String, IrError> {
@@ -1978,7 +1978,7 @@ fn read_web_search_call(item: &serde_json::Value) -> crate::codec::ir::IrBlock {
 /// carries none, `status` `completed` when it names none, its results as the search action's
 /// `sources`).
 fn write_web_search_call(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     call_id: Option<&str>,
     status: Option<&str>,
     results: &[crate::codec::ir::IrSearchResult],

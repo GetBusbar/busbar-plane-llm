@@ -6,7 +6,7 @@
 
 use crate::codec::dialect::{parse_sse_frame, write_sse_frame, SSE_DONE_FRAME, SSE_DONE_SENTINEL};
 use crate::codec::framework::STREAM_ABORT_DETAIL;
-use busbar_contract::protocol::{find_frame_terminator, IrError};
+use crate::codec::protocol::{find_frame_terminator, IrError};
 
 use super::proto_codec::{protocol_for, Protocol, SameProtoEdit, StreamFraming, ToolIdRemap};
 use std::borrow::Cow;
@@ -170,7 +170,7 @@ impl StreamTranslate {
     /// decode state.
     fn translate_event(
         &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         event_type: &str,
         data: &serde_json::Value,
         out: &mut Vec<u8>,
@@ -217,7 +217,7 @@ impl StreamTranslate {
     /// `out`.
     fn translate_ir_event(
         &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ingress_name: &'static str,
         mut ev: crate::codec::ir::IrStreamEvent,
         out: &mut Vec<u8>,
@@ -421,7 +421,7 @@ impl StreamTranslate {
     /// Re-emit a buffered (non-stream) 2xx as the ingress dialect's native stream, for a client that
     /// asked to stream when the upstream answered with one JSON body its stream decoder cannot parse.
     pub fn synthesize_from_response(
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ingress: &str,
         ir: &crate::codec::ir::IrResponse,
         translate_cap: usize,
@@ -500,7 +500,7 @@ impl StreamTranslate {
     /// strip, writer or reframe, since the original bytes re-emit verbatim.
     fn extract_usage_only(
         &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         event_type: &str,
         data: &serde_json::Value,
     ) {
@@ -538,7 +538,7 @@ impl StreamTranslate {
     /// usage frame's real latency, per-chunk SSE identity) goes through the [`StreamFraming`] vtable.
     fn emit_ir_event(
         &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &crate::codec::ir::IrStreamEvent,
         out: &mut Vec<u8>,
     ) {
@@ -635,11 +635,7 @@ impl StreamTranslate {
 
     /// Close every block the egress reader left open. `mem::take` first so re-entrant
     /// `emit_ir_event` calls cannot re-insert (idempotent).
-    fn close_open_blocks(
-        &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
-        out: &mut Vec<u8>,
-    ) {
+    fn close_open_blocks(&mut self, host: &dyn crate::codec::cells::CodecHost, out: &mut Vec<u8>) {
         for (index, _) in std::mem::take(&mut self.open_blocks) {
             self.emit_ir_event(
                 host,
@@ -653,7 +649,7 @@ impl StreamTranslate {
     /// can emit a runnable call, so discard those entries instead of completing them.
     fn close_failed_blocks(
         &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         out: &mut Vec<u8>,
     ) {
         for (index, tool) in std::mem::take(&mut self.open_blocks) {
@@ -673,7 +669,7 @@ impl StreamTranslate {
 
     /// Feed a chunk of egress SSE bytes; return translated ingress bytes for the complete frames now
     /// available (empty for a partial frame).
-    pub fn feed(&mut self, host: &dyn busbar_contract::codec::CodecHost, chunk: &[u8]) -> Vec<u8> {
+    pub fn feed(&mut self, host: &dyn crate::codec::cells::CodecHost, chunk: &[u8]) -> Vec<u8> {
         self.feed_borrowed(host, chunk).into_owned()
     }
 
@@ -682,7 +678,7 @@ impl StreamTranslate {
     /// unterminated tail is copied into the reassembly buffer.
     pub fn feed_borrowed<'a>(
         &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         chunk: &'a [u8],
     ) -> Cow<'a, [u8]> {
         if self.aborted {
@@ -731,7 +727,7 @@ impl StreamTranslate {
     /// header is folded into the payload.
     fn feed_eventstream(
         &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         chunk: &[u8],
     ) -> Vec<u8> {
         self.buf.extend_from_slice(chunk);
@@ -809,7 +805,7 @@ impl StreamTranslate {
     /// frame boundary).
     fn drain_sse(
         &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         src: &[u8],
     ) -> (usize, Option<Vec<u8>>) {
         let mut consumed = 0usize;
@@ -906,7 +902,7 @@ impl StreamTranslate {
     /// since the first frame, the one that latched the stream's identity.
     pub fn terminal_error_frame(
         &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         err: &IrError,
     ) -> Option<(String, serde_json::Value)> {
         self.ingress.writer().write_error_frame(host, err)
@@ -923,7 +919,7 @@ impl StreamTranslate {
 
     /// Call once at end-of-stream. Returns the ingress terminator (OpenAI: `data: [DONE]\n\n`;
     /// Anthropic: empty, `message_stop` already terminates).
-    pub fn finish(&mut self, host: &dyn busbar_contract::codec::CodecHost) -> Vec<u8> {
+    pub fn finish(&mut self, host: &dyn crate::codec::cells::CodecHost) -> Vec<u8> {
         let mut out: Vec<u8> = Vec::new();
 
         if !self.same_proto && (self.upstream_error || self.encoding_failed) {

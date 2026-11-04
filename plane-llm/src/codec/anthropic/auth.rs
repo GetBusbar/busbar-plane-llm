@@ -11,7 +11,7 @@ impl AnthropicWriter {
     /// Build the native error envelope for a resolved `error.type`. Native bodies carry a top-level
     /// `request_id`; busbar mints one since its absence is a tell.
     pub(super) fn error_envelope(
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         error_type: &str,
         message: &str,
     ) -> serde_json::Value {

@@ -3604,7 +3604,7 @@ fn max_tokens_above_u32_max_is_rejected_not_truncated() {
 
 #[test]
 fn auth_headers_valid_key_emits_bearer_authorization() {
-    let Some(busbar_contract::protocol::EgressScheme::Static {
+    let Some(crate::codec::protocol::EgressScheme::Static {
         families,
         own,
         passthrough,
@@ -3613,10 +3613,10 @@ fn auth_headers_valid_key_emits_bearer_authorization() {
         panic!("openai declares a static credential scheme");
     };
     assert!(families.is_empty());
-    assert_eq!(own, busbar_contract::protocol::CredentialHeader::Bearer);
+    assert_eq!(own, crate::codec::protocol::CredentialHeader::Bearer);
     assert_eq!(
         passthrough,
-        busbar_contract::protocol::CredentialHeader::Bearer
+        crate::codec::protocol::CredentialHeader::Bearer
     );
     assert!(
         crate::codec::openai_chat::DECL

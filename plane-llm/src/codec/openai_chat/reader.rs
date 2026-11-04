@@ -640,7 +640,7 @@ impl ProtocolReader for OpenAiReader {
     /// may carry role + content + finish at once → up to several IR events.
     fn read_response_events(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _event_type: &str,
         data: &serde_json::Value,
         state: &mut crate::codec::ir::StreamDecodeState,
@@ -660,7 +660,7 @@ impl ProtocolReader for OpenAiReader {
                 .or(error_type)
                 .or_else(|| error_obj.get(keys::MESSAGE).and_then(|m| m.as_str()))
                 .map(String::from);
-            out.push(IrStreamEvent::Error(busbar_contract::protocol::IrError {
+            out.push(IrStreamEvent::Error(crate::codec::protocol::IrError {
                 class: stream_inline_error_class(error_type, code),
                 provider_signal,
                 retry_after: None,
@@ -1088,7 +1088,7 @@ impl ProtocolReader for OpenAiReader {
 
     fn read_response(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         body: &serde_json::Value,
     ) -> Result<crate::codec::ir::IrResponse, IrError> {
         let obj = body.as_object().ok_or_else(ir_parse_error)?;

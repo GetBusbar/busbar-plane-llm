@@ -80,9 +80,9 @@ pub fn read_search_units(value: &Value, protocol: &'static str) -> Option<u64> {
 pub fn extract_usage(
     body: &[u8],
     protocol: &'static str,
-) -> Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault> {
-    let value: Value = crate::codec::json::parse(body)
-        .map_err(|_| busbar_contract::codec::UsageTapFault::Decode)?;
+) -> Result<Option<busbar_contract::billing::TokenUsage>, crate::codec::cells::UsageTapFault> {
+    let value: Value =
+        crate::codec::json::parse(body).map_err(|_| crate::codec::cells::UsageTapFault::Decode)?;
     Ok(read_search_units(&value, protocol).map(|count| {
         let mut usage = busbar_contract::billing::TokenUsage::default();
         if count != 0 {

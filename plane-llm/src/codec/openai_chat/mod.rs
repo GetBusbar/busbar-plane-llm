@@ -11,7 +11,7 @@ use busbar_contract::http::StatusCode;
 use crate::codec::dialect::{bearer_error_code, context_length_prose_scan};
 
 use crate::codec::framework::{ERR_TYPE_OVERLOADED, ERR_TYPE_SERVER_ERROR};
-use busbar_contract::protocol::*;
+use crate::codec::protocol::*;
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
 use busbar_contract::upstream::StatusClass;
@@ -51,10 +51,10 @@ fn models_list_envelope(names: &[&str]) -> serde_json::Value {
 /// (`/v1/embeddings`, `/v1/moderations`, `/v1/images/…`, `/v1/audio/…`; 14, the loosest path
 /// claims).
 fn claims(
-    _h: busbar_contract::protocol::HeadFields<'_>,
+    _h: crate::codec::protocol::HeadFields<'_>,
     path: &str,
-) -> Option<busbar_contract::protocol::ClaimStrength> {
-    use busbar_contract::protocol::ClaimStrength;
+) -> Option<crate::codec::protocol::ClaimStrength> {
+    use crate::codec::protocol::ClaimStrength;
     if path.ends_with("/v1/chat/completions") {
         return Some(ClaimStrength(7));
     }
@@ -71,8 +71,8 @@ fn claims(
 /// Headerless detection. A `/v1/models/{id}` no sibling claimed more tightly (25, looser than
 /// Gemini's `/v1/models/{id}:{action}` at 20, so a genuine Gemini action wins and a colon-bearing
 /// OpenAI fine-tune id stays OpenAI) and an exact `/v1/chat/completions` (55).
-fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrength> {
-    use busbar_contract::protocol::ClaimStrength;
+fn residual_claims(path: &str) -> Option<crate::codec::protocol::ClaimStrength> {
+    use crate::codec::protocol::ClaimStrength;
     if path.starts_with("/v1/models/") {
         return Some(ClaimStrength(25));
     }
@@ -96,7 +96,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
         busbar_contract::operation::OpVerb::SPEECH,
     ],
     head_keys: super::proto_codec::LLM_CHAT_HEAD_KEYS,
-    streaming_content_type: Some(busbar_contract::protocol::TEXT_EVENT_STREAM),
+    streaming_content_type: Some(crate::codec::protocol::TEXT_EVENT_STREAM),
     array_stream_shim_key: None,
 
     native_tool_id_prefix: Some("call_"),
@@ -121,14 +121,14 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     has_model_in_url: false,
     auth_failure_status_and_kind: (
         busbar_contract::http::StatusCode::UNAUTHORIZED.as_u16(),
-        busbar_contract::protocol::ERR_TYPE_AUTHENTICATION,
+        crate::codec::protocol::ERR_TYPE_AUTHENTICATION,
     ),
     ingress_relays_amzn_headers: false,
     ingress_relayed_response_header_names: &[],
     auth_failure_message: AUTH_FAILURE_MSG,
     uses_array_stream_shim: false,
     has_native_path_not_found: false,
-    egress_stream_accept: busbar_contract::protocol::TEXT_EVENT_STREAM,
+    egress_stream_accept: crate::codec::protocol::TEXT_EVENT_STREAM,
     models_list_envelope: Some(models_list_envelope),
     claims: Some(claims),
     residual_claims: Some(residual_claims),
@@ -419,7 +419,7 @@ const BASE62: &[u8; 62] = crate::codec::dialect::BASE62_ALPHABET;
 
 /// Synthesize a native-shaped completion id (`chatcmpl-<24 base62 chars>`) for cross-protocol
 /// responses where the backend supplied none.
-fn synth_completion_id(host: &dyn busbar_contract::codec::CodecHost) -> Result<String, IrError> {
+fn synth_completion_id(host: &dyn crate::codec::cells::CodecHost) -> Result<String, IrError> {
     let mut token = [b'0'; COMPLETION_ID_TOKEN_LEN];
     if !crate::codec::dialect::fill_base62(host, &mut token, BASE62) {
         return Err(entropy_error());

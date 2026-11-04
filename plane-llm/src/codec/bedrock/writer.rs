@@ -96,7 +96,7 @@ impl ProtocolWriter for BedrockWriter {
     /// `write_request_with`).
     fn write_request_for_lane(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         req: &crate::codec::ir::IrRequest,
         _model: &str,
         caps: &LaneCaps,
@@ -106,7 +106,7 @@ impl ProtocolWriter for BedrockWriter {
 
     fn write_response_event(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Option<(String, serde_json::Value)> {
         match ev {
@@ -296,7 +296,7 @@ impl ProtocolWriter for BedrockWriter {
     /// the same `contentBlockIndex`, as a native stream interleaves them.
     fn write_response_events(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Vec<(String, serde_json::Value)> {
         if let IrStreamEvent::BlockDelta {
@@ -328,8 +328,8 @@ impl ProtocolWriter for BedrockWriter {
     /// stream union, not the request-level HTTP set) so an SDK decoder recognizes it.
     fn write_response_exception(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
-        err: &busbar_contract::protocol::IrError,
+        _host: &dyn crate::codec::cells::CodecHost,
+        err: &crate::codec::protocol::IrError,
     ) -> Option<(String, String)> {
         self.finish_stream();
         let (exception_name, message) = bedrock_stream_exception_for(err);
@@ -338,7 +338,7 @@ impl ProtocolWriter for BedrockWriter {
 
     fn write_response(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> serde_json::Value {
         let mut content_arr: Vec<serde_json::Value> = Vec::new();
@@ -487,7 +487,7 @@ impl ProtocolWriter for BedrockWriter {
     /// exception name in `__type` (the two fields `BedrockReader::extract_error` reads).
     fn write_error(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _status: u16,
         kind: &str,
         message: &str,
@@ -500,7 +500,7 @@ impl ProtocolWriter for BedrockWriter {
 
     fn attach_error_response_headers(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         headers: &mut busbar_contract::http::HeaderMap,
         kind: &str,
         _envelope: &serde_json::Value,
@@ -514,7 +514,7 @@ impl ProtocolWriter for BedrockWriter {
 
     fn wrap_buffered_as_stream(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ir: &crate::codec::ir::IrResponse,
         elapsed_ms: Option<u64>,
     ) -> Option<Vec<u8>> {
@@ -527,7 +527,7 @@ impl ProtocolWriter for BedrockWriter {
 
     fn ingress_response_request_id(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         upstream_request_id: Option<&str>,
     ) -> Option<(&'static str, String)> {
         upstream_request_id

@@ -3,13 +3,13 @@
 
 //! Bedrock `RequestHandler` + cells. Embeddings first (Titan, via InvokeModel).
 
+use crate::codec::cells::{CodecError, IngressReject, RequestHandler};
+use crate::codec::cells::{EgressCtx, WireBody};
 use crate::codec::ir::embeddings::{
     EmbInput, EmbeddingItem, EmbeddingsReq, EmbeddingsResp, EncFmt, VectorData,
 };
 use crate::codec::keys;
 use crate::codec::leaf_codec::LeafCodec;
-use busbar_contract::codec::{CodecError, IngressReject, RequestHandler};
-use busbar_contract::codec::{EgressCtx, WireBody};
 use busbar_contract::operation::OpVerb;
 use busbar_contract::SlabBytes;
 use bytes::Bytes;
@@ -26,7 +26,7 @@ static RERANK: BedrockRerank = BedrockRerank;
 
 /// Bedrock's row of the support matrix, as data. A verb absent from it is a genuine gap (the
 /// standard no-handler 404).
-static CELLS: &[busbar_contract::codec::Cell] = &[
+static CELLS: &[crate::codec::cells::Cell] = &[
     (OpVerb::CHAT, &CHAT),
     (OpVerb::EMBEDDINGS, &EMB),
     (OpVerb::IMAGE, &IMG),
@@ -157,17 +157,17 @@ leaf_op! {
     }
     fn extract_usage(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _ingress: &str,
         body: &[u8],
-    ) -> Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault> {
+    ) -> Result<Option<busbar_contract::billing::TokenUsage>, crate::codec::cells::UsageTapFault> {
         let value: Value = crate::codec::json::parse(body)
-            .map_err(|_| busbar_contract::codec::UsageTapFault::Decode)?;
+            .map_err(|_| crate::codec::cells::UsageTapFault::Decode)?;
         Ok(read_embeddings_usage(&value))
     }
     fn recover_response_billing(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         body: &[u8],
     ) -> Option<busbar_contract::billing::Billing> {
         let value: Value = crate::codec::json::parse(body).ok()?;
@@ -246,16 +246,16 @@ leaf_op! {
     }
     fn extract_usage(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _ingress: &str,
         body: &[u8],
-    ) -> Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault>
+    ) -> Result<Option<busbar_contract::billing::TokenUsage>, crate::codec::cells::UsageTapFault>
     {
         crate::codec::rerank_wire::extract_usage(body, super::VENDOR_NAME)
     }
     fn recover_response_billing(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         body: &[u8],
     ) -> Option<busbar_contract::billing::Billing> {
         let value: Value = crate::codec::json::parse(body).ok()?;

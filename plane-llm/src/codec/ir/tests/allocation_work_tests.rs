@@ -62,7 +62,14 @@ fn snapshot_preserves_projected_facts_and_survives_request_drop() {
 
 #[test]
 fn fold_coverage_matches_union_for_unordered_overlapping_and_invalid_ranges() {
-    let ranges = [4..9, 2..6, 7..3, 100..200, 1..1, 9..10];
+    let ranges = [
+        4..9,
+        2..6,
+        std::ops::Range { start: 7, end: 3 },
+        100..200,
+        1..1,
+        9..10,
+    ];
     let request = IrRequest {
         system: (0..12).map(|i| IrBlock::text(i.to_string())).collect(),
         system_folds: ranges

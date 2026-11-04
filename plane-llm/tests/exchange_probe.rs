@@ -11,7 +11,7 @@ use common::TestHost;
 use serde_json::json;
 
 /// The handle every codec call here is handed.
-const HOST: &dyn busbar_contract::codec::CodecHost = &TestHost;
+const HOST: &dyn busbar_plane_llm::codec::cells::CodecHost = &TestHost;
 
 fn shaping() -> Shaping {
     Shaping::from_settings(&json!({

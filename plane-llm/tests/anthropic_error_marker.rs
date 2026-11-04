@@ -4,9 +4,9 @@
 //! A native error marker must remain a failure even without its nested error object.
 
 use busbar_contract::abi::transport::FAULT_TRANSIENT;
-use busbar_contract::codec::CodecHost;
 use busbar_contract::operation::OpVerb;
 use busbar_contract::upstream::StatusClass;
+use busbar_plane_llm::codec::cells::CodecHost;
 use busbar_plane_llm::codec::ir::{IrStreamEvent, StreamDecodeState};
 use busbar_plane_llm::codec::proto_codec::protocol_for;
 use busbar_plane_llm::codec::proto_stream::StreamTranslate;

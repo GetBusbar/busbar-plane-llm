@@ -3,12 +3,12 @@
 
 //! The per-`(operation, egress-protocol)` leaf-op writer dispatch.
 
+use crate::codec::cells::{CodecError, IngressReject, WireBody};
 use crate::codec::ir::audio::{SpeechReq, SpeechResp, TranscriptionReq, TranscriptionResp};
 use crate::codec::ir::embeddings::{EmbeddingsReq, EmbeddingsResp};
 use crate::codec::ir::image::{ImageReq, ImageResp};
 use crate::codec::ir::moderation::{ModerationReq, ModerationResp};
 use crate::codec::ir::rerank::{RerankReq, RerankResp};
-use busbar_contract::codec::{CodecError, IngressReject, WireBody};
 use bytes::Bytes;
 
 /// One leaf operation's four codec fns in one dialect: the egress request writer, the ingress response

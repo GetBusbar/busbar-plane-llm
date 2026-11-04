@@ -320,7 +320,7 @@ pub fn read_usage(
     protocol: &'static str,
     usage: Option<&serde_json::Value>,
     table: &[UsageCount],
-) -> Result<crate::codec::ir::IrUsage, busbar_contract::protocol::IrError> {
+) -> Result<crate::codec::ir::IrUsage, crate::codec::protocol::IrError> {
     let kept = |read: Result<Option<u64>, UnreadableCount>| match read {
         Ok(n) => n,
         Err(unreadable) => {

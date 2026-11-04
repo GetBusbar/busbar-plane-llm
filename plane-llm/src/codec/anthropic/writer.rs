@@ -24,7 +24,7 @@ impl ProtocolWriter for AnthropicWriter {
     /// id the caller's entropy produces; every other byte is the writer's.
     fn write_error_from_entropy(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         status: u16,
         kind: &str,
         message: &str,
@@ -45,7 +45,7 @@ impl ProtocolWriter for AnthropicWriter {
 
     fn write_error(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         status: u16,
         kind: &str,
         message: &str,
@@ -61,13 +61,11 @@ impl ProtocolWriter for AnthropicWriter {
             ERR_TYPE_REQUEST_TOO_LARGE | "payload_too_large" => ERR_TYPE_REQUEST_TOO_LARGE,
             "rate_limit" | "too_many_requests" => ERR_TYPE_RATE_LIMIT,
 
-            busbar_contract::protocol::KIND_INSUFFICIENT_QUOTA | "quota_exceeded" => {
-                ERR_TYPE_BILLING
-            }
+            crate::codec::protocol::KIND_INSUFFICIENT_QUOTA | "quota_exceeded" => ERR_TYPE_BILLING,
 
             crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH
-            | busbar_contract::protocol::DISPOSITION_CONTEXT_LENGTH => ERR_TYPE_INVALID_REQUEST,
-            busbar_contract::protocol::KIND_OVERLOADED => ERR_TYPE_OVERLOADED,
+            | crate::codec::protocol::DISPOSITION_CONTEXT_LENGTH => ERR_TYPE_INVALID_REQUEST,
+            crate::codec::protocol::KIND_OVERLOADED => ERR_TYPE_OVERLOADED,
             crate::codec::framework::KIND_TIMEOUT => ERR_TYPE_TIMEOUT,
             ERR_TYPE_API_ERROR | crate::codec::framework::KIND_SERVER_ERROR | "internal" => {
                 ERR_TYPE_API_ERROR
@@ -80,7 +78,7 @@ impl ProtocolWriter for AnthropicWriter {
 
     fn attach_error_response_headers(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         headers: &mut busbar_contract::http::HeaderMap,
         _kind: &str,
         envelope: &serde_json::Value,
@@ -94,7 +92,7 @@ impl ProtocolWriter for AnthropicWriter {
 
     fn ingress_response_request_id(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         upstream_request_id: Option<&str>,
     ) -> Option<(&'static str, String)> {
         upstream_request_id
@@ -146,7 +144,7 @@ impl ProtocolWriter for AnthropicWriter {
 
     fn write_request_for_lane(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         req: &crate::codec::ir::IrRequest,
         model: &str,
         caps: &LaneCaps,
@@ -167,7 +165,7 @@ impl ProtocolWriter for AnthropicWriter {
 
     fn try_write_request_for_lane(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         req: &crate::codec::ir::IrRequest,
         _model: &str,
         caps: &LaneCaps,
@@ -479,7 +477,7 @@ impl ProtocolWriter for AnthropicWriter {
 
     fn write_response_event(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Option<(String, serde_json::Value)> {
         match self.try_write_response_events(host, ev) {
@@ -490,7 +488,7 @@ impl ProtocolWriter for AnthropicWriter {
 
     fn try_write_response_events(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Result<Vec<(String, serde_json::Value)>, IrError> {
         let frame = match ev {
@@ -787,7 +785,7 @@ impl ProtocolWriter for AnthropicWriter {
 
     fn write_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> serde_json::Value {
         self.try_write_response(host, resp).unwrap_or_else(|error| {
@@ -805,7 +803,7 @@ impl ProtocolWriter for AnthropicWriter {
 
     fn try_write_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> Result<serde_json::Value, IrError> {
         validate_tool_inputs(&resp.content)?;
@@ -896,7 +894,7 @@ impl ProtocolWriter for AnthropicWriter {
         Ok(serde_json::Value::Object(obj))
     }
 
-    fn encoding_failure(&self, host: &dyn busbar_contract::codec::CodecHost) -> serde_json::Value {
+    fn encoding_failure(&self, host: &dyn crate::codec::cells::CodecHost) -> serde_json::Value {
         let message = if self.stream.lock().invalid_tool_input {
             INVALID_TOOL_INPUT
         } else {

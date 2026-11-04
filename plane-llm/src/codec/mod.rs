@@ -9,6 +9,11 @@
 /// `ir::invoke`, `ir::subscribe` traits).
 pub mod ir;
 
+/// Plane-owned codec cell execution.
+pub mod cells;
+/// Plane-owned dialect declarations.
+pub mod protocol;
+
 /// The chat `IrHandle` (`ChatReqHandle`/`ChatRespHandle`) and its `prepare_for_egress`/`_ingress`/
 /// `usage` bodies; the handle writes itself onto the egress dialect by protocol string.
 pub mod chat_handle;
@@ -27,7 +32,7 @@ pub mod leaf_handles;
 /// follows the `;` verbatim.
 macro_rules! leaf_op {
     ($op:ident: $dialect:expr, $req:ident = $read_req:ident, $resp:ident = $read_resp:ident; $($extra:tt)*) => {
-        impl busbar_contract::codec::OperationHandler for $op {
+        impl crate::codec::cells::OperationHandler for $op {
             fn extract_error(
                 &self,
                 status: u16,
@@ -39,14 +44,14 @@ macro_rules! leaf_op {
                 &self,
                 body: &[u8],
                 content_type: &str,
-            ) -> Result<Box<dyn busbar_contract::ir::handle::IrHandle>, busbar_contract::codec::IngressReject>
+            ) -> Result<Box<dyn busbar_contract::ir::handle::IrHandle>, crate::codec::cells::IngressReject>
             {
                 Ok(Box::new($crate::codec::leaf_handles::$req($read_req(body, content_type)?)))
             }
             fn read_response(
-                &self,_host: &dyn busbar_contract::codec::CodecHost,
+                &self,_host: &dyn crate::codec::cells::CodecHost,
                 wire: &[u8],
-            ) -> Result<Box<dyn busbar_contract::ir::handle::IrHandle>, busbar_contract::codec::CodecError>
+            ) -> Result<Box<dyn busbar_contract::ir::handle::IrHandle>, crate::codec::cells::CodecError>
             {
                 Ok(Box::new($crate::codec::leaf_handles::$resp($read_resp(wire)?)))
             }
@@ -75,7 +80,7 @@ macro_rules! dialect_identity {
         fn operation_handler(
             &self,
             op: busbar_contract::operation::OpVerb,
-        ) -> Option<&dyn busbar_contract::codec::OperationHandler> {
+        ) -> Option<&dyn crate::codec::cells::OperationHandler> {
             crate::codec::framework::cell_of(CELLS, op)
         }
     };
@@ -162,7 +167,7 @@ pub mod wire_shim;
 /// (path-model shape, array-stream shim key, native tool-id prefix, provider-metadata reporter) is a
 /// fact about one of these six dialects, so it reads this table, never the host's registry.
 #[must_use]
-pub fn decl_of(name: &str) -> Option<&'static busbar_contract::protocol::ProtocolDecl> {
+pub fn decl_of(name: &str) -> Option<&'static crate::codec::protocol::ProtocolDecl> {
     DECLS.iter().copied().find(|d| d.name == name)
 }
 
@@ -193,10 +198,10 @@ pub(crate) const DIALECTS: &[&proto_codec::DialectEntry] = &[
 
 /// Every registered dialect's declaration, in [`DIALECTS`] order (the operator-visible order
 /// documented there).
-pub static DECLS: &[&busbar_contract::protocol::ProtocolDecl] = &decls::<{ DIALECTS.len() }>();
+pub static DECLS: &[&crate::codec::protocol::ProtocolDecl] = &decls::<{ DIALECTS.len() }>();
 
 /// [`DIALECTS`]' declarations as an array, evaluated at compile time.
-const fn decls<const N: usize>() -> [&'static busbar_contract::protocol::ProtocolDecl; N] {
+const fn decls<const N: usize>() -> [&'static crate::codec::protocol::ProtocolDecl; N] {
     let mut out = [DIALECTS[0].decl; N];
     let mut i = 0;
     while i < N {

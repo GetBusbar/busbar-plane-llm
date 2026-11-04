@@ -10,12 +10,12 @@ use busbar_plane_llm::exchange::reply::relay::{Relay, RelayCtx};
 use common::TestHost;
 
 /// The handle every codec call here is handed.
-const HOST: &dyn busbar_contract::codec::CodecHost = &TestHost;
+const HOST: &dyn busbar_plane_llm::codec::cells::CodecHost = &TestHost;
 
 /// The usage tap's cap these relays carry.
 const CAP: usize = 64;
 
-fn embeddings_handler() -> &'static dyn busbar_contract::codec::OperationHandler {
+fn embeddings_handler() -> &'static dyn busbar_plane_llm::codec::cells::OperationHandler {
     busbar_plane_llm::codec::DECLS
         .iter()
         .find(|d| d.name == "openai")

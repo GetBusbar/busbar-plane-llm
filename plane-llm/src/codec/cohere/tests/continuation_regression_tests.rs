@@ -205,7 +205,8 @@ fn provider_error_signal_never_reaches_cohere_diagnostics() {
         retry_after: None,
     });
     let frame = tracing::dispatcher::with_default(&subscriber, || {
-        CohereWriter.write_response_event(crate::codec::test_host::HOST, &event)
+        let writer = CohereWriter;
+        writer.write_response_event(crate::codec::test_host::HOST, &event)
     });
     let messages = crate::codec_diagnostics::diagnostic_texts(&capture);
     assert!(!messages.is_empty());

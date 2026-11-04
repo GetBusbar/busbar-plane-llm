@@ -1,5 +1,5 @@
 use super::*;
-use busbar_contract::codec::OperationHandler;
+use crate::codec::cells::OperationHandler;
 
 #[test]
 fn malformed_embedding_shape_retains_reported_billing() {

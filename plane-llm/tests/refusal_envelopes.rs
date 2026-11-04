@@ -26,7 +26,7 @@ fn without_minted_id(bytes: &[u8]) -> String {
 }
 
 /// The dialect codec of the dialect named `name`.
-fn dialect_codec(name: &str) -> &'static dyn busbar_contract::protocol::DialectCodec {
+fn dialect_codec(name: &str) -> &'static dyn busbar_plane_llm::codec::protocol::DialectCodec {
     busbar_plane_llm::codec::DECLS
         .iter()
         .find(|d| d.name == name)
@@ -35,7 +35,7 @@ fn dialect_codec(name: &str) -> &'static dyn busbar_contract::protocol::DialectC
 }
 
 /// The constant-entropy handle the rendered-refusal tests hand the exchange and the codecs.
-const SEVENS: &dyn busbar_contract::codec::CodecHost = &SevensHost;
+const SEVENS: &dyn busbar_plane_llm::codec::cells::CodecHost = &SevensHost;
 
 /// The value of the head field `name` (compared without case), if the refusal carries one.
 fn head_value<'a>(fields: &'a [(String, Vec<u8>)], name: &str) -> Option<&'a [u8]> {
@@ -48,7 +48,7 @@ fn head_value<'a>(fields: &'a [(String, Vec<u8>)], name: &str) -> Option<&'a [u8
 /// LEGACY `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_anthropic_ingress_error_request_id_header_matches_body`
 #[test]
 fn test_anthropic_ingress_error_request_id_header_matches_body() {
-    use busbar_contract::protocol::KIND_INVALID_REQUEST;
+    use busbar_plane_llm::codec::protocol::KIND_INVALID_REQUEST;
     use busbar_plane_llm::exchange::refuse::render;
     let rendered = render(
         SEVENS,
@@ -88,11 +88,11 @@ fn test_anthropic_ingress_error_request_id_header_matches_body() {
 /// LEGACY `crates/busbar-llm/src/unit/tests/audit.rs::every_refusal_class_renders_byte_identically_on_both_paths`
 #[test]
 fn every_refusal_class_renders_byte_identically_on_both_paths() {
-    use busbar_contract::protocol::{
+    use busbar_plane_llm::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH;
+    use busbar_plane_llm::codec::protocol::{
         KIND_AUTHENTICATION, KIND_INSUFFICIENT_QUOTA, KIND_INVALID_REQUEST, KIND_NOT_FOUND,
         KIND_PERMISSION, KIND_RATE_LIMIT, KIND_REQUEST_TOO_LARGE,
     };
-    use busbar_plane_llm::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH;
     use busbar_plane_llm::exchange::refuse::render;
 
     let classes: [(&str, u16, &str, &str, u32); 8] = [

@@ -947,7 +947,7 @@ fn test_writer_tool_call_reassembles_split_json_args() {
 /// across the life of a stream.
 #[test]
 fn test_writer_tool_call_args_capped_at_max_len() {
-    let cap = busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
+    let cap = crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
     let writer = GeminiWriter;
     writer.write_response_event(
         crate::codec::test_host::HOST,
@@ -1028,7 +1028,7 @@ fn test_writer_tool_call_args_capped_at_max_len() {
 }
 
 /// Happy-path regression: a NORMAL-sized tool call's arguments (well under
-/// `busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`) must still round-trip correctly —
+/// `crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT`) must still round-trip correctly —
 /// the cap must not
 /// false-positive on legitimate multi-fragment argument streams.
 #[test]
@@ -2172,7 +2172,7 @@ fn test_response_identity_cross_protocol_synthesizes_id_when_created_set() {
 #[test]
 fn test_stream_error_emits_full_google_rpc_status() {
     let writer = GeminiWriter;
-    let err = busbar_contract::protocol::IrError {
+    let err = crate::codec::protocol::IrError {
         class: StatusClass::RateLimit,
         provider_signal: Some("slow down".to_string()),
         retry_after: None,
@@ -2201,7 +2201,7 @@ fn test_stream_error_emits_full_google_rpc_status() {
 #[test]
 fn test_stream_error_server_error_maps_internal() {
     let writer = GeminiWriter;
-    let err = busbar_contract::protocol::IrError {
+    let err = crate::codec::protocol::IrError {
         class: StatusClass::ServerError,
         provider_signal: None,
         retry_after: None,
@@ -3478,11 +3478,11 @@ fn test_stream_open_tools_under_cap_records_all() {
 /// A well-formed credential yields exactly one `x-goog-api-key` header carrying the verbatim key.
 #[test]
 fn test_auth_headers_valid_key_emits_x_goog_api_key() {
-    let raw = busbar_contract::protocol::CredentialHeader::Raw {
+    let raw = crate::codec::protocol::CredentialHeader::Raw {
         header: "x-goog-api-key",
         trim_start: false,
     };
-    let Some(busbar_contract::protocol::EgressScheme::Static {
+    let Some(crate::codec::protocol::EgressScheme::Static {
         families,
         own,
         passthrough,
@@ -6539,7 +6539,7 @@ fn streamed_citation_chunks_do_not_rewalk_the_answer() {
 /// translate cap; text past it is still delivered, only not copied.
 #[test]
 fn streamed_answer_copy_is_bounded_by_the_translate_cap() {
-    let cap = busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
+    let cap = crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
     let piece = "x".repeat(4 * 1024 * 1024);
     let mut state = StreamDecodeState::default();
     let mut delivered = 0usize;

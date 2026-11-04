@@ -1,4 +1,5 @@
 use super::*;
+use crate::codec::cells::OperationHandler;
 #[test]
 fn refused_embedding_retains_provider_billing() {
     let body = br#"{"embedding":[0.1,"bad",0.3],"inputTextTokenCount":5}"#;

@@ -119,7 +119,7 @@ fn item16_synthesized_stream_keeps_a_summary_in_summary() {
             crate::codec::test_host::HOST,
             "responses",
             &ir,
-            busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+            crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
         )
         .expect("synthesized"),
     )

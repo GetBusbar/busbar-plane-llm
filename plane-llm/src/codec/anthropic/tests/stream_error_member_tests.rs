@@ -5,7 +5,7 @@
 
 use super::super::proto_codec::protocol_for;
 use crate::codec::ir::IrStreamEvent;
-use busbar_contract::protocol::IrError;
+use crate::codec::protocol::IrError;
 use busbar_contract::upstream::StatusClass;
 
 const TOKENS: [&str; 9] = [

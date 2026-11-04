@@ -1,7 +1,7 @@
 //! Provider projection and refusal accounting through the production Reply boundary.
 
-use busbar_contract::codec::CodecHost;
 use busbar_contract::operation::OpVerb;
+use busbar_plane_llm::codec::cells::CodecHost;
 use busbar_plane_llm::exchange::arrive::Arrived;
 use busbar_plane_llm::exchange::attempt::StreamIntent;
 use busbar_plane_llm::exchange::reply::{At, Piece, Reply, ReplyCtx};

@@ -18,7 +18,7 @@ use serde_json::Value;
 /// seconds.
 struct TestHost;
 
-impl busbar_contract::codec::CodecHost for TestHost {
+impl busbar_plane_llm::codec::cells::CodecHost for TestHost {
     fn fill_entropy(&self, out: &mut [u8]) -> bool {
         out.fill(7);
         true
@@ -33,7 +33,7 @@ impl busbar_contract::codec::CodecHost for TestHost {
 }
 
 /// The handle every codec call here is handed.
-const HOST: &dyn busbar_contract::codec::CodecHost = &TestHost;
+const HOST: &dyn busbar_plane_llm::codec::cells::CodecHost = &TestHost;
 
 const SIX: [&str; 6] = [
     "anthropic",
@@ -370,7 +370,7 @@ fn ctx<'a>(
         request: None,
         now_s: 1_752_000_000,
         elapsed_ms: Some(12),
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     }
 }
 
@@ -457,7 +457,7 @@ fn a_json_array_caller_reads_a_one_element_array() {
 
 use busbar_plane_llm::exchange::reply::relay::{self, ContentType, Fed, Relay, RelayCtx};
 
-fn chat_handler(dialect: &str) -> &'static dyn busbar_contract::codec::OperationHandler {
+fn chat_handler(dialect: &str) -> &'static dyn busbar_plane_llm::codec::cells::OperationHandler {
     busbar_plane_llm::codec::DECLS
         .iter()
         .find(|d| d.name == dialect)
@@ -476,7 +476,7 @@ fn relay_ctx<'a>(ingress: &'a str, egress: &'a str, far_is_stream: bool) -> Rela
         request: None,
         handler: chat_handler(ingress),
         meter: true,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     }
 }
 
@@ -734,7 +734,7 @@ fn a_reply_relays_a_stream_piece_by_piece() {
         lane: &lane,
         intent: stream_intent(chat_handler("openai"), arrived.parsed.as_ref()),
         passthrough: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let far = native_stream("anthropic");
     let head: &[(&[u8], &[u8])] = &[(b"content-type", b"text/event-stream")];
@@ -781,7 +781,7 @@ fn a_reply_takes_a_whole_answer_whole() {
         lane: &lane,
         intent: stream_intent(chat_handler("openai"), arrived.parsed.as_ref()),
         passthrough: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let (_, far) = native_answers("cohere")
         .into_iter()
@@ -816,7 +816,7 @@ fn a_whole_answer_handed_to_the_caller_bills_when_the_caller_leaves_early() {
         lane: &lane,
         intent: stream_intent(chat_handler("openai"), arrived.parsed.as_ref()),
         passthrough: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let (_, far) = native_answers("cohere")
         .into_iter()
@@ -856,7 +856,7 @@ fn a_reply_judges_a_far_end_error() {
         lane: &lane,
         intent: stream_intent(chat_handler("openai"), arrived.parsed.as_ref()),
         passthrough: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let body = br#"{"type":"error","error":{"type":"invalid_request_error","message":"too long"}}"#;
     for (status, verdict, disposition) in [
@@ -891,7 +891,7 @@ fn a_judged_far_end_error_carries_the_breakers_reading_apart_from_its_verdict() 
         lane: &lane,
         intent: stream_intent(chat_handler("openai"), arrived.parsed.as_ref()),
         passthrough: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let error = |code: &str| {
         format!(r#"{{"error":{{"message":"m","type":"invalid_request_error","code":"{code}"}}}}"#)
@@ -933,7 +933,7 @@ fn a_reply_that_is_cut_says_so() {
         lane: &lane,
         intent: stream_intent(chat_handler("openai"), arrived.parsed.as_ref()),
         passthrough: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let far = native_stream("anthropic");
     let head: &[(&[u8], &[u8])] = &[(b"content-type", b"text/event-stream")];
@@ -950,7 +950,7 @@ fn a_reply_that_is_cut_says_so() {
         lane: &lane,
         intent: stream_intent(chat_handler("openai"), arrived.parsed.as_ref()),
         passthrough: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let mut reply = Reply::new(HOST, &ctx, 200, JSON_HEAD);
     let _ = reply.feed(HOST, &ctx, b"{\"id\":", false, AT);
@@ -1146,7 +1146,7 @@ mod rehomed_answers {
     /// The host's entropy, so a dialect that mints an id (a request id, a message id) mints one:
     struct SevensHost;
 
-    impl busbar_contract::codec::CodecHost for SevensHost {
+    impl busbar_plane_llm::codec::cells::CodecHost for SevensHost {
         fn fill_entropy(&self, out: &mut [u8]) -> bool {
             out.fill(7);
             true
@@ -1159,7 +1159,7 @@ mod rehomed_answers {
 
     /// The handle every exchange and codec call in this module is handed (it shadows the file's
     /// OS-random host: these answers are compared byte for byte).
-    const HOST: &dyn busbar_contract::codec::CodecHost = &SevensHost;
+    const HOST: &dyn busbar_plane_llm::codec::cells::CodecHost = &SevensHost;
 
     /// A chat request in `dialect`'s own shape.
     fn chat_request(dialect: &str, stream: bool) -> Value {
@@ -1219,7 +1219,7 @@ mod rehomed_answers {
                 client_include_usage: false,
             },
             passthrough,
-            translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+            translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
         }
     }
 
@@ -3122,7 +3122,7 @@ fn a_responses_stream_that_fails_bills_no_tokens_and_agrees_with_its_buffered_tw
         lane: &lane,
         intent: stream_intent(chat_handler("responses"), arrived.parsed.as_ref()),
         passthrough: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let stream = concat!(
         "event: response.created\n",
@@ -3156,7 +3156,7 @@ fn a_responses_stream_that_fails_bills_no_tokens_and_agrees_with_its_buffered_tw
         lane: &lane,
         intent: stream_intent(chat_handler("responses"), arrived.parsed.as_ref()),
         passthrough: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let failed = br#"{"id":"resp_1","object":"response","created_at":1,"status":"failed","model":"m-1","output":[],"error":{"code":"server_error","message":"boom"},"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}"#;
     let mut reply = Reply::new(HOST, &ctx, 200, JSON_HEAD);
@@ -3184,7 +3184,7 @@ fn a_responses_streams_top_level_error_event_fails_the_exchange_without_changing
         lane: &lane,
         intent: stream_intent(chat_handler("responses"), arrived.parsed.as_ref()),
         passthrough: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let stream = concat!(
         "event: response.created\n",
@@ -3287,7 +3287,7 @@ mod rehomed_metering {
         reply_ctx_capped(
             arrived,
             lane,
-            busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+            busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
         )
     }
 
@@ -4474,7 +4474,7 @@ mod rehomed_metering {
     fn local_entropy_failure_keeps_actual_reply_units_and_late_cancel_accounting() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         struct LimitedEntropy(AtomicUsize);
-        impl busbar_contract::codec::CodecHost for LimitedEntropy {
+        impl busbar_plane_llm::codec::cells::CodecHost for LimitedEntropy {
             fn fill_entropy(&self, out: &mut [u8]) -> bool {
                 out.fill(7);
                 self.0
@@ -4531,7 +4531,7 @@ mod rehomed_metering {
     #[test]
     fn entropy_failure_only_in_final_flush_keeps_actual_reply_units() {
         struct Silent;
-        impl busbar_contract::codec::CodecHost for Silent {
+        impl busbar_plane_llm::codec::cells::CodecHost for Silent {
             fn fill_entropy(&self, _out: &mut [u8]) -> bool {
                 false
             }
@@ -4555,7 +4555,7 @@ mod rehomed_metering {
         assert!(!body.contains("response.completed"), "{body}");
 
         let protocol = busbar_plane_llm::codec::proto_codec::protocol_for("responses").unwrap();
-        let original = busbar_contract::protocol::IrError {
+        let original = busbar_plane_llm::codec::protocol::IrError {
             class: StatusClass::ServerError,
             provider_signal: Some("original-provider-failure".into()),
             retry_after: None,
@@ -4696,7 +4696,7 @@ mod rehomed_metering {
 fn a_translated_stream_is_timed_on_the_hosts_clock() {
     use std::sync::atomic::{AtomicU64, Ordering};
     struct Clocked(AtomicU64);
-    impl busbar_contract::codec::CodecHost for Clocked {
+    impl busbar_plane_llm::codec::cells::CodecHost for Clocked {
         fn fill_entropy(&self, out: &mut [u8]) -> bool {
             out.fill(7);
             true
@@ -4790,7 +4790,7 @@ fn malformed_anthropic_answer_keeps_observation_but_bills_no_translate_abort() {
         lane: &far_lane,
         intent: stream_intent(chat_handler("openai"), arrived.parsed.as_ref()),
         passthrough: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let mut reply = Reply::new(
         HOST,
@@ -4987,7 +4987,7 @@ fn failed_responses_usage_is_observed_while_same_and_cross_dialect_refunds_stay_
             lane: &lane,
             intent: stream_intent(chat_handler(ingress), arrived.parsed.as_ref()),
             passthrough: false,
-            translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+            translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
         };
         let mut reply = Reply::new(HOST, &reply_ctx, 200, JSON_HEAD);
         let end = reply.feed(HOST, &reply_ctx, far, true, AT);
@@ -5047,7 +5047,7 @@ fn responses_content_parse_failure_keeps_observation_without_billing_abort() {
         lane: &far_lane,
         intent: stream_intent(chat_handler("openai"), arrived.parsed.as_ref()),
         passthrough: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let mut reply = Reply::new(HOST, &reply_ctx, 200, JSON_HEAD);
     let end = reply.feed(HOST, &reply_ctx, far, true, AT);
@@ -5071,7 +5071,7 @@ fn buffered_reported_usage_is_billable_only_after_a_delivered_translation() {
         lane: &far_lane,
         intent: stream_intent(chat_handler("openai"), arrived.parsed.as_ref()),
         passthrough: false,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
     let mut delivered = Reply::new(HOST, &context, 200, JSON_HEAD);
     let end = delivered.feed(HOST, &context, far, true, AT);

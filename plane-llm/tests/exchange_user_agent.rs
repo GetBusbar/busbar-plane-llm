@@ -15,7 +15,7 @@ use busbar_plane_llm::exchange::attempt::{build, FarRequest};
 use busbar_plane_llm::exchange::shaping::Shaping;
 
 /// The handle every codec call here is handed.
-const HOST: &dyn busbar_contract::codec::CodecHost = &TestHost;
+const HOST: &dyn busbar_plane_llm::codec::cells::CodecHost = &TestHost;
 
 fn shaping() -> Shaping {
     Shaping::from_settings(&json!({
@@ -161,7 +161,7 @@ fn every_dialects_egress_user_agent_version_is_pinned_and_present() {
     }
 
     assert_eq!(
-        busbar_contract::protocol::EGRESS_UA_DEFAULT,
+        busbar_plane_llm::codec::protocol::EGRESS_UA_DEFAULT,
         "okhttp/4.12.0",
         "the foreign/default egress UA drifted from the pinned literal"
     );
@@ -180,7 +180,7 @@ fn every_dialects_egress_user_agent_version_is_pinned_and_present() {
     let every: Vec<&str> = pinned
         .iter()
         .map(|(_, ua)| *ua)
-        .chain([busbar_contract::protocol::EGRESS_UA_DEFAULT])
+        .chain([busbar_plane_llm::codec::protocol::EGRESS_UA_DEFAULT])
         .collect();
     for ua in every {
         assert!(!ua.is_empty(), "an egress UA must never be empty");

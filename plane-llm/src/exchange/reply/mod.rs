@@ -4,9 +4,9 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
+use crate::codec::cells::UsageTapFault;
+use crate::codec::protocol::HeadFields;
 use busbar_contract::billing::TokenUsage;
-use busbar_contract::codec::UsageTapFault;
-use busbar_contract::protocol::HeadFields;
 use busbar_contract::upstream::{Disposition, StatusClass};
 
 use super::arrive::Arrived;
@@ -246,7 +246,7 @@ impl Reply {
     /// OPEN the answer on the far end's `status` and head.
     #[must_use]
     pub fn new(
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ctx: &ReplyCtx<'_>,
         status: u16,
         head: HeadFields<'_>,
@@ -269,7 +269,7 @@ impl Reply {
                 .and_then(wire::head_text)
                 .is_some_and(|ct| ct.starts_with(invoke::EVENTSTREAM));
         let far_ct = if invoke_stream {
-            Some(busbar_contract::protocol::TEXT_EVENT_STREAM.as_bytes())
+            Some(crate::codec::protocol::TEXT_EVENT_STREAM.as_bytes())
         } else {
             far_ct
         };
@@ -314,9 +314,7 @@ impl Reply {
         match relay::content_type(ingress, egress, far_is_stream, json_array(ctx)) {
             relay::ContentType::Json => fields.push((
                 "content-type".to_string(),
-                busbar_contract::protocol::APPLICATION_JSON
-                    .as_bytes()
-                    .to_vec(),
+                crate::codec::protocol::APPLICATION_JSON.as_bytes().to_vec(),
             )),
             relay::ContentType::Ingress(ct) => {
                 fields.push(("content-type".to_string(), ct.as_bytes().to_vec()));
@@ -359,7 +357,7 @@ impl Reply {
     /// FEED one far-end piece; `last` says no piece follows.
     pub fn feed<'a>(
         &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ctx: &ReplyCtx<'_>,
         bytes: &'a [u8],
         last: bool,
@@ -386,7 +384,7 @@ impl Reply {
     /// READ one piece in the answer's own framing.
     fn read<'a>(
         &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ctx: &ReplyCtx<'_>,
         bytes: &'a [u8],
         last: bool,
@@ -524,7 +522,7 @@ impl Reply {
     /// expired, before its last piece.
     pub fn cut(
         &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ctx: &ReplyCtx<'_>,
         transport: bool,
     ) -> Piece<'static> {
@@ -565,7 +563,7 @@ impl Reply {
 
     fn judge<'a>(
         &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ctx: &ReplyCtx<'_>,
     ) -> Piece<'a> {
         let State::Error { status, head, body } = std::mem::replace(&mut self.state, State::Done)
@@ -620,7 +618,7 @@ impl Reply {
 }
 
 fn whole_piece<'a>(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ctx: &ReplyCtx<'_>,
     status: u16,
     body: &[u8],

@@ -4,8 +4,8 @@
 //! Anthropic `RequestHandler`. Chat-only today (Anthropic ships no embeddings/images/audio API here);
 //! its non-chat operations stay `None` = no-handler 404.
 
-use busbar_contract::codec::EgressCtx;
-use busbar_contract::codec::RequestHandler;
+use crate::codec::cells::EgressCtx;
+use crate::codec::cells::RequestHandler;
 use busbar_contract::operation::OpVerb;
 
 /// Endpoint paths — each appears on BOTH the egress side (`upstream_path`) and the ingress match
@@ -19,7 +19,7 @@ static CHAT: super::super::chat_handle::ChatOperation =
     super::super::chat_handle::ChatOperation(super::VENDOR_NAME);
 
 /// Anthropic's row of the support matrix: one verb. Every other verb is the standard no-handler 404.
-static CELLS: &[busbar_contract::codec::Cell] = &[(OpVerb::CHAT, &CHAT)];
+static CELLS: &[crate::codec::cells::Cell] = &[(OpVerb::CHAT, &CHAT)];
 
 impl RequestHandler for AnthropicRequestHandler {
     dialect_identity!(super::VENDOR_NAME);

@@ -63,7 +63,7 @@ use crate::exchange::{handler_of, probe, project, refuse};
 use crate::meta::PROVIDER_KEYS;
 
 /// The protocol axis of the door's linked row: the plane's six dialect declarations in operator
-/// order, as contract data (`busbar_contract::protocol::ProtocolDecl`).
+/// order, as contract data (`crate::codec::protocol::ProtocolDecl`).
 pub use crate::codec::DECLS as PROTOCOLS;
 
 /// The version the Statement names: the crate's (a test pins the two equal).
@@ -299,7 +299,7 @@ const SCOPE_KINDS: &[AbiStr] = &[abi_str("pool")];
 
 /// Response media types delivered piece by piece through the memory ABI.
 const STREAMING_CONTENT_TYPES: &[AbiStr] = &[
-    abi_str(busbar_contract::protocol::TEXT_EVENT_STREAM),
+    abi_str(crate::codec::protocol::TEXT_EVENT_STREAM),
     abi_str(crate::exchange::invoke::EVENTSTREAM),
 ];
 
@@ -599,7 +599,7 @@ const UNTICKETED: CompletionHandle = CompletionHandle {
     ..CompletionHandle::ZERO
 };
 
-/// THE DOOR'S CODEC HOST: the [`CodecHost`](busbar_contract::codec::CodecHost) this plane's codecs
+/// THE DOOR'S CODEC HOST: the [`CodecHost`](crate::codec::cells::CodecHost) this plane's codecs
 /// are handed, down their call graph, over the host services the instance was given at open — the
 /// host's CSPRNG (`random.fill`, at most [`MAX_RANDOM_FILL`] bytes a call, so a larger draw is
 /// several) and the host's wall clock (`clock.now`, whole seconds). A host that serves neither
@@ -614,7 +614,7 @@ impl DoorHost {
     }
 }
 
-impl busbar_contract::codec::CodecHost for DoorHost {
+impl crate::codec::cells::CodecHost for DoorHost {
     fn fill_entropy(&self, out: &mut [u8]) -> bool {
         let Some(services) = self.0 else {
             return false;
@@ -955,7 +955,7 @@ fn fee_unit(unit: &mut UnitState, answer: &mut Answer) {
 pub fn affinity_key(
     header: &str,
     caller: &[(&[u8], &[u8])],
-    handler: Option<&dyn busbar_contract::codec::OperationHandler>,
+    handler: Option<&dyn crate::codec::cells::OperationHandler>,
     body: Option<&Value>,
 ) -> Option<String> {
     let visible = |v: &[u8]| v.iter().all(|b| *b == b'\t' || (0x20..0x7f).contains(b));
@@ -987,7 +987,7 @@ fn to_caller(piece: Piece<'_>) -> Answer {
         fault,
         tap_fault: piece.tap_fault.map_or(
             busbar_contract::abi::plane::TAP_FAULT_NONE,
-            busbar_contract::codec::UsageTapFault::code,
+            crate::codec::cells::UsageTapFault::code,
         ),
         done: piece.done,
         ..Answer::default()
@@ -1197,9 +1197,7 @@ fn answer(host: &DoorHost, unit: &mut UnitState, from: u32, piece: &PieceIn<'_>)
                 status: 200,
                 fields: vec![(
                     b"content-type".to_vec(),
-                    busbar_contract::protocol::APPLICATION_JSON
-                        .as_bytes()
-                        .to_vec(),
+                    crate::codec::protocol::APPLICATION_JSON.as_bytes().to_vec(),
                 )],
                 bytes: ack,
                 done: true,
@@ -1466,7 +1464,7 @@ slot!(
                         why: arrive::Decline::WebhookBody,
                         status: 400,
                         envelope: RESPONSES,
-                        kind: busbar_contract::protocol::KIND_INVALID_REQUEST,
+                        kind: crate::codec::protocol::KIND_INVALID_REQUEST,
                         message: message.into(),
                         entry: None,
                     };
@@ -1872,5 +1870,7 @@ busbar_contract::plugin_door! {
 mod caller_secrets;
 
 #[cfg(test)]
+// The ABI retry witness crosses raw door entry points only in test builds.
+#[allow(unsafe_code)]
 #[path = "../tests/support/project_retry.rs"]
 mod project_retry_tests;

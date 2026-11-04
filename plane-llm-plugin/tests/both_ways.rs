@@ -604,7 +604,7 @@ fn translated(p: &Plugin<Plane>, unit: u64) -> String {
 #[test]
 fn the_translate_cap_the_settings_carry_is_the_one_the_door_enforces() {
     struct NoHost;
-    impl busbar_contract::codec::CodecHost for NoHost {
+    impl busbar_plane_llm::codec::cells::CodecHost for NoHost {
         fn fill_entropy(&self, _out: &mut [u8]) -> bool {
             false
         }

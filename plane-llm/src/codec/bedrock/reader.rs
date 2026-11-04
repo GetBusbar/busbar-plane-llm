@@ -194,7 +194,7 @@ impl ProtocolReader for BedrockReader {
     fn extract_error_with_head(
         &self,
         status: StatusCode,
-        head: busbar_contract::protocol::HeadFields<'_>,
+        head: crate::codec::protocol::HeadFields<'_>,
         body: &[u8],
     ) -> busbar_contract::upstream::RawUpstreamError {
         let json = crate::codec::json::parse::<serde_json::Value>(body).ok();
@@ -679,7 +679,7 @@ impl ProtocolReader for BedrockReader {
 
     fn read_response_events(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _event_type: &str,
         data: &serde_json::Value,
         state: &mut crate::codec::ir::StreamDecodeState,
@@ -706,7 +706,7 @@ impl ProtocolReader for BedrockReader {
 
             Some(ET_CONTENT_BLOCK_START) => {
                 let Some(idx) = read_content_block_index(data) else {
-                    return vec![IrStreamEvent::Error(busbar_contract::protocol::IrError {
+                    return vec![IrStreamEvent::Error(crate::codec::protocol::IrError {
                         class: StatusClass::ServerError,
                         provider_signal: Some("invalid Bedrock contentBlockIndex".into()),
                         retry_after: None,
@@ -780,7 +780,7 @@ impl ProtocolReader for BedrockReader {
 
             Some(ET_CONTENT_BLOCK_DELTA) => {
                 let Some(idx) = read_content_block_index(data) else {
-                    return vec![IrStreamEvent::Error(busbar_contract::protocol::IrError {
+                    return vec![IrStreamEvent::Error(crate::codec::protocol::IrError {
                         class: StatusClass::ServerError,
                         provider_signal: Some("invalid Bedrock contentBlockIndex".into()),
                         retry_after: None,
@@ -909,7 +909,7 @@ impl ProtocolReader for BedrockReader {
 
             Some(ET_CONTENT_BLOCK_STOP) => {
                 let Some(idx) = read_content_block_index(data) else {
-                    return vec![IrStreamEvent::Error(busbar_contract::protocol::IrError {
+                    return vec![IrStreamEvent::Error(crate::codec::protocol::IrError {
                         class: StatusClass::ServerError,
                         provider_signal: Some("invalid Bedrock contentBlockIndex".into()),
                         retry_after: None,
@@ -984,7 +984,7 @@ impl ProtocolReader for BedrockReader {
                     .map(String::from);
 
                 let class = super::stream_error_class(exc);
-                out.push(IrStreamEvent::Error(busbar_contract::protocol::IrError {
+                out.push(IrStreamEvent::Error(crate::codec::protocol::IrError {
                     class,
                     provider_signal: message.or_else(|| Some(exc.to_string())),
                     retry_after: None,
@@ -999,7 +999,7 @@ impl ProtocolReader for BedrockReader {
 
     fn read_response(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         body: &serde_json::Value,
     ) -> Result<crate::codec::ir::IrResponse, IrError> {
         let obj = body.as_object().ok_or_else(ir_parse_error)?;

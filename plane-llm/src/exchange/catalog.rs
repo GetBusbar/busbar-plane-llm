@@ -5,7 +5,7 @@
 //! kernel lists for the caller in the envelope of the dialect the request names (answered with no
 //! unit; the plane renders, the kernel lists).
 
-use busbar_contract::protocol::ProtocolDecl;
+use crate::codec::protocol::ProtocolDecl;
 
 use crate::codec::DECLS;
 
@@ -80,9 +80,7 @@ pub fn render_listing(
         status: 200,
         fields: vec![(
             "content-type".to_string(),
-            busbar_contract::protocol::APPLICATION_JSON
-                .as_bytes()
-                .to_vec(),
+            crate::codec::protocol::APPLICATION_JSON.as_bytes().to_vec(),
         )],
         body: serde_json::to_vec(&value).unwrap_or_default(),
     }

@@ -7,7 +7,7 @@ use super::*;
 
 /// Mint a native-shaped `msg_01` id for the cross-protocol path, where the backend supplied none.
 pub(super) fn synth_message_id(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
 ) -> Result<String, IrError> {
     synth_id_with_prefix(host, "msg_")
 }
@@ -15,7 +15,7 @@ pub(super) fn synth_message_id(
 /// Mint a native-shaped `req_01` id for the top level of a synthesized error envelope, which
 /// carries a `request_id` on the native API.
 pub(super) fn synth_request_id(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
 ) -> Result<String, IrError> {
     synth_id_with_prefix(host, "req_")
 }
@@ -61,7 +61,7 @@ pub fn request_id_from_entropy(entropy: &[u8]) -> Option<String> {
 /// from the OS CSPRNG, with no counter or clock (those leave predictable characters, a structural
 /// tell).
 pub(super) fn synth_id_with_prefix(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     prefix: &str,
 ) -> Result<String, IrError> {
     let mut token = [b'0'; SYNTH_ID_TOKEN_LEN];
@@ -74,7 +74,7 @@ pub(super) fn synth_id_with_prefix(
 
 /// Mint a request id (`req_01` + 24 base62 chars, 30 in all, matching the body `request_id`) for
 /// the `request-id` response header a native response always carries; omitting it is a proxy tell.
-pub fn synth_anthropic_request_id(host: &dyn busbar_contract::codec::CodecHost) -> Option<String> {
+pub fn synth_anthropic_request_id(host: &dyn crate::codec::cells::CodecHost) -> Option<String> {
     let mut token = [0u8; 24];
     if !crate::codec::dialect::fill_base62(host, &mut token, crate::codec::dialect::BASE62_ALPHABET)
     {

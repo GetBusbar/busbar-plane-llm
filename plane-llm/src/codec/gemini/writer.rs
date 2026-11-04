@@ -5,8 +5,8 @@ use crate::codec::keys;
 #[path = "tests/remaining_gemini_tests.rs"]
 mod remaining_gemini_tests;
 
-fn tool_overflow_error() -> busbar_contract::protocol::IrError {
-    busbar_contract::protocol::IrError {
+fn tool_overflow_error() -> crate::codec::protocol::IrError {
+    crate::codec::protocol::IrError {
         class: StatusClass::ServerError,
         provider_signal: Some("tool arguments exceed the translation limit".to_string()),
         retry_after: None,
@@ -109,7 +109,7 @@ impl ProtocolWriter for GeminiWriter {
     /// that model accepts it (IR-09, [`gemini_model_accepts_thinking_off`]).
     fn write_request_for_lane(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         req: &crate::codec::ir::IrRequest,
         model: &str,
         _caps: &crate::codec::egress_prep::LaneCaps,
@@ -655,7 +655,7 @@ impl ProtocolWriter for GeminiWriter {
     /// Native Gemini error envelope: `{"error":{"code":<int>,"message":<msg>,"status":<UPPER_SNAKE>}}`.
     fn write_error(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         status: u16,
         kind: &str,
         message: &str,
@@ -688,13 +688,13 @@ impl ProtocolWriter for GeminiWriter {
                 ERR_TYPE_RATE_LIMIT | "resource_exhausted" | "rate_limit" => {
                     Some(GRPC_RESOURCE_EXHAUSTED)
                 }
-                ERR_TYPE_OVERLOADED
-                | busbar_contract::protocol::KIND_OVERLOADED
-                | "unavailable" => Some(GRPC_UNAVAILABLE),
+                ERR_TYPE_OVERLOADED | crate::codec::protocol::KIND_OVERLOADED | "unavailable" => {
+                    Some(GRPC_UNAVAILABLE)
+                }
                 "deadline_exceeded" | crate::codec::framework::KIND_TIMEOUT => {
                     Some(GRPC_DEADLINE_EXCEEDED)
                 }
-                busbar_contract::protocol::KIND_API_ERROR
+                crate::codec::protocol::KIND_API_ERROR
                 | "internal"
                 | crate::codec::framework::KIND_SERVER_ERROR => Some(GRPC_INTERNAL),
                 "unimplemented" | "not_implemented" => Some(GRPC_UNIMPLEMENTED),
@@ -746,9 +746,9 @@ impl ProtocolWriter for GeminiWriter {
 
     fn try_write_response_events(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         event: &IrStreamEvent,
-    ) -> Result<Vec<(String, serde_json::Value)>, busbar_contract::protocol::IrError> {
+    ) -> Result<Vec<(String, serde_json::Value)>, crate::codec::protocol::IrError> {
         if let IrStreamEvent::BlockStart {
             index,
             block: crate::codec::ir::IrBlockMeta::ToolUse { id, name },
@@ -768,7 +768,7 @@ impl ProtocolWriter for GeminiWriter {
 
     fn write_response_event(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ev: &IrStreamEvent,
     ) -> Option<(String, serde_json::Value)> {
         match ev {
@@ -1004,7 +1004,7 @@ impl ProtocolWriter for GeminiWriter {
 
     fn write_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         resp: &crate::codec::ir::IrResponse,
     ) -> serde_json::Value {
         let mut parts_arr: Vec<serde_json::Value> = Vec::new();
@@ -1157,7 +1157,7 @@ impl ProtocolWriter for GeminiWriter {
 
     fn make_array_stream_framer(
         &self,
-    ) -> Option<Box<dyn busbar_contract::protocol::ArrayStreamFramer>> {
+    ) -> Option<Box<dyn crate::codec::protocol::ArrayStreamFramer>> {
         Some(Box::new(GeminiJsonArrayFramer::new()))
     }
 

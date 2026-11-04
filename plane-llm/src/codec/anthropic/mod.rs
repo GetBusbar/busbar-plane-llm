@@ -30,8 +30,8 @@ use usage::*;
 #[cfg(test)]
 use crate::codec::ir::IrUsage;
 use crate::codec::ir::{IrBlockMeta, IrDelta, IrStreamEvent};
+use crate::codec::protocol::*;
 use busbar_contract::http::StatusCode;
-use busbar_contract::protocol::*;
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
 use busbar_contract::upstream::StatusClass;
@@ -79,11 +79,11 @@ fn models_list_envelope(names: &[&str]) -> serde_json::Value {
 
 /// Router detection: the `anthropic-version`/`anthropic-beta` headers (2), the `x-api-key`
 fn claims(
-    h: busbar_contract::protocol::HeadFields<'_>,
+    h: crate::codec::protocol::HeadFields<'_>,
     path: &str,
-) -> Option<busbar_contract::protocol::ClaimStrength> {
+) -> Option<crate::codec::protocol::ClaimStrength> {
     use crate::codec::framework::head_field;
-    use busbar_contract::protocol::ClaimStrength;
+    use crate::codec::protocol::ClaimStrength;
     if head_field(h, HDR_ANTHROPIC_VERSION).is_some() || head_field(h, "anthropic-beta").is_some() {
         return Some(ClaimStrength(2));
     }
@@ -97,9 +97,9 @@ fn claims(
 }
 
 /// Headerless detection: a `/v1/messages` path (exact or model-prefixed) names Anthropic (40).
-fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrength> {
+fn residual_claims(path: &str) -> Option<crate::codec::protocol::ClaimStrength> {
     if path == "/v1/messages" || path.ends_with("/v1/messages") {
-        return Some(busbar_contract::protocol::ClaimStrength(40));
+        return Some(crate::codec::protocol::ClaimStrength(40));
     }
     None
 }
@@ -110,7 +110,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     handler: Some(&handler::AnthropicRequestHandler),
     verbs: &[busbar_contract::operation::OpVerb::CHAT],
     head_keys: super::proto_codec::LLM_CHAT_HEAD_KEYS,
-    streaming_content_type: Some(busbar_contract::protocol::TEXT_EVENT_STREAM),
+    streaming_content_type: Some(crate::codec::protocol::TEXT_EVENT_STREAM),
     array_stream_shim_key: None,
 
     native_tool_id_prefix: Some("toolu_"),
@@ -155,14 +155,14 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     has_model_in_url: false,
     auth_failure_status_and_kind: (
         busbar_contract::http::StatusCode::UNAUTHORIZED.as_u16(),
-        busbar_contract::protocol::ERR_TYPE_AUTHENTICATION,
+        crate::codec::protocol::ERR_TYPE_AUTHENTICATION,
     ),
     ingress_relays_amzn_headers: false,
     ingress_relayed_response_header_names: &[HDR_REQUEST_ID],
     auth_failure_message: "invalid x-api-key",
     uses_array_stream_shim: false,
     has_native_path_not_found: false,
-    egress_stream_accept: busbar_contract::protocol::TEXT_EVENT_STREAM,
+    egress_stream_accept: crate::codec::protocol::TEXT_EVENT_STREAM,
     models_list_envelope: Some(models_list_envelope),
     claims: Some(claims),
     residual_claims: Some(residual_claims),
@@ -531,17 +531,17 @@ fn index_stash(
 /// Error `type` strings for error envelopes and in-stream error events. Shared values alias
 /// their canonical home; only `timeout_error` is Anthropic-specific.
 const ERR_TYPE_OVERLOADED: &str = crate::codec::framework::ERR_TYPE_OVERLOADED;
-const ERR_TYPE_INVALID_REQUEST: &str = busbar_contract::protocol::ERR_TYPE_INVALID_REQUEST;
-const ERR_TYPE_AUTHENTICATION: &str = busbar_contract::protocol::ERR_TYPE_AUTHENTICATION;
-const ERR_TYPE_RATE_LIMIT: &str = busbar_contract::protocol::ERR_TYPE_RATE_LIMIT;
-const ERR_TYPE_API_ERROR: &str = busbar_contract::protocol::ERR_TYPE_API_ERROR;
+const ERR_TYPE_INVALID_REQUEST: &str = crate::codec::protocol::ERR_TYPE_INVALID_REQUEST;
+const ERR_TYPE_AUTHENTICATION: &str = crate::codec::protocol::ERR_TYPE_AUTHENTICATION;
+const ERR_TYPE_RATE_LIMIT: &str = crate::codec::protocol::ERR_TYPE_RATE_LIMIT;
+const ERR_TYPE_API_ERROR: &str = crate::codec::protocol::ERR_TYPE_API_ERROR;
 const ERR_TYPE_TIMEOUT: &str = "timeout_error";
 /// The billing `ErrorResponse.error` type. No cross-dialect alias exists (OpenAI names the same
 /// condition `insufficient_quota`).
 const ERR_TYPE_BILLING: &str = "billing_error";
-const ERR_TYPE_NOT_FOUND: &str = busbar_contract::protocol::ERR_TYPE_NOT_FOUND;
-const ERR_TYPE_PERMISSION: &str = busbar_contract::protocol::ERR_TYPE_PERMISSION;
-const ERR_TYPE_REQUEST_TOO_LARGE: &str = busbar_contract::protocol::ERR_TYPE_REQUEST_TOO_LARGE;
+const ERR_TYPE_NOT_FOUND: &str = crate::codec::protocol::ERR_TYPE_NOT_FOUND;
+const ERR_TYPE_PERMISSION: &str = crate::codec::protocol::ERR_TYPE_PERMISSION;
+const ERR_TYPE_REQUEST_TOO_LARGE: &str = crate::codec::protocol::ERR_TYPE_REQUEST_TOO_LARGE;
 
 const BATCH: &str = "batch";
 const BLOCKED_DOMAINS: &str = "blocked_domains";

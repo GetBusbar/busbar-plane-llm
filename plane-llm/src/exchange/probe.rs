@@ -2,7 +2,7 @@
 //! (a probe is a kernel-originated unit pinned to one member; the plane answers its ATTEMPT with
 //! this, the kernel's breaker classifies the answer as organic traffic, and the probe bills nothing).
 
-use busbar_contract::protocol::{APPLICATION_JSON, EGRESS_UA_DEFAULT};
+use crate::codec::protocol::{APPLICATION_JSON, EGRESS_UA_DEFAULT};
 
 use super::attempt::{default_head_fields, wire_and_canonical_path, with_option_query, FarRequest};
 use super::decl;
@@ -11,7 +11,7 @@ use super::shaping::Lane;
 /// The probe body the far end's dialect answers for `wire_model` (empty when it has none).
 #[must_use]
 pub fn probe_body(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     dialect: &str,
     wire_model: &str,
 ) -> Vec<u8> {
@@ -35,7 +35,7 @@ pub fn probe_path(lane: &Lane) -> String {
 
 /// THE PROBE REQUEST for `lane`; `None` for a lane under a path base, which is not probed.
 #[must_use]
-pub fn request(host: &dyn busbar_contract::codec::CodecHost, lane: &Lane) -> Option<FarRequest> {
+pub fn request(host: &dyn crate::codec::cells::CodecHost, lane: &Lane) -> Option<FarRequest> {
     if lane.path_base.is_some() {
         return None;
     }

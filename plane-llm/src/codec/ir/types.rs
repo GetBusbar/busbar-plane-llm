@@ -203,7 +203,7 @@ pub enum IrStreamEvent {
         usage: IrUsage,
     },
     MessageStop,
-    Error(busbar_contract::protocol::IrError),
+    Error(crate::codec::protocol::IrError),
 }
 
 /// Protocol-neutral stop/finish reason. A reader maps any unknown native token to [`Self::Other`]
@@ -1331,10 +1331,10 @@ pub const MAX_STREAM_BLOCKS: usize = 4096;
 impl StreamDecodeState {
     /// Claim the next free IR block index. `reasoning_seen` reserves index 0 for the thinking block
     /// (the OpenAI reader emits it with a hardcoded 0).
-    pub fn claim_ir_index(&mut self) -> Result<usize, busbar_contract::protocol::IrError> {
+    pub fn claim_ir_index(&mut self) -> Result<usize, crate::codec::protocol::IrError> {
         let idx = self.next_ir_index.max(usize::from(self.reasoning_seen));
         if idx >= MAX_STREAM_BLOCKS {
-            return Err(busbar_contract::protocol::IrError {
+            return Err(crate::codec::protocol::IrError {
                 class: busbar_contract::upstream::StatusClass::ServerError,
                 retry_after: None,
                 provider_signal: Some("Stream lifetime block limit exceeded".into()),

@@ -28,14 +28,14 @@ fn test_gemini_registered_in_builtins() {
     );
 
     let decl = decl_for("gemini").expect("gemini declares itself");
-    let raw = busbar_contract::protocol::CredentialHeader::Raw {
+    let raw = crate::codec::protocol::CredentialHeader::Raw {
         header: "x-goog-api-key",
         trim_start: false,
     };
     assert!(
         matches!(
             decl.egress_scheme,
-            Some(busbar_contract::protocol::EgressScheme::Static { families: [], own, passthrough })
+            Some(crate::codec::protocol::EgressScheme::Static { families: [], own, passthrough })
                 if own == raw && passthrough == raw
         ),
         "gemini's declared egress auth is the raw key in x-goog-api-key — no Bearer"

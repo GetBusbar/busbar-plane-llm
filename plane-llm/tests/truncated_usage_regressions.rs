@@ -1,7 +1,7 @@
 //! A native whole response cut by its transport bills only structurally proven root usage.
 
-use busbar_contract::codec::CodecHost;
 use busbar_contract::operation::OpVerb;
+use busbar_plane_llm::codec::cells::CodecHost;
 use busbar_plane_llm::exchange::arrive::Arrived;
 use busbar_plane_llm::exchange::attempt::StreamIntent;
 use busbar_plane_llm::exchange::reply::{At, Piece, Reply, ReplyCtx};

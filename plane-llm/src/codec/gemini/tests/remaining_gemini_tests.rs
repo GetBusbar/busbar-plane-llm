@@ -750,7 +750,7 @@ struct EntropyHost<'a> {
     draws: std::sync::atomic::AtomicUsize,
 }
 
-impl busbar_contract::codec::CodecHost for EntropyHost<'_> {
+impl crate::codec::cells::CodecHost for EntropyHost<'_> {
     fn fill_entropy(&self, out: &mut [u8]) -> bool {
         let draw = self
             .draws

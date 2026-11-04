@@ -18,7 +18,7 @@ fn stop_reason_reverse_never_leaks_foreign_tokens() {
 
 #[test]
 fn test_bedrock_sigv4_sign_request_structure() {
-    let Some(busbar_contract::protocol::EgressScheme::SigV4 {
+    let Some(crate::codec::protocol::EgressScheme::SigV4 {
         service,
         region_of_host,
         default_region,
@@ -43,7 +43,7 @@ fn test_bedrock_sigv4_sign_request_structure() {
 
 #[test]
 fn test_bedrock_sigv4_session_token() {
-    let Some(busbar_contract::protocol::EgressScheme::SigV4 {
+    let Some(crate::codec::protocol::EgressScheme::SigV4 {
         service,
         region_of_host,
         default_region,
@@ -787,7 +787,7 @@ fn test_error_kind_to_bedrock_type_mapping() {
     );
 
     assert_eq!(
-        error_kind_to_bedrock_type(busbar_contract::protocol::KIND_OVERLOADED),
+        error_kind_to_bedrock_type(crate::codec::protocol::KIND_OVERLOADED),
         "ServiceUnavailableException"
     );
     assert_eq!(
@@ -1209,7 +1209,7 @@ fn test_write_request_tool_result_preserves_non_text_content() {
 fn test_write_response_event_error_names_real_exception() {
     let writer = BedrockWriter;
 
-    let throttle = IrStreamEvent::Error(busbar_contract::protocol::IrError {
+    let throttle = IrStreamEvent::Error(crate::codec::protocol::IrError {
         class: StatusClass::RateLimit,
         provider_signal: Some("slow down".to_string()),
         retry_after: None,
@@ -1226,7 +1226,7 @@ fn test_write_response_event_error_names_real_exception() {
         Some("slow down")
     );
 
-    let server = IrStreamEvent::Error(busbar_contract::protocol::IrError {
+    let server = IrStreamEvent::Error(crate::codec::protocol::IrError {
         class: StatusClass::ServerError,
         provider_signal: None,
         retry_after: None,
@@ -2223,7 +2223,7 @@ fn test_stream_exception_only_emits_converse_stream_union_members() {
     ];
 
     for (class, expected) in cases {
-        let err = busbar_contract::protocol::IrError {
+        let err = crate::codec::protocol::IrError {
             class,
             provider_signal: Some("upstream detail".to_string()),
             retry_after: None,
@@ -2242,7 +2242,7 @@ fn test_stream_exception_only_emits_converse_stream_union_members() {
         );
         assert_eq!(msg, "upstream detail", "message prefers provider_signal");
 
-        let ev = IrStreamEvent::Error(busbar_contract::protocol::IrError {
+        let ev = IrStreamEvent::Error(crate::codec::protocol::IrError {
             class,
             provider_signal: None,
             retry_after: None,
@@ -2270,7 +2270,7 @@ fn test_stream_exception_only_emits_converse_stream_union_members() {
         StatusClass::Auth,
         StatusClass::Billing,
     ] {
-        let err = busbar_contract::protocol::IrError {
+        let err = crate::codec::protocol::IrError {
             class,
             provider_signal: None,
             retry_after: None,
@@ -2515,7 +2515,7 @@ fn test_derive_sigv4_region_shapes() {
 /// rejects with SignatureDoesNotMatch).
 #[test]
 fn test_bedrock_sigv4_fips_host_derives_correct_region() {
-    let Some(busbar_contract::protocol::EgressScheme::SigV4 {
+    let Some(crate::codec::protocol::EgressScheme::SigV4 {
         service,
         region_of_host,
         default_region,
@@ -2543,7 +2543,7 @@ fn test_bedrock_sigv4_fips_host_derives_correct_region() {
 /// operator-visible signal, asserted indirectly via the resulting scope.
 #[test]
 fn test_bedrock_sigv4_undecodable_host_falls_back_to_us_east_1() {
-    let Some(busbar_contract::protocol::EgressScheme::SigV4 {
+    let Some(crate::codec::protocol::EgressScheme::SigV4 {
         service,
         region_of_host,
         default_region,
@@ -5518,7 +5518,7 @@ fn a_same_dialect_buffered_answer_gets_no_translator_in_any_dialect() {
                 d,
                 d,
                 false,
-                busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT
+                crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT
             )
             .is_none(),
             "{d}: a same-dialect buffered answer is relayed verbatim"
@@ -5528,7 +5528,7 @@ fn a_same_dialect_buffered_answer_gets_no_translator_in_any_dialect() {
         "bedrock",
         "anthropic",
         false,
-        busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT
+        crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT
     )
     .is_none());
 }
@@ -5686,7 +5686,7 @@ fn the_served_tier_is_read_and_written() {
 
 #[test]
 fn the_tails_sigv4_parameters_restate_the_signing_scheme() {
-    let Some(busbar_contract::protocol::EgressScheme::SigV4 {
+    let Some(crate::codec::protocol::EgressScheme::SigV4 {
         service,
         region_of_host,
         default_region,

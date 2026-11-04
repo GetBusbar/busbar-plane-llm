@@ -2384,7 +2384,7 @@ mod ir_property_tests {
     #[test]
     fn test_openai_write_response_event_error() {
         let writer = OpenAiWriter;
-        let err = busbar_contract::protocol::IrError {
+        let err = crate::codec::protocol::IrError {
             class: busbar_contract::upstream::StatusClass::ClientError,
             provider_signal: Some("boom".to_string()),
             retry_after: None,

@@ -2,12 +2,12 @@
 //! the previous release answered in.
 
 use crate::codec::framework::KIND_TIMEOUT;
-use busbar_contract::abi::plane::{class_of_word, reason_of, RefusalClass};
-use busbar_contract::protocol::{
+use crate::codec::protocol::{
     APPLICATION_JSON, KIND_API_ERROR, KIND_AUTHENTICATION, KIND_INSUFFICIENT_QUOTA,
     KIND_INVALID_REQUEST, KIND_NOT_FOUND, KIND_OVERLOADED, KIND_PERMISSION, KIND_RATE_LIMIT,
     KIND_REQUEST_TOO_LARGE,
 };
+use busbar_contract::abi::plane::{class_of_word, reason_of, RefusalClass};
 use serde_json::Value;
 
 use super::decl;
@@ -32,7 +32,7 @@ pub fn agnostic_envelope(kind: &str, message: &str) -> Value {
 /// RENDER one refusal in `envelope`'s dialect (empty or unknown: the agnostic envelope).
 #[must_use]
 pub fn render(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     envelope: &str,
     status: u16,
     kind: &str,
@@ -121,7 +121,7 @@ pub fn gate_kind(status: u16) -> &'static str {
 /// kernel's hook engine clamped and sanitised them.
 #[must_use]
 pub fn gate_refusal(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     envelope: &str,
     status: u16,
     text: &str,
@@ -149,7 +149,7 @@ fn is_authentication(reason: &str) -> bool {
 /// `status` the status the kernel chose, `text` its message.
 #[must_use]
 pub fn kernel_refusal(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     envelope: &str,
     reason: u32,
     status: u16,
@@ -171,7 +171,7 @@ pub fn kernel_refusal(
             .and_then(|row| u16::try_from(row.status).ok())
             .unwrap_or(status);
         let d = decl(envelope);
-        let kind = d.map_or(busbar_contract::protocol::KIND_AUTHENTICATION, |d| {
+        let kind = d.map_or(crate::codec::protocol::KIND_AUTHENTICATION, |d| {
             d.auth_failure_status_and_kind.1
         });
         let message = d.map_or("authentication failed", |d| d.auth_failure_message);
@@ -190,7 +190,7 @@ pub fn kernel_refusal(
 /// RENDER one of the plane's own arrival refusals.
 #[must_use]
 pub fn declined(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     d: &super::arrive::Declined,
 ) -> Rendered {
     render(host, d.envelope, d.status, d.kind, &d.message, 0)
@@ -198,9 +198,6 @@ pub fn declined(
 
 /// RENDER a refusal an attempt answers without reaching the far end.
 #[must_use]
-pub fn answered(
-    host: &dyn busbar_contract::codec::CodecHost,
-    a: &super::attempt::Answer,
-) -> Rendered {
+pub fn answered(host: &dyn crate::codec::cells::CodecHost, a: &super::attempt::Answer) -> Rendered {
     render(host, a.envelope, a.status, a.kind, &a.message, 0)
 }

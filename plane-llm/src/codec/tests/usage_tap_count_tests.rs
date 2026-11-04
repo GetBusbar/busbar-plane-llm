@@ -6,7 +6,7 @@
 //! way, whether the tap is the chat cell's own (unknown protocol / bad JSON / a body its reader
 //! refuses) or a leaf cell's default (a decode failure).
 
-use busbar_contract::codec::{OperationHandler, UsageTapFault};
+use crate::codec::cells::{OperationHandler, UsageTapFault};
 use busbar_contract::operation::OpVerb;
 
 fn cell(op: OpVerb) -> &'static dyn OperationHandler {

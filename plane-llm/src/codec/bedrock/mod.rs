@@ -5,12 +5,12 @@
 
 use crate::codec::ir::IrStreamEvent;
 use crate::codec::keys;
-use busbar_contract::http::{HeaderName, HeaderValue, StatusCode};
-use busbar_contract::protocol::*;
-use busbar_contract::protocol::{
+use crate::codec::protocol::*;
+use crate::codec::protocol::{
     ERR_TYPE_AUTHENTICATION, ERR_TYPE_INVALID_REQUEST, ERR_TYPE_NOT_FOUND, ERR_TYPE_PERMISSION,
     ERR_TYPE_RATE_LIMIT,
 };
+use busbar_contract::http::{HeaderName, HeaderValue, StatusCode};
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
 use busbar_contract::upstream::StatusClass;
@@ -144,11 +144,11 @@ pub fn protocol() -> Protocol {
 /// claim of any dialect (rung 1, path-independent), then `/converse` (rung 12) and
 /// `/model/{id}/invoke` (rung 13).
 fn claims(
-    h: busbar_contract::protocol::HeadFields<'_>,
+    h: crate::codec::protocol::HeadFields<'_>,
     path: &str,
-) -> Option<busbar_contract::protocol::ClaimStrength> {
+) -> Option<crate::codec::protocol::ClaimStrength> {
     use crate::codec::framework::head_field;
-    use busbar_contract::protocol::ClaimStrength;
+    use crate::codec::protocol::ClaimStrength;
     if head_field(h, "authorization")
         .is_some_and(|a| a.is_ascii() && a.starts_with(b"AWS4-HMAC-SHA256"))
     {
@@ -165,11 +165,11 @@ fn claims(
 
 /// Headerless residual detection: a `/model/{id}/converse[-stream]` path (rung 30). The
 /// `/converse` suffix is load-bearing: a non-Converse `/model/…` path must not wear a Bedrock envelope.
-fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrength> {
+fn residual_claims(path: &str) -> Option<crate::codec::protocol::ClaimStrength> {
     if path.starts_with("/model/")
         && (path.ends_with("/converse") || path.ends_with("/converse-stream"))
     {
-        return Some(busbar_contract::protocol::ClaimStrength(30));
+        return Some(crate::codec::protocol::ClaimStrength(30));
     }
     None
 }
@@ -208,7 +208,7 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
         service: VENDOR_NAME,
         region_of_host: declared_sigv4_region,
         default_region: "us-east-1",
-        content_type: busbar_contract::protocol::APPLICATION_JSON,
+        content_type: crate::codec::protocol::APPLICATION_JSON,
     }),
 
     stream_usage_requires_opt_in: false,
@@ -335,11 +335,11 @@ pub fn error_kind_to_bedrock_type(kind: &str) -> &'static str {
         | "unauthorized" => "AccessDeniedException",
         "not_found" | ERR_TYPE_NOT_FOUND | "model_not_found" => "ResourceNotFoundException",
         crate::codec::framework::KIND_TIMEOUT | "model_timeout" => "ModelTimeoutException",
-        busbar_contract::protocol::KIND_OVERLOADED
+        crate::codec::protocol::KIND_OVERLOADED
         | ERR_TYPE_OVERLOADED
         | "service_unavailable"
         | "unavailable" => EXC_SERVICE_UNAVAILABLE,
-        busbar_contract::protocol::KIND_API_ERROR
+        crate::codec::protocol::KIND_API_ERROR
         | "internal_error"
         | crate::codec::framework::KIND_SERVER_ERROR => EXC_INTERNAL_SERVER,
 
@@ -349,7 +349,7 @@ pub fn error_kind_to_bedrock_type(kind: &str) -> &'static str {
 
 /// Mint a UUID-v4-shaped request id for the `x-amzn-RequestId` header, which a native response
 /// always carries (success and error, stream and non-stream; its absence is a proxy tell).
-pub fn synth_amzn_request_id(host: &dyn busbar_contract::codec::CodecHost) -> Option<String> {
+pub fn synth_amzn_request_id(host: &dyn crate::codec::cells::CodecHost) -> Option<String> {
     let mut buf = [0u8; 16];
     if !host.fill_entropy(&mut buf) {
         return None;
@@ -373,7 +373,7 @@ pub fn synth_amzn_request_id(host: &dyn busbar_contract::codec::CodecHost) -> Op
 /// `error_kind_to_bedrock_type`) to an already-built error response, as a native one always
 /// carries.
 fn attach_bedrock_error_headers(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     headers: &mut busbar_contract::http::HeaderMap,
     kind: &str,
 ) {
@@ -390,9 +390,7 @@ fn attach_bedrock_error_headers(
 
 /// Map a mid-stream `IrError` to the ConverseStream output-union member name the SDK decoder
 /// recognizes, plus the message.
-fn bedrock_stream_exception_for(
-    err: &busbar_contract::protocol::IrError,
-) -> (&'static str, String) {
+fn bedrock_stream_exception_for(err: &crate::codec::protocol::IrError) -> (&'static str, String) {
     let exception_name = match err.class {
         StatusClass::RateLimit => EXC_THROTTLING,
         StatusClass::Overloaded => EXC_SERVICE_UNAVAILABLE,
@@ -1828,7 +1826,7 @@ impl BedrockWriter {
 
 /// Wrap one non-stream `IrResponse` into a ConverseStream binary `eventstream`
 pub fn bedrock_response_to_eventstream(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ir: &crate::codec::ir::IrResponse,
     elapsed_ms: Option<u64>,
 ) -> Vec<u8> {

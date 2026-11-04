@@ -31,7 +31,8 @@ fn explicit_file_mime_survives_regular_and_tool_attachment_writers() {
             }],
             ..Default::default()
         };
-        let output = GeminiWriter.write_request(crate::codec::test_host::HOST, &request);
+        let writer = GeminiWriter;
+        let output = writer.write_request(crate::codec::test_host::HOST, &request);
         assert_eq!(output["contents"][0]["parts"][0], part);
     }
 }
@@ -68,22 +69,23 @@ fn mime_bearing_image_urls_transfer_to_url_capable_dialects() {
         }],
         ..Default::default()
     };
-    let openai = crate::codec::openai_chat::OpenAiWriter
-        .write_request(crate::codec::test_host::HOST, &request);
+    let openai_writer = crate::codec::openai_chat::OpenAiWriter;
+    let openai = openai_writer.write_request(crate::codec::test_host::HOST, &request);
     assert_eq!(
         openai["messages"][0]["content"][0]["image_url"]["url"],
         "https://example.test/opaque"
     );
-    let anthropic = crate::codec::anthropic::AnthropicWriter
-        .write_request(crate::codec::test_host::HOST, &request);
+    let anthropic_writer = crate::codec::anthropic::AnthropicWriter;
+    let anthropic = anthropic_writer.write_request(crate::codec::test_host::HOST, &request);
     assert_eq!(
         anthropic["messages"][0]["content"][0]["source"]["url"],
         "https://example.test/opaque"
     );
     // Writing a dialect without a MIME field must not mutate the shared IR.
+    let gemini_writer = GeminiWriter;
     assert_eq!(
-        GeminiWriter.write_request(crate::codec::test_host::HOST, &request)["contents"][0]["parts"]
-            [0]["fileData"]["mimeType"],
+        gemini_writer.write_request(crate::codec::test_host::HOST, &request)["contents"][0]
+            ["parts"][0]["fileData"]["mimeType"],
         "image/png"
     );
 }

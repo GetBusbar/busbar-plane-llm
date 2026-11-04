@@ -1,7 +1,7 @@
 //! Native reported work must survive unrelated Anthropic content-shape failures.
 
-use busbar_contract::codec::CodecHost;
 use busbar_contract::operation::OpVerb;
+use busbar_plane_llm::codec::cells::CodecHost;
 use busbar_plane_llm::codec::ir::{IrStreamEvent, StreamDecodeState};
 use busbar_plane_llm::codec::proto_codec::protocol_for;
 use busbar_plane_llm::codec::proto_stream::StreamTranslate;

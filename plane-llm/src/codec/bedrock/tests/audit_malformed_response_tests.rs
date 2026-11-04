@@ -67,8 +67,10 @@ fn explicit_invalid_max_tokens_must_not_become_default_budget() {
 
 #[test]
 fn invalid_stream_indices_cannot_mutate_live_tool_blocks() {
-    let mut state = crate::codec::ir::StreamDecodeState::default();
-    state.started = true;
+    let mut state = crate::codec::ir::StreamDecodeState {
+        started: true,
+        ..Default::default()
+    };
     state.open_tools.insert(1023);
     for kind in [
         ET_CONTENT_BLOCK_START,

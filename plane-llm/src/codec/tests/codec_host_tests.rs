@@ -3,7 +3,7 @@
 
 //! Codecs read only the host supplied to them.
 
-use busbar_contract::codec::CodecHost;
+use crate::codec::cells::CodecHost;
 
 /// A host whose entropy is one repeated byte and whose clock is one fixed second.
 struct Fixed;
@@ -194,7 +194,7 @@ fn buffered_entropy_failure_is_not_http_success_and_retains_executed_usage() {
                 request: None,
                 now_s: 1,
                 elapsed_ms: None,
-                translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+                translate_cap: crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
             };
             let good = whole::translate(&Fixed, &ctx, 200, &bytes);
             assert_eq!(good.end, WholeEnd::Delivered);
@@ -234,7 +234,7 @@ fn a_chat_stream_refuses_entropy_loss_and_retains_anthropic_usage() {
 
 #[test]
 fn request_identity_synthesis_failure_refuses_egress() {
-    use busbar_contract::codec::{EgressWire, OperationHandler};
+    use crate::codec::cells::{EgressWire, OperationHandler};
     let request = serde_json::json!({"model":"m","max_tokens":16,"messages":[{
         "role":"assistant", "content":[{"type":"thinking","thinking":"reasoning-canary"}]
     }]});
@@ -290,7 +290,7 @@ fn a_terminal_flush_entropy_failure_marks_the_real_relay_end_failed() {
         request: None,
         handler: &HANDLER,
         meter: true,
-        translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+        translate_cap: crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
     };
 
     let delta = b"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":3}}\n\n";

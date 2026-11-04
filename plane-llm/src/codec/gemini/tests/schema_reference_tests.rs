@@ -17,7 +17,8 @@ fn assert_projection(schema: Value, expected: Value) {
         }))
         .expect("schema request");
     request.extra.clear();
-    let wire = GeminiWriter.write_request(crate::codec::test_host::HOST, &request);
+    let writer = GeminiWriter;
+    let wire = writer.write_request(crate::codec::test_host::HOST, &request);
     for path in [
         "/generationConfig/responseSchema",
         "/tools/0/functionDeclarations/0/parameters",

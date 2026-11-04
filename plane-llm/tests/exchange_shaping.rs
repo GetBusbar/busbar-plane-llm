@@ -113,12 +113,12 @@ fn the_translate_cap_is_the_one_the_settings_carry_else_the_default() {
     let s = Shaping::from_settings(&settings()).expect("reads");
     assert_eq!(
         s.translate_cap(),
-        busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT
+        busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT
     );
     let s = Shaping::from_settings(&json!({})).expect("reads");
     assert_eq!(
         s.translate_cap(),
-        busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT
+        busbar_plane_llm::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT
     );
 }
 

@@ -5,11 +5,11 @@ use std::collections::BTreeMap;
 
 use crate::codec::framework::KIND_TIMEOUT;
 use crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH;
-use busbar_contract::billing::{Billing, TokenUsage};
-use busbar_contract::protocol::{
+use crate::codec::protocol::{
     HeadFields, ProtocolDecl, KIND_API_ERROR, KIND_AUTHENTICATION, KIND_INVALID_REQUEST,
     KIND_OVERLOADED, KIND_PERMISSION, KIND_RATE_LIMIT,
 };
+use busbar_contract::billing::{Billing, TokenUsage};
 use busbar_contract::upstream::{CanonicalSignal, StatusClass};
 use serde_json::Value;
 
@@ -97,7 +97,7 @@ pub fn ingress_relayed_response_header_names(ingress: &str) -> &'static [&'stati
 /// one was captured, else a minted one; `None` for a dialect that carries none.
 #[must_use]
 pub fn response_request_id(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ingress: &str,
     upstream_request_id: Option<&str>,
 ) -> Option<(&'static str, String)> {
@@ -195,7 +195,7 @@ pub fn cross_protocol_error(status: u16, bytes: &[u8]) -> (&'static str, String)
 /// dialect the plane does not hold, or one framing no in-band error, gets a bare `data:` frame.
 #[must_use]
 pub fn mid_stream_error_bytes(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ingress: &str,
     ingress_eventstream: bool,
     message: &str,
@@ -309,7 +309,7 @@ pub fn open_units_of(usage: &Option<Billing>) -> BTreeMap<String, u64> {
 /// reads the stop reason as the error reason.
 #[must_use]
 pub fn generation_failed(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     egress: &str,
     rv: &Value,
 ) -> bool {

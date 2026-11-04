@@ -6,12 +6,12 @@
 //! keyed by the peer protocol string: the handle writes itself onto the target dialect via
 //! `super::proto_codec::protocol_for(proto).writer()`, without downcasting the request handle.
 
+use crate::codec::cells::{CodecError, IngressReject, OperationHandler};
+use crate::codec::cells::{EgressWire, TranslatedResponse};
 use crate::codec::drops::{self, Dropped};
 use crate::codec::egress_prep::EgressPrep;
 use crate::codec::ir::{IrReasoningAsk, IrRequest, IrResponse};
 use busbar_contract::billing::Billing;
-use busbar_contract::codec::{CodecError, IngressReject, OperationHandler};
-use busbar_contract::codec::{EgressWire, TranslatedResponse};
 use busbar_contract::ir::facts::IrFacts;
 use busbar_contract::ir::handle::sealed::Sealed;
 use busbar_contract::ir::handle::IrHandle;
@@ -330,7 +330,7 @@ pub fn chat_usage(r: &IrResponse) -> Option<Billing> {
 /// seam hands over in the [`EgressPrep`] and the egress write passes to the writer.
 pub struct ChatReqHandle(pub IrRequest, pub crate::codec::egress_prep::LaneCaps);
 /// The chat response handle: the response, and the translation cap its plane enforces
-/// ([`IrHandle::apply_translate_cap`]; [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`]
+/// ([`IrHandle::apply_translate_cap`]; [`crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT`]
 /// until set), which bounds what a writer accumulates when re-emitting the response as a stream.
 pub struct ChatRespHandle(pub IrResponse, pub usize);
 
@@ -367,7 +367,7 @@ impl IrHandle for ChatReqHandle {
     }
     fn write_egress_request(
         &mut self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         egress_proto: &str,
         model: &str,
     ) -> EgressWire {
@@ -410,7 +410,7 @@ impl IrHandle for ChatRespHandle {
     }
     fn wrap_buffered_as_stream(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ingress_protocol: &str,
         elapsed_ms: Option<u64>,
     ) -> Option<Vec<u8>> {
@@ -430,7 +430,7 @@ impl IrHandle for ChatRespHandle {
     }
     fn write_ingress_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ingress_protocol: &str,
         ingress_serves_op: bool,
     ) -> TranslatedResponse {
@@ -462,16 +462,16 @@ impl ChatOperation {
 
 /// Validate a chat response once, retaining its provider-failure classification and usage tap.
 pub(crate) fn inspect_response_usage(
-    host: &dyn busbar_contract::codec::CodecHost,
+    host: &dyn crate::codec::cells::CodecHost,
     ingress_protocol: &str,
     body: &[u8],
 ) -> (
     bool,
-    Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault>,
+    Result<Option<busbar_contract::billing::TokenUsage>, crate::codec::cells::UsageTapFault>,
 ) {
     let mut reported_failure = false;
     let tapped = (|| {
-        use busbar_contract::codec::UsageTapFault;
+        use crate::codec::cells::UsageTapFault;
         let Some(p) = super::proto_codec::protocol_for(ingress_protocol) else {
             ::tracing::debug!(diag = %crate::codec::diagnostics::USAGE_TAP_UNKNOWN_PROTOCOL.banner(),
                 protocol = ingress_protocol,
@@ -540,17 +540,17 @@ impl OperationHandler for ChatOperation {
     }
     fn extract_usage(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         ingress_protocol: &str,
         body: &[u8],
-    ) -> Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault>
+    ) -> Result<Option<busbar_contract::billing::TokenUsage>, crate::codec::cells::UsageTapFault>
     {
         inspect_response_usage(host, ingress_protocol, body).1
     }
 
     fn recover_response_billing(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         body: &[u8],
     ) -> Option<Billing> {
         let body = crate::codec::json::parse::<Value>(body).ok()?;
@@ -576,7 +576,7 @@ impl OperationHandler for ChatOperation {
     }
     fn read_response_value(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         v: &Value,
     ) -> Result<Box<dyn IrHandle>, CodecError> {
         let p = self
@@ -587,7 +587,7 @@ impl OperationHandler for ChatOperation {
             .map(|r| {
                 Box::new(ChatRespHandle(
                     r,
-                    busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+                    crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
                 )) as Box<dyn IrHandle>
             })
             .map_err(|e| CodecError::Malformed(format!("{e:?}")))
@@ -609,7 +609,7 @@ impl OperationHandler for ChatOperation {
     }
     fn read_response(
         &self,
-        host: &dyn busbar_contract::codec::CodecHost,
+        host: &dyn crate::codec::cells::CodecHost,
         wire: &[u8],
     ) -> Result<Box<dyn IrHandle>, CodecError> {
         let v: Value =
@@ -622,7 +622,7 @@ impl OperationHandler for ChatOperation {
             .map(|r| {
                 Box::new(ChatRespHandle(
                     r,
-                    busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+                    crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
                 )) as Box<dyn IrHandle>
             })
             .map_err(|e| CodecError::Malformed(format!("{e:?}")))

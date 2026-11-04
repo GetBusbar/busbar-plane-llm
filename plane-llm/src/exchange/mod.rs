@@ -13,7 +13,7 @@ pub mod reply;
 pub mod shaping;
 pub mod webhook;
 
-use busbar_contract::codec::OperationHandler;
+use crate::codec::cells::OperationHandler;
 
 /// The declaration of the dialect named `name`: the plane's one lookup ([`crate::codec::decl_of`]).
 pub(crate) use crate::codec::decl_of as decl;

@@ -5,9 +5,9 @@
 //! refuses rather than invents a body, and this plane's translate seam turns that refusal into the
 //! 4xx reject. (Moved with the translate seam from `busbar-substrate-values`, SD-8.)
 
+use crate::codec::cells::{CodecError, EgressWire, IngressReject, OperationHandler};
 use crate::codec::egress_prep::EgressPrep;
 use crate::codec::translate::{TranslateCodec, TranslateReqInput, TranslateReqReject};
-use busbar_contract::codec::{CodecError, EgressWire, IngressReject, OperationHandler};
 use busbar_contract::ir::handle::IrHandle;
 use busbar_contract::ir::invoke::InvokeReq;
 use busbar_contract::ir::neutral_handles::InvokeReqHandle;
@@ -77,7 +77,7 @@ impl OperationHandler for DefaultWriteCodec {
     }
     fn read_response(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _wire: &[u8],
     ) -> Result<Box<dyn IrHandle>, CodecError> {
         Err(CodecError::Malformed("not a response codec".to_string()))

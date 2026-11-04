@@ -4,16 +4,16 @@
 //! OpenAI `RequestHandler` and its OperationHandlers. OperationHandlers are pure codecs — wire ↔ IR,
 //! both directions, nothing else: moderation, embeddings, images, audio, and chat each get one.
 
+use crate::codec::cells::{CodecError, IngressReject, RequestHandler};
 use crate::codec::ir::moderation::{
     ModerationInput, ModerationReq, ModerationResp, ModerationResult,
 };
 use crate::codec::keys;
 use crate::codec::leaf_codec::LeafCodec;
-use busbar_contract::codec::{CodecError, IngressReject, RequestHandler};
 
 #[cfg(test)]
-use busbar_contract::codec::OperationHandler;
-use busbar_contract::codec::{EgressCtx, WireBody};
+use crate::codec::cells::OperationHandler;
+use crate::codec::cells::{EgressCtx, WireBody};
 use busbar_contract::operation::OpVerb;
 use busbar_contract::SlabBytes;
 use bytes::Bytes;
@@ -47,7 +47,7 @@ static SPEECH: OpenAiSpeech = OpenAiSpeech;
 /// this table is the standard no-handler 404, which is what the enumerated `None` arm used to say:
 /// OpenAI ships no rerank surface, and the protocol-surface verbs are MCP's and A2A's, so the pair
 /// is unrepresentable rather than refused at runtime.
-static CELLS: &[busbar_contract::codec::Cell] = &[
+static CELLS: &[crate::codec::cells::Cell] = &[
     (OpVerb::CHAT, &CHAT),
     (OpVerb::MODERATION, &MODERATION),
     (OpVerb::EMBEDDINGS, &EMBEDDINGS),
@@ -154,7 +154,7 @@ leaf_op! {
     }
     fn recover_response_billing(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         body: &[u8],
     ) -> Option<Billing> {
         let value: Value = crate::codec::json::parse(body).ok()?;
@@ -427,17 +427,17 @@ leaf_op! {
     }
     fn extract_usage(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _ingress: &str,
         body: &[u8],
-    ) -> Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault> {
+    ) -> Result<Option<busbar_contract::billing::TokenUsage>, crate::codec::cells::UsageTapFault> {
         let value: Value = crate::codec::json::parse(body)
-            .map_err(|_| busbar_contract::codec::UsageTapFault::Decode)?;
+            .map_err(|_| crate::codec::cells::UsageTapFault::Decode)?;
         Ok(read_embeddings_usage(&value))
     }
     fn recover_response_billing(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         body: &[u8],
     ) -> Option<busbar_contract::billing::Billing> {
         let value: Value = crate::codec::json::parse(body).ok()?;
@@ -525,7 +525,7 @@ leaf_op! {
     }
     fn recover_response_billing(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         body: &[u8],
     ) -> Option<Billing> {
         let value: Value = crate::codec::json::parse(body).ok()?;

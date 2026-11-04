@@ -1,6 +1,6 @@
 //! Request format custody through the multipart arrival, actual attempt and whole reply.
 
-use busbar_contract::codec::CodecHost;
+use busbar_plane_llm::codec::cells::CodecHost;
 use busbar_plane_llm::exchange::{
     arrive::arrive,
     attempt::{build, StreamIntent},

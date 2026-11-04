@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 use super::*;
+use crate::codec::cells::CodecHost;
 use crate::codec::ir::{IrBlock, IrResponse, IrRole, IrStopReason, IrUsage, StreamDecodeState};
-use busbar_contract::codec::CodecHost;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -166,7 +166,7 @@ fn whole_delivery_failure_keeps_reported_usage_in_both_cohere_directions() {
                     request: None,
                     now_s: 1,
                     elapsed_ms: None,
-                    translate_cap: busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
+                    translate_cap: crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT,
                 };
                 let bytes = serde_json::to_vec(&source).unwrap();
                 let good = whole::translate(&Entropy::new(true), &ctx, 200, &bytes);

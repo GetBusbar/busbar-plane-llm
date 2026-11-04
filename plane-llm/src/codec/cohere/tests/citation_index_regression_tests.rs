@@ -40,7 +40,7 @@ fn citations(
 
 fn assert_pairs(frames: &[(String, serde_json::Value)], first: usize, count: usize) {
     assert_eq!(frames.len(), count * 2);
-    for (n, pair) in frames.chunks_exact(2).enumerate() {
+    for (n, pair) in frames.as_chunks::<2>().0.iter().enumerate() {
         assert_eq!(pair[0].1["type"], "citation-start");
         assert_eq!(pair[1].1["type"], "citation-end");
         assert_eq!(pair[0].1["index"], first + n);

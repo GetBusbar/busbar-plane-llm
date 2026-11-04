@@ -634,7 +634,7 @@ impl ProtocolReader for CohereReader {
 
     fn read_response_events(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         _event_type: &str,
         data: &serde_json::Value,
         state: &mut crate::codec::ir::StreamDecodeState,
@@ -884,7 +884,7 @@ impl ProtocolReader for CohereReader {
                 };
 
                 if stop_reason == Some(crate::codec::ir::IrStopReason::Error) {
-                    out.push(IrStreamEvent::Error(busbar_contract::protocol::IrError {
+                    out.push(IrStreamEvent::Error(crate::codec::protocol::IrError {
                         class: busbar_contract::upstream::StatusClass::ServerError,
                         provider_signal: Some(raw_finish_reason.to_string()),
                         retry_after: None,
@@ -1048,7 +1048,7 @@ impl ProtocolReader for CohereReader {
 
     fn read_response(
         &self,
-        _host: &dyn busbar_contract::codec::CodecHost,
+        _host: &dyn crate::codec::cells::CodecHost,
         body: &serde_json::Value,
     ) -> Result<crate::codec::ir::IrResponse, IrError> {
         let obj = body.as_object().ok_or_else(ir_parse_error)?;
@@ -1280,7 +1280,7 @@ mod unreadable_count_refusal_tests;
 mod native_stream_origin_tests;
 
 fn cohere_frame_limit_error() -> IrStreamEvent {
-    IrStreamEvent::Error(busbar_contract::protocol::IrError {
+    IrStreamEvent::Error(crate::codec::protocol::IrError {
         class: busbar_contract::upstream::StatusClass::ServerError,
         provider_signal: Some("Cohere stream block limit exceeded".to_string()),
         retry_after: None,

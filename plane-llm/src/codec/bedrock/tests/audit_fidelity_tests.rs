@@ -18,7 +18,7 @@ fn titan_embedding_rejects_corrupt_components_without_shifting_dimensions() {
     ] {
         assert!(matches!(
             handler::read_embeddings_response(body),
-            Err(busbar_contract::codec::CodecError::Malformed(_))
+            Err(crate::codec::cells::CodecError::Malformed(_))
         ));
     }
     let result = handler::read_embeddings_response(br#"{"embedding":[0.1,0.2,0.3]}"#).unwrap();

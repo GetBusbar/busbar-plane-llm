@@ -3,13 +3,13 @@
 
 //! The six leaf-op `IrHandle`s: embeddings / image / rerank / moderation / transcription / speech.
 
+use crate::codec::cells::{EgressWire, TranslatedResponse};
 use crate::codec::ir::audio::{SpeechReq, SpeechResp, TranscriptionReq, TranscriptionResp};
 use crate::codec::ir::embeddings::{EmbeddingsReq, EmbeddingsResp};
 use crate::codec::ir::image::{ImageReq, ImageResp};
 use crate::codec::ir::moderation::{ModerationReq, ModerationResp};
 use crate::codec::ir::rerank::{RerankReq, RerankResp};
 use busbar_contract::billing::Billing;
-use busbar_contract::codec::{EgressWire, TranslatedResponse};
 use busbar_contract::ir::facts::IrFacts;
 use busbar_contract::ir::handle::sealed::Sealed;
 use busbar_contract::ir::handle::IrHandle;
@@ -58,7 +58,7 @@ macro_rules! leaf_handles {
             }
             fn write_egress_request(
                 &mut self,
-                _host: &dyn busbar_contract::codec::CodecHost,
+                _host: &dyn crate::codec::cells::CodecHost,
                 egress_proto: &str,
                 model: &str,
             ) -> EgressWire {
@@ -90,7 +90,7 @@ macro_rules! leaf_handles {
             leaf_handles!(@response_echo $resp);
             fn write_ingress_response(
                 &self,
-                _host: &dyn busbar_contract::codec::CodecHost,
+                _host: &dyn crate::codec::cells::CodecHost,
                 ingress_proto: &str,
                 serves_op: bool,
             ) -> TranslatedResponse {
@@ -99,7 +99,7 @@ macro_rules! leaf_handles {
                 }
                 let wb = super::leaf_codec::$write_resp(ingress_proto, &self.0);
                 leaf_handles!(@refuse_response $resp_refuse wb);
-                if wb.content_type.as_bytes() != busbar_contract::protocol::APPLICATION_JSON.as_bytes() {
+                if wb.content_type.as_bytes() != crate::codec::protocol::APPLICATION_JSON.as_bytes() {
                     return TranslatedResponse::Typed(wb);
                 }
                 match serde_json::from_slice::<Value>(&wb.bytes) {
@@ -109,7 +109,7 @@ macro_rules! leaf_handles {
             }
             fn write_ingress_response_bytes(
                 &self,
-                _host: &dyn busbar_contract::codec::CodecHost,
+                _host: &dyn crate::codec::cells::CodecHost,
                 ingress_proto: &str,
                 serves_op: bool,
             ) -> TranslatedResponse {

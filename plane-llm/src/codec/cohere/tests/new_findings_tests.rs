@@ -59,7 +59,8 @@ fn many_tool_prefix_blocks_keep_order_and_are_folded_once() {
         }],
         ..Default::default()
     };
-    let wire = CohereWriter.write_request(crate::codec::test_host::HOST, &request);
+    let writer = CohereWriter;
+    let wire = writer.write_request(crate::codec::test_host::HOST, &request);
     let messages = wire["messages"].as_array().unwrap();
     assert_eq!(messages[0]["content"], format!("{}first", prefix.join("")));
     assert_eq!(messages[1]["content"], "second");
