@@ -4,6 +4,10 @@
 //! LLM dialect declarations and computed codec facade.
 
 use crate::codec::cells::CodecHost;
+pub use busbar_contract::auth_egress::{
+    CredentialFamily, CredentialHeader, EgressAuthHeaders, EgressScheme, IngressAuth,
+    SigningContext,
+};
 use busbar_contract::operation::OpVerb;
 pub use busbar_contract::protocol::{
     find_frame_terminator, head_field, sse_line_spans, sse_lines, HeadFields, IrError, SseFrames,
@@ -14,10 +18,6 @@ pub use busbar_contract::protocol::{
     KIND_INSUFFICIENT_QUOTA, KIND_INVALID_REQUEST, KIND_NOT_FOUND, KIND_OVERLOADED,
     KIND_PERMISSION, KIND_RATE_LIMIT, KIND_REQUEST_TOO_LARGE, KIND_SERVER_ERROR, KIND_TIMEOUT,
     PROVIDER_CODE_CONTEXT_LENGTH, SIGNAL_IR_PARSE, STREAM_ABORT_DETAIL, TEXT_EVENT_STREAM,
-};
-pub use busbar_contract::protocol::{
-    CredentialFamily, CredentialHeader, EgressAuthHeaders, EgressScheme, IngressAuth,
-    SigningContext,
 };
 
 /// How tightly a protocol CLAIMS an inbound request, for the generic detection fold. A LOWER value

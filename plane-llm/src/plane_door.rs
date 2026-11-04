@@ -47,7 +47,9 @@ use busbar_contract::abi::sdk::publish::{ClaimSpec, SnapshotSpec};
 use busbar_contract::abi::sdk::{
     Generations, HostBuf, Instance, Lent, Out, Safe, SafeSlot, Services, StaticServices,
 };
-use busbar_contract::abi::transport::{FAULT_CALLER, FAULT_HARD, FAULT_NONE, FAULT_TRANSIENT};
+use busbar_contract::abi::transport::{
+    FAULT_CALLER, FAULT_HARD, FAULT_NONE, FAULT_RATE_LIMIT, FAULT_TRANSIENT,
+};
 use busbar_contract::ids::OpClassId;
 use busbar_contract::provider_keys::EXT_PROVIDER_KEYS;
 use busbar_contract::upstream::{Disposition, StatusClass};
@@ -878,14 +880,18 @@ pub fn counts(units: &Units) -> Vec<UnitCount> {
 
 /// The breaker's reading of a judged answer (one neutral vocabulary, stated apart from the walk's
 /// verdict), recorded per disposition: the caller's own bad input records nothing
-/// against the destination; a transient failure (an `error_map` entry naming `rate_limit` among
-/// them) counts toward the pool cell's trip; a refused credential or account trips every cell; a
+/// against the destination; a transient failure counts toward the pool cell's trip. Rate limits
+/// retain their declared semantic cause for the host's retry ladder. A refused credential or account trips every cell; a
 /// request too large for the window fails over with nothing recorded.
 #[must_use]
 pub fn breaker_fault(f: Option<&Fault>) -> u8 {
     match f {
         None => FAULT_NONE,
         Some(Fault::Transient(_)) => FAULT_TRANSIENT,
+        Some(Fault::Judged {
+            disposition: Disposition::TransientUpstream,
+            class: Some(StatusClass::RateLimit),
+        }) => FAULT_RATE_LIMIT,
         Some(Fault::Judged { disposition, .. }) => match disposition {
             Disposition::ClientFault => FAULT_CALLER,
             Disposition::TransientUpstream => FAULT_TRANSIENT,

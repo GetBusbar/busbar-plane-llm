@@ -881,7 +881,9 @@ fn a_reply_judges_a_far_end_error() {
 /// THE BREAKER'S READING beside the walk's verdict:
 #[test]
 fn a_judged_far_end_error_carries_the_breakers_reading_apart_from_its_verdict() {
-    use busbar_contract::abi::transport::{FAULT_CALLER, FAULT_HARD, FAULT_NONE, FAULT_TRANSIENT};
+    use busbar_contract::abi::transport::{
+        FAULT_CALLER, FAULT_HARD, FAULT_NONE, FAULT_RATE_LIMIT, FAULT_TRANSIENT,
+    };
     use busbar_plane_llm::plane_door::breaker_fault;
     let arrived = arrival("openai", false);
     let mut lane = lane("openai");
@@ -898,7 +900,7 @@ fn a_judged_far_end_error_carries_the_breakers_reading_apart_from_its_verdict() 
     };
     for (status, code, verdict, reading) in [
         (400, "context_length_exceeded", Verdict::Retry, FAULT_NONE),
-        (400, "1302", Verdict::Retry, FAULT_TRANSIENT),
+        (400, "1302", Verdict::Retry, FAULT_RATE_LIMIT),
         (400, "bad_field", Verdict::Hard, FAULT_CALLER),
         (401, "invalid_api_key", Verdict::Hard, FAULT_HARD),
         (503, "busy", Verdict::Retry, FAULT_TRANSIENT),
@@ -920,6 +922,32 @@ fn a_judged_far_end_error_carries_the_breakers_reading_apart_from_its_verdict() 
         FAULT_TRANSIENT
     );
     assert_eq!(breaker_fault(None), FAULT_NONE);
+    for (class, disposition, expected) in [
+        (
+            StatusClass::RateLimit,
+            Disposition::TransientUpstream,
+            FAULT_RATE_LIMIT,
+        ),
+        (
+            StatusClass::ServerError,
+            Disposition::TransientUpstream,
+            FAULT_TRANSIENT,
+        ),
+        (StatusClass::Billing, Disposition::HardDown, FAULT_HARD),
+        (
+            StatusClass::RateLimit,
+            Disposition::ClientFault,
+            FAULT_CALLER,
+        ),
+    ] {
+        assert_eq!(
+            breaker_fault(Some(&Fault::Judged {
+                disposition,
+                class: Some(class)
+            })),
+            expected
+        );
+    }
 }
 
 /// A cut: a stream after its first byte ends on the caller's error frame, `Hard`, the far end's
