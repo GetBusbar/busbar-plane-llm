@@ -201,17 +201,17 @@ fn tool_choice_without_tools_is_omitted_on_every_writer() {
         ("Bedrock", &cap_b),
     ] {
         assert!(
-            diagnostic_texts(&cap)
+            diagnostic_texts(cap)
                 .iter()
                 .any(|event| event.contains("dropping"))
-                && (diagnostic_texts(&cap)
+                && (diagnostic_texts(cap)
                     .iter()
                     .any(|event| event.contains("tool_choice"))
-                    || diagnostic_texts(&cap)
+                    || diagnostic_texts(cap)
                         .iter()
                         .any(|event| event.contains("toolChoice"))),
             "{name} must warn that it dropped the tool_choice; got {:?}",
-            diagnostic_texts(&cap)
+            diagnostic_texts(cap)
         );
     }
 }

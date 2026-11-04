@@ -217,9 +217,8 @@ fn llm_serving_requires_all_six_actual_http_needs_in_both_deliveries() {
         conns: ConnTable::NoNeeds,
         ..bind(&d)
     };
-    let linked = load_linked::<Plane>(&row, serving())
-        .err()
-        .expect("actual networked plane needs a table");
+    let linked =
+        load_linked::<Plane>(&row, serving()).expect_err("actual networked plane needs a table");
     assert_eq!(linked, expected);
     assert!(linked
         .to_string()

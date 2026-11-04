@@ -825,14 +825,12 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     let mut answers = Vec::new();
     {
         let before = first();
-        let answer = (|| {
-            format!(
-                "{:?} {} max_inflight={}",
-                p.kind(),
-                p.name(),
-                p.max_inflight()
-            )
-        })();
+        let answer = format!(
+            "{:?} {} max_inflight={}",
+            p.kind(),
+            p.name(),
+            p.max_inflight()
+        );
         assert_eq!(first() - before, 0, "exact first crossings: {}", "facts");
         answers.push((("facts").to_string(), answer));
     };
@@ -845,26 +843,26 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     for (i, b) in bad.iter().enumerate() {
         {
             let before = first();
-            let answer = (|| called(&validate(&p, &dealt(b))))();
+            let answer = called(&validate(&p, &dealt(b)));
             assert_eq!(
                 first() - before,
                 1,
                 "exact first crossings: {}",
                 &format!("validate bad #{i}")
             );
-            answers.push(((&format!("validate bad #{i}")).to_string(), answer));
+            answers.push((format!("validate bad #{i}").to_string(), answer));
         };
     }
     {
         let before = first();
-        let answer = (|| called(&validate(&p, &dealt(&settings))))();
+        let answer = called(&validate(&p, &dealt(&settings)));
         assert_eq!(first() - before, 1, "exact first crossings: {}", "validate");
         answers.push((("validate").to_string(), answer));
     };
 
     {
         let before = first();
-        let answer = (|| arrive(&p, &claimed, &request))();
+        let answer = arrive(&p, &claimed, &request);
         assert_eq!(
             first() - before,
             0,
@@ -876,7 +874,7 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     let opened = handed(&p.served(), &settings);
     {
         let before = first();
-        let answer = (|| open(&p, &opened, url))();
+        let answer = open(&p, &opened, url);
         assert_eq!(first() - before, 1, "exact first crossings: {}", "open");
         answers.push((("open").to_string(), answer));
     };
@@ -897,7 +895,7 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
 
     {
         let before = first();
-        let answer = (|| open(&p, &opened, url))();
+        let answer = open(&p, &opened, url);
         assert_eq!(
             first() - before,
             0,
@@ -910,19 +908,19 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     let driver = d.driver(&p, 0);
     {
         let before = first();
-        let answer = (|| generation(&p, slot::HYDRATE, 1))();
+        let answer = generation(&p, slot::HYDRATE, 1);
         assert_eq!(first() - before, 1, "exact first crossings: {}", "hydrate");
         answers.push((("hydrate").to_string(), answer));
     };
     {
         let before = first();
-        let answer = (|| generation(&p, slot::START, 1))();
+        let answer = generation(&p, slot::START, 1);
         assert_eq!(first() - before, 1, "exact first crossings: {}", "start");
         answers.push((("start").to_string(), answer));
     };
     {
         let before = first();
-        let answer = (|| arrive(&p, &claimed, &request))();
+        let answer = arrive(&p, &claimed, &request);
         assert_eq!(
             first() - before,
             1,
@@ -933,7 +931,7 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     };
     {
         let before = first();
-        let answer = (|| arrive(&p, &unclaimed, &request))();
+        let answer = arrive(&p, &unclaimed, &request);
         assert_eq!(
             first() - before,
             1,
@@ -964,7 +962,7 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     ] {
         {
             let before = first();
-            let answer = (|| on_piece(&p, &d, &one, g, room, c).line(Piece::line))();
+            let answer = on_piece(&p, &d, &one, g, room, c).line(Piece::line);
             assert_eq!(first() - before, 1, "exact first crossings: {}", label);
             answers.push(((label).to_string(), answer));
         };
@@ -976,7 +974,7 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
 
     {
         let before = first();
-        let answer = (|| arrive(&p, &claimed.for_unit(narrow_unit), &request))();
+        let answer = arrive(&p, &claimed.for_unit(narrow_unit), &request);
         assert_eq!(
             first() - before,
             1,
@@ -988,8 +986,7 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     {
         let before = first();
         let answer =
-            (|| on_piece(&p, &d, &narrow, attempt(narrow_unit, claim), room, c).line(Piece::line))(
-            );
+            on_piece(&p, &d, &narrow, attempt(narrow_unit, claim), room, c).line(Piece::line);
         assert_eq!(
             first() - before,
             1,
@@ -1000,7 +997,7 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     };
     {
         let before = first();
-        let answer = (|| {
+        let answer = {
             let g = Given {
                 from: FROM_CALLER,
                 flags: PIECE_LAST,
@@ -1009,7 +1006,7 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
                 ..attempt(narrow_unit, claim)
             };
             on_piece(&p, &d, &narrow, g, room, c).line(Piece::line)
-        })();
+        };
         assert_eq!(
             first() - before,
             1,
@@ -1020,10 +1017,10 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     };
     {
         let before = first();
-        let answer = (|| {
+        let answer = {
             let g = far_end(narrow_unit, claim, whole, &far_answer, answer);
             on_piece(&p, &d, &narrow, g, room, c).line(Piece::line)
-        })();
+        };
         assert_eq!(
             first() - before,
             1,
@@ -1035,17 +1032,17 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     for i in 0..more {
         {
             let before = first();
-            let answer = (|| {
+            let answer = {
                 let g = far_end(narrow_unit, claim, 0, b"", answer);
                 on_piece(&p, &d, &narrow, g, room, c).line(Piece::line)
-            })();
+            };
             assert_eq!(
                 first() - before,
                 1,
                 "exact first crossings: {}",
                 &format!("narrow more #{i}")
             );
-            answers.push(((&format!("narrow more #{i}")).to_string(), answer));
+            answers.push((format!("narrow more #{i}").to_string(), answer));
         };
     }
     narrow.end(&d);
@@ -1054,7 +1051,7 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     let short = Unit::mint(&d, 1024);
     {
         let before = first();
-        let answer = (|| arrive(&p, &claimed.for_unit(short_unit), &request))();
+        let answer = arrive(&p, &claimed.for_unit(short_unit), &request);
         assert_eq!(
             first() - before,
             1,
@@ -1066,7 +1063,7 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     {
         let before = first();
         let answer =
-            (|| on_piece(&p, &d, &short, attempt(short_unit, claim), room, c).line(Piece::line))();
+            on_piece(&p, &d, &short, attempt(short_unit, claim), room, c).line(Piece::line);
         assert_eq!(
             first() - before,
             1,
@@ -1077,7 +1074,7 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     };
     {
         let before = first();
-        let answer = (|| {
+        let answer = {
             let g = Given {
                 from: FROM_CALLER,
                 flags: PIECE_LAST,
@@ -1086,7 +1083,7 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
                 ..attempt(short_unit, claim)
             };
             on_piece(&p, &d, &short, g, room, c).line(Piece::line)
-        })();
+        };
         assert_eq!(
             first() - before,
             1,
@@ -1097,10 +1094,10 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     };
     {
         let before = first();
-        let answer = (|| {
+        let answer = {
             let g = far_end(short_unit, claim, whole, &far_answer, answer);
             short_then(&p, &d, &short, g, buffer, c, Piece::line)
-        })();
+        };
         assert_eq!(
             first() - before,
             2,
@@ -2265,7 +2262,7 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
 
     {
         let before = first();
-        let answer = (|| {
+        let answer = {
             let (mut reply, mut arena) = ([0_u8; 512], [0_u8; 256]);
             let mut fields = [z::<OutField>(); 2];
             let mut f: Frame<RefusalIn, RefusalOut> = Frame::new(input(), output());
@@ -2285,19 +2282,19 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
                 String::from_utf8_lossy(&reply[..(f.out.reply_written as usize).min(reply.len())]),
                 f.out.status
             )
-        })();
+        };
         assert_eq!(first() - before, 1, "exact first crossings: {}", "refusal");
         answers.push((("refusal").to_string(), answer));
     };
     {
         let before = first();
-        let answer = (|| serve(&p, &d, None))();
+        let answer = serve(&p, &d, None);
         assert_eq!(first() - before, 1, "exact first crossings: {}", "serve");
         answers.push((("serve").to_string(), answer));
     };
     {
         let before = first();
-        let answer = (|| {
+        let answer = {
             let mut arena = [0_u8; 256];
             let mut signals = [z::<SignalEntry>(); 4];
             let mut f: Frame<ProjectIn, ProjectOut> = Frame::new(input(), output());
@@ -2307,23 +2304,23 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
             (f.input.arena_buf, f.input.arena_cap) = (arena.as_mut_ptr(), arena.len());
             let c = p.call(slot::PROJECT, &mut f);
             format!("{} signals={}", called(&c), f.out.view.signals_len)
-        })();
+        };
         assert_eq!(first() - before, 1, "exact first crossings: {}", "project");
         answers.push((("project").to_string(), answer));
     };
     {
         let before = first();
-        let answer = (|| {
+        let answer = {
             let (c, named) = drive(&p, driver);
             format!("{} sessions={}", called(&c), named.len())
-        })();
+        };
         assert_eq!(first() - before, 1, "exact first crossings: {}", "drive");
         answers.push((("drive").to_string(), answer));
     };
 
     {
         let before = first();
-        let answer = (|| called(&release(&p, 0)))();
+        let answer = called(&release(&p, 0));
         assert_eq!(
             first() - before,
             1,
@@ -2334,27 +2331,27 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     };
     {
         let before = first();
-        let answer = (|| match driver {
+        let answer = match driver {
             Some(driver) => {
                 let done = d.tick(&p, driver, 1_000).wait_done();
                 let next = done.frame.as_ref().map_or(0, |f| f.out.next_tick_ns);
                 format!("{} next={next}", called(&answered(&done)))
             }
             None => "Refused lease=false no driver ticket next=0".to_string(),
-        })();
+        };
         assert_eq!(first() - before, 1, "exact first crossings: {}", "tick");
         answers.push((("tick").to_string(), answer));
     };
     {
         let before = first();
-        let answer = (|| {
+        let answer = {
             let mut f: Frame<
                 busbar_contract::abi::plane::PlaneCancelIn,
                 busbar_contract::abi::plane::PlaneCancelOut,
             > = Frame::new(input(), output());
             let c = p.call(life::CANCEL, &mut f);
             format!("{} disposition={}", called(&c), f.out.cancel.disposition)
-        })();
+        };
         assert_eq!(first() - before, 1, "exact first crossings: {}", "cancel");
         answers.push((("cancel").to_string(), answer));
     };
@@ -2367,26 +2364,26 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     };
     {
         let before = first();
-        let answer = (|| refresh(&handed(&p.served(), &refresh_settings)))();
+        let answer = refresh(&handed(&p.served(), &refresh_settings));
         assert_eq!(first() - before, 1, "exact first crossings: {}", "refresh");
         answers.push((("refresh").to_string(), answer));
     };
     {
         let before = first();
-        let answer = (|| generation(&p, life::RETIRE, 1))();
+        let answer = generation(&p, life::RETIRE, 1);
         assert_eq!(first() - before, 1, "exact first crossings: {}", "retire");
         answers.push((("retire").to_string(), answer));
     };
     {
         let before = first();
-        let answer = (|| called(&close(&p)))();
+        let answer = called(&close(&p));
         assert_eq!(first() - before, 1, "exact first crossings: {}", "close");
         answers.push((("close").to_string(), answer));
     };
 
     {
         let before = first();
-        let answer = (|| arrive(&p, &claimed, &request))();
+        let answer = arrive(&p, &claimed, &request);
         assert_eq!(
             first() - before,
             0,
@@ -3362,7 +3359,8 @@ fn llm_declares_its_actual_statement_needs_and_requested_profile() {
     declared.dedup();
     assert_eq!(needs, declared);
     if std::env::var_os("BUSBAR_EXPECT_RELEASE").is_some() {
-        assert!(!cfg!(debug_assertions), "release profile requested");
+        #[cfg(debug_assertions)]
+        panic!("release profile requested");
     }
 }
 #[path = "support/ready_refusal.rs"]

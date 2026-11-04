@@ -61,7 +61,7 @@ fn answer(egress: &str, ingress: &str, body: &Value) -> (Vec<String>, Diagnostic
 /// The one captured warn that carries exactly `path=<path>` and contains `text`.
 fn warn_of(cap: &DiagnosticEvents, path: &str, text: &str) -> Option<String> {
     let field = format!("path={path}");
-    diagnostic_texts(&cap)
+    diagnostic_texts(cap)
         .into_iter()
         .find(|m| m.contains(text) && m.split_whitespace().any(|w| w == field))
 }
@@ -81,7 +81,7 @@ fn on_the_drop_path(
     let warn = warn_of(cap, path, text).unwrap_or_else(|| {
         panic!(
             "one drop-path warn names `{path}` with the writer's text `{text}`: {:?}",
-            diagnostic_texts(&cap)
+            diagnostic_texts(cap)
         )
     });
     assert!(
@@ -89,13 +89,13 @@ fn on_the_drop_path(
         "the drop-path warn carries {diag}: {warn}"
     );
     assert_eq!(
-        diagnostic_texts(&cap)
+        diagnostic_texts(cap)
             .iter()
             .filter(|m| m.contains(text))
             .count(),
         1,
         "the writer's warn is said once, on the drop path: {:?}",
-        diagnostic_texts(&cap)
+        diagnostic_texts(cap)
     );
 }
 
@@ -511,7 +511,7 @@ fn on_the_answer_drop_path(
         audited.iter().any(|a| a == path),
         "the reader's drop is audited as `{path}`: {audited:?}"
     );
-    let on_path: Vec<String> = diagnostic_texts(&cap)
+    let on_path: Vec<String> = diagnostic_texts(cap)
         .into_iter()
         .filter(|m| m.contains(text) && m.split_whitespace().any(|w| w == format!("path={path}")))
         .collect();
@@ -519,7 +519,7 @@ fn on_the_answer_drop_path(
         on_path.len(),
         1,
         "one drop-path warn: {:?}",
-        diagnostic_texts(&cap)
+        diagnostic_texts(cap)
     );
     assert!(
         on_path[0].contains(&format!("diag={diag}")),

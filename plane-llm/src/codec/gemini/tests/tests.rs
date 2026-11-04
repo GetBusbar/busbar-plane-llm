@@ -794,7 +794,8 @@ fn streamed_tool_arguments_use_the_buffered_object_coercion() {
             }],
             ..Default::default()
         };
-        let buffered = GeminiWriter.write_response(crate::codec::test_host::HOST, &response);
+        let writer = GeminiWriter;
+        let buffered = writer.write_response(crate::codec::test_host::HOST, &response);
         assert_eq!(
             buffered["candidates"][0]["content"]["parts"][0]["functionCall"]["args"],
             expected

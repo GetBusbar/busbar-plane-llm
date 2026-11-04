@@ -87,7 +87,8 @@ fn buffered_bedrock_image_output_reaches_the_gemini_client() {
         .reader()
         .read_response(crate::codec::test_host::HOST, &source)
         .expect("read real Converse output");
-    let wire = GeminiWriter.write_response(crate::codec::test_host::HOST, &response);
+    let writer = GeminiWriter;
+    let wire = writer.write_response(crate::codec::test_host::HOST, &response);
     assert_eq!(
         wire.pointer("/candidates/0/content/parts/1/inlineData"),
         Some(&json!({"mimeType":"image/png","data":"iVBORw0KGgo="})),
@@ -388,7 +389,8 @@ fn schema_request(schema: Value) -> crate::codec::ir::IrRequest {
 fn assert_schema_egress(schema: Value, expected: Value) {
     let mut request = schema_request(schema.clone());
     request.extra.clear();
-    let wire = GeminiWriter.write_request(crate::codec::test_host::HOST, &request);
+    let writer = GeminiWriter;
+    let wire = writer.write_request(crate::codec::test_host::HOST, &request);
     assert_eq!(
         wire.pointer("/generationConfig/responseSchema"),
         Some(&expected)
@@ -500,7 +502,8 @@ fn native_nullable_schemas_survive_the_existing_reader_writer_path() {
             .pointer("/properties/value/type"),
         Some(&json!(["string", "null"]))
     );
-    let wire = GeminiWriter.write_request(crate::codec::test_host::HOST, &request);
+    let writer = GeminiWriter;
+    let wire = writer.write_request(crate::codec::test_host::HOST, &request);
     for path in [
         "/generationConfig/responseSchema",
         "/tools/0/functionDeclarations/0/parameters",
@@ -592,7 +595,10 @@ fn document_coordinates_are_replaced_only_by_an_unambiguous_answer_quote() {
                     ingress: "gemini",
                     egress: "anthropic",
                 },
-                || GeminiWriter.write_response(crate::codec::test_host::HOST, &response),
+                || {
+                    let writer = GeminiWriter;
+                    writer.write_response(crate::codec::test_host::HOST, &response)
+                },
             );
             let source = gemini
                 .pointer("/candidates/0/citationMetadata/citationSources/0")

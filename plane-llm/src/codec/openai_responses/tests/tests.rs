@@ -39,7 +39,8 @@ fn buffered_provider_generation_errors_remain_failed_in_responses() {
             Some(IrStopReason::Error),
             "{provider}"
         );
-        let buffered = ResponsesWriter.write_response(host, &response);
+        let writer = ResponsesWriter;
+        let buffered = writer.write_response(host, &response);
         assert_eq!(buffered["status"], "failed", "{provider}: {buffered}");
         assert_eq!(buffered["error"]["code"], "server_error");
         assert_eq!(buffered["error"]["message"], "error");
@@ -65,7 +66,8 @@ fn buffered_provider_generation_errors_remain_failed_in_responses() {
         ] {
             let mut normal = response.clone();
             normal.stop_reason = reason;
-            let output = ResponsesWriter.write_response(host, &normal);
+            let writer = ResponsesWriter;
+            let output = writer.write_response(host, &normal);
             assert_eq!(output["status"], status, "{reason:?}");
             assert!(output["error"].is_null(), "{reason:?}");
             assert_eq!(output["output"][0]["content"][0]["text"], "partial");
@@ -209,7 +211,8 @@ fn response_failed_unrepresentable_code_is_diagnosed_without_changing_http_error
         egress: "openai",
     };
     let (_, dropped) = crate::codec::drops::scope(seam, || {
-        ResponsesWriter.write_response_event(
+        let writer = ResponsesWriter;
+        writer.write_response_event(
             host,
             &IrStreamEvent::Error(IrError {
                 class: StatusClass::Auth,

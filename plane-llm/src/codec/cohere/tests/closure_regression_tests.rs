@@ -328,7 +328,8 @@ fn genuine_errors_use_v2_error_even_when_the_signal_mentions_safety() {
             "{decoded:?}"
         );
     }
-    let (_, safe) = CohereWriter
+    let writer = CohereWriter;
+    let (_, safe) = writer
         .write_response_event(
             crate::codec::test_host::HOST,
             &IrStreamEvent::MessageDelta {

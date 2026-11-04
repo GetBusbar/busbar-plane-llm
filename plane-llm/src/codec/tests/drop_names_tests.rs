@@ -65,7 +65,7 @@ fn translate(
 /// Whether a captured warn carries exactly `path=<path>` as one of its fields; `drop_path` picks the
 fn warned(cap: &DiagnosticEvents, path: &str, drop_path: bool) -> bool {
     let field = format!("path={path}");
-    diagnostic_texts(&cap)
+    diagnostic_texts(cap)
         .iter()
         .any(|m| m.split_whitespace().any(|w| w == field) && m.contains("diag=") == drop_path)
 }

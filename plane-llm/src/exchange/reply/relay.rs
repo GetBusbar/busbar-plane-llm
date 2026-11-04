@@ -354,9 +354,7 @@ impl Relay {
             }
         } else if !self.far_is_stream && !self.nonstream_buf.is_empty() {
             let buf = std::mem::take(&mut self.nonstream_buf);
-            if self.nonstream_buf_truncated {
-                None
-            } else if far_reported_failure(host, self.ingress, &buf) {
+            if self.nonstream_buf_truncated || far_reported_failure(host, self.ingress, &buf) {
                 None
             } else {
                 let tapped = self.handler.extract_usage(host, self.ingress, &buf);
