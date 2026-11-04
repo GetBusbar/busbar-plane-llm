@@ -37,6 +37,7 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// The controls Gemini has no form for, derived from the mapping file; `write_request` drops
+    /// each with a warn and the seam audits it from here.
     fn dropped_egress_controls(&self, req: &crate::codec::ir::IrRequest) -> Vec<&'static str> {
         crate::codec::carry::dropped(super::map::REQUEST, super::map::CONTROLS, req)
             .map(crate::codec::carry::Slot::name)
@@ -48,6 +49,7 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// Gemini expresses the candidate count as `generationConfig.candidateCount` (the snake_case
+    /// `candidate_count` is also tolerated).
     fn requested_candidate_count(&self, body: &serde_json::Value) -> Option<u64> {
         body.pointer("/generationConfig/candidateCount")
             .or_else(|| body.pointer("/generationConfig/candidate_count"))
@@ -56,6 +58,8 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// Gemini's URL embeds the model AND the stream mode. Streaming requests go to
+    /// `:streamGenerateContent?alt=sse` (the gemini reader already decodes those SSE chunks);
+    /// non-streaming to `:generateContent`.
     fn upstream_path_for_stream(&self, model: &str, stream: bool) -> String {
         if stream {
             let (key, value) = super::STREAM_QUERY;
@@ -70,6 +74,7 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// Gemini carries turns in `contents` as `{role, parts: [{text}]}`, and spells the assistant
+    /// role `model`.
     fn apply_rewrite_to_ingress_body(
         &self,
         obj: &mut serde_json::Map<String, serde_json::Value>,
@@ -101,6 +106,7 @@ impl ProtocolWriter for GeminiWriter {
     }
 
     /// The production write: the lane model is known, so a reasoning-OFF ask is written only where
+    /// that model accepts it (IR-09, [`gemini_model_accepts_thinking_off`]).
     fn write_request_for_lane(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -325,6 +331,9 @@ impl ProtocolWriter for GeminiWriter {
 
 
 
+                        crate::codec::ir::IrImageSource::UrlWithMime { url, media_type } => parts_arr.push(serde_json::json!({
+                            (FIELD_FILE_DATA): { (FIELD_FILE_URI): url, (FIELD_MIME_TYPE): media_type }
+                        })),
                         crate::codec::ir::IrImageSource::Url(uri) => parts_arr.push(serde_json::json!({
                             (FIELD_FILE_DATA): { (FIELD_FILE_URI): uri, (FIELD_MIME_TYPE): gemini_image_mime_for_url(uri) }
                         })),
@@ -351,6 +360,9 @@ impl ProtocolWriter for GeminiWriter {
 
 
                     crate::codec::ir::IrBlock::Media { kind, source, .. } => match source {
+                        crate::codec::ir::IrImageSource::UrlWithMime { url, media_type } => parts_arr.push(serde_json::json!({
+                            (FIELD_FILE_DATA): { (FIELD_FILE_URI): url, (FIELD_MIME_TYPE): media_type }
+                        })),
                         crate::codec::ir::IrImageSource::Url(uri) => {
 
 
@@ -508,7 +520,8 @@ impl ProtocolWriter for GeminiWriter {
                 &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
                 [],
                 "dropping parallel_tool_calls on Gemini egress: generateContent has no parallelism \
-                 control, so the backend's default parallelism applies");
+                 control, so the backend's default parallelism applies"
+            );
         }
 
         let mut gen_config = req
@@ -736,6 +749,15 @@ impl ProtocolWriter for GeminiWriter {
         host: &dyn busbar_contract::codec::CodecHost,
         event: &IrStreamEvent,
     ) -> Result<Vec<(String, serde_json::Value)>, busbar_contract::protocol::IrError> {
+        if let IrStreamEvent::BlockStart {
+            index,
+            block: crate::codec::ir::IrBlockMeta::ToolUse { id, name },
+            ..
+        } = event
+        {
+            self.start_tool(*index, id, name)?;
+            return Ok(Vec::new());
+        }
         if let IrStreamEvent::BlockStop { index } = event {
             return self
                 .flush_tool(*index)
@@ -774,28 +796,10 @@ impl ProtocolWriter for GeminiWriter {
                 refusal: _,
             } => match block {
                 crate::codec::ir::IrBlockMeta::ToolUse { id, name } => {
-                    {
-                        let guard = &mut self.stream.lock().open_tools;
-                        let open_count = guard.len();
-                        match guard.iter_mut().find(|t| t.index == *index) {
-                            Some(entry) => {
-                                entry.id = id.clone();
-                                entry.name = name.clone();
-                                entry.args.clear();
-                                entry.overflowed = false;
-                            }
-
-                            None if open_count >= MAX_GEMINI_TOOL_FRAMES => {}
-                            None => guard.push(GeminiOpenTool {
-                                index: *index,
-                                id: id.clone(),
-                                name: name.clone(),
-                                args: String::new(),
-                                overflowed: false,
-                            }),
-                        }
+                    match self.start_tool(*index, id, name) {
+                        Ok(()) => None,
+                        Err(error) => self.write_response_event(host, &IrStreamEvent::Error(error)),
                     }
-                    None
                 }
 
                 crate::codec::ir::IrBlockMeta::Text
@@ -812,25 +816,17 @@ impl ProtocolWriter for GeminiWriter {
                         let st = &mut stream.stream_text;
                         let emitted_start = st.emitted_bytes;
                         st.emitted_bytes = emitted_start.saturating_add(text.len());
-                        let position = st
-                            .block_starts
-                            .iter()
-                            .position(|block| block.index == *index);
-                        if let Some(position) = position {
-                            let block = &mut st.block_starts[position];
+                        if let Some(block) = st.block_starts.get_mut(index) {
                             block.contiguous &= block.end == emitted_start;
                             block.end = st.emitted_bytes;
                         }
                         if !st.truncated && st.text.len().saturating_add(text.len()) <= cap {
                             let start = st.text.len();
-                            if position.is_none() {
-                                st.block_starts.push(GeminiStreamBlock {
-                                    index: *index,
-                                    start,
-                                    end: st.emitted_bytes,
-                                    contiguous: true,
-                                });
-                            }
+                            st.block_starts.entry(*index).or_insert(GeminiStreamBlock {
+                                start,
+                                end: st.emitted_bytes,
+                                contiguous: true,
+                            });
                             extend_char_marks(&mut st.marks, &mut st.chars, start, text);
                             st.text.push_str(text);
                         } else {
@@ -880,10 +876,8 @@ impl ProtocolWriter for GeminiWriter {
                             {
                                 let stream = self.stream.lock();
                                 let st = &stream.stream_text;
-                                let anchor = st
-                                    .block_starts
-                                    .iter()
-                                    .find(|block| block.index == *index && block.contiguous);
+                                let anchor =
+                                    st.block_starts.get(index).filter(|block| block.contiguous);
                                 match anchor {
                                     Some(block) => {
                                         let start = block.start;
@@ -1184,6 +1178,7 @@ impl ProtocolWriter for GeminiWriter {
 }
 
 /// One native `functionCall` part: `{functionCall: {id?, name, args}, thoughtSignature?}`. The id
+/// rides Gemini's optional `functionCall.id` (GEM-08) and is omitted when empty.
 fn function_call_part(
     id: &str,
     name: &str,
@@ -1208,6 +1203,9 @@ fn function_call_part(
 }
 
 /// The native `usageMetadata` RECONSTRUCTED from the normalized IR usage, shared by the stream's
+/// terminal chunk and `write_response`, with the `totalTokenCount` it states: four additive terms,
+/// exactly as Google states them — prompt (cache-inclusive) + candidates + the tool-use prompt term
+/// (thinking is already inside `output_tokens`).
 fn gemini_usage_metadata(
     usage: &crate::codec::ir::IrUsage,
     emit_total: bool,
@@ -1259,6 +1257,32 @@ fn gemini_usage_metadata(
 }
 
 impl GeminiWriter {
+    fn start_tool(&self, index: usize, id: &str, name: &str) -> Result<(), IrError> {
+        let tools = &mut self.stream.lock().open_tools;
+        if let Some(entry) = tools.iter_mut().find(|tool| tool.index == index) {
+            entry.id = id.to_string();
+            entry.name = name.to_string();
+            entry.args.clear();
+            entry.overflowed = false;
+        } else {
+            if tools.len() >= MAX_GEMINI_TOOL_FRAMES {
+                return Err(IrError {
+                    class: StatusClass::ServerError,
+                    provider_signal: Some("tool count exceeds the translation limit".to_string()),
+                    retry_after: None,
+                });
+            }
+            tools.push(GeminiOpenTool {
+                index,
+                id: id.to_string(),
+                name: name.to_string(),
+                args: String::new(),
+                overflowed: false,
+            });
+        }
+        Ok(())
+    }
+
     fn flush_tool(&self, index: usize) -> Result<Option<(String, serde_json::Value)>, IrError> {
         let tool = {
             let mut stream = self.stream.lock();

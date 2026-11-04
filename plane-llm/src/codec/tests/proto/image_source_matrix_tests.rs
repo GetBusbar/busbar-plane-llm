@@ -1,4 +1,6 @@
 //! Regression net for the image-source bug class (closed by the typed `IrImageSource`). The key
+//! invariant: a writer can NEVER emit a corrupt block from a misread sentinel — a `Vendor`
+//! reference it doesn't own is dropped, a neutral `Base64`/`Url` is projected natively.
 
 use super::*;
 use crate::codec::ir::{IrBlock, IrImageSource, IrMessage, IrRole};
@@ -18,6 +20,7 @@ fn req_with_image(source: IrImageSource) -> crate::codec::ir::IrRequest {
 }
 
 /// A FOREIGN vendor reference (one the writer doesn't own) must never reach the wire as a corrupt
+/// block — every writer drops it. (The OWNING protocol re-emits its own; covered per-protocol.)
 #[test]
 fn foreign_vendor_image_ref_never_corrupts_any_writer() {
     let foreign = IrImageSource::Vendor {
@@ -56,6 +59,7 @@ fn foreign_vendor_image_ref_never_corrupts_any_writer() {
 }
 
 /// A neutral base64 image projects to a real inline-image shape on every writer that supports
+/// images, and no writer corrupts it.
 #[test]
 fn base64_image_projects_intact_on_every_writer() {
     let req = req_with_image(IrImageSource::Base64 {

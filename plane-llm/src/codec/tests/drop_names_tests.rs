@@ -2,6 +2,10 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! A DROP IS NAMED BY THE CALLER'S WIRE PATH (design F3 "Drops"). A seam gate (`n`, the reasoning
+//! ask, the prompt-cache breakpoints, the stop cap) and a control the far end's dialect has no
+//! form for are named, in the warn's `path=` field and in the seam's audit, by the path the
+//! caller's own dialect spells them at (its map file's row, notation A): a Gemini caller's
+//! `generationConfig.candidateCount`, not the IR slot `n`.
 
 use super::tests::prep;
 use crate::codec::egress_prep::EgressPrep;
@@ -63,6 +67,7 @@ fn translate(
 }
 
 /// Whether a captured warn carries exactly `path=<path>` as one of its fields; `drop_path` picks the
+/// one drop path's warn (it carries `diag=`) or a writer's control warn (it does not).
 fn warned(cap: &DiagnosticEvents, path: &str, drop_path: bool) -> bool {
     let field = format!("path={path}");
     diagnostic_texts(cap)
@@ -71,6 +76,7 @@ fn warned(cap: &DiagnosticEvents, path: &str, drop_path: bool) -> bool {
 }
 
 /// A seam gate's drop is warned on the one drop path and audited under `path`, and never under the
+/// IR name `slot` (unless the two are the same).
 fn gate_named(ingress: &str, egress: &str, body: Value, path: &str, slot: &str) {
     let (audited, cap) = translate(ingress, egress, &body, CLOSED);
     assert!(
@@ -96,6 +102,7 @@ fn gate_named(ingress: &str, egress: &str, body: Value, path: &str, slot: &str) 
 }
 
 /// A control the far end's dialect has no form for is warned by the far end's writer and audited
+/// under `path`, never under the IR name `slot` (unless the two are the same).
 fn control_named(ingress: &str, egress: &str, body: Value, path: &str, slot: &str) {
     let (audited, cap) = translate(ingress, egress, &body, OPEN);
     assert!(
@@ -265,6 +272,8 @@ fn cohere_control_drop_is_named_by_its_wire_path() {
 }
 
 /// A member the caller's map file has no row for, carried by the reader's own code: Cohere's
+/// budget ask is its `thinking.token_budget` member, and the gate's drop is named by it (DF-SITES: the
+/// reader's request code names), not by the IR name.
 #[test]
 fn a_slot_the_callers_reader_carries_by_code_is_named_by_its_wire_path() {
     gate_named(

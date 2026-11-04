@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The (op, protocol) READ dispatch, test-only. Symmetric to the write dispatchers in
+//! `leaf_codec`.
 
 #![allow(dead_code)]
 

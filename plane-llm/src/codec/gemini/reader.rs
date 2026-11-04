@@ -66,6 +66,7 @@ static GRAMMAR: crate::codec::drops::Grammar = crate::codec::drops::Grammar {
 
 impl ProtocolReader for GeminiReader {
     /// A candidate's own `finishReason` member (`{"candidates":[{…,"finishReason":…}]}`, depth 3);
+    /// the first is the first candidate's, which `read_response` reads.
     fn stop_reason_key(&self) -> Option<crate::codec::usage_tail::StopKey> {
         Some(crate::codec::usage_tail::StopKey {
             key: b"\"finishReason\"",
@@ -660,7 +661,12 @@ impl ProtocolReader for GeminiReader {
                                         Some(ti) if !state.text_block_closed => ti,
                                         _ => {
                                             state.text_block_start = state.streamed_chars;
-                                            state.claim_ir_index()
+                                            match state.claim_ir_index() {
+                                                Ok(index) => index,
+                                                Err(error) => {
+                                                    return vec![IrStreamEvent::Error(error)];
+                                                }
+                                            }
                                         }
                                     };
                                     state.text_block_closed = false;
@@ -735,7 +741,10 @@ impl ProtocolReader for GeminiReader {
                                     && state.open_tools.len() < MAX_GEMINI_TOOL_FRAMES
                                 {
                                     let tool_call_index = state.open_tools.len();
-                                    let ir_idx = state.claim_ir_index();
+                                    let ir_idx = match state.claim_ir_index() {
+                                        Ok(index) => index,
+                                        Err(error) => return vec![IrStreamEvent::Error(error)],
+                                    };
                                     state.open_tools.insert(ir_idx);
 
                                     if state.thinking_block_open {
@@ -797,7 +806,10 @@ impl ProtocolReader for GeminiReader {
                                         index: state.text_index.unwrap_or(0),
                                     });
                                 }
-                                let index = state.claim_ir_index();
+                                let index = match state.claim_ir_index() {
+                                    Ok(index) => index,
+                                    Err(error) => return vec![IrStreamEvent::Error(error)],
+                                };
                                 state
                                     .block_origins
                                     .insert(index, IrBlockOrigin::at(&RESPONSE_PART_SOURCE));
@@ -869,7 +881,13 @@ impl ProtocolReader for GeminiReader {
                         });
                     }
                 } else if !citations.is_empty() {
-                    let ti = state.text_index.unwrap_or_else(|| state.claim_ir_index());
+                    let ti = match state.text_index {
+                        Some(index) => index,
+                        None => match state.claim_ir_index() {
+                            Ok(index) => index,
+                            Err(error) => return vec![IrStreamEvent::Error(error)],
+                        },
+                    };
                     if !state.text_block_open {
                         if state.thinking_block_open {
                             state.thinking_block_open = false;
@@ -897,7 +915,10 @@ impl ProtocolReader for GeminiReader {
             if !stream_logprobs.is_empty() {
                 let ti = match state.text_index {
                     Some(ti) if !state.text_block_closed => ti,
-                    _ => state.claim_ir_index(),
+                    _ => match state.claim_ir_index() {
+                        Ok(index) => index,
+                        Err(error) => return vec![IrStreamEvent::Error(error)],
+                    },
                 };
                 if !state.text_block_open {
                     state.text_block_closed = false;
@@ -1194,6 +1215,7 @@ impl ProtocolReader for GeminiReader {
     }
 
     /// A chunk bills or fails only via a top-level `error` object, a `promptFeedback` (prompt-blocked
+    /// envelope), or a `finishReason` string on `candidates[0]`; usage is read off those chunks alone.
     fn same_proto_reads(&self, _event_type: &str, payload: &[u8]) -> bool {
         use crate::codec::json_splice::{any_member, first_element};
         any_member(payload, |m, v| {
@@ -1218,6 +1240,8 @@ impl ProtocolReader for GeminiReader {
 }
 
 /// Close every block still open, in order: a thinking block first (a thinking-only stream never
+/// opens text, so a terminal path is its only closer), the text block at its claimed index (not a
+/// hardcoded 0), then tools in ascending order (via `open_tools`).
 fn close_open_blocks(
     state: &mut crate::codec::ir::StreamDecodeState,
     out: &mut Vec<IrStreamEvent>,
@@ -1241,152 +1265,5 @@ fn close_open_blocks(
 mod unreadable_count_refusal_tests;
 
 #[cfg(test)]
-mod native_origin_tests {
-    use super::*;
-    use crate::codec::drops;
-    use crate::codec::ir::IrBlockOrigin;
-    use serde_json::json;
-
-    fn projected_paths(origin: Option<&IrBlockOrigin>) -> Vec<String> {
-        let (_, paths) = drops::scope(
-            drops::Seam {
-                direction: drops::Direction::Request,
-                ingress: COUNT_LABEL,
-                egress: crate::codec::anthropic::DECL.name,
-            },
-            || {
-                drops::with_block_origin(origin, || {
-                    drops::note(drops::Dropped::member(
-                        drops::IMAGE,
-                        &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                        "projection probe",
-                    ));
-                });
-            },
-        );
-        paths
-    }
-
-    #[test]
-    fn nested_result_sources_survive_skipped_parts_and_missing_response() {
-        let body = json!({
-            "systemInstruction": {"parts": [{"text": "rules"}]},
-            "contents": [{"parts": [
-                {"futurePart": {}},
-                {"functionResponse": {"name": "lookup", "response": {"output": "ok"},
-                    "parts": [{"futurePart": {}}, {"fileData": {"mimeType": "image/png", "fileUri": "https://example.test/image"}}]}},
-                {"functionResponse": {"name": "empty"}}
-            ]}]
-        });
-        let request = GeminiReader.read_request(&body).unwrap();
-        let [system] = request.block_origins.system.as_slice() else {
-            panic!("system text");
-        };
-        assert_eq!(projected_paths(Some(system)), ["systemInstruction.parts[]"]);
-        let [message] = request.block_origins.messages.as_slice() else {
-            panic!("one native turn");
-        };
-        let [result, missing] = message.as_slice() else {
-            panic!("unknown part contributes no block");
-        };
-        let [response, image] = result.children.as_slice() else {
-            panic!("result text and decoded attachment");
-        };
-        assert_eq!(
-            projected_paths(Some(response)),
-            ["contents[].parts[].functionResponse.response"]
-        );
-        assert_eq!(
-            projected_paths(Some(image)),
-            ["contents[].parts[].functionResponse.parts[]"]
-        );
-        let [synthetic] = missing.children.as_slice() else {
-            panic!("synthetic null text");
-        };
-        assert!(synthetic.source.is_none());
-    }
-
-    #[test]
-    fn buffered_grounding_and_multi_output_part_keep_their_actual_containers() {
-        let body = json!({"candidates": [{
-            "groundingMetadata": {"groundingChunks": [{"web": {"uri": "https://example.test/source"}}]},
-            "content": {"parts": [{"futurePart": {}}, {
-                "text": "answer", "functionCall": {"name": "lookup", "args": {}},
-                "inlineData": {"mimeType": "image/png", "data": "aW1hZ2U="}
-            }]}
-        }]});
-        let response = GeminiReader
-            .read_response(crate::codec::test_host::HOST, &body)
-            .unwrap();
-        let (grounding, parts) = response.block_origins.response.split_first().unwrap();
-        assert_eq!(
-            projected_paths(Some(grounding)),
-            ["candidates[].groundingMetadata.groundingChunks[]"]
-        );
-        assert!(!parts.is_empty());
-        for origin in parts {
-            assert_eq!(
-                projected_paths(Some(origin)),
-                ["candidates[].content.parts[]"]
-            );
-        }
-        assert_eq!(
-            response.block_origins.response.len(),
-            response.content.len()
-        );
-    }
-
-    #[test]
-    fn streaming_origins_follow_emitted_indices_across_text_tools_and_media() {
-        let mut state = crate::codec::ir::StreamDecodeState::default();
-        let body = json!({"candidates": [{"content": {"parts": [
-            {"futurePart": {}}, {"text": "before"},
-            {"functionCall": {"name": "lookup", "args": {}}},
-            {"inlineData": {"mimeType": "image/png", "data": "aW1hZ2U="}},
-            {"text": "after"}
-        ]}}]});
-        let events =
-            GeminiReader.read_response_events(crate::codec::test_host::HOST, "", &body, &mut state);
-        let mut opened = std::collections::BTreeSet::new();
-        for event in events {
-            if let IrStreamEvent::BlockStart { index, .. } = event {
-                assert!(opened.insert(index));
-                assert_eq!(
-                    projected_paths(state.block_origins.get(&index)),
-                    ["candidates[].content.parts[]"]
-                );
-            }
-        }
-        assert!(!opened.is_empty());
-        let recorded: std::collections::BTreeSet<_> = state.block_origins.keys().copied().collect();
-        assert_eq!(opened, recorded);
-
-        let mut omitted = crate::codec::ir::StreamDecodeState::default();
-        GeminiReader.read_response_events(
-            crate::codec::test_host::HOST,
-            "",
-            &json!({"candidates": [{"content": {"parts": [{"futurePart": {}}]}}]}),
-            &mut omitted,
-        );
-        assert!(omitted.block_origins.is_empty());
-    }
-
-    #[test]
-    fn citation_only_aggregate_uses_the_native_candidate_without_inventing_a_leaf() {
-        let mut state = crate::codec::ir::StreamDecodeState::default();
-        let body = json!({"candidates": [{
-            "citationMetadata": {"citationSources": [{"uri": "https://example.test/legacy"}]},
-            "groundingMetadata": {"groundingChunks": [{"web": {"uri": "https://example.test/grounding"}}]}
-        }]});
-        let events =
-            GeminiReader.read_response_events(crate::codec::test_host::HOST, "", &body, &mut state);
-        let origin = events
-            .iter()
-            .find_map(|event| match event {
-                IrStreamEvent::BlockStart { index, .. } => state.block_origins.get(index),
-                _ => None,
-            })
-            .expect("citation-only text start");
-        assert_eq!(projected_paths(Some(origin)), ["candidates[]"]);
-    }
-}
+#[path = "tests/reader_native_origin_tests.rs"]
+mod native_origin_tests;

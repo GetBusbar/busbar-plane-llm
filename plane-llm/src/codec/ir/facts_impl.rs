@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! `impl IrFacts for IrRequest` and its `project` helper: the chat IR's projection. The neutral
+//! `IrFacts` trait and `Shape`/`ContentItem`/`Slot` stay in `busbar_contract::ir::facts`.
 
 use super::{IrBlock, IrRequest, IrRole};
 use busbar_contract::ir::facts::{
@@ -9,6 +10,136 @@ use busbar_contract::ir::facts::{
 };
 use busbar_contract::operation::OpVerb;
 use std::borrow::Cow;
+
+// Own only the projection. Opaque media and provider carry never enter a facts snapshot.
+struct FactsSnapshot {
+    stream: bool,
+    user: Option<String>,
+    shape: Shape,
+    items: Vec<OwnedItem>,
+}
+
+enum OwnedItem {
+    Text {
+        author: &'static str,
+        slot: Slot,
+        text: String,
+    },
+    Data {
+        author: &'static str,
+        slot: Slot,
+        label: String,
+        value: serde_json::Value,
+    },
+    Opaque {
+        author: &'static str,
+        slot: Slot,
+        label: &'static str,
+        marker: &'static str,
+    },
+}
+
+impl OwnedItem {
+    fn borrowed(&self) -> ContentItem<'_> {
+        match self {
+            Self::Text { author, slot, text } => ContentItem::Text {
+                author,
+                slot: *slot,
+                text: Cow::Borrowed(text),
+            },
+            Self::Data {
+                author,
+                slot,
+                label,
+                value,
+            } => ContentItem::Data {
+                author,
+                slot: *slot,
+                label,
+                value,
+            },
+            Self::Opaque {
+                author,
+                slot,
+                label,
+                marker,
+            } => ContentItem::Opaque {
+                author,
+                slot: *slot,
+                label,
+                marker,
+            },
+        }
+    }
+}
+
+impl IrRequest {
+    pub(crate) fn facts_snapshot(&self) -> impl IrFacts + Send + Sync + use<> {
+        FactsSnapshot {
+            stream: self.stream,
+            user: self.user.clone(),
+            shape: Shape {
+                turn_count: self.messages.len() + self.system_turns_folded,
+                has_tools: !self.tools.is_empty() || !self.hosted_tools.is_empty(),
+                tool_count: self.tools.len() + self.hosted_tools.len(),
+                max_tokens: self.max_tokens,
+                ..Shape::EMPTY
+            },
+            items: project(self)
+                .into_iter()
+                .map(|item| match item {
+                    ContentItem::Text { author, slot, text } => OwnedItem::Text {
+                        author,
+                        slot,
+                        text: text.into_owned(),
+                    },
+                    ContentItem::Data {
+                        author,
+                        slot,
+                        label,
+                        value,
+                    } => OwnedItem::Data {
+                        author,
+                        slot,
+                        label: label.to_owned(),
+                        value: value.clone(),
+                    },
+                    ContentItem::Opaque {
+                        author,
+                        slot,
+                        label,
+                        marker,
+                    } => OwnedItem::Opaque {
+                        author,
+                        slot,
+                        label,
+                        marker,
+                    },
+                })
+                .collect(),
+        }
+    }
+}
+
+impl IrFacts for FactsSnapshot {
+    fn verb(&self) -> OpVerb {
+        OpVerb::CHAT
+    }
+    fn wants_stream(&self) -> bool {
+        self.stream
+    }
+    fn end_user(&self) -> Option<&str> {
+        self.user.as_deref()
+    }
+    fn shape(&self) -> Shape {
+        let mut shape = self.shape;
+        (shape.text_chars, shape.system_chars) = Shape::counts_over(&self.content());
+        shape
+    }
+    fn content(&self) -> Vec<ContentItem<'_>> {
+        self.items.iter().map(OwnedItem::borrowed).collect()
+    }
+}
 
 impl IrFacts for IrRequest {
     fn verb(&self) -> OpVerb {
@@ -24,19 +155,11 @@ impl IrFacts for IrRequest {
     }
 
     fn shape(&self) -> Shape {
-        let mut text_chars = 0usize;
-        let mut system_chars = 0usize;
-        for item in project(self) {
-            let n = item.screenable_text().chars().count();
-            text_chars += n;
-            if matches!(item.slot(), Slot::System) {
-                system_chars += n;
-            }
-        }
+        let (text_chars, system_chars) = Shape::counts_over(&project(self));
         Shape {
             turn_count: self.messages.len() + self.system_turns_folded,
-            has_tools: !self.tools.is_empty(),
-            tool_count: self.tools.len(),
+            has_tools: !self.tools.is_empty() || !self.hosted_tools.is_empty(),
+            tool_count: self.tools.len() + self.hosted_tools.len(),
             text_chars,
             system_chars,
             max_tokens: self.max_tokens,
@@ -49,6 +172,7 @@ impl IrFacts for IrRequest {
 }
 
 /// The projection: walk one chat-family IR request into the flat, ordered, protocol-blind item
+/// stream.
 pub fn project(req: &IrRequest) -> Vec<ContentItem<'_>> {
     let mut out = Vec::new();
     if req.system_folds.is_empty() {
@@ -67,12 +191,18 @@ pub fn project(req: &IrRequest) -> Vec<ContentItem<'_>> {
 
     let len = req.system.len();
     let clamp = |r: &std::ops::Range<usize>| r.start.min(len)..r.end.min(len);
+    // Sort only coverage ranges; the original folds retain their conversation order below.
+    let mut ranges: Vec<_> = req.system_folds.iter().map(|f| clamp(&f.blocks)).collect();
+    ranges.sort_unstable_by_key(|r| r.start);
+    let mut ranges = ranges.into_iter().peekable();
+    let mut covered_until = 0;
     for (b, block) in req.system.iter().enumerate() {
-        if !req
-            .system_folds
-            .iter()
-            .any(|f| clamp(&f.blocks).contains(&b))
-        {
+        while let Some(range) = ranges.next_if(|r| r.start <= b) {
+            if range.start < range.end {
+                covered_until = covered_until.max(range.end);
+            }
+        }
+        if b >= covered_until {
             walk(
                 std::slice::from_ref(block),
                 author_of(IrRole::System),
@@ -112,6 +242,8 @@ fn turn<'a>(blocks: &'a [IrBlock], author: &'static str, i: usize, out: &mut Vec
 }
 
 /// The LLM family's author label for a chat role, the exact strings the hook wire has carried. The
+/// one place `IrRole` becomes the neutral opaque label, with the walk, not the neutral gate that
+/// reads it.
 fn author_of(role: IrRole) -> &'static str {
     match role {
         IrRole::System => "system",
@@ -122,6 +254,7 @@ fn author_of(role: IrRole) -> &'static str {
 }
 
 /// One level of the block walk. `turn` is `None` for the system slot, where a tool call or result
+/// has no turn to be attributed to and keeps the slot it was reached through.
 fn walk<'a>(
     blocks: &'a [IrBlock],
     author: &'static str,
@@ -182,3 +315,7 @@ fn walk<'a>(
 #[cfg(test)]
 #[path = "tests/facts_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/allocation_work_tests.rs"]
+mod allocation_work_tests;

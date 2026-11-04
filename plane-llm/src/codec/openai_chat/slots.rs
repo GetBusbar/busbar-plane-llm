@@ -71,6 +71,7 @@ pub(super) fn dropped_hosted_kinds(req: &IrRequest) -> Vec<&'static str> {
 }
 
 /// The Chat `tool_choice` the writer emits for `req` (before its no-tools guard): the allowed-tools
+/// subset when one is set (IR-10), else the plain directive.
 pub(super) fn write_tool_choice(req: &IrRequest) -> Option<serde_json::Value> {
     if let Some(names) = &req.allowed_tools {
         let mode = match req.tool_choice {
@@ -108,6 +109,9 @@ pub(crate) fn read_modalities(v: &serde_json::Value, ir: &mut IrRequest) {
 }
 
 /// Hook (`modalities`, IR-19). Chat accepts `text` and `audio`. `audio` output also REQUIRES the
+/// `audio` request member (the voice and format), which is a vendor catalogue the IR does not carry
+/// — so it is written only when the Chat caller's own `audio` member rides alongside (same
+/// dialect); cross-protocol it is dropped with a warn rather than sent as a request OpenAI rejects.
 pub(crate) fn write_modalities(req: &IrRequest) -> Option<serde_json::Value> {
     let has_audio_member = req.extra.contains_key(super::AUDIO);
     let mut out: Vec<serde_json::Value> = Vec::new();
@@ -119,10 +123,11 @@ pub(crate) fn write_modalities(req: &IrRequest) -> Option<serde_json::Value> {
                 crate::codec::drops::writer_drop!(
                     crate::codec::drops::OUTPUT_MODALITIES,
                     &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                    [modality = m.as_str(), ],
+                    [modality = m.as_str(),],
                     "dropping an output modality on OpenAI Chat egress: Chat produces image output \
                      never, and audio output only beside its own `audio` request member, which \
-                     does not cross dialects");
+                     does not cross dialects"
+                );
             }
         }
     }
@@ -130,6 +135,8 @@ pub(crate) fn write_modalities(req: &IrRequest) -> Option<serde_json::Value> {
 }
 
 /// Hook (`web_search_options`, IR-11): Chat `web_search_options{search_context_size,
+/// user_location:{type:"approximate", approximate:{city, region, country, timezone}}}` → the
+/// neutral web search.
 pub(crate) fn read_web_search(v: &serde_json::Value, ir: &mut IrRequest) {
     let Some(o) = v.as_object() else {
         return;
@@ -151,6 +158,8 @@ pub(crate) fn read_web_search(v: &serde_json::Value, ir: &mut IrRequest) {
 }
 
 /// Hook (`web_search_options`, IR-11): the first hosted web search, in Chat's one member. A second
+/// search, and every hosted kind Chat has no built-in for, is dropped with a warn; a custom tool is
+/// a `tools[]` entry (`write_custom_tools`), not this member.
 pub(crate) fn write_web_search(req: &IrRequest) -> Option<serde_json::Value> {
     let mut written = None;
     for tool in &req.hosted_tools {
@@ -214,6 +223,7 @@ fn web_search_options(search: &IrWebSearch) -> serde_json::Value {
 }
 
 /// Chat `tool_choice:{type:"allowed_tools", allowed_tools:{mode, tools:[{type:"function",
+/// function:{name}}]}}` → (the FUNCTION tool names, the directive).
 fn read_allowed_tools(v: &serde_json::Value) -> Option<(Vec<String>, IrToolChoice)> {
     if v.get(keys::TYPE).and_then(|t| t.as_str()) != Some(TOOL_CHOICE_ALLOWED_TOOLS) {
         return None;

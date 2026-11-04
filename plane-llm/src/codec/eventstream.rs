@@ -33,6 +33,8 @@
 //! `[value_len: u16 BE][value]`.
 
 /// Upper bound on one event-stream frame. ConverseStream frames are small JSON deltas, so a larger
+/// declared `total_len` is a malformed or hostile prelude; the cap stops it driving unbounded
+/// buffering.
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
 use crate::codec::diagnostics::{
@@ -55,6 +57,8 @@ pub enum DrainStatus {
 }
 
 /// Drain every complete frame from `buf`, returning `(event_type, payload_bytes)` pairs and a
+/// [`DrainStatus`]. [`DrainStatus::MalformedPrelude`] is the explicit abort signal: the buffer is
+/// cleared (unrecoverable).
 pub fn drain_frames_checked(
     buf: &mut Vec<u8>,
     consumed_sink: Option<&mut Vec<u8>>,
@@ -98,13 +102,8 @@ pub(crate) struct DrainWork {
     pub shifted: usize,
 }
 
-impl DrainWork {
-    /// Every byte the pass touched: walked as frames plus moved by an edit.
-    #[cfg(test)]
-    pub(crate) fn total(&self) -> usize {
-        self.scanned + self.shifted
-    }
-}
+#[cfg(test)]
+include!("tests/eventstream_drainwork_helper.rs");
 
 /// Remove the first `n` bytes of `buf`, counting the edit and the tail bytes it moves.
 fn consume_front(buf: &mut Vec<u8>, n: usize, work: &mut DrainWork) {
@@ -193,11 +192,8 @@ fn drain_frames_signaled_counted(
     (out, status, pos)
 }
 
-/// Drain every complete frame from `buf`, returning `(event_type, payload_bytes)` per frame and
 #[cfg(test)]
-pub fn drain_frames(buf: &mut Vec<u8>) -> Vec<(String, Vec<u8>)> {
-    drain_frames_checked(buf, None).0
-}
+include!("tests/eventstream_drain_frames_helper.rs");
 
 /// The framing headers `drain_frames_checked` reads: `:event-type`, plus `:message-type` and
 /// `:exception-type` that a modeled-exception frame carries instead. All optional strings.
@@ -210,11 +206,8 @@ struct FrameHeaders {
     error_message: Option<String>,
 }
 
-/// Resolve the event-type token `drain_frames_checked` returns for a frame: `:event-type` verbatim
 #[cfg(test)]
-fn event_type_for_frame(headers: &[u8]) -> String {
-    event_type_from_headers(&parse_frame_headers(headers))
-}
+include!("tests/eventstream_event_type_for_frame_helper.rs");
 
 fn event_type_from_headers(parsed: &FrameHeaders) -> String {
     if parsed.message_type.as_deref() == Some(MSG_TYPE_ERROR) {
@@ -231,6 +224,7 @@ fn event_type_from_headers(parsed: &FrameHeaders) -> String {
 }
 
 /// Normalize an AWS failure-name header (`:exception-type` or `:error-code`) to the reader's
+/// union-member token: drop namespace / shape-ARN qualification, lowercase the first letter.
 fn normalize_error_token(raw: &str) -> String {
     let bare = raw
         .rsplit(['#', '/'])
@@ -240,6 +234,7 @@ fn normalize_error_token(raw: &str) -> String {
 }
 
 /// Lowercase only the first character (`InternalServerException` to `internalServerException`),
+/// mapping the PascalCase `:exception-type` to the Smithy union-member token the reader keys on.
 fn lowercase_first(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
@@ -249,6 +244,7 @@ fn lowercase_first(s: &str) -> String {
 }
 
 /// Scan the header block for the `:event-type`, `:message-type` and `:exception-type` string
+/// headers.
 fn parse_frame_headers(mut h: &[u8]) -> FrameHeaders {
     let mut found = FrameHeaders::default();
     while !h.is_empty() {
@@ -318,6 +314,8 @@ fn parse_frame_headers(mut h: &[u8]) -> FrameHeaders {
 }
 
 /// Append one `[name_len:u8][name][value_type:u8 = 7][value_len:u16 BE][value]` string header. The
+/// spec caps a name at 255 bytes and a string value at 65535; current callers pass short ASCII, so
+/// the limits never fire in practice.
 #[must_use]
 fn push_string_header(headers: &mut Vec<u8>, name: &str, value: &str) -> bool {
     if name.len() > u8::MAX as usize || value.len() > u16::MAX as usize {
@@ -365,6 +363,10 @@ pub fn encode_frame(event_type: &str, payload: &[u8]) -> Vec<u8> {
 }
 
 /// Encode a modeled-exception event-stream message for a native Bedrock SDK client: AWS signals a
+/// mid-stream error with `:message-type: exception` and an `:exception-type` naming the Converse
+/// exception (e.g. `InternalServerException`, `ModelStreamErrorException`); the payload is the JSON
+/// `{"message": ...}` body. A Bedrock-ingress stream must emit this on a mid-stream upstream failure,
+/// not SSE `event: error` text, which makes an undecodable prelude/CRC for the SDK.
 pub fn encode_exception_frame(exception_type: &str, message: &str) -> Vec<u8> {
     let payload = crate::codec::json::to_vec(&serde_json::json!({ "message": message }))
         .unwrap_or_else(|_| b"{\"message\":\"An internal server error occurred.\"}".to_vec());
@@ -418,6 +420,7 @@ const MSG_TYPE_EVENT: &str = "event";
 const MSG_TYPE_EXCEPTION: &str = "exception";
 
 /// `:message-type` value for an AWS mid-stream ERROR frame — the UNMODELED sibling of an exception
+/// frame.
 const MSG_TYPE_ERROR: &str = "error";
 
 /// AWS event-stream header name for the error code (error frames only).
@@ -430,11 +433,13 @@ const HDR_ERROR_MESSAGE: &str = ":error-message";
 const HDR_TYPE_STRING: u8 = 7;
 
 /// Open a frame buffer with the 12-byte prelude (`total_len`, `headers_len`, `prelude_crc`) reserved
+/// as a zeroed placeholder.
 fn frame_open() -> Vec<u8> {
     vec![0u8; PRELUDE_LEN]
 }
 
 /// Close a frame from [`frame_open`] after its headers are appended: backfill the prelude
+/// (`total_len`, `headers_len`, real `prelude_crc`), append `payload`, then the real `message_crc`.
 fn frame_close(mut frame: Vec<u8>, payload: &[u8]) -> Vec<u8> {
     let headers_len = (frame.len() - PRELUDE_LEN) as u64;
 

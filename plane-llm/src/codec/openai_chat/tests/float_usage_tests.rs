@@ -7,6 +7,7 @@ use super::*;
 use crate::codec::ir::StreamDecodeState;
 
 /// THE TRUNCATED-STREAM RECOVERY PATH. `recover_truncated_usage` parses the trailing `usage` object
+/// independently of the main streaming/buffered decode, so it needed its own proof.
 #[test]
 fn recover_truncated_usage_reads_float_encoded_counts() {
     let reader = OpenAiReader;
@@ -23,6 +24,8 @@ fn recover_truncated_usage_reads_float_encoded_counts() {
 }
 
 /// THE STREAMING PATH: a `stream_options: {include_usage: true}` trailing usage-only chunk
+/// (`choices: []`, a real top-level `usage` object) with EVERY field float-spelled, including the
+/// reasoning/audio/predicted-output sub-buckets.
 #[test]
 fn streaming_trailing_usage_chunk_reads_float_encoded_counts() {
     let reader = OpenAiReader;
@@ -177,6 +180,8 @@ fn an_unreadable_image_count_is_recorded_as_unknown_and_the_answer_served() {
 }
 
 /// THE BUFFERED EMBEDDINGS READER REFUSES AN UNREADABLE BILLED COUNT ON ITS OWN (LLM3#6): it bills
+/// nothing and the vectors are served, v1.5.5's `.and_then(Value::as_u64).unwrap_or(0)` figure
+/// (v1.5.5 `handlers/openai.rs:586`).
 #[test]
 fn an_unreadable_embeddings_count_refuses_itself_and_the_answer_is_served() {
     let wire = br#"{"model":"m","data":[{"index":0,"embedding":[0.1]}],"usage":{"prompt_tokens":{"n":27}}}"#;

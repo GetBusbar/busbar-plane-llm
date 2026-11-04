@@ -1,9 +1,12 @@
 //! The SSE line-terminator grammar the dialect probes and parser walk: the contract's frame
+//! boundary scan, and this plane's `parse_sse_frame` / `sse_event_type` over bare-CR frames (moved
+//! with the host's copies when those were deleted, SD-8).
 
 use super::*;
 use busbar_contract::protocol::find_frame_terminator;
 
 /// The event-stream grammar names three line terminators — CRLF, a lone LF, a lone CR — and a
+/// blank line is any terminator immediately followed by any terminator (nine pairings).
 #[test]
 fn every_spec_line_terminator_pairing_ends_a_frame() {
     assert_eq!(find_frame_terminator(b"data: a\r\rrest"), Some((7, 2)));
@@ -25,6 +28,8 @@ fn every_spec_line_terminator_pairing_ends_a_frame() {
 }
 
 /// `parse_sse_frame` used `str::lines()`, which does not split on a bare CR — a bare-CR frame
+/// (correctly framed by `find_frame_terminator` above) yielded no `data:` line at all, and a
+/// multi-field bare-CR frame swallowed later fields into the first value.
 #[test]
 fn parse_sse_frame_splits_on_bare_cr() {
     assert_eq!(
@@ -47,6 +52,7 @@ fn parse_sse_frame_splits_on_bare_cr() {
 }
 
 /// The cheap `event:`-name probe split on LF alone, so a bare-CR frame came back as the WHOLE
+/// frame body (`message_delta\rdata: {…}`).
 #[test]
 fn sse_event_type_splits_on_bare_cr() {
     assert_eq!(

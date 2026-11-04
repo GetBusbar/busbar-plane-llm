@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! EVERY BEDROCK CONVERSE USAGE COUNT IS LEDGERED OR A DECLARED SLICE (MONEY-AUDIT A-F1/A-F4;
+//! owner LEDGER-100, 2026-10-03: every reported unit is a ledger line under its meter class).
 
 use super::*;
 use crate::codec_diagnostics::{diagnostic_texts, warnings};
@@ -58,6 +59,7 @@ const GUARDRAIL_METRICS: &[&str] = &[
 ];
 
 /// The integer members the pinned wire lock declares under `usage` and `trace.guardrail` on
+/// `section`, with `prefix` (the stream's `metadata.`) removed.
 fn lock_counts(section: &str, prefix: &str) -> Vec<String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../testing/llm-conformance/wire/bedrock.wire.json");
@@ -78,6 +80,7 @@ fn lock_counts(section: &str, prefix: &str) -> Vec<String> {
 }
 
 /// A lock path's class: `usage.<field>` from the usage table, a guardrail path by its side and
+/// count.
 fn class_of(path: &str) -> (Class, Option<(&'static str, String)>) {
     if let Some(field) = path.strip_prefix("usage.") {
         let class = BEDROCK_USAGE_CLASSES
@@ -131,6 +134,7 @@ type Units = (i64, i64, i64, i64);
 type Open = std::collections::BTreeMap<String, u64>;
 
 /// One path's read: the ledgered units, the identity note, the 5m cache-write attribution, the
+/// open classes.
 type Read = (Units, Option<(u64, u64, i64)>, Option<u64>, Open);
 
 fn units(u: &busbar_contract::billing::TokenUsage) -> Units {
@@ -198,6 +202,7 @@ fn read_buffered_and_streamed(
 }
 
 /// The read on each path: buffered, the stream's `metadata` frame, a truncated-body recovery (units
+/// only).
 fn read_all_paths(usage: &serde_json::Value, trace: Option<&serde_json::Value>) -> [Read; 3] {
     let [buffered, streamed] = read_buffered_and_streamed(usage, trace);
 
@@ -222,6 +227,11 @@ fn read_all_paths(usage: &serde_json::Value, trace: Option<&serde_json::Value>) 
 }
 
 /// EVERY COUNT IN THE WIRE LOCK HAS A CLASS, AND THE READER HONOURS IT ON EVERY PATH. 7 more of a
+/// ledgered count moves (input, cache read, cache write, output) by exactly its class; a per-TTL
+/// cache-write entry moves nothing beyond its cache write and is attributed to its TTL; 7 more on
+/// `totalTokens` alone is reported as a 7-unit gap and ledgers 7 `unitemized_tokens` (a truncated
+/// body recovers the same `usage`, so the same 7); 7 of a guardrail count on each of two
+/// guardrails ledgers 14 under that count's own class (buffered, streamed and truncated alike).
 #[test]
 fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {
     let counts = lock_counts("response", "");
@@ -332,6 +342,8 @@ fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {
 }
 
 /// A TRUNCATED BODY RECOVERS THE TURN'S `usage`, NOT A GUARDRAIL'S. When `trace` follows the turn's
+/// `usage`, the last `"usage"` in the tail is a guardrail's `invocationMetrics.usage`, which names
+/// policy units and no token; it used to read as a zero-token turn.
 #[test]
 fn a_truncated_body_recovers_the_turns_usage_not_a_guardrails() {
     let tail = br#"{"usage":{"inputTokens":10,"outputTokens":5,"totalTokens":15},"trace":{"guardrail":{"inputAssessment":{"g1":{"invocationMetrics":{"usage":{"contentPolicyUnits":3,"topicPolicyUnits":1}}}}}}}"#;
@@ -356,6 +368,9 @@ fn a_truncated_body_recovers_the_turns_usage_not_a_guardrails() {
 }
 
 /// A STATED TOTAL THAT DISAGREES WITH THE LEDGERED CLASSES: AWS counts cache tokens inside
+/// `totalTokens`, so 10 in + 5 out + 1000 cache read + 200 cache write is 1215; a body stating 15
+/// is reported (gap -1200), and the ledger holds the itemized counts: a total BELOW its terms is no
+/// unit, so no `unitemized_tokens` line.
 #[test]
 fn a_total_that_disagrees_is_reported_never_ledgered() {
     let usage = serde_json::json!({
@@ -385,6 +400,7 @@ fn a_total_that_disagrees_is_reported_never_ledgered() {
 }
 
 /// The ledger projection (`TokenUsage`) the buffered read and the stream's `metadata` frame each
+/// carry.
 fn usage_on_both_paths(
     usage: &serde_json::Value,
     trace: Option<&serde_json::Value>,

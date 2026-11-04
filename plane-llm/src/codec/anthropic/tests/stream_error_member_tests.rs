@@ -1,4 +1,7 @@
 //! CONFORMANCE (Anthropic's published `ErrorResponse`): an in-stream `error` event's `error.type` is
+//! one of nine tokens, and `error.message` is the human-readable text. v1.5.5 put the provider's
+//! signal in `type` verbatim, so free text ("The response stream was interrupted.") landed in the
+//! discriminator, which no SDK maps to an exception.
 
 use super::super::proto_codec::protocol_for;
 use crate::codec::ir::IrStreamEvent;

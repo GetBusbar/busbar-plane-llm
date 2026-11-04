@@ -176,23 +176,20 @@ impl ProtocolWriter for CohereWriter {
                             keys::TOOL_CALL_ID.to_string(),
                             serde_json::Value::String(tool_use_id.clone()),
                         );
-                        let mut text_parts: Vec<String> = content
-                            .iter()
-                            .filter_map(|b| match b {
-                                crate::codec::ir::IrBlock::Text { text, .. } => Some(text.clone()),
+                        let mut text_parts: Vec<String> =
+                            if fold_text_into_tool && !emitted_tool_result {
+                                text_blocks.iter().map(|text| (*text).clone()).collect()
+                            } else {
+                                Vec::new()
+                            };
+                        text_parts.extend(content.iter().filter_map(|b| match b {
+                            crate::codec::ir::IrBlock::Text { text, .. } => Some(text.clone()),
 
-                                crate::codec::ir::IrBlock::Json(v) => {
-                                    crate::codec::json::to_string(v).ok()
-                                }
-                                _ => None,
-                            })
-                            .collect();
-
-                        if fold_text_into_tool && !emitted_tool_result {
-                            for t in text_blocks.iter().rev() {
-                                text_parts.insert(0, (*t).clone());
+                            crate::codec::ir::IrBlock::Json(v) => {
+                                crate::codec::json::to_string(v).ok()
                             }
-                        }
+                            _ => None,
+                        }));
 
                         let mut doc_parts: Vec<serde_json::Value> = Vec::new();
                         for (block_index, b) in content.iter().enumerate() {
@@ -644,10 +641,11 @@ impl ProtocolWriter for CohereWriter {
                     | crate::codec::ir::IrDelta::RedactedReasoningDelta(_) => None,
                     crate::codec::ir::IrDelta::MediaDelta(block) => {
                         crate::codec::drops::writer_drop!(
-                        crate::codec::drops::block(block.kind_name()),
-                        &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                        [], "dropping generated media on Cohere streaming egress: no native media delta"
-                    );
+                            crate::codec::drops::block(block.kind_name()),
+                            &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                            [],
+                            "dropping generated media on Cohere streaming egress: no native media delta"
+                        );
                         None
                     }
 
@@ -655,6 +653,12 @@ impl ProtocolWriter for CohereWriter {
                         let c = cits.first()?;
                         let span = self.citation_span(ir_index, c);
                         let Some(citation) = write_cohere_citation(c, span) else {
+                            return self.write_response_event(
+                                host,
+                                &IrStreamEvent::Error(response_projection_error()),
+                            );
+                        };
+                        let Some(index) = self.next_citation_index() else {
                             return self.write_response_event(
                                 host,
                                 &IrStreamEvent::Error(response_projection_error()),
@@ -763,10 +767,9 @@ impl ProtocolWriter for CohereWriter {
 
                 let finish_reason = COHERE_FINISH_ERROR;
 
-                if let Some(detail) = err.provider_signal.as_deref() {
+                if err.provider_signal.is_some() {
                     tracing::warn!(
                         finish_reason,
-                        detail,
                         "cohere: mid-stream error terminating with native message-end frame"
                     );
                 }
@@ -813,10 +816,15 @@ impl ProtocolWriter for CohereWriter {
                     delta: crate::codec::ir::IrDelta::CitationsDelta(vec![c.clone()]),
                 };
                 if let Some(start) = self.write_response_event(host, &one) {
+                    if start.1[keys::TYPE] != ET_CITATION_START {
+                        frames.push(start);
+                        break;
+                    }
+                    let citation_index = start.1[keys::INDEX].clone();
                     frames.push(start);
                     frames.push((
                         "".to_string(),
-                        serde_json::json!({ (keys::TYPE): ET_CITATION_END, (keys::INDEX): self.wire_index(*index) }),
+                        serde_json::json!({ (keys::TYPE): ET_CITATION_END, (keys::INDEX): citation_index }),
                     ));
                 }
             }
@@ -851,7 +859,7 @@ impl ProtocolWriter for CohereWriter {
                 .iter()
                 .any(|citation| !self.stream_citation_representable(*index, citation)) =>
             {
-                return Err(response_projection_error())
+                return Err(response_projection_error());
             }
             _ => {}
         }
@@ -905,7 +913,7 @@ impl ProtocolWriter for CohereWriter {
                         .iter()
                         .any(|citation| !citation_representable(citation)) =>
                 {
-                    return Err(response_projection_error())
+                    return Err(response_projection_error());
                 }
                 _ => {}
             }
@@ -957,7 +965,8 @@ impl ProtocolWriter for CohereWriter {
                 &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
                 [],
                 "dropping response logprobs on Cohere egress: a Cohere logprobs item needs the token \
-                 ids, which the source dialect has no field for");
+                 ids, which the source dialect has no field for"
+            );
         }
 
         let mut tokens_map = serde_json::Map::new();
@@ -1050,6 +1059,8 @@ impl ProtocolWriter for CohereWriter {
     }
 
     /// NATIVE Cohere v2 error envelope. The Cohere v2 chat API conveys the error *category* via the
+    /// HTTP status (400/401/404/429/5xx) and carries only a human-readable `{"message": <detail>}`
+    /// body — it has no typed `error.type`/`code` field the way OpenAI/Anthropic do.
     fn write_error(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,

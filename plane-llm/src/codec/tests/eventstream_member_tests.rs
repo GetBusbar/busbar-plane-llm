@@ -1,4 +1,7 @@
 //! CONFORMANCE (botocore `bedrock-runtime/2023-09-30/service-2.json`, `ConverseStreamOutput`): the
+//! `:exception-type` of a modeled exception frame names a MEMBER of the output union, and the
+//! members are lowerCamel (`internalServerException`). v1.5.5 sent the PascalCase shape name, which
+//! is not a member, so a decoder that looks the header up among the union's members finds none.
 
 use super::*;
 

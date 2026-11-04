@@ -36,6 +36,7 @@ fn reasoning_ask_to_budget_and_to_effort_use_the_table() {
 }
 
 /// `billable_tokens` sums all four token fields with `saturating_add` (the operands are
+/// upstream-controlled).
 #[test]
 fn test_billable_tokens_sum_and_saturation() {
     let u = IrUsage {

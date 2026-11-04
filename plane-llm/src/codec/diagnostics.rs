@@ -2,6 +2,10 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The LLM plane's own coded diagnostics: the thirty-two codes only this plane emits: the nine
+//! cross-protocol IR normalizations, two usage-tap faults, three event-stream framing guards, the
+//! dropped provider-metadata report, and sixteen lane-engine codes (usage-tap reassembly cap, two
+//! upstream transport interruptions, the lane breaker trip, six cross-protocol response faults, three
+//! rewrite-pass refusals, two per-attempt timeouts, and the restrict fallback with no eligible lane).
 
 use busbar_contract::diagnostic::{Class, Diagnostic, Severity};
 
@@ -50,8 +54,7 @@ pub const IR_DROP_CACHE_CONTROL_OVER_CAP: Diagnostic = Diagnostic {
               dropped before the writer emitted them. Reachable only cross-protocol. Warned on every \
               translated request it affects (one drop path, `codec::drops`), and recorded in the audit \
               log as `egress.control_unrepresentable` naming the wire path.",
-    action:
-        "None — self-heals. Reduce the number of cache breakpoints, or route to a same-protocol \
+    action: "None — self-heals. Reduce the number of cache breakpoints, or route to a same-protocol \
              lane if the full set is load-bearing.",
     since: "1.6.0",
     retired: false,
@@ -100,8 +103,7 @@ pub const IR_DROP_PROMPT_CACHE: Diagnostic = Diagnostic {
               capability; the request proceeds uncached. Warned on every translated request it affects \
               (one drop path, `codec::drops`), and recorded in the audit log as \
               `egress.control_unrepresentable` naming the wire path.",
-    action:
-        "None — self-heals. Set `prompt_caching: true` on the model if the backend accepts cache \
+    action: "None — self-heals. Set `prompt_caching: true` on the model if the backend accepts cache \
              markers.",
     since: "1.6.0",
     retired: false,
@@ -136,8 +138,7 @@ pub const IR_DROP_UNMODELED_KEYS: Diagnostic = Diagnostic {
               place. Only the wire path is logged (never the value). Warned on every translated \
               request or response it affects (one drop path, `codec::drops`); a request-side drop is \
               also recorded in the audit log as `egress.control_unrepresentable` naming the wire path.",
-    action:
-        "None — self-heals. Route to a same-protocol lane (which forwards the caller's original \
+    action: "None — self-heals. Route to a same-protocol lane (which forwards the caller's original \
              bytes verbatim) if a named field is load-bearing.",
     since: "1.6.0",
     retired: false,
@@ -527,16 +528,39 @@ pub const FALLBACK_RESTRICT_NO_ELIGIBLE_LANE: Diagnostic = Diagnostic {
     since: "1.6.0",
     retired: false,
 };
-/// Report an operator `error_map` value naming no status class, once per distinct value per process,
+// Keep only fixed-size fingerprints: both entry count and retained bytes stay bounded
+// across config reloads, even when an invalid class name is arbitrarily long.
+const ERROR_MAP_WARNING_CACHE_CAPACITY: usize = 256;
+
+fn fresh_error_map_warning(seen: &mut std::collections::VecDeque<u64>, value: &str) -> bool {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    let fingerprint = hasher.finish();
+    if seen.contains(&fingerprint) {
+        return false;
+    }
+    if seen.len() == ERROR_MAP_WARNING_CACHE_CAPACITY {
+        seen.pop_front();
+    }
+    seen.push_back(fingerprint);
+    true
+}
+
+/// Report an operator `error_map` value naming no status class, deduplicating the
+/// last 256 distinct fingerprints in FIFO order. Evicted values can warn again;
+/// a fingerprint collision can suppress a warning until that entry is evicted.
+/// As in 1.5.5 this is uncoded (neither 1.5.5 nor the catalogue assigns a code).
 pub fn warn_error_map_class_unrecognized(value: &str) {
-    use std::collections::HashSet;
+    use std::collections::VecDeque;
     use std::sync::{Mutex, OnceLock};
-    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
+    static SEEN: OnceLock<Mutex<VecDeque<u64>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(|| Mutex::new(VecDeque::new()));
 
     let fresh = {
         let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
-        seen.insert(value.to_string())
+        fresh_error_map_warning(&mut seen, value)
     };
 
     if fresh {
@@ -550,10 +574,15 @@ pub fn warn_error_map_class_unrecognized(value: &str) {
 }
 
 #[cfg(test)]
+#[path = "tests/diagnostics_warning_bound_tests.rs"]
+mod warning_bound_tests;
+
+#[cfg(test)]
 #[path = "tests/diagnostics_reentry_tests.rs"]
 mod reentry_tests;
 
 /// Every code this plane defines, in catalog order, for the composition root's
+/// `install_diagnostics`.
 pub static DIAGNOSTICS: &[&Diagnostic] = &[
     &USAGE_TAP_UNKNOWN_PROTOCOL,
     &USAGE_TAP_BAD_JSON,

@@ -119,6 +119,8 @@ const fn query(name: &'static str, check: Check) -> WireOption {
 }
 
 /// Anthropic Messages API, `anthropic-version: 2023-06-01`. Docs: <https://docs.anthropic.com/en/api/versioning>
+/// (`anthropic-version`), <https://docs.anthropic.com/en/api/beta-headers> (`anthropic-beta`,
+/// comma-separated), <https://docs.anthropic.com/en/api/messages>.
 pub const ANTHROPIC: &[WireOption] = &[
     header(
         "anthropic-version",
@@ -135,6 +137,7 @@ pub const OPENAI: &[WireOption] = &[
 ];
 
 /// Gemini API (`generativelanguage.googleapis.com` v1beta) and Vertex AI, through Google's API system
+/// parameters.
 pub const GEMINI: &[WireOption] = &[
     forced_header("X-Goog-User-Project", Check::Token),
     header("X-Goog-Quota-User", Check::Text),
@@ -143,6 +146,8 @@ pub const GEMINI: &[WireOption] = &[
 ];
 
 /// Amazon Bedrock runtime: the `InvokeModel` / `InvokeModelWithResponseStream` request headers, which
+/// reach a model served over the invoke envelope (Converse takes the same settings in its body:
+/// `guardrailConfig`, `performanceConfig`, `serviceTier`).
 pub const BEDROCK: &[WireOption] = &[
     invoke_header(
         "X-Amzn-Bedrock-Trace",
@@ -177,6 +182,8 @@ pub fn catalogue(dialect: &str) -> &'static [WireOption] {
 }
 
 /// busbar's own provider keys: the kernel's (the destination, the credential and its auth binding,
+/// the health probe, the metadata carve-outs) and this plane's (the dialect, the error map, the lane
+/// capabilities).
 pub const BUSBAR_KEYS: &[&str] = &[
     "api_key",
     "protocol",
@@ -213,6 +220,7 @@ const CREDENTIALS: &[&str] = &[
 ];
 
 /// Hop-by-hop and connection-level fields (RFC 9110 §7.6.1), which the transport writes for each
+/// connection and no option sets.
 const HOP_BY_HOP: &[&str] = &[
     "connection",
     "keep-alive",
@@ -242,6 +250,7 @@ pub struct SetOption {
 }
 
 /// The entry on `list` that `key` names: a head field without regard to case, a query parameter
+/// exactly.
 fn find(list: &'static [WireOption], key: &str) -> Option<&'static WireOption> {
     list.iter().find(|o| match o.place {
         Place::Header => o.name.eq_ignore_ascii_case(key),
@@ -356,6 +365,7 @@ pub fn accepted(dialect: &str) -> String {
 }
 
 /// READ ONE PROVIDER'S OPTIONS: every key of its block that is not one of [`BUSBAR_KEYS`],
+/// judged against the list of `dialect`, the dialect the provider speaks.
 pub fn read(
     provider: &str,
     dialect: &str,

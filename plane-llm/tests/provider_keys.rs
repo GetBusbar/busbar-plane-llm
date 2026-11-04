@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE PLANE STATES ITS PROVIDER KEYS: the descriptor in
+//! `meta::PROVIDER_KEYS` is what the door's Statement carries under the contract's one extensions
+//! key, it reads in the neutral shape vocabulary, and the one loader hands it on in the plane's
+//! registration, unchanged.
 
 use busbar_contract::provider_keys::{decode, encode, ProviderKeys};
 use busbar_plane_llm::meta::PROVIDER_KEYS;

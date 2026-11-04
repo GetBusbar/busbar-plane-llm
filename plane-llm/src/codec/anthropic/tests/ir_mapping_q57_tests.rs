@@ -52,6 +52,7 @@ fn xreq_lane(
 }
 
 /// A lane of the newest Claude generation: declares adaptive thinking AND native structured
+/// outputs (the shipped catalog's model patterns turn both on for Opus 4.7+/5.x, Sonnet 5, Fable).
 pub(super) fn newest_lane() -> crate::codec::egress_prep::LaneCaps {
     crate::codec::egress_prep::LaneCaps {
         anthropic_adaptive_thinking: true,
@@ -88,6 +89,7 @@ fn user_text(text: &str) -> Value {
 }
 
 /// ANT-01: an Anthropic `document` with a `text` source is carried BASE64 on the IR, so a foreign
+/// writer's base64 slot holds the real encoding of the text, not the raw text posing as base64.
 #[test]
 fn ant01_text_document_reaches_foreign_writers_as_real_base64() {
     let body = json!({
@@ -113,6 +115,8 @@ fn ant01_text_document_reaches_foreign_writers_as_real_base64() {
 }
 
 /// ANT-02: a foreign text/plain document (base64 on the IR) reaches Anthropic as a `text` source
+/// holding the DECODED text; a mime Anthropic has no inline document source for is dropped, never
+/// sent as a corrupt `text` source.
 #[test]
 fn ant02_foreign_text_document_is_decoded_into_the_text_source() {
     let body = json!({
@@ -149,6 +153,7 @@ fn ant02_foreign_text_document_is_decoded_into_the_text_source() {
 }
 
 /// ANT-03: a Files-API image (`source.type:"file"`) is an Anthropic-only handle: a foreign writer
+/// must not receive an empty base64 image, and the Anthropic writer re-emits it verbatim.
 #[test]
 fn ant03_file_image_source_is_a_vendor_handle_not_empty_base64() {
     let body = json!({
@@ -238,6 +243,7 @@ fn ant05_tool_strict_is_written() {
 }
 
 /// ANT-06: Anthropic `output_config.format` (and the deprecated `output_format`) reach a foreign
+/// backend as its structured-output directive.
 #[test]
 fn ant06_output_config_format_is_read() {
     let schema = json!({"type": "object", "properties": {"a": {"type": "string"}},
@@ -263,6 +269,7 @@ fn ant06_output_config_format_is_read() {
 }
 
 /// ANT-07 (with ANT-08): on a lane that declares native structured outputs, a foreign
+/// `response_format` rides Anthropic's native `output_config.format`.
 #[test]
 fn ant07_response_format_is_native_and_leaves_tool_choice_alone() {
     let body = json!({
@@ -337,6 +344,9 @@ fn ant07_response_format_is_native_and_leaves_tool_choice_alone() {
 }
 
 /// ANT-07, the lane that does NOT declare native structured outputs (the default — Claude 3.x,
+/// Sonnet 4 / Opus 4.0 400 on `output_config.format`): the directive is DROPPED with a warn and
+/// reported, exactly as 1.5.5 dropped it (v1.5.5 `crates/busbar/src/proto/anthropic/writer.rs:343-347`;
+/// CHANGELOG 1.6.0: an omitted lane-capability key "sends what 1.5.5 sent").
 #[test]
 fn ant07_default_lane_drops_the_directive_as_in_1_5_5() {
     let body = json!({
@@ -405,6 +415,8 @@ fn ant09_adaptive_thinking_and_effort_are_read() {
 }
 
 /// ANT-10: a word-form reasoning ask reaches an adaptive-thinking lane (Opus 4.7+/5.x, Sonnet 5,
+/// Fable — where `budget_tokens` is a 400) as adaptive thinking + effort, and every other lane as
+/// `budget_tokens` (architect lane-capability ruling).
 #[test]
 fn ant10_effort_ask_is_written_as_adaptive() {
     let body = json!({"model": "gpt-5", "messages": [{"role": "user", "content": "hi"}],
@@ -428,6 +440,7 @@ fn ant10_effort_ask_is_written_as_adaptive() {
 }
 
 /// ANT-11: `model_context_window_exceeded` is a length cut-off on every foreign client, buffered and
+/// streamed — never a natural stop.
 #[test]
 fn ant11_context_window_stop_is_a_length_stop() {
     let body = json!({"id": "msg_1", "type": "message", "role": "assistant", "model": "claude",
@@ -460,6 +473,7 @@ fn ant11_context_window_stop_is_a_length_stop() {
 }
 
 /// ANT-12: a foreign content-filter stop reaches an Anthropic client as `refusal`, buffered and
+/// streamed — never as a completed `end_turn`.
 #[test]
 fn ant12_content_filter_stop_is_a_refusal() {
     let body = json!({"id": "chatcmpl-1", "object": "chat.completion", "created": 1, "model": "gpt-4o",
@@ -479,6 +493,7 @@ fn ant12_content_filter_stop_is_a_refusal() {
 }
 
 /// ANT-13: an Anthropic server tool is hosted, not a function: it never reaches a foreign backend as
+/// a function tool with a null schema.
 #[test]
 fn ant13_server_tools_are_hosted_not_functions() {
     let body = json!({"model": "m", "max_tokens": 100, "messages": [user_text("hi")],
@@ -516,6 +531,8 @@ fn ant13_server_tools_are_hosted_not_functions() {
 }
 
 /// ANT-14: a streamed server-tool block (`server_tool_use` + its `input_json_delta`s + stop, then a
+/// `web_search_tool_result`) is suppressed WHOLE: a foreign client sees no orphan tool-argument
+/// deltas for a block that never opened, and the answer text still arrives.
 #[test]
 fn ant14_suppressed_stream_block_drops_its_deltas_and_stop() {
     let raw = concat!(
@@ -564,6 +581,7 @@ fn ant14_suppressed_stream_block_drops_its_deltas_and_stop() {
 }
 
 /// ANT-15: a foreign backend's image/attachment output is omitted from an Anthropic response (an
+/// assistant message has no image/document response block); its JSON output rides as text.
 #[test]
 fn ant15_response_image_and_json_blocks_are_not_invalid_blocks() {
     let resp = crate::codec::ir::IrResponse {
@@ -628,6 +646,8 @@ fn ant16_json_tool_result_is_carried_as_text() {
 }
 
 /// ANT-17: inside a `tool_result`, an attachment with no Anthropic projection (audio, a foreign
+/// vendor handle) and an empty text are omitted — never the empty-text placeholder Anthropic
+/// rejects.
 #[test]
 fn ant17_tool_result_content_is_filtered_like_message_content() {
     let req = crate::codec::ir::IrRequest {
@@ -677,6 +697,7 @@ fn ant17_tool_result_content_is_filtered_like_message_content() {
 }
 
 /// ANT-18: a `search_result_location` citation keeps its `source` (as the neutral url) on read, and
+/// a neutral search-result citation is written back with the search-result field names.
 #[test]
 fn ant18_search_result_citation_source_maps_both_ways() {
     let body = json!({"id": "msg_1", "type": "message", "role": "assistant", "model": "claude",

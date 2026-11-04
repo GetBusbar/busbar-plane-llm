@@ -3,14 +3,6 @@
 
 //! Opt-in hook projection exercised through the plane driver.
 
-
-
-
-
-
-
-
-
 use serde_json::{json, Value};
 
 use super::policies::{capturing, CapturedReq};
@@ -47,6 +39,7 @@ fn target(dialect: &str, mut v: Value) -> (&'static str, Value) {
 }
 
 /// What a `prompt: ro` base policy is shown of `v` posted in `dialect`; `None` when the request
+/// never reached the hooks.
 async fn shown(dialect: &str, v: Value) -> Option<CapturedReq> {
     let (seen, policy) = capturing(true, true, None);
     let rig = Rig::new(
@@ -180,7 +173,6 @@ async fn prompt_projection_keeps_empty_entries_aligned() {
 
 #[tokio::test]
 async fn system_text_chars_counts_block_arrays() {
-
     let c = seen(
         "anthropic",
         json!({
@@ -248,12 +240,10 @@ async fn prompt_projection_reads_responses_input() {
     );
     assert_eq!(c.message_count, 2);
 
-
     let c = seen("responses", json!({"input": "just a question"})).await;
     assert_eq!(prompt(&c).1, turns(&[("user", "just a question")]));
     assert_eq!(c.message_count, 1);
     assert_eq!(c.total_chars, 15);
-
 
     let c = seen(
         "responses",
@@ -276,7 +266,6 @@ async fn prompt_projection_reads_responses_input() {
 
 #[tokio::test]
 async fn max_tokens_signal_is_dialect_aware_for_responses() {
-
     let c = seen(
         "responses",
         json!({"input": "hi", "max_output_tokens": 4096}),
@@ -469,8 +458,6 @@ async fn prompt_projection_and_total_chars_mark_responses_reasoning_with_empty_c
 
 #[tokio::test]
 async fn block_text_responses_reasoning_rejects_malformed_encrypted_content() {
-
-
     for blob in [json!(""), json!(123)] {
         let c = seen(
             "responses",
@@ -654,7 +641,6 @@ async fn size_signal_and_projection_agree_on_reasoning() {
 
 #[tokio::test]
 async fn every_known_protocol_has_a_declared_reasoning_wire_shape() {
-
     let rows: Vec<(&str, Option<Value>, Option<&str>)> = vec![
         (
             "anthropic",
@@ -733,7 +719,6 @@ async fn apply_rewrite_to_body_echoes_redacted_marker_as_visible_text() {
     let c = seen("anthropic", body.clone()).await;
     assert_eq!(prompt(&c).1[0].1, MARKER);
 
-
     let echo = std::sync::Arc::new(super::policies::RewritingGate(vec![json!({
         "role": "assistant",
         "content": MARKER,
@@ -763,8 +748,6 @@ async fn apply_rewrite_to_body_echoes_redacted_marker_as_visible_text() {
     assert_eq!(msgs[0]["content"].as_str(), Some(MARKER));
     assert!(!sent.to_string().contains("OPAQUE_CIPHERTEXT_BYTES"));
 }
-
-
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_opt_in_projection_tests.rs::max_tokens_signal_is_dialect_aware_for_responses`
 #[tokio::test]
@@ -843,7 +826,6 @@ async fn size_signal_and_projection_agree_on_tool_role_content() {
 /// LEGACY `crates/busbar-llm/src/engine/tests/hook_opt_in_projection_tests.rs::hook_content_uncapped_by_default_and_omits_whole_when_opted_in`
 #[tokio::test]
 async fn hook_content_uncapped_by_default_and_omits_whole_when_opted_in() {
-
     // This test mutates the process-wide hook limit. Run its complete original body in
     // its own process so unrelated root tests cannot observe or alter that limit.
     const CHILD: &str = "BUSBAR_LLM_HOOK_CONTENT_PROJECTION_LIMIT_CHILD";
@@ -852,14 +834,19 @@ async fn hook_content_uncapped_by_default_and_omits_whole_when_opted_in() {
             .name()
             .expect("the root test harness names this test")
             .to_owned();
-        let output = std::process::Command::new(std::env::current_exe().expect("root test executable"))
-            .args(["--exact", &test_name, "--nocapture", "--color=never"])
-            .env(CHILD, "1")
-            .output()
-            .expect("run the complete hook projection test in an isolated root process");
+        let output =
+            std::process::Command::new(std::env::current_exe().expect("root test executable"))
+                .args(["--exact", &test_name, "--nocapture", "--color=never"])
+                .env(CHILD, "1")
+                .output()
+                .expect("run the complete hook projection test in an isolated root process");
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(output.status.success(), "isolated {test_name} failed: status={}\nstdout={stdout}\nstderr={stderr}", output.status);
+        assert!(
+            output.status.success(),
+            "isolated {test_name} failed: status={}\nstdout={stdout}\nstderr={stderr}",
+            output.status
+        );
         assert!(stdout.contains("test result: ok. 1 passed; 0 failed; 0 ignored;"), "isolated {test_name} must execute exactly one passing test, without ignored coverage\nstdout={stdout}\nstderr={stderr}");
         return;
     }

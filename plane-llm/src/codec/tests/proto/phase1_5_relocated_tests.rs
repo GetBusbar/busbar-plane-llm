@@ -8,6 +8,7 @@ use super::*;
 use busbar_contract::ir::facts::IrFacts;
 
 /// UUID-v4 shape checker — a private copy of the core auth suite's helper (which stays in core for
+/// its other callers), so the relocated `synth_amzn_request_id` shape test carries its own oracle.
 fn assert_uuid_v4_shaped(id: &str) {
     let segs: Vec<&str> = id.split('-').collect();
     assert_eq!(
@@ -45,6 +46,7 @@ fn test_synth_amzn_request_id_is_uuid_v4() {
 }
 
 /// The reader's own accept/skip rules for a `reasoning` item's `encrypted_content`: an empty string
+/// or a non-string yields no usable blob.
 #[test]
 fn responses_reasoning_reader_rejects_malformed_encrypted_content() {
     let empty_string: serde_json::Value =
@@ -57,6 +59,7 @@ fn responses_reasoning_reader_rejects_malformed_encrypted_content() {
 }
 
 /// A single text-bearing reasoning part (in EITHER `content[]` or `summary[]` alone) must come
+/// through the reader's own walk still BORROWED.
 #[test]
 fn responses_single_part_reasoning_text_borrows() {
     let content_only = serde_json::json!({
@@ -79,6 +82,7 @@ fn responses_single_part_reasoning_text_borrows() {
 }
 
 /// Two `content[]` parts + one `summary[]` part must still allocate — and concatenate
+/// content-array-then-summary-array, with NO separator (the deliberate separator-less concat).
 #[test]
 fn responses_multi_part_reasoning_text_concatenates() {
     let item = serde_json::json!({
@@ -95,6 +99,7 @@ fn responses_multi_part_reasoning_text_concatenates() {
 }
 
 /// The bedrock forward-kind → `x-amzn-errortype`/`__type` mapping, for the kinds the ingress error
+/// path emits.
 #[test]
 fn error_kind_to_bedrock_type_covers_ingress_emitted_kinds() {
     use busbar_contract::protocol::{
@@ -120,6 +125,12 @@ fn error_kind_to_bedrock_type_covers_ingress_emitted_kinds() {
 }
 
 /// Every kind the bedrock writer can be handed answers an exception that Converse AND
+/// ConverseStream DECLARE: the `errors` of both operations in the pinned botocore model
+/// (`testing/llm-conformance/spec-digests.tsv` row `bedrock`, bedrock-runtime 2023-09-30 at
+/// e5c8122617a2), with ONE owner-chosen exception: an exhausted quota or budget answers 1.5.5's
+/// `ServiceQuotaExceededException` (InvokeModel's), because every AWS SDK retries the declared
+/// `ThrottlingException` and a spent budget does not come back by retrying (OWNER 2026-10-27,
+/// overriding the rule-22 reading of 2026-10-14).
 #[test]
 fn every_bedrock_error_kind_is_a_converse_declared_exception() {
     const CONVERSE_DECLARED: [&str; 9] = [
@@ -175,6 +186,7 @@ fn every_bedrock_error_kind_is_a_converse_declared_exception() {
 }
 
 /// THE EXHAUSTIVENESS GUARD: every registered protocol has a reader that produces a readable IR, so
+/// a seventh protocol is covered by REGISTERING rather than by an arm added anywhere.
 #[test]
 fn every_known_protocol_has_a_declared_reasoning_wire_shape() {
     let protos = known_protocols();

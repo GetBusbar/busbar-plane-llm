@@ -5,6 +5,7 @@ use super::{anthropic_writer, AnthropicReader, AnthropicWriter};
 use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 /// `metadata`, `service_tier`, `container`, `betas`: Anthropic-specific request knobs with no
+/// cross-protocol analog.
 #[test]
 fn anthropic_request_provider_specific_fields_carry() {
     let body = serde_json::json!({
@@ -29,9 +30,11 @@ fn anthropic_request_provider_specific_fields_carry() {
 }
 
 /// A top-level request member no dialect table, row or reader names (DIALECT-FIDELITY F4's synthetic
+/// key).
 const UNKNOWN_MEMBER: &str = "x_busbar_unknown_member";
 
 /// The unknown member's value: nested, mixed-type, and key-ordered unusually, so a writer that
+/// reserializes, sorts, coerces or flattens it is caught, not only one that drops it.
 fn unknown_member_value() -> serde_json::Value {
     serde_json::json!({"z": [1, {"y": null, "a": "keep"}], "b": 2.5, "a": {"nested": true}})
 }
@@ -131,6 +134,7 @@ fn anthropic_request_tool_choice_carry() {
 }
 
 /// `thinking` (the request ASK): `{type:"enabled",budget_tokens}` promotes to the IR reasoning ask
+/// and re-emits as Anthropic's `thinking` param.
 #[test]
 fn anthropic_request_thinking_carry() {
     let body = serde_json::json!({
@@ -156,6 +160,8 @@ fn anthropic_request_thinking_carry() {
 }
 
 /// text.cache_control / text.citations / image.source.url / image.cache_control /
+/// tool_use.cache_control / tool_result.is_error / tool_result.cache_control — each with its OWN
+/// assertion so a mutation dropping any single one fails.
 #[test]
 fn anthropic_content_block_field_carry() {
     let body = serde_json::json!({
@@ -226,6 +232,7 @@ fn anthropic_content_block_field_carry() {
 }
 
 /// thinking.thinking / thinking.signature — an assistant `thinking` block (with the mandatory
+/// signature so the request writer does not drop it) round-trips both fields.
 #[test]
 fn anthropic_thinking_content_block_carry() {
     let body = serde_json::json!({
@@ -304,6 +311,7 @@ fn anthropic_document_block_carry() {
 }
 
 /// search_result.source / search_result.title / search_result.content — a `search_result` block is
+/// stashed and spliced back byte-exact on the same-protocol hop, so all three survive.
 #[test]
 fn anthropic_search_result_block_carry() {
     let body = serde_json::json!({
@@ -333,6 +341,7 @@ fn anthropic_search_result_block_carry() {
 }
 
 /// usage.server_tool_use.web_search_requests / usage.service_tier — Anthropic usage attribution now
+/// modelled on `IrUsageDetail`, so both survive a buffered response round-trip.
 #[test]
 fn anthropic_response_usage_extras_carry() {
     let body = serde_json::json!({
@@ -370,6 +379,7 @@ fn anthropic_response_usage_extras_carry() {
 }
 
 /// stream:message_start / content_block_start / content_block_stop / message_delta / message_stop —
+/// each event type read into an `IrStreamEvent` and re-emitted, with a per-event assertion.
 #[test]
 fn anthropic_stream_event_roundtrip_carry() {
     let writer = AnthropicWriter;
@@ -441,6 +451,7 @@ fn anthropic_stream_event_roundtrip_carry() {
 }
 
 /// stream:content_block_delta.{text_delta,input_json_delta,thinking_delta,signature_delta,
+/// citations_delta} — each delta kind read and re-emitted, with a per-kind assertion.
 #[test]
 fn anthropic_stream_delta_roundtrip_carry() {
     let rw = |delta: serde_json::Value| -> serde_json::Value {
@@ -624,6 +635,9 @@ fn streamed_redacted_reasoning_preserves_bytes_on_anthropic_egress() {
 }
 
 /// Buffered `Message`: `stop_details`, `container` (null), `content[].citations` (null on a text
+/// block with none), `content[].caller` on tool_use, and the full `usage` object with every
+/// required member (`cache_creation` zero tiers, zero cache counters, `inference_geo` null,
+/// `output_tokens_details` null, `server_tool_use` null, `service_tier: "standard"`).
 #[test]
 fn anthropic_response_carries_every_spec_required_member_with_default_shapes() {
     let resp = crate::codec::ir::IrResponse {
@@ -671,9 +685,12 @@ fn anthropic_response_carries_every_spec_required_member_with_default_shapes() {
         ..Default::default()
     };
     let out = anthropic_writer().write_response(crate::codec::test_host::HOST, &resp);
-    assert_eq!(out["stop_details"], serde_json::Value::Null);
-    assert_eq!(out["container"], serde_json::Value::Null);
-    assert_eq!(out["content"][0]["citations"], serde_json::Value::Null);
+    assert_eq!(out.get("stop_details"), Some(&serde_json::Value::Null));
+    assert_eq!(out.get("container"), Some(&serde_json::Value::Null));
+    assert_eq!(
+        out["content"][0].get("citations"),
+        Some(&serde_json::Value::Null)
+    );
     assert_eq!(
         out["content"][1]["caller"],
         serde_json::json!({"type": "direct"})
@@ -696,6 +713,9 @@ fn anthropic_response_carries_every_spec_required_member_with_default_shapes() {
 }
 
 /// The same members, where the source DID report values, pass through unchanged: reported tiers,
+/// counters, `service_tier`, `server_tool_use` (with the spec-required `web_fetch_requests`
+/// sibling) and `output_tokens_details.thinking_tokens`; a citation-bearing text block keeps its
+/// citations rather than being nulled.
 #[test]
 fn anthropic_response_spec_required_members_pass_reported_values_through() {
     let body = serde_json::json!({
@@ -741,6 +761,8 @@ fn anthropic_response_spec_required_members_pass_reported_values_through() {
 }
 
 /// A cache write whose tier split is unknown (a foreign backend that reports only the total) must
+/// not be given an invented split that does not sum to the total: `cache_creation` is the spec's
+/// nullable form in that one case.
 #[test]
 fn anthropic_response_cache_creation_is_null_when_total_known_but_tiers_are_not() {
     let resp = crate::codec::ir::IrResponse {
@@ -767,10 +789,16 @@ fn anthropic_response_cache_creation_is_null_when_total_known_but_tiers_are_not(
     };
     let out = anthropic_writer().write_response(crate::codec::test_host::HOST, &resp);
     assert_eq!(out["usage"]["cache_creation_input_tokens"], 9);
-    assert_eq!(out["usage"]["cache_creation"], serde_json::Value::Null);
+    assert_eq!(
+        out["usage"].get("cache_creation"),
+        Some(&serde_json::Value::Null)
+    );
 }
 
 /// Streaming: `message_start.message` is the same full `Message` shape (`stop_details`,
+/// `container`, full `usage`); `content_block_start` seeds carry `citations: null` (text) and
+/// `caller` (tool_use); `message_delta.delta` carries `container`/`stop_details` and its `usage`
+/// every `MessageDeltaUsage` member.
 #[test]
 fn anthropic_stream_events_carry_every_spec_required_member() {
     use crate::codec::ir::{IrBlockMeta, IrStreamEvent};
@@ -788,9 +816,9 @@ fn anthropic_stream_events_carry_every_spec_required_member() {
         )
         .expect("message_start");
     let m = &start["message"];
-    assert_eq!(m["stop_details"], serde_json::Value::Null);
-    assert_eq!(m["container"], serde_json::Value::Null);
-    assert_eq!(m["stop_sequence"], serde_json::Value::Null);
+    assert_eq!(m.get("stop_details"), Some(&serde_json::Value::Null));
+    assert_eq!(m.get("container"), Some(&serde_json::Value::Null));
+    assert_eq!(m.get("stop_sequence"), Some(&serde_json::Value::Null));
     for k in [
         "cache_creation",
         "cache_creation_input_tokens",
@@ -819,8 +847,8 @@ fn anthropic_stream_events_carry_every_spec_required_member() {
         )
         .expect("text start");
     assert_eq!(
-        text_start["content_block"]["citations"],
-        serde_json::Value::Null
+        text_start["content_block"].get("citations"),
+        Some(&serde_json::Value::Null)
     );
     let (_, tool_start) = w
         .write_response_event(
@@ -857,8 +885,14 @@ fn anthropic_stream_events_carry_every_spec_required_member() {
             },
         )
         .expect("message_delta");
-    assert_eq!(delta["delta"]["container"], serde_json::Value::Null);
-    assert_eq!(delta["delta"]["stop_details"], serde_json::Value::Null);
+    assert_eq!(
+        delta["delta"].get("container"),
+        Some(&serde_json::Value::Null)
+    );
+    assert_eq!(
+        delta["delta"].get("stop_details"),
+        Some(&serde_json::Value::Null)
+    );
     assert_eq!(
         delta["usage"],
         serde_json::json!({

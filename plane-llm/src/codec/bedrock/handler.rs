@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 
 pub struct BedrockRequestHandler;
 /// This protocol's own chat instance; remove it and the registry arm and chat 404s via the
+/// standard no-handler path.
 static CHAT: super::super::chat_handle::ChatOperation =
     super::super::chat_handle::ChatOperation(super::VENDOR_NAME);
 static EMB: BedrockEmbeddings = BedrockEmbeddings;
@@ -24,6 +25,7 @@ static IMG: BedrockImage = BedrockImage;
 static RERANK: BedrockRerank = BedrockRerank;
 
 /// Bedrock's row of the support matrix, as data. A verb absent from it is a genuine gap (the
+/// standard no-handler 404).
 static CELLS: &[busbar_contract::codec::Cell] = &[
     (OpVerb::CHAT, &CHAT),
     (OpVerb::EMBEDDINGS, &EMB),
@@ -72,6 +74,7 @@ impl RequestHandler for BedrockRequestHandler {
 }
 
 /// Amazon Titan Image Generator via `/model/{id}/invoke`: prompt in, `images[]` (b64) out. The model
+/// rides the path; routing fills the IR's `model` (`IrReq::set_model`).
 struct BedrockImage;
 
 leaf_op! {
@@ -87,6 +90,7 @@ leaf_op! {
 }
 
 /// A request or answer member the InvokeModel writers do not send, dropped with a warn (the one
+/// drop path, `codec::drops`).
 fn invoke_drop(name: &'static str) {
     crate::codec::drops::writer_drop!(
         crate::codec::drops::member(name),
@@ -98,6 +102,7 @@ fn invoke_drop(name: &'static str) {
 }
 
 /// IR to Titan image request wire ([`BedrockImage::write_request`]): `taskType`, prompt `text` and
+/// `numberOfImages` only.
 pub fn write_image_request(r: &crate::codec::ir::image::ImageReq) -> Bytes {
     let body = json!({
         "taskType": "TEXT_IMAGE",
@@ -138,6 +143,7 @@ pub fn write_image_response(r: &crate::codec::ir::image::ImageResp) -> WireBody 
 }
 
 /// Amazon Titan Embeddings via `/model/{id}/invoke`: `inputText` (+ v2 dims/normalize). The model
+/// rides the path; routing fills it via `IrReq::set_model`.
 struct BedrockEmbeddings;
 
 leaf_op! {
@@ -149,6 +155,25 @@ leaf_op! {
     fn taps_usage(&self) -> bool {
         true
     }
+    fn extract_usage(
+        &self,
+        _host: &dyn busbar_contract::codec::CodecHost,
+        _ingress: &str,
+        body: &[u8],
+    ) -> Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault> {
+        let value: Value = crate::codec::json::parse(body)
+            .map_err(|_| busbar_contract::codec::UsageTapFault::Decode)?;
+        Ok(read_embeddings_usage(&value))
+    }
+    fn recover_response_billing(
+        &self,
+        _host: &dyn busbar_contract::codec::CodecHost,
+        body: &[u8],
+    ) -> Option<busbar_contract::billing::Billing> {
+        let value: Value = crate::codec::json::parse(body).ok()?;
+        read_embeddings_usage(&value).map(busbar_contract::billing::Billing::Tokens)
+    }
+
 }
 
 /// IR to Titan embeddings request wire ([`BedrockEmbeddings::write_request`]).
@@ -287,6 +312,7 @@ mod tests;
 mod titan_roundtrip_regression_tests;
 
 /// Wire to concrete `ImageReq`, shared by the leaf-op handle and the `leaf_codec` read dispatch so
+/// neither needs a downcast.
 pub fn read_image_request(
     body: &[u8],
     _content_type: &str,
@@ -318,7 +344,13 @@ pub fn read_image_request(
         guidance_scale: cfg
             .get(super::CFG_SCALE)
             .and_then(Value::as_f64)
-            .map(|f| f as f32),
+            .map(|f| {
+                let value = f as f32;
+                value.is_finite().then_some(value).ok_or_else(|| {
+                    IngressReject::BadRequest("guidance scale exceeds the finite f32 range".into())
+                })
+            })
+            .transpose()?,
 
         size: match (
             cfg.get(super::WIDTH).and_then(Value::as_u64),
@@ -344,19 +376,21 @@ pub fn read_image_request(
 pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::ImageResp, CodecError> {
     let v: Value =
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
-    let images: Vec<crate::codec::framework::ImageOutput> = v
+    let images = v
         .get(super::IMAGES)
         .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|b| b.as_str())
-                .map(|b| crate::codec::framework::ImageOutput {
-                    b64: Some(b.to_string()),
-                    ..Default::default()
-                })
-                .collect()
+        .ok_or_else(|| CodecError::Malformed("image response requires an images array".into()))?
+        .iter()
+        .map(|value| {
+            let b64 = value.as_str().ok_or_else(|| {
+                CodecError::Malformed("image response contains a non-string image".into())
+            })?;
+            Ok(crate::codec::framework::ImageOutput {
+                b64: Some(b64.to_string()),
+                ..Default::default()
+            })
         })
-        .unwrap_or_default();
+        .collect::<Result<Vec<_>, CodecError>>()?;
 
     let cost_basis = Some(crate::codec::ir::image::CostBasis {
         count: u32::try_from(images.len()).unwrap_or(u32::MAX),
@@ -400,32 +434,50 @@ pub fn read_embeddings_response(
     let v: Value =
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
     let mut item = EmbeddingItem::default();
-    if let Some(f) = v.get(keys::EMBEDDING).and_then(Value::as_array) {
-        item.vectors.insert(
-            EncFmt::Float,
-            VectorData::Float(
-                f.iter()
-                    .filter_map(|x| x.as_f64().map(|n| n as f32))
-                    .collect(),
-            ),
-        );
+    {
+        let f = v
+            .get(keys::EMBEDDING)
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                CodecError::Malformed("embedding response requires an embedding array".into())
+            })?;
+        let values = f
+            .iter()
+            .map(|value| {
+                let number = value.as_f64().ok_or_else(|| {
+                    CodecError::Malformed("embedding contains a nonnumeric component".into())
+                })?;
+                let number = number as f32;
+                if !number.is_finite() {
+                    return Err(CodecError::Malformed(
+                        "embedding component exceeds the finite f32 range".into(),
+                    ));
+                }
+                Ok(number)
+            })
+            .collect::<Result<Vec<_>, CodecError>>()?;
+        item.vectors
+            .insert(EncFmt::Float, VectorData::Float(values));
     }
 
-    let usage =
-        crate::codec::usage_count::billed_count_opt(Some(&v), super::INPUT_TEXT_TOKEN_COUNT)
-            .unwrap_or_else(|unreadable| {
-                crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
-                None
-            })
-            .map(|n| busbar_contract::billing::TokenUsage {
-                input: n,
-                ..Default::default()
-            });
+    let usage = read_embeddings_usage(&v);
     Ok(EmbeddingsResp {
         embeddings: vec![item],
         usage,
         ..Default::default()
     })
+}
+
+fn read_embeddings_usage(v: &Value) -> Option<busbar_contract::billing::TokenUsage> {
+    crate::codec::usage_count::billed_count_opt(Some(v), super::INPUT_TEXT_TOKEN_COUNT)
+        .unwrap_or_else(|unreadable| {
+            crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
+            None
+        })
+        .map(|n| busbar_contract::billing::TokenUsage {
+            input: n,
+            ..Default::default()
+        })
 }
 
 /// Wire to concrete `RerankReq`, shared by the leaf-op handle and the `leaf_codec` read dispatch.
@@ -500,3 +552,7 @@ pub(crate) const LEAF: crate::codec::leaf_codec::LeafCodecs =
         }),
         ..crate::codec::leaf_codec::LeafCodecs::NONE
     };
+
+#[cfg(test)]
+#[path = "tests/audit_embedding_billing_tests.rs"]
+mod audit_embedding_billing_tests;

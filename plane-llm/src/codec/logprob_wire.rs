@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The per-token logprob wire object two dialects speak alike: `{content: [{token, logprob, bytes,
+//! top_logprobs[]}], refusal}` on a Chat choice, whose `content` entries are also the `LogProb`
+//! entries a Responses `output_text` part carries.
 
 use crate::codec::ir::{IrTokenLogprob, IrTopLogprob};
 use crate::codec::keys;
@@ -51,6 +53,7 @@ fn read_entry(entry: &serde_json::Value) -> Option<IrTopLogprob> {
 }
 
 /// OpenAI's `logprobs` object to neutral IR entries. Byte vectors are all-or-nothing: filtering an
+/// invalid cell would change the token's byte sequence.
 pub fn read_token_logprobs(v: Option<&serde_json::Value>) -> Vec<IrTokenLogprob> {
     let entries = match v.and_then(|logprobs| logprobs.get(keys::CONTENT)) {
         None | Some(serde_json::Value::Null) => return Vec::new(),
@@ -88,6 +91,7 @@ pub fn read_token_logprobs(v: Option<&serde_json::Value>) -> Vec<IrTokenLogprob>
 }
 
 /// Neutral IR logprobs to OpenAI's `logprobs` object. `bytes` is synthesized from the token's UTF-8
+/// when the source protocol (Gemini) carries none; an explicit null stays null.
 pub fn write_token_logprobs(lps: &[IrTokenLogprob]) -> serde_json::Value {
     let content: Vec<serde_json::Value> = lps
         .iter()

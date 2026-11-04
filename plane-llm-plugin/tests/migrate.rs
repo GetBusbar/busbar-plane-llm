@@ -29,6 +29,7 @@ fn cdylib() -> PathBuf {
 }
 
 /// The private-destinations corpus shape (busbar `tests/migration-corpus/private-destinations`), as
+/// core hands it to the plane: its own sections, and the merged catalog+deployment `providers:`.
 fn sections() -> serde_json::Value {
     json!({
         "pools": { "local": { "members": [{ "model": "llama-local" }] } },

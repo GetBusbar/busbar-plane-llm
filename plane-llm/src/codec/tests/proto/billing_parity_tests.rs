@@ -76,6 +76,8 @@ fn nonstream_same_proto_all_protocols() {
 }
 
 /// A Cohere completion whose separately-metered `billed_units` differ from the raw `tokens` bucket
+/// must be ledgered IDENTICALLY whether it was served buffered or streamed, and on the raw counts
+/// 1.5.5 billed.
 #[test]
 fn buffered_billing_and_stream_tap_agree_on_cohere_billed_units() {
     use busbar_contract::billing::Billing;

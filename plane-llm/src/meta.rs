@@ -6,6 +6,7 @@ use busbar_contract::ids::OpClassId;
 pub const KEY: &str = "llm";
 
 /// The operation classes a unit of this plane can be: the classes that price a unit, so no wider than
+/// what is billed.
 pub const OP_CLASSES: &[OpClassId] = &[
     OpClassId::new("chat"),
     OpClassId::new("embeddings"),
@@ -24,6 +25,7 @@ macro_rules! help_tagline {
 }
 
 /// The one-line description `busbar --help` opens with (`busbar <version> — <this>`), byte for byte
+/// as printed (shadow-oracle cells `cli__--help` / `cli__-h`).
 pub const HELP_TAGLINE: &str = help_tagline!();
 
 /// [`HELP_ENDPOINTS`]'s text, spelled once for it and for [`CLI_HELP_TEXT`].
@@ -44,9 +46,12 @@ macro_rules! help_endpoints {
 }
 
 /// This plane's lines in the `ENDPOINTS` block of `busbar --help` (the doors its dialects answer on),
+/// byte for byte as printed (shadow-oracle cells `cli__--help` / `cli__-h`), no trailing newline: the
+/// root splices them between two lines it owns.
 pub const HELP_ENDPOINTS: &str = help_endpoints!();
 
 /// The same rows as the door's tail states them (`PlaneTail::cli_help`), in the contract's grammar
+/// (`busbar_contract::abi::plane::cli_help`): tagline row, then `ENDPOINTS`.
 pub const CLI_HELP_TEXT: &str = concat!(
     "\u{1e}tagline\u{1f}",
     help_tagline!(),
@@ -55,6 +60,8 @@ pub const CLI_HELP_TEXT: &str = concat!(
 );
 
 /// The provider keys this plane owns, per form of a `providers:` entry, stated in its Statement's
+/// extensions under `busbar_contract::provider_keys::EXT_PROVIDER_KEYS` in the contract's neutral
+/// shape vocabulary, so the kernel parses an entry without holding one of these names.
 pub const PROVIDER_KEYS: &str = r#"{
   "catalog": {
     "deny_unknown": false,
@@ -122,26 +129,5 @@ pub const PROVIDER_KEYS: &str = r#"{
 }"#;
 
 #[cfg(test)]
-mod provider_grammar_fixture {
-    #[test]
-    fn the_exported_descriptor_matches_the_provenance_bound_config_fixture() {
-        let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../testing/provider-keys-llm.json")).unwrap();
-        let text = fixture["descriptor_text"].as_str().unwrap();
-        assert_eq!(
-            busbar_contract::sha256_hex(text.as_bytes()),
-            fixture["provenance"]["sha256"].as_str().unwrap()
-        );
-        assert_eq!(super::PROVIDER_KEYS, text);
-        let statement = crate::plane_door::STATEMENT;
-
-        let exported = crate::plane_door::EXTENSIONS;
-        assert_eq!(statement.extensions.ptr, exported.as_ptr());
-        assert_eq!(statement.extensions.len, exported.len());
-        let actual = busbar_contract::provider_keys::stated(exported)
-            .unwrap()
-            .unwrap();
-        let expected = busbar_contract::provider_keys::decode(text.as_bytes()).unwrap();
-        assert_eq!(actual, expected);
-    }
-}
+#[path = "tests/provider_grammar_fixture.rs"]
+mod provider_grammar_fixture;

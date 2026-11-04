@@ -19,6 +19,7 @@ fn cohere_wire() -> Vec<u8> {
 }
 
 /// cohere ingress -> bedrock egress: query/documents/top_n cross; api_version added; the
+/// {text} object form normalizes to a bare string.
 #[test]
 fn cohere_request_reaches_bedrock() {
     let rh = CohereRequestHandler;
@@ -325,6 +326,7 @@ fn embeddings_write_request_carries_output_dimension_and_truncate() {
 }
 
 /// A client top_n larger than u32::MAX must DROP to None (omitted), never silently wrap to a
+/// bogus small value — the checked-narrowing contract for all client-supplied counts.
 #[test]
 fn oversized_top_n_drops_to_none_not_wrapped() {
     let body = serde_json::to_vec(&json!({
@@ -342,6 +344,7 @@ fn oversized_top_n_drops_to_none_not_wrapped() {
 }
 
 /// Protocols without a rerank surface have NO handler: the universal no-handler 404 covers
+/// ingress and egress alike (the deletion-switch symmetry).
 #[test]
 fn no_rerank_handler_on_the_other_four() {
     for proto in ["openai", "anthropic", "gemini", "responses"] {
@@ -394,6 +397,7 @@ fn cohere_rerank_return_documents_round_trips_the_document() {
 }
 
 /// MONEY BUG regression: Cohere *specs* `meta.billed_units.search_units` as a JSON number, but the
+/// wire carries it as a FLOAT (`3.0`), not a bare integer.
 #[test]
 fn read_rerank_response_search_units_survives_as_float_on_the_wire() {
     let resp = serde_json::to_vec(&json!({
@@ -411,6 +415,8 @@ fn read_rerank_response_search_units_survives_as_float_on_the_wire() {
 }
 
 /// MONEY BUG regression: same float-encoded-count defect as `search_units` above, but on
+/// `meta.billed_units.input_tokens` in an embeddings response — the count busbar bills the caller
+/// for.
 #[test]
 fn read_embeddings_response_usage_survives_as_float_on_the_wire() {
     let resp = serde_json::to_vec(&json!({

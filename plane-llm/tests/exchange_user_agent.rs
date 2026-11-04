@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The far end's `user-agent`. On a same-dialect route the caller's
+//! passes through unchanged, and a caller that sent none gets the dialect's declared native-SDK
+//! fingerprint, as 1.5.5 sent.
 
 mod common;
 

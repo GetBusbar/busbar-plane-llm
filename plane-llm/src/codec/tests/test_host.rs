@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THIS CRATE'S TEST HOST (#83a SD-3): the host services a shipped binary's host hands the codec,
+//! provided for this crate's own test binary by the test itself — so the codec's tests prove the
+//! codec's own seam and never reach the host crate.
 
 use busbar_contract::codec::CodecHost;
 use busbar_contract::upstream::{CanonicalSignal, RawUpstreamError, StatusClass};
@@ -29,6 +31,7 @@ impl CodecHost for TestHost {
 pub const HOST: &dyn CodecHost = &TestHost;
 
 /// The class the host's classifier places `raw` in with an EMPTY operator `error_map`, read off the
+/// shared fixture.
 pub fn classified(raw: &RawUpstreamError) -> CanonicalSignal {
     let path =
         std::path::PathBuf::from(std::env::var_os("BUSBAR_CHECKOUT").expect(
@@ -65,6 +68,7 @@ pub fn screened(items: &[busbar_contract::ir::facts::ContentItem<'_>]) -> Vec<St
 }
 
 /// The stop reason of a non-stream response read from its RAW BYTES the way the same-protocol
+/// relay reads it: the dialect's stop-reason field, scanned, its token mapped.
 pub(crate) fn raw_stop_reason(
     reader: &dyn crate::codec::proto_codec::ProtocolReader,
     body: &[u8],

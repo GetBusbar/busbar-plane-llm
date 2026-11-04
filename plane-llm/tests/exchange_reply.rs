@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The far end's answer, sans I/O: a far-end error judged, a whole answer translated, a relayed
+//! answer, and the reply that drives them, through the public API.
 
 use std::collections::HashMap;
 
@@ -14,6 +15,7 @@ use busbar_plane_llm::exchange::reply::wire::head_field;
 use serde_json::Value;
 
 /// The codec host these tests hand the plane: a FIXED entropy source and the system clock in whole
+/// seconds.
 struct TestHost;
 
 impl busbar_contract::codec::CodecHost for TestHost {
@@ -23,6 +25,8 @@ impl busbar_contract::codec::CodecHost for TestHost {
     }
 
     /// A FIXED wall clock: a relay stamps `created` from it, and the piece-boundary test compares two
+    /// relays of one stream byte for byte, so a running clock answered different bytes whenever the
+    /// two straddled a second (openai<-gemini, coverage run 40137430891).
     fn wall_clock_now(&self) -> Option<u64> {
         Some(1_700_000_000)
     }
@@ -62,6 +66,7 @@ fn field<'a>(fields: &'a [(String, Vec<u8>)], name: &str) -> Option<&'a [u8]> {
 }
 
 /// A dialect may declare a relayed head field the way its vendor spells it; the caller reads the
+/// wire (lower-case) form, and a name that is no legal field name is dropped, never fatal.
 #[test]
 fn a_declared_head_field_name_is_lowered_and_an_illegal_one_dropped() {
     let (name, value) = head_field("x-amzn-RequestId", b"req-1").expect("a legal name");
@@ -77,6 +82,7 @@ fn a_declared_head_field_name_is_lowered_and_an_illegal_one_dropped() {
 }
 
 /// The class of a far-end error: a mapped code, the built-in context-length code on a request-size
+/// status only, a mapped structured type, and the status; `context_length` never masks a 5xx.
 #[test]
 fn a_far_end_error_is_placed_in_its_class() {
     let em = map(&[
@@ -147,6 +153,9 @@ fn a_far_end_error_is_placed_in_its_class() {
 const JSON_HEAD: &[(&[u8], &[u8])] = &[(b"content-type", b"application/json")];
 
 /// A far-end error judged, for every dialect: a caller's own credential failing is relayed
+/// unjudged; a client fault within one dialect is the far end's bytes, across dialects the
+/// caller's envelope; the deployment's refused credential is the caller's own refusal; a transient
+/// carries the relay the walk ends on.
 #[test]
 fn a_far_end_error_is_judged_for_every_pair() {
     let head = JSON_HEAD;
@@ -223,6 +232,7 @@ fn a_far_end_error_is_judged_for_every_pair() {
 }
 
 /// A caller that relays the far end's `x-amzn-*` fields reads them verbatim on a same-dialect
+/// relay; any other caller reads the far end's own request id.
 #[test]
 fn a_verbatim_relay_carries_the_native_head_fields() {
     let head: &[(&[u8], &[u8])] = &[
@@ -260,6 +270,8 @@ fn a_verbatim_relay_carries_the_native_head_fields() {
 }
 
 /// BUSBAR IS INVISIBLE ON A SAME-DIALECT ANSWER: every far head field reaches the caller in order,
+/// except what busbar governs (the far end's echo of the operator's tenant, and the operator's
+/// account-wide rate-limit state); nothing is invented.
 #[test]
 fn a_verbatim_relay_carries_every_far_field_but_the_governed_ones() {
     let head: &[(&[u8], &[u8])] = &[
@@ -324,6 +336,7 @@ fn letter(dialect: &str) -> char {
 }
 
 /// Every native answer of `dialect` the codec's golden corpus holds: each `resp_X2Y_*.json` is a
+/// body written in dialect Y, so it is also a far end of dialect Y answering.
 pub fn native_answers(dialect: &str) -> Vec<(String, Vec<u8>)> {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/codec/tests/proto/golden");
     let infix = format!("2{}_", letter(dialect));
@@ -362,6 +375,7 @@ fn ctx<'a>(
 }
 
 /// Every far end's native answer, for a caller of every other dialect, is delivered in the
+/// caller's own dialect under `application/json`, with the usage the far end reported.
 #[test]
 fn a_whole_answer_is_delivered_in_the_callers_dialect() {
     let mut checked = 0;
@@ -406,6 +420,7 @@ fn a_failed_generation_is_a_502_that_keeps_its_usage() {
 }
 
 /// An answer the caller's dialect cannot be written from is a 500 in the caller's envelope; the
+/// cap and the cut are the 500 and the 502 of the same envelope.
 #[test]
 fn an_untranslatable_answer_is_the_callers_500() {
     for ingress in SIX {
@@ -426,6 +441,7 @@ fn an_untranslatable_answer_is_the_callers_500() {
 }
 
 /// A caller that asked for a JSON-array stream from a far end that answered one body reads a
+/// one-element array under `application/json`, and no request id.
 #[test]
 fn a_json_array_caller_reads_a_one_element_array() {
     let (_, body) = native_answers("openai")
@@ -493,6 +509,7 @@ fn relay_all(r: &mut Relay, far: &[u8], step: usize) -> Vec<u8> {
 }
 
 /// A far end's native stream of `dialect`: the OpenAI stream above as the translator writes it for
+/// a caller of that dialect.
 fn native_stream(dialect: &str) -> Vec<u8> {
     let mut ctx = relay_ctx(dialect, "openai", true);
     ctx.client_include_usage = true;
@@ -501,6 +518,7 @@ fn native_stream(dialect: &str) -> Vec<u8> {
 }
 
 /// A same-dialect whole body relays untouched (the far end's own bytes, borrowed) and its usage is
+/// read at the end — in every dialect, Bedrock included (no busbar-measured `metrics` is added).
 #[test]
 fn a_same_dialect_whole_body_relays_untouched_and_meters() {
     for dialect in SIX {
@@ -537,6 +555,8 @@ fn with_unknown_member(json: &[u8]) -> Vec<u8> {
 }
 
 /// SAME-DIALECT IDENTITY, the answer side (DIALECT FIDELITY; DIALECT-FIDELITY-DESIGN F4): in
+/// every dialect a buffered answer and a stream that carry a member busbar has never heard of reach
+/// the caller byte-identical, and are still metered.
 #[test]
 fn a_same_dialect_answer_carrying_an_unknown_member_reaches_the_caller_byte_identical() {
     for dialect in SIX {
@@ -585,6 +605,7 @@ fn a_same_dialect_answer_carrying_an_unknown_member_reaches_the_caller_byte_iden
 }
 
 /// A stream from a far end of every dialect reaches a caller of every dialect whole, whatever the
+/// piece boundaries, and its usage is read at the end.
 #[test]
 fn a_stream_relays_for_every_pair_whatever_the_piece_boundaries() {
     let mut checked = 0;
@@ -617,6 +638,7 @@ fn a_stream_relays_for_every_pair_whatever_the_piece_boundaries() {
 }
 
 /// A stream cut after its first byte ends on the caller's own in-band error; one cut before any
+/// byte ends with no bytes and reports the far end's transfer as failed.
 #[test]
 fn a_cut_stream_ends_on_the_callers_error_frame() {
     for ingress in SIX {
@@ -702,6 +724,7 @@ const AT: At = At {
 };
 
 /// A relayed stream: the caller's head on the first piece with an `Ok`, the bytes as frames
+/// complete, the usage cumulative, and the end on the last piece.
 #[test]
 fn a_reply_relays_a_stream_piece_by_piece() {
     let arrived = arrival("openai", true);
@@ -748,6 +771,7 @@ fn a_reply_relays_a_stream_piece_by_piece() {
 }
 
 /// A whole answer: nothing for the caller until the last piece, then the head, the translated
+/// body, the usage and `Ok`; over the cap, the caller's 500 at once.
 #[test]
 fn a_reply_takes_a_whole_answer_whole() {
     let arrived = arrival("openai", false);
@@ -779,6 +803,10 @@ fn a_reply_takes_a_whole_answer_whole() {
 }
 
 /// A TRANSLATED WHOLE ANSWER BILLS ON AN EARLY LEAVE. The door writes a
+/// whole answer to the caller in windows; a caller that leaves before the last one is a cancel, and
+/// the cancel bills the units the answer stated only when the reply says the caller had a usable
+/// part of it. 1.5.5 billed a buffered translated answer before writing a byte of it, so a delivered
+/// whole answer is that part from the moment it is handed over.
 #[test]
 fn a_whole_answer_handed_to_the_caller_bills_when_the_caller_leaves_early() {
     let arrived = arrival("openai", false);
@@ -895,6 +923,7 @@ fn a_judged_far_end_error_carries_the_breakers_reading_apart_from_its_verdict() 
 }
 
 /// A cut: a stream after its first byte ends on the caller's error frame, `Hard`, the far end's
+/// transfer at fault; a whole answer cut is the caller's 502.
 #[test]
 fn a_reply_that_is_cut_says_so() {
     let arrived = arrival("openai", true);
@@ -942,6 +971,7 @@ fn stream_drops(caller: &str, far: &str, bytes: &[u8]) -> Vec<String> {
 }
 
 /// The far end's spec-shaped stream of `dialect` (the OpenAI stream itself, or as busbar writes it
+/// for that dialect).
 fn far_stream(dialect: &str) -> Vec<u8> {
     if dialect == "openai" {
         openai_stream()
@@ -965,6 +995,7 @@ fn a_translated_stream_of_carried_members_drops_nothing() {
 }
 
 /// A member the caller's dialect has no form for is dropped on the one drop path, named by its wire
+/// path ONCE for the whole stream however many frames carry it.
 #[test]
 fn a_translated_stream_names_each_unmapped_path_once() {
     let far = String::from_utf8(openai_stream())
@@ -1006,6 +1037,7 @@ fn a_translated_stream_names_each_unmapped_path_once() {
 }
 
 /// Responses refusal events are mapped content: the actual relay carries each text delta into
+/// Chat's refusal field, without treating it as plain content or an unmapped wire-path loss.
 #[test]
 fn a_translated_responses_refusal_keeps_its_text_usage_and_has_no_drop() {
     let events = [
@@ -1094,6 +1126,7 @@ fn a_same_dialect_stream_drops_nothing() {
 }
 
 /// The legacy engine's answer tests (`crates/busbar-llm/src/engine/**`), rehomed onto the served
+/// reply.
 mod rehomed_answers {
     use super::*;
     use std::borrow::Cow;
@@ -1125,6 +1158,7 @@ mod rehomed_answers {
     }
 
     /// The handle every exchange and codec call in this module is handed (it shadows the file's
+    /// OS-random host: these answers are compared byte for byte).
     const HOST: &dyn busbar_contract::codec::CodecHost = &SevensHost;
 
     /// A chat request in `dialect`'s own shape.
@@ -1143,6 +1177,7 @@ mod rehomed_answers {
     }
 
     /// The caller's arrival of `request` in `dialect`: a path-model dialect's URL names the model
+    /// and the stream, and `json_array` is a stream asked without the event-stream switch.
     fn arrived(dialect: &'static str, request: Value, json_array: bool) -> Arrived {
         let stream = request["stream"].as_bool().unwrap_or(false);
         Arrived {
@@ -1387,6 +1422,7 @@ mod rehomed_answers {
     }
 
     /// A same-dialect whole body in two pieces through a relay that meters nothing (the ungoverned
+    /// relay): the caller's bytes and the end.
     fn ungoverned_relay(first: &[u8], second: &[u8]) -> (Vec<u8>, relay::End) {
         let mut ctx = relay_ctx("cohere", "cohere", false);
         ctx.meter = false;
@@ -1451,6 +1487,9 @@ mod rehomed_answers {
     ];
 
     /// DIALECT-FIDELITY F2: a same-dialect 2xx answer carries the far head
+    /// (`openai-processing-ms: 12`) but the far end's echo of the operator's tenant
+    /// (`openai-organization`, `openai-project`) and the operator's account-wide rate-limit state
+    /// (`x-ratelimit-remaining-tokens`): one tenant never reads the operator's quota.
     #[test]
     fn a_same_dialect_answer_relays_the_upstream_head() {
         let (arrived, lane) = ask("openai", "openai", false);
@@ -1471,6 +1510,8 @@ mod rehomed_answers {
     }
 
     /// A same-dialect 400 `invalid_request_error` reaches the caller with the far head's values
+    /// (`retry-after: 7`) and without `openai-organization` or the operator's
+    /// `x-ratelimit-remaining-tokens`.
     #[test]
     fn a_same_dialect_error_relays_the_upstream_head() {
         let (arrived, lane) = ask("openai", "openai", false);
@@ -2102,6 +2143,7 @@ mod rehomed_answers {
     }
 
     /// The checks every bedrock caller's cut stream answers to: pure binary frames, nothing left
+    /// over, and a trailing `InternalServerException` exception frame.
     fn assert_binary_exception_tail(read: &Read) {
         let body = &read.body;
         assert!(
@@ -2682,6 +2724,8 @@ mod rehomed_answers {
     }
 
     /// The breaker's class rule (`busbar-kernel-breaker` `classify::normalize_raw_error`, 1.5.5's),
+    /// transcribed: a mapped code (never `context_length` over a 5xx), the built-in context-length
+    /// code on 400/413 only, a mapped structured type (same guard), then the status.
     fn breaker_rule(
         raw: &RawUpstreamError,
         error_map: &HashMap<String, String>,
@@ -2946,9 +2990,14 @@ mod rehomed_answers {
 }
 
 /// The far end's one content chunk before its connection dropped (an OpenAI chat stream), as the
+/// recordings below were taken.
 const CUT_FIRST: &[u8] = b"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"},\"finish_reason\":null}]}\n\n";
 
 /// THE BYTES 1.5.5 ENDED A CUT STREAM WITH, per caller dialect: recorded 2026-10-13 from the
+/// published 1.5.5 binary (`busbar 1.5.5`, the oracle cache's aarch64-apple-darwin build) in front
+/// of an OpenAI far end that sent [`CUT_FIRST`] and then dropped its connection with no terminating
+/// chunk, one fresh process per caller (v1.5.5 `crates/busbar/src/proxy/response_body.rs:279-345`,
+/// the `had_first && is_sse` arm and its JSON-array twin).
 const CUT_1_5_5: &[(&str, bool, &[u8])] = &[
     ("openai", false, b"data: {\"error\":{\"code\":null,\"message\":\"The response stream was interrupted.\",\"param\":null,\"type\":\"server_error\"}}\n\n"),
     ("anthropic", false, b"event: error\ndata: {\"error\":{\"message\":\"The response stream was interrupted.\",\"type\":\"api_error\"},\"type\":\"error\"}\n\n"),
@@ -2973,6 +3022,10 @@ const S6_RESPONSE_MEMBERS: &[&str] = &[
 ];
 
 /// A Responses `response.failed` frame as 1.5.5's recording is compared to it: its event name and
+/// its data with the run's own values taken out — the response `id` and `created_at` (the run's),
+/// the `model` (1.5.5 wrote a fresh writer's fallback; the stream's own carried model is the one
+/// identity a stream keeps, S-15), the top-level `sequence_number` (contiguous with the frames the
+/// stream already carried, signed entry S-2; 1.5.5 restarted it at 0) — and the S-6 members.
 fn without_run_ids(frame: &[u8]) -> (Vec<u8>, Value) {
     let text = std::str::from_utf8(frame).expect("text");
     let (event, data) = text.split_once("\ndata: ").expect("an event and its data");
@@ -3010,6 +3063,9 @@ fn assert_run_ids(frame: &[u8]) {
 }
 
 /// A STREAM CUT AFTER ITS FIRST BYTE ENDS IN 1.5.5'S BYTES, for every caller dialect: the in-band error 1.5.5 wrote, in
+/// the caller's own framing (an SSE event, a JSON-array element and its `]`, an eventstream
+/// exception frame). RED: a cut written as a clean end (the caller's terminator) or in another
+/// dialect's framing.
 #[test]
 fn a_stream_cut_after_its_first_byte_ends_in_1_5_5s_bytes_for_every_caller_dialect() {
     let hex = |s: &str| -> Vec<u8> {
@@ -3114,6 +3170,7 @@ fn a_responses_stream_that_fails_bills_no_tokens_and_agrees_with_its_buffered_tw
 }
 
 /// A top-level upstream error keeps native frames byte-identical while marking the exchange
+/// failed.
 #[test]
 fn a_responses_streams_top_level_error_event_fails_the_exchange_without_changing_native_bytes() {
     let mut arrived = arrival("responses", true);
@@ -3150,6 +3207,8 @@ fn a_responses_streams_top_level_error_event_fails_the_exchange_without_changing
 }
 
 /// The legacy engine's tests that pin what an answer bills (`crates/busbar-llm/src/engine/**`),
+/// rehomed onto the served reply: the far end's reported units each piece carries, and the
+/// verdict and fault that decide whether the request's fee stands.
 mod rehomed_metering {
     use super::*;
     use std::borrow::Cow;
@@ -3180,6 +3239,7 @@ mod rehomed_metering {
     }
 
     /// The caller's arrival of `request` for `operation` in `dialect` (`None`: a body that is not
+    /// JSON); `json_array` is a stream asked without the event-stream switch.
     fn arrived_for(
         dialect: &'static str,
         operation: OpVerb,
@@ -3370,6 +3430,7 @@ mod rehomed_metering {
     }
 
     /// A gemini event stream: a text chunk, then the terminal chunk with `finish_reason`,
+    /// reporting 10 prompt / 5 candidate tokens.
     fn gemini_stream(finish_reason: &str) -> Vec<u8> {
         let first = json!({"candidates": [{"index": 0,
             "content": {"role": "model", "parts": [{"text": "x"}]}}]});
@@ -3615,6 +3676,7 @@ mod rehomed_metering {
     }
 
     /// How many times the usage tap's copy of a same-dialect chat body, fed in 512-byte pieces under
+    /// `cap`, overflowed: the plane's `busbar_billing_truncated_total` signal, once per response.
     fn truncations(body: &[u8], cap: usize) -> usize {
         let mut ctx = super::relay_ctx("openai", "openai", false);
         ctx.translate_cap = cap;
@@ -3998,6 +4060,7 @@ mod rehomed_metering {
     }
 
     /// The far end's answer, in `far`'s dialect, to a stream request: its content type and bytes,
+    /// a native stream when `stream`, else one whole body.
     fn upstream_answer(far: &str, stream: bool) -> (&'static str, Vec<u8>) {
         let usage_chat = json!({"prompt_tokens": IN_TOK, "completion_tokens": OUT_TOK,
             "total_tokens": IN_TOK + OUT_TOK});
@@ -4204,6 +4267,9 @@ mod rehomed_metering {
     }
 
     /// One `stream: true` responses request answered by a far end of `far` (a native stream when
+    /// `stream`, else one whole body): the caller reads a responses event stream (within one
+    /// dialect too: a whole body is synthesised into the caller's stream, OWNER 2026-10-27), and
+    /// the answer bills exactly 11 / 7 once.
     fn responses_case(far: &'static str, stream: bool) {
         let label = format!("responses<-{far} (stream: {stream})");
         let (content_type, body) = upstream_answer(far, stream);
@@ -4504,6 +4570,7 @@ mod rehomed_metering {
     }
 
     /// One answer read to its end in one far-end piece: the reply (for its cancel reading) and
+    /// the end.
     fn ended(ctx: &ReplyCtx<'_>, head: &[(&[u8], &[u8])], far: &[u8]) -> (Reply, Piece<'static>) {
         let mut reply = Reply::new(HOST, ctx, 200, head);
         let end = owned(reply.feed(HOST, ctx, far, true, AT));
@@ -4512,6 +4579,9 @@ mod rehomed_metering {
     }
 
     /// A RELAYED END THAT BILLS ITS UNITS BILLS THEM WHEN THE CALLER LEAVES DURING ITS LAST WINDOW
+    /// The door writes
+    /// a relayed end to the caller in windows; a caller that leaves before the last one is a
+    /// cancel, which bills the units the end stated only when the reply reads as PARTIAL.
     #[test]
     fn a_relayed_end_that_bills_bills_when_the_caller_leaves_during_its_last_window() {
         let (arrived, lane) = ask("cohere", "cohere", false);
@@ -4585,6 +4655,8 @@ mod rehomed_metering {
     }
 
     /// ZERO HOST CALLS PER CHUNK (`on_piece`). The door reads the host's
+    /// clock for a far-end piece only when the reply says the piece states the time: the last
+    /// piece of an answer taken whole (its creation stamp and elapsed milliseconds).
     #[test]
     fn only_the_last_piece_of_a_whole_answer_reads_the_time() {
         let (arrived, lane) = ask("openai", "cohere", false);
@@ -4617,6 +4689,9 @@ mod rehomed_metering {
 }
 
 /// A TRANSLATED STREAM IS TIMED ON THE HOST'S ONE CLOCK. A Bedrock caller's
+/// `metadata` frame reports `metrics.latencyMs` as the host's monotonic time between the stream's
+/// first byte and that frame, so a host whose clock moved 250 ms reports 250 whatever the process
+/// clock did.
 #[test]
 fn a_translated_stream_is_timed_on_the_hosts_clock() {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -4654,6 +4729,8 @@ fn a_translated_stream_is_timed_on_the_hosts_clock() {
 }
 
 /// AN OPENAI FAR END'S WHOLE ANSWER READS AS AN ANTHROPIC MESSAGE: an anthropic caller served by an
+/// openai member gets `type: message`, a `text` content block carrying the answer, `end_turn` for
+/// `stop`, and the serving model the far end named; never the raw openai body.
 #[test]
 fn an_openai_whole_answer_reads_as_an_anthropic_message_naming_the_serving_model() {
     let far = br#"{"object":"chat.completion","model":"glm-4.5","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":3}}"#;
@@ -4803,6 +4880,7 @@ fn malformed_rerank_retains_full_billing_variants_and_units() {
 type Banners = Vec<(String, Option<String>)>;
 
 /// Every `diag` banner, and every uncoded line carrying an `error_map_value` (by its message), with
+/// that field, from a closure's tracing events.
 fn banners_of(f: impl FnOnce()) -> Banners {
     use std::sync::{Arc, Mutex};
     use tracing::field::{Field, Visit};
@@ -4854,6 +4932,8 @@ fn banners_of(f: impl FnOnce()) -> Banners {
 }
 
 /// A provider `error_map` entry that names no status class is ignored, and the operator is told so
+/// with 1.5.5's uncoded warning, once per distinct value for the life of the process, whichever of the two keys
+/// (a provider code or a structured type) the entry sits under.
 #[test]
 fn an_error_map_class_that_names_no_class_is_reported_once() {
     let em = map(&[
@@ -5013,4 +5093,42 @@ fn buffered_reported_usage_is_billable_only_after_a_delivered_translation() {
         "a cancelled non-stream partial bills zero"
     );
     assert!(!cancelled.partial());
+}
+
+#[test]
+fn oversized_error_bodies_keep_the_upstream_status_and_bounded_prefix() {
+    let arrived = arrival("openai", false);
+    let far_lane = lane("openai");
+    for status in [400, 429, 503] {
+        for cap in [0, 8] {
+            let ctx = ReplyCtx {
+                arrived: &arrived,
+                lane: &far_lane,
+                intent: stream_intent(chat_handler("openai"), arrived.parsed.as_ref()),
+                passthrough: false,
+                translate_cap: cap,
+            };
+            let mut reply = Reply::new(HOST, &ctx, status, &[]);
+            for _ in 0..100 {
+                assert!(
+                    !reply
+                        .feed(HOST, &ctx, b"provider diagnostic", false, AT)
+                        .done
+                );
+            }
+            let end = reply.feed(HOST, &ctx, b"tail", true, AT);
+            assert_eq!(end.head.unwrap().status, status);
+            assert_eq!(end.bytes.as_ref(), &b"provider"[..cap]);
+            assert_eq!(
+                end.verdict,
+                if status == 400 {
+                    Verdict::Hard
+                } else {
+                    Verdict::Retry
+                }
+            );
+            assert!(end.fault.is_some());
+            assert_eq!(end.units, Units::default());
+        }
+    }
 }

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Regression net: `read_speech_response` must derive the audio Content-Type from the response's
+//! own container signature rather than hardcoding `audio/mpeg`.
 
 use super::*;
 

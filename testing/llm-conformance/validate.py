@@ -690,7 +690,7 @@ class Checker:
                 out.append(Violation(self.at(ptr), "discriminator", f"missing discriminator property '{pn}'"))
                 return
             if mapping:
-                if val in mapping:
+                if isinstance(val, str) and val in mapping:
                     self.check(inst, {"$ref": mapping[val]}, ptr, out)
                 else:
                     out.append(Violation(self.at(ptr), "discriminator", f"'{pn}': {val!r} is not one of {sorted(mapping)}"))
@@ -727,28 +727,29 @@ class Checker:
 
 
 # ── wire decoders ───────────────────────────────────────────────────────────────────────────────
+def reject_json_constant(value):
+    raise ValueError(f"non-JSON constant: {value}")
+
+
 def parse_sse(text):
-    """-> list of (index, event_name, data_str). Per the SSE spec: blocks split on a blank line,
-    multiple `data:` lines joined with \\n, one leading space after the colon stripped, `:` comments
-    ignored, unknown fields ignored."""
+    """Return dispatched events; EOF discards a pending, unterminated event."""
     events = []
-    for i, block in enumerate(re.split(r"\r?\n\r?\n", text)):
-        if not block.strip():
+    ev, data = None, []
+    for ln in re.split(r"\r\n|\r|\n", text)[0:-1]:
+        if not ln:
+            if data:
+                events.append((len(events), ev, "\n".join(data)))
+            ev, data = None, []
             continue
-        ev, data = None, []
-        for ln in block.split("\n"):
-            ln = ln.rstrip("\r")
-            if not ln or ln.startswith(":"):
-                continue
-            field, _, value = ln.partition(":")
-            if value.startswith(" "):
-                value = value[1:]
-            if field == "data":
-                data.append(value)
-            elif field == "event":
-                ev = value
-        if data or ev is not None:
-            events.append((len(events), ev, "\n".join(data)))
+        if ln.startswith(":"):
+            continue
+        field, _, value = ln.partition(":")
+        if value.startswith(" "):
+            value = value[1:]
+        if field == "data":
+            data.append(value)
+        elif field == "event":
+            ev = value
     return events
 
 
@@ -764,24 +765,41 @@ def parse_eventstream(b):
             fr["error"] = f"frame length {total} exceeds remaining {len(b) - off} bytes"; frames.append(fr); break
         if (zlib.crc32(b[off:off + 8]) & 0xFFFFFFFF) != (pcrc & 0xFFFFFFFF):
             fr["crc_ok"] = False
+        if hlen > total - 16:
+            fr["error"] = f"header length {hlen} exceeds frame header capacity {total - 16}"
+            frames.append(fr)
+            off += total
+            continue
         p, end = off + 12, off + 12 + hlen
-        while p < end:
-            nlen = b[p]; p += 1
-            name = b[p:p + nlen].decode("utf-8", "replace"); p += nlen
-            ht = b[p]; p += 1
-            if ht in (0, 1): val = ht == 0
-            elif ht == 2: val = b[p]; p += 1
-            elif ht == 3: val = struct.unpack(">h", b[p:p + 2])[0]; p += 2
-            elif ht == 4: val = struct.unpack(">i", b[p:p + 4])[0]; p += 4
-            elif ht == 5: val = struct.unpack(">q", b[p:p + 8])[0]; p += 8
-            elif ht in (6, 7):
-                vlen = struct.unpack(">H", b[p:p + 2])[0]; p += 2
-                raw = b[p:p + vlen]; p += vlen
-                val = raw.decode("utf-8", "replace") if ht == 7 else raw
-            elif ht == 8: val = struct.unpack(">q", b[p:p + 8])[0]; p += 8
-            elif ht == 9: val = b[p:p + 16].hex(); p += 16
-            else: fr["error"] = f"unknown header value type {ht}"; break
-            fr["headers"][name] = val
+
+        def take(size):
+            nonlocal p
+            if size > end - p:
+                raise ValueError("truncated event-stream header")
+            raw = b[p:p + size]
+            p += size
+            return raw
+
+        try:
+            while p < end:
+                nlen = take(1)[0]
+                name = take(nlen).decode("utf-8", "replace")
+                ht = take(1)[0]
+                if ht in (0, 1): val = ht == 0
+                elif ht == 2: val = take(1)[0]
+                elif ht == 3: val = struct.unpack(">h", take(2))[0]
+                elif ht == 4: val = struct.unpack(">i", take(4))[0]
+                elif ht in (5, 8): val = struct.unpack(">q", take(8))[0]
+                elif ht in (6, 7):
+                    vlen = struct.unpack(">H", take(2))[0]
+                    raw = take(vlen)
+                    val = raw.decode("utf-8", "replace") if ht == 7 else raw
+                elif ht == 9: val = take(16).hex()
+                else:
+                    raise ValueError(f"unknown header value type {ht}")
+                fr["headers"][name] = val
+        except ValueError as e:
+            fr["error"] = str(e)
         fr["payload"] = b[end:off + total - 4]
         mcrc = struct.unpack(">i", b[off + total - 4:off + total])[0]
         if (zlib.crc32(b[off:off + total - 4]) & 0xFFFFFFFF) != (mcrc & 0xFFFFFFFF):
@@ -971,7 +989,7 @@ class Judge:
         cfg = DIALECTS[dialect]
         ck = self.checker(dialect)
         try:
-            inst = json.loads(body_bytes.decode("utf-8"))
+            inst = json.loads(body_bytes.decode("utf-8"), parse_constant=reject_json_constant)
         except (ValueError, UnicodeDecodeError) as e:
             return [Violation("/", "body.json", f"request body is not JSON: {e}")], "request"
         ref = cfg.get("request_stream") if (outcome in STREAM_OUTCOMES and cfg.get("request_stream")) else cfg["request"]
@@ -1062,7 +1080,7 @@ class Judge:
     @staticmethod
     def parse_json(b):
         try:
-            return json.loads(b.decode("utf-8")), None
+            return json.loads(b.decode("utf-8"), parse_constant=reject_json_constant), None
         except (ValueError, UnicodeDecodeError) as e:
             return None, f"body is not JSON: {e}"
 
@@ -1087,7 +1105,7 @@ class Judge:
             if data == "":
                 out.append(Violation(p, "sse.data", f"event '{ev}' carries no data")); continue
             try:
-                inst = json.loads(data)
+                inst = json.loads(data, parse_constant=reject_json_constant)
             except ValueError as e:
                 out.append(Violation(p, "sse.data", f"data is not JSON ({e}): {short(data)}")); continue
             envelope = STREAM_ERROR_ENVELOPE.get(dialect)

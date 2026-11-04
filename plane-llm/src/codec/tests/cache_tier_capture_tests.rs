@@ -66,6 +66,7 @@ fn terminal_usage(events: &[IrStreamEvent]) -> &crate::codec::ir::IrUsage {
 }
 
 /// busbar's tree at the pin this repo names (`BUSBAR_CHECKOUT`, a checkout of GetBusbar/busbar at
+/// `.busbar-ref`, which plugin CI exports); an unset variable is a failure, never a skip.
 fn workspace_root() -> std::path::PathBuf {
     std::path::PathBuf::from(
         std::env::var_os("BUSBAR_CHECKOUT").expect(
@@ -88,6 +89,7 @@ fn oracle_cell_body(cell: &str) -> Value {
 }
 
 /// Load a raw RECORDED UPSTREAM BODY from the llm-conformance fixtures — the bytes exactly as they
+/// came off the wire, before any normalization.
 fn conformance_raw_body(recording: &str, cell: &str) -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../testing/llm-conformance/fixtures")
@@ -121,6 +123,7 @@ fn with_member(body: &Value, pointer: &str, value: Value) -> Value {
 }
 
 /// The recorded Bedrock Converse body is the shape the reader must handle, and busbar must not
+/// invent a TTL split for a turn that reported none.
 #[test]
 fn bedrock_recorded_no_cache_turn_invents_no_ttl_split() {
     let body = oracle_cell_body("llm__bedrock__bedrock__request__ok");
@@ -223,6 +226,7 @@ fn bedrock_cache_details_ride_the_stream_metadata_frame() {
 }
 
 /// The RAW RECORDED Cohere upstream body — the bytes off the wire — is the shape the reader handles,
+/// and a turn with no cache hit must not acquire an invented cache-read count.
 #[test]
 fn cohere_recorded_raw_body_reads_without_inventing_a_cache_read() {
     let raw = conformance_raw_body("selftest-recording", "llm__cohere__cohere__request__ok");
@@ -246,6 +250,9 @@ fn cohere_recorded_raw_body_reads_without_inventing_a_cache_read() {
 }
 
 /// `usage.cached_tokens` stays inside the input: the whole reported `tokens.input_tokens` bills at
+/// the input tier and nothing reaches the cache-read tier, as 1.5.5 billed it (v1.5.5
+/// `crates/busbar/src/proto/cohere/reader.rs:964-979`: `input_tokens` = `tokens.input_tokens`,
+/// `cache_read_input_tokens: None`).
 #[test]
 fn cohere_cached_tokens_bill_inside_the_input() {
     let raw = conformance_raw_body("selftest-recording", "llm__cohere__cohere__request__ok");
@@ -283,6 +290,7 @@ fn cohere_cached_tokens_bill_inside_the_input() {
 }
 
 /// The STREAM terminal (`message-end.delta.usage`) bills the cache hit inside the input the same
+/// way (v1.5.5 `crates/busbar/src/proto/cohere/reader.rs:709-729`).
 #[test]
 fn cohere_cached_tokens_ride_the_stream_terminal_inside_the_input() {
     let mut state = StreamDecodeState::default();
@@ -370,6 +378,9 @@ fn cohere_truncated_recovery_bills_the_same_bucket_as_the_buffered_path() {
 }
 
 /// The recorded Responses body carries the member (busbar's own Responses WRITER emits it; the
+/// pinned `ResponseUsage` schema requires it), and the reader leaves it inside the input total: a
+/// recorded `cache_write_tokens: 0` reads as no cache-write tier at all, as in 1.5.5 (v1.5.5
+/// `crates/busbar/src/proto/openai_responses/reader.rs:1341`).
 #[test]
 fn responses_recorded_body_carries_the_cache_write_member() {
     let body = oracle_cell_body("llm__responses__responses__request__ok");
@@ -426,6 +437,7 @@ fn responses_cache_write_tokens_bill_inside_the_input() {
 }
 
 /// The STREAM terminal (`response.completed`) bills the cache write inside the input the same way
+/// (v1.5.5 `crates/busbar/src/proto/openai_responses/reader.rs:1022`).
 #[test]
 fn responses_cache_write_tokens_ride_the_stream_terminal_inside_the_input() {
     let mut state = StreamDecodeState::default();
@@ -459,6 +471,7 @@ fn responses_cache_write_tokens_ride_the_stream_terminal_inside_the_input() {
 }
 
 /// The recorded Chat Completions body is the shape the reader handles, and a turn that reported no
+/// cache detail at all must not acquire an invented one.
 #[test]
 fn openai_chat_recorded_body_invents_no_cache_write() {
     let body = oracle_cell_body("llm__openai__openai__request__ok");

@@ -91,6 +91,7 @@ fn sse_payloads(out: &str) -> Vec<serde_json::Value> {
 }
 
 /// Feed each Anthropic SSE `data` payload through `t` as a framed event and collect every byte it
+/// writes, including the finish flush.
 fn feed_frames(
     t: &mut crate::codec::proto_stream::StreamTranslate,
     frames: impl IntoIterator<Item = String>,
@@ -215,6 +216,8 @@ fn ir18_claude_signature_survives_a_responses_client_round_trip_stream() {
 }
 
 /// The reverse trip: an OpenAI `encrypted_content` given to an Anthropic client comes back to a
+/// Responses backend as the original blob (it used to be read back as an Anthropic signature and
+/// dropped as foreign on Responses egress).
 #[test]
 fn ir18_openai_blob_survives_an_anthropic_client_round_trip() {
     let responses_answer = serde_json::json!({

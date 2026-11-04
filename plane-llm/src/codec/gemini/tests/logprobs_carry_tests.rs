@@ -1,4 +1,5 @@
 //! Cross-protocol logprobs (OpenAI<->Gemini): the ask (request) and the data (response,
+//! buffered AND streaming) must cross the seam in both directions via the neutral IR.
 
 use super::super::proto_codec::{Protocol, ProtocolReader};
 
@@ -29,6 +30,7 @@ fn gemini_body_with_logprobs() -> serde_json::Value {
 }
 
 /// Gemini backend -> OpenAI caller (buffered): `logprobsResult` becomes
+/// `choices[0].logprobs.content[]`, chosen+top zipped, bytes synthesized from UTF-8.
 #[test]
 fn openai_logprobs_codec_round_trips_bytes_and_top() {
     use crate::codec::logprob_wire::{
@@ -86,6 +88,7 @@ fn gemini_logprobs_reach_openai_caller() {
 }
 
 /// OpenAI backend -> Gemini caller (buffered): `choices[0].logprobs.content[]` becomes
+/// `candidates[0].logprobsResult` with parallel chosen/top arrays.
 #[test]
 fn tts_instructions_prefix_the_prompt_not_language_code() {
     let ir = crate::codec::ir::audio::SpeechReq {
@@ -192,6 +195,8 @@ fn openai_logprobs_reach_gemini_caller() {
 }
 
 /// A response WITHOUT logprobs gains nothing on translation in either direction. On the OpenAI
+/// side the choice's `logprobs` member is required by the published schema, so "nothing" is the
+/// spec's JSON null rather than an absent key.
 #[test]
 fn absence_gains_nothing() {
     let mut body = gemini_body_with_logprobs();
@@ -215,6 +220,7 @@ fn absence_gains_nothing() {
 }
 
 /// STREAMING, Gemini backend -> OpenAI caller: a chunk's `logprobsResult` becomes an OpenAI
+/// chunk carrying `choices[0].logprobs.content[]` (alongside the text delta's own chunk).
 #[test]
 fn gemini_stream_logprobs_reach_openai_caller() {
     let chunk = serde_json::json!({
@@ -255,6 +261,7 @@ fn gemini_stream_logprobs_reach_openai_caller() {
 }
 
 /// A Gemini stream carrying BOTH a `thought:true` part AND a `logprobsResult` in the same
+/// chunk must not collide the logprobs' text block on index 0 with the thinking block.
 #[test]
 fn stream_thinking_plus_logprobs_do_not_collide_on_index_zero() {
     let chunk = serde_json::json!({
@@ -306,6 +313,7 @@ fn stream_thinking_plus_logprobs_do_not_collide_on_index_zero() {
 }
 
 /// STREAMING, OpenAI backend -> Gemini caller: a chunk's `choices[0].logprobs` becomes a
+/// Gemini chunk candidate carrying `logprobsResult`.
 #[test]
 fn openai_stream_logprobs_reach_gemini_caller() {
     let chunk = serde_json::json!({

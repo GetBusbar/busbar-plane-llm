@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The hook view of a body the operation's reader refuses, read off the raw body. The projection
+//! never fails: a turn whose role no reader knows (`role: "wizard"`) is screened under its own
+//! role and the request goes on.
 
 use std::borrow::Cow;
 
@@ -51,6 +53,7 @@ impl BlockText<'_> {
 }
 
 /// The body's conversation-turn array: `contents` (gemini), a list `input` (responses), else
+/// `messages`.
 fn conversation_turns<'a>(v: &'a Value, dialect: &str) -> Option<&'a Vec<Value>> {
     let key = match dialect {
         PROTO_GEMINI => "contents",

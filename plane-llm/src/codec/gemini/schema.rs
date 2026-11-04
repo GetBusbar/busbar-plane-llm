@@ -1,4 +1,5 @@
 //! Gemini structured output (`responseMimeType` / `responseSchema` / `responseJsonSchema`) and
+//! the JSON-Schema sanitizing and `$ref` inlining Gemini's schema subset needs.
 
 use super::*;
 use crate::codec::keys;
@@ -22,6 +23,8 @@ pub(super) fn read_gemini_response_format(
 }
 
 /// Project [`crate::codec::ir::IrResponseFormat`] into a Gemini `generationConfig` map. The only
+/// code that builds this wire shape: a JSON directive emits `responseMimeType:"application/json"`
+/// plus the sanitized `responseSchema`; a non-JSON one emits nothing (Gemini defaults to text).
 pub(super) fn write_gemini_response_format(
     gen_config: &mut serde_json::Map<String, serde_json::Value>,
     rf: &crate::codec::ir::IrResponseFormat,
@@ -57,6 +60,9 @@ pub(super) const GEMINI_SCHEMA_REJECTED_KEYS: &[&str] = &[
 ];
 
 /// JSON-Schema keywords whose value is a map from a caller-chosen name to a subschema. The keys are
+/// field names, not keywords, so [`GEMINI_SCHEMA_REJECTED_KEYS`] must not apply to them (see
+/// [`sanitize_gemini_schema`]). (`$defs`, `definitions` and `patternProperties` are stripped whole,
+/// so never reach the descent.)
 pub(super) const GEMINI_SCHEMA_NAME_KEYED_MAPS: &[&str] = &[keys::PROPERTIES, "dependentSchemas"];
 
 #[derive(Clone, Copy)]
@@ -118,6 +124,7 @@ fn map_schema_child(
 }
 
 /// Recursively strip the keywords Gemini rejects (`GEMINI_SCHEMA_REJECTED_KEYS`) from a schema so a
+/// cross-protocol tool / `responseSchema` does not 400.
 pub(super) fn sanitize_gemini_schema(schema: &serde_json::Value) -> serde_json::Value {
     let mut cleaned = sanitize_gemini_schema_keywords(schema);
     write_gemini_nullable_types(&mut cleaned);
@@ -208,6 +215,7 @@ fn sanitize_gemini_schema_keywords(schema: &serde_json::Value) -> serde_json::Va
 }
 
 /// The name-keyed half of [`sanitize_gemini_schema`]: keys are kept verbatim (caller field names)
+/// and every value is sanitized as a schema.
 pub(super) fn sanitize_gemini_schema_names(value: &serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(map) => serde_json::Value::Object(
@@ -219,97 +227,109 @@ pub(super) fn sanitize_gemini_schema_names(value: &serde_json::Value) -> serde_j
     }
 }
 
-/// Collect every `$defs`/`definitions` map in a schema, keyed by definition name, for
-pub(super) fn collect_gemini_schema_defs(
-    schema: &serde_json::Value,
-    out: &mut serde_json::Map<String, serde_json::Value>,
-) {
-    if let serde_json::Value::Object(map) = schema {
-        for defs_key in ["$defs", keys::DEFINITIONS] {
-            if let Some(serde_json::Value::Object(defs)) = map.get(defs_key) {
-                for (k, v) in defs {
-                    out.entry(k.clone()).or_insert_with(|| v.clone());
-                }
-            }
-        }
-        for (key, value) in map {
-            if key == "$defs" || key == keys::DEFINITIONS {
-                continue;
-            }
-            match schema_children(key) {
-                SchemaChildren::Names => {
-                    if let Some(names) = value.as_object() {
-                        for child in names.values() {
-                            collect_gemini_schema_defs(child, out);
-                        }
-                    }
-                }
-                SchemaChildren::Many => match value.as_array() {
-                    Some(children) => {
-                        for child in children {
-                            collect_gemini_schema_defs(child, out);
-                        }
-                    }
-                    None => collect_gemini_schema_defs(value, out),
-                },
-                SchemaChildren::One => collect_gemini_schema_defs(value, out),
-                SchemaChildren::Literal => {}
-            }
-        }
-    }
-}
-
 /// Ceiling on nodes one `$ref` resolution may emit. The `active` stack stops self-reference but not a
+/// cycle-free schema whose expansion is enormous: N chained definitions each referencing the next
+/// twice inline to 2^N nodes.
 pub(super) const GEMINI_SCHEMA_INLINE_MAX_NODES: usize = 100_000;
 
+/// Cumulative allowance for copied string/key bytes and pointer decoding scratch. Node bounds
+/// alone cannot constrain expansion of a large description through many references. Sanitizing
+/// the bounded result only makes a constant-factor copy; JSON escaping adds at most six bytes per
+/// input string byte. Charge before allocating, including temporary pointer lookup strings.
+pub(super) const GEMINI_SCHEMA_INLINE_MAX_BYTES: usize = 8 * 1024 * 1024;
+
 /// Ceiling on inlined nesting depth, matching the substrate JSON parser's input depth guard. That
+/// guard sees the schema as it arrives; inlining can multiply it, so a few thousand chained shallow
+/// definitions could build a `Value` deep enough to overflow the stack on the walk and on drop.
 pub(super) const GEMINI_SCHEMA_INLINE_MAX_DEPTH: usize = 128;
 
 /// One inlining allowance, owned by [`resolve_gemini_schema_refs`] and threaded through the walk so
+/// every branch draws on the same pool.
 pub(super) struct GeminiInlineBudget {
     remaining_nodes: usize,
+    remaining_bytes: usize,
     depth: usize,
+    failed: bool,
 }
 
-/// Recursively inline every `$ref` pointing at a named `#/$defs/X` or `#/definitions/X` entry in
+impl GeminiInlineBudget {
+    fn bytes(&mut self, count: usize) -> bool {
+        if self.failed || count > self.remaining_bytes {
+            self.failed = true;
+            return false;
+        }
+        self.remaining_bytes -= count;
+        true
+    }
+
+    fn node(&mut self) -> bool {
+        if self.failed || self.remaining_nodes == 0 || self.depth >= GEMINI_SCHEMA_INLINE_MAX_DEPTH
+        {
+            self.failed = true;
+            return false;
+        }
+        self.remaining_nodes -= 1;
+        self.depth += 1;
+        true
+    }
+
+    fn string(&mut self, value: &str) -> Option<String> {
+        self.bytes(value.len()).then(|| value.to_owned())
+    }
+}
+
+/// Inline local JSON Pointer references against the original document, preserving container paths
+/// and escaped property names. The active stack holds decoded pointers, not bare definition names.
 pub(super) fn inline_gemini_schema_refs(
     schema: &serde_json::Value,
-    defs: &serde_json::Map<String, serde_json::Value>,
+    root: &serde_json::Value,
     active: &mut Vec<String>,
     budget: &mut GeminiInlineBudget,
 ) -> serde_json::Value {
-    if budget.remaining_nodes == 0 || budget.depth >= GEMINI_SCHEMA_INLINE_MAX_DEPTH {
+    if !budget.node() {
         return serde_json::json!({});
     }
-    budget.remaining_nodes -= 1;
-    budget.depth += 1;
-    let out = inline_gemini_schema_refs_within_budget(schema, defs, active, budget);
+    let out = inline_gemini_schema_refs_within_budget(schema, root, active, budget);
     budget.depth -= 1;
     out
 }
 
 /// Copy instance data without interpreting any member as a schema keyword. Each node still
+/// spends the expansion allowance: repeated references must not clone a large literal for free.
 fn inline_gemini_literal(
     value: &serde_json::Value,
     budget: &mut GeminiInlineBudget,
 ) -> serde_json::Value {
-    if budget.remaining_nodes == 0 || budget.depth >= GEMINI_SCHEMA_INLINE_MAX_DEPTH {
+    if !budget.node() {
         return serde_json::json!({});
     }
-    budget.remaining_nodes -= 1;
-    budget.depth += 1;
     let out = match value {
-        serde_json::Value::Object(map) => serde_json::Value::Object(
-            map.iter()
-                .map(|(key, child)| (key.clone(), inline_gemini_literal(child, budget)))
-                .collect(),
-        ),
-        serde_json::Value::Array(children) => serde_json::Value::Array(
-            children
-                .iter()
-                .map(|child| inline_gemini_literal(child, budget))
-                .collect(),
-        ),
+        serde_json::Value::Object(map) => {
+            let mut copied = serde_json::Map::new();
+            for (key, child) in map {
+                let Some(key) = budget.string(key) else { break };
+                let child = inline_gemini_literal(child, budget);
+                if budget.failed {
+                    break;
+                }
+                copied.insert(key, child);
+            }
+            serde_json::Value::Object(copied)
+        }
+        serde_json::Value::Array(children) => {
+            let mut copied = Vec::new();
+            for child in children {
+                let child = inline_gemini_literal(child, budget);
+                if budget.failed {
+                    break;
+                }
+                copied.push(child);
+            }
+            serde_json::Value::Array(copied)
+        }
+        serde_json::Value::String(value) => budget
+            .string(value)
+            .map_or(serde_json::Value::Null, serde_json::Value::String),
         other => other.clone(),
     };
     budget.depth -= 1;
@@ -319,83 +339,380 @@ fn inline_gemini_literal(
 fn inline_gemini_child(
     key: &str,
     value: &serde_json::Value,
-    defs: &serde_json::Map<String, serde_json::Value>,
+    root: &serde_json::Value,
     active: &mut Vec<String>,
     budget: &mut GeminiInlineBudget,
 ) -> serde_json::Value {
-    match schema_children(key) {
-        SchemaChildren::Literal => inline_gemini_literal(value, budget),
-        SchemaChildren::Names if !value.is_object() => inline_gemini_literal(value, budget),
-        _ => map_schema_child(key, value, |child| {
-            inline_gemini_schema_refs(child, defs, active, budget)
-        }),
+    match (schema_children(key), value) {
+        (SchemaChildren::Names, serde_json::Value::Object(names)) => {
+            if !budget.node() {
+                return serde_json::json!({});
+            }
+            let mut copied = serde_json::Map::new();
+            for (name, child) in names {
+                let Some(name) = budget.string(name) else {
+                    break;
+                };
+                let child = inline_gemini_schema_refs(child, root, active, budget);
+                if budget.failed {
+                    break;
+                }
+                copied.insert(name, child);
+            }
+            budget.depth -= 1;
+            serde_json::Value::Object(copied)
+        }
+        (SchemaChildren::Many, serde_json::Value::Array(children)) => {
+            if !budget.node() {
+                return serde_json::json!({});
+            }
+            let mut copied = Vec::new();
+            for child in children {
+                let child = inline_gemini_schema_refs(child, root, active, budget);
+                if budget.failed {
+                    break;
+                }
+                copied.push(child);
+            }
+            budget.depth -= 1;
+            serde_json::Value::Array(copied)
+        }
+        (SchemaChildren::Literal | SchemaChildren::Names, _) => {
+            inline_gemini_literal(value, budget)
+        }
+        _ => inline_gemini_schema_refs(value, root, active, budget),
     }
 }
 
 /// The inlining walk proper, reached only through [`inline_gemini_schema_refs`], which charges the
+/// node/depth budget for this node first.
 pub(super) fn inline_gemini_schema_refs_within_budget(
     schema: &serde_json::Value,
-    defs: &serde_json::Map<String, serde_json::Value>,
+    root: &serde_json::Value,
     active: &mut Vec<String>,
     budget: &mut GeminiInlineBudget,
 ) -> serde_json::Value {
     match schema {
         serde_json::Value::Object(map) => {
-            if let Some(serde_json::Value::String(r)) = map.get("$ref") {
-                let target_name = r
-                    .strip_prefix("#/$defs/")
-                    .or_else(|| r.strip_prefix("#/definitions/"));
-                if let Some(name) = target_name {
-                    if let Some(target) = defs.get(name) {
-                        if active.contains(&name.to_string()) {
-                            return serde_json::json!({});
-                        }
-                        active.push(name.to_string());
-                        let inlined = inline_gemini_schema_refs(target, defs, active, budget);
-                        active.pop();
-
-                        if map.len() > 1 {
-                            if let serde_json::Value::Object(mut inlined_map) = inlined {
-                                for (k, v) in map {
-                                    if k != "$ref" {
-                                        inlined_map.insert(
-                                            k.clone(),
-                                            inline_gemini_child(k, v, defs, active, budget),
-                                        );
-                                    }
-                                }
-                                return serde_json::Value::Object(inlined_map);
-                            }
-                        }
-                        return inlined;
+            if let Some(reference) = map.get("$ref") {
+                let pointer = reference
+                    .as_str()
+                    .and_then(|reference| local_schema_pointer(reference, budget));
+                let target = pointer.as_deref().and_then(|pointer| root.pointer(pointer));
+                if let (Some(pointer), Some(target)) = (pointer, target) {
+                    if active.contains(&pointer) {
+                        budget.failed = true;
+                        return serde_json::json!({});
                     }
+                    active.push(pointer);
+                    let inlined = inline_gemini_schema_refs(target, root, active, budget);
+                    active.pop();
+                    let mut siblings = serde_json::Map::new();
+                    for (key, value) in map {
+                        if matches!(key.as_str(), "$ref" | "$defs" | "definitions") {
+                            continue;
+                        }
+                        let Some(key) = budget.string(key) else { break };
+                        let value = inline_gemini_child(&key, value, root, active, budget);
+                        if budget.failed {
+                            break;
+                        }
+                        siblings.insert(key, value);
+                    }
+                    return intersect_gemini_schemas(
+                        inlined,
+                        serde_json::Value::Object(siblings),
+                        budget,
+                    );
                 }
+                // An unresolved reference must not become an unconstrained schema when the
+                // sanitizer removes $ref. Refuse the whole projection instead.
+                budget.failed = true;
+                return serde_json::json!({});
             }
-            let cleaned: serde_json::Map<String, serde_json::Value> = map
-                .iter()
-                .filter(|(k, _)| k.as_str() != "$defs" && k.as_str() != keys::DEFINITIONS)
-                .map(|(k, v)| {
-                    let resolved = inline_gemini_child(k, v, defs, active, budget);
-                    (k.clone(), resolved)
-                })
-                .collect();
+            let mut cleaned = serde_json::Map::new();
+            for (key, value) in map {
+                if matches!(key.as_str(), "$defs" | "definitions") {
+                    continue;
+                }
+                let Some(key) = budget.string(key) else { break };
+                let value = inline_gemini_child(&key, value, root, active, budget);
+                if budget.failed {
+                    break;
+                }
+                cleaned.insert(key, value);
+            }
             serde_json::Value::Object(cleaned)
         }
-        other => other.clone(),
+        // Malformed schema primitives/arrays still use the bounded literal copier.
+        other => inline_gemini_literal(other, budget),
     }
 }
 
-/// Entry point: resolve every `$ref` against the schema's own `$defs`/`definitions` and drop those
+/// Entry point: inline references against the original document and remove definition containers.
+/// Unsupported, recursive or over-budget expansion is an explicit unsatisfiable conjunction;
+/// Gemini may reject that representation, but it must never receive a silently weakened schema.
 pub(super) fn resolve_gemini_schema_refs(schema: &serde_json::Value) -> serde_json::Value {
-    let mut defs = serde_json::Map::new();
-    collect_gemini_schema_defs(schema, &mut defs);
-    if defs.is_empty() {
-        return schema.clone();
-    }
-    let mut active = Vec::new();
     let mut budget = GeminiInlineBudget {
         remaining_nodes: GEMINI_SCHEMA_INLINE_MAX_NODES,
+        remaining_bytes: GEMINI_SCHEMA_INLINE_MAX_BYTES,
         depth: 0,
+        failed: false,
     };
-    inline_gemini_schema_refs(schema, &defs, &mut active, &mut budget)
+    resolve_gemini_schema_refs_with_budget(schema, &mut budget)
 }
+
+fn resolve_gemini_schema_refs_with_budget(
+    schema: &serde_json::Value,
+    budget: &mut GeminiInlineBudget,
+) -> serde_json::Value {
+    let resolved = inline_gemini_schema_refs(schema, schema, &mut Vec::new(), budget);
+    if budget.failed {
+        serde_json::json!({"allOf": [false]})
+    } else {
+        resolved
+    }
+}
+
+/// Decode the URI fragment before JSON Pointer's own ~0/~1 decoding in Value::pointer.
+/// Reject malformed escapes rather than accidentally resolving a different target.
+fn local_schema_pointer(reference: &str, budget: &mut GeminiInlineBudget) -> Option<String> {
+    let fragment = reference.strip_prefix('#')?;
+    // One decoded buffer plus up to two replacement buffers per JSON Pointer token in
+    // serde_json::Value::pointer. The sum of token lengths never exceeds fragment.len().
+    if !budget.bytes(fragment.len().saturating_mul(3)) {
+        return None;
+    }
+    let mut decoded = Vec::with_capacity(fragment.len());
+    let mut bytes = fragment.bytes();
+    while let Some(byte) = bytes.next() {
+        if byte == b'%' {
+            let high = char::from(bytes.next()?).to_digit(16)?;
+            let low = char::from(bytes.next()?).to_digit(16)?;
+            decoded.push((high * 16 + low) as u8);
+        } else {
+            decoded.push(byte);
+        }
+    }
+    let pointer = String::from_utf8(decoded).ok()?;
+    if !pointer.is_empty() && !pointer.starts_with('/') {
+        return None;
+    }
+    let mut chars = pointer.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '~' && !matches!(chars.next(), Some('0' | '1')) {
+            return None;
+        }
+    }
+    Some(pointer)
+}
+
+/// Flatten conjunctions only when a keyword has an exact representation in Gemini's schema
+/// subset. All other collisions retain both operands in allOf: provider refusal is preferable
+/// to accepting values outside the caller's schema. In particular, closed object schemas and
+/// tuple items cannot be combined by simply unioning their properties/items.
+fn intersect_gemini_schemas(
+    left: serde_json::Value,
+    right: serde_json::Value,
+    budget: &mut GeminiInlineBudget,
+) -> serde_json::Value {
+    use serde_json::Value;
+    if budget.failed {
+        return Value::Null;
+    }
+    if left == right || right == serde_json::json!({}) || right == Value::Bool(true) {
+        return left;
+    }
+    if left == serde_json::json!({}) || left == Value::Bool(true) {
+        return right;
+    }
+    let (mut left, right) = match (left, right) {
+        (Value::Object(left), Value::Object(right)) => (left, right),
+        (left, right) => return gemini_schema_conjunction(left, right, budget),
+    };
+    let annotation = |key: &str| {
+        matches!(
+            key,
+            "title" | "description" | "default" | "examples" | "$comment"
+        )
+    };
+    if left.keys().all(|key| annotation(key)) || right.keys().all(|key| annotation(key)) {
+        left.extend(right);
+        return Value::Object(left);
+    }
+    // Inspect collisions before consuming either map. Unsupported merges retain the entire
+    // conjunction, including constraints already examined, without cloning any string or tree.
+    let independent = |key: &str| {
+        matches!(
+            key,
+            "type"
+                | "format"
+                | "title"
+                | "description"
+                | "default"
+                | "examples"
+                | "$comment"
+                | "enum"
+                | "minimum"
+                | "maximum"
+                | "minLength"
+                | "maxLength"
+                | "pattern"
+                | "minItems"
+                | "maxItems"
+                | "minProperties"
+                | "maxProperties"
+                | "required"
+                | "properties"
+                | "items"
+                | "anyOf"
+                | "propertyOrdering"
+        )
+    };
+    let supported = left.keys().chain(right.keys()).all(|key| independent(key))
+        && right.iter().all(|(key, value)| {
+            let Some(previous) = left.get(key) else {
+                return true;
+            };
+            previous == value
+                || annotation(key)
+                || match key.as_str() {
+                    "minLength" | "minItems" | "minProperties" | "maxLength" | "maxItems"
+                    | "maxProperties" => previous.as_u64().is_some() && value.as_u64().is_some(),
+                    "minimum" | "maximum" => numeric_schema_order(previous, value).is_some(),
+                    "required" => [previous, value].iter().all(|array| {
+                        array
+                            .as_array()
+                            .is_some_and(|names| names.iter().all(Value::is_string))
+                    }),
+                    "properties" | "items" => previous.is_object() && value.is_object(),
+                    _ => false,
+                }
+        });
+    if !supported {
+        return gemini_schema_conjunction(Value::Object(left), Value::Object(right), budget);
+    }
+    for (key, value) in right {
+        let Some(previous) = left.remove(&key) else {
+            left.insert(key, value);
+            continue;
+        };
+        let combined = if previous == value || annotation(&key) {
+            value
+        } else {
+            match key.as_str() {
+                "minLength" | "minItems" | "minProperties" | "maxLength" | "maxItems"
+                | "maxProperties" => {
+                    let a = previous.as_u64().unwrap_or_default();
+                    let b = value.as_u64().unwrap_or_default();
+                    if (key.starts_with("min") && a < b) || (key.starts_with("max") && a > b) {
+                        value
+                    } else {
+                        previous
+                    }
+                }
+                "minimum" | "maximum" => {
+                    let ordering = numeric_schema_order(&previous, &value)
+                        .unwrap_or(std::cmp::Ordering::Equal);
+                    if (key == "minimum" && ordering.is_lt())
+                        || (key == "maximum" && ordering.is_gt())
+                    {
+                        value
+                    } else {
+                        previous
+                    }
+                }
+                "required" => {
+                    let (Value::Array(mut names), Value::Array(additions)) = (previous, value)
+                    else {
+                        budget.failed = true;
+                        return Value::Null;
+                    };
+                    let mut seen: std::collections::BTreeSet<&str> =
+                        names.iter().filter_map(Value::as_str).collect();
+                    let retain: Vec<bool> = additions
+                        .iter()
+                        .map(|name| name.as_str().is_some_and(|name| seen.insert(name)))
+                        .collect();
+                    drop(seen);
+                    names.extend(
+                        additions
+                            .into_iter()
+                            .zip(retain)
+                            .filter_map(|(name, keep)| keep.then_some(name)),
+                    );
+                    Value::Array(names)
+                }
+                "properties" => {
+                    let (Value::Object(mut properties), Value::Object(additions)) =
+                        (previous, value)
+                    else {
+                        budget.failed = true;
+                        return Value::Null;
+                    };
+                    for (name, schema) in additions {
+                        let combined = match properties.remove(&name) {
+                            Some(old) => intersect_gemini_schemas(old, schema, budget),
+                            None => schema,
+                        };
+                        if budget.failed {
+                            return Value::Null;
+                        }
+                        properties.insert(name, combined);
+                    }
+                    Value::Object(properties)
+                }
+                "items" => intersect_gemini_schemas(previous, value, budget),
+                _ => {
+                    budget.failed = true;
+                    return Value::Null;
+                }
+            }
+        };
+        if budget.failed {
+            return Value::Null;
+        }
+        left.insert(key, combined);
+    }
+    Value::Object(left)
+}
+
+/// Construct an owned conjunction, never json!([left, right]), which serializes/copies Values.
+fn gemini_schema_conjunction(
+    left: serde_json::Value,
+    right: serde_json::Value,
+    budget: &mut GeminiInlineBudget,
+) -> serde_json::Value {
+    if !budget.bytes("allOf".len()) || budget.remaining_nodes < 2 {
+        budget.failed = true;
+        return serde_json::Value::Null;
+    }
+    budget.remaining_nodes -= 2;
+    serde_json::Value::Object(serde_json::Map::from_iter([(
+        "allOf".to_owned(),
+        serde_json::Value::Array(vec![left, right]),
+    )]))
+}
+
+fn numeric_schema_order(
+    left: &serde_json::Value,
+    right: &serde_json::Value,
+) -> Option<std::cmp::Ordering> {
+    let (left, right) = (left.as_number()?, right.as_number()?);
+    if !left.is_f64() && !right.is_f64() {
+        let integer = |n: &serde_json::Number| {
+            n.as_i64()
+                .map(i128::from)
+                .or_else(|| n.as_u64().map(i128::from))
+        };
+        Some(integer(left)?.cmp(&integer(right)?))
+    } else if left.is_f64() && right.is_f64() {
+        left.as_f64()?.partial_cmp(&right.as_f64()?)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/schema_reference_tests.rs"]
+mod schema_reference_tests;

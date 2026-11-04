@@ -229,6 +229,7 @@ fn roundtrip_openai_request() {
 }
 
 /// An OpenAI `input_audio` / `file` attachment survives read → write instead of becoming
+/// `{"type":"text","text":""}`.
 #[test]
 fn openai_attachments_survive_the_ir_rather_than_becoming_empty_text() {
     let entry = crate::codec::proto_codec::protocol_for("openai").expect("openai");
@@ -436,6 +437,7 @@ fn roundtrip_bedrock_request() {
 }
 
 /// A Bedrock `document` / `video` block reaches the IR (cross-protocol) AND is re-emitted verbatim
+/// from the positional stash (same-protocol) — without being emitted twice.
 #[test]
 fn bedrock_document_is_modelled_without_double_emitting() {
     let entry = crate::codec::proto_codec::protocol_for("bedrock").expect("bedrock");
@@ -526,6 +528,9 @@ fn cohere_tool_plan_is_reasoning_not_visible_text() {
 }
 
 /// A Cohere tool-result `document` content part must keep its STRUCTURE instead of being stringified
+/// into a literal JSON blob the model reads as escaped syntax: its JSON `data` reaches the IR as the
+/// tool-output `Json` block (the ANT-17 follow-up — it rode the cohere `Vendor` escape, which every
+/// foreign writer dropped), so every target receives the tool's output.
 #[test]
 fn cohere_tool_result_document_is_not_stringified() {
     let entry = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
@@ -569,6 +574,7 @@ fn cohere_tool_result_document_is_not_stringified() {
 }
 
 /// Cohere's `billed_units.search_units` is a SEPARATELY BILLED unit that no token field can carry —
+/// its loss is invisible in a token total that reconciles perfectly.
 #[test]
 fn cohere_search_units_reach_the_ir() {
     let entry = crate::codec::proto_codec::protocol_for("cohere").expect("cohere");
@@ -657,6 +663,7 @@ fn responses_reasoning_tokens_are_not_zeroed() {
 }
 
 /// Gemini's `thoughtsTokenCount` is the reasoning sub-bucket, and recording it must not move any
+/// total.
 #[test]
 fn gemini_thoughts_token_count_is_the_reasoning_sub_bucket() {
     let entry = crate::codec::proto_codec::protocol_for("gemini").expect("gemini");

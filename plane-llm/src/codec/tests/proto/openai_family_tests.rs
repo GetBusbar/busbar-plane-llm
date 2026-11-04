@@ -57,6 +57,8 @@ fn every_context_length_phrasing_the_shared_scan_knows_classifies_as_context_len
 }
 
 /// The shared context-length prose scan must fire on the canonical self-contained phrases and on
+/// the `exceeds`+`context`/`token limit` pairing — this is what lets a genuine oversized-request
+/// body fail over (to a larger-context model) instead of penalizing the lane's breaker.
 #[test]
 fn context_length_prose_scan_fires_on_canonical_phrases() {
     use super::context_length_prose_scan as scan;
@@ -70,6 +72,8 @@ fn context_length_prose_scan_fires_on_canonical_phrases() {
 }
 
 /// Precision guard: the scan must NOT fire on unrelated errors whose prose merely mentions weak
+/// tokens like `token`/`maximum` — e.g. a per-day quota (rate-limit) body — or a bare `exceeds`
+/// with no context/token-limit co-location.
 #[test]
 fn context_length_prose_scan_precise_no_false_positive() {
     use super::context_length_prose_scan as scan;
@@ -86,6 +90,9 @@ fn context_length_prose_scan_precise_no_false_positive() {
 }
 
 /// `bearer_error_code` mirrors the native OpenAI `type`→`code` pairing: only auth and
+/// insufficient-quota carry a machine-readable `code` (the value official SDKs surface as
+/// `error.code`); every other modeled type — and any passthrough type — stays `null`, matching
+/// the shape OpenAI uses when no code applies.
 #[test]
 fn bearer_error_code_mirrors_native_type_code_pairing() {
     use super::bearer_error_code as code;

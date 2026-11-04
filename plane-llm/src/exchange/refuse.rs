@@ -1,4 +1,5 @@
 //! A refusal, rendered: the status, head fields and body the caller reads, in the dialect envelope
+//! the previous release answered in.
 
 use crate::codec::framework::KIND_TIMEOUT;
 use busbar_contract::abi::plane::{class_of_word, reason_of, RefusalClass};
@@ -101,6 +102,8 @@ fn kind_of_status(status: u16) -> &'static str {
 }
 
 /// The kind a hook's refusal wears, by the status the hook chose (the previous release's
+/// `reject_kind_for_status`): 429 a rate limit, 408 a timeout, the 503 of a load-bearing hook that
+/// could not answer overloaded (retryable), any status with no natural kind an invalid request.
 #[must_use]
 pub fn gate_kind(status: u16) -> &'static str {
     match status {
@@ -115,6 +118,7 @@ pub fn gate_kind(status: u16) -> &'static str {
 }
 
 /// RENDER A HOOK'S REFUSAL in `envelope`'s dialect: the hook's own status and words, as the
+/// kernel's hook engine clamped and sanitised them.
 #[must_use]
 pub fn gate_refusal(
     host: &dyn busbar_contract::codec::CodecHost,
@@ -126,6 +130,7 @@ pub fn gate_refusal(
 }
 
 /// The sentence the previous release answered a model with when it named no pool and no configured
+/// model: the dialect's own copy where the path gave one (`shaped`), else the neutral sentence.
 #[must_use]
 pub fn model_not_found(model: &str, shaped: Option<&str>) -> String {
     shaped.map_or_else(
@@ -135,11 +140,13 @@ pub fn model_not_found(model: &str, shaped: Option<&str>) -> String {
 }
 
 /// Whether a reason is an authentication refusal (its class is `Unauthenticated`): those answer in
+/// the dialect's own vendor terms.
 fn is_authentication(reason: &str) -> bool {
     class_of_word(reason) == Some(RefusalClass::Unauthenticated)
 }
 
 /// RENDER A KERNEL REFUSAL in `envelope`'s dialect: `reason` is the reason's code on the plane ABI,
+/// `status` the status the kernel chose, `text` its message.
 #[must_use]
 pub fn kernel_refusal(
     host: &dyn busbar_contract::codec::CodecHost,

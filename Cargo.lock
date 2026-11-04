@@ -140,6 +140,7 @@ dependencies = [
  "sonic-rs",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]

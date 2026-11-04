@@ -67,6 +67,9 @@ pub struct ImageReq {
 }
 
 /// The image family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. A struct has
+/// no field exhaustiveness check, so every caller-text field is enumerated by hand and the
+/// `image_projection_covers_every_text_field` test fails if a new `String` field lacks a projection
+/// decision.
 impl busbar_contract::ir::facts::IrFacts for ImageReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::IMAGE
@@ -173,6 +176,8 @@ pub const IMAGE_OUTPUT_TOKENS_RESIDUAL: &str = "image.output_tokens";
 
 impl ImageResp {
     /// Billing projection. An answer reporting token usage (gpt-image-1, a Gemini image model) bills
+    /// no token: its counts are recorded on [`TokenUsage::residual_units`] (the settle's one
+    /// `usage.residual` audit row), never on the four billed tiers.
     pub fn billing(&self) -> Option<Billing> {
         if let Some(u) = &self.usage {
             let mut residual_units = std::collections::BTreeMap::new();

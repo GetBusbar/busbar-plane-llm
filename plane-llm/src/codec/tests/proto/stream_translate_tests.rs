@@ -3,6 +3,7 @@ use crate::codec::ir::{IrBlockMeta, IrStreamEvent};
 use busbar_contract::http::StatusCode;
 
 /// The canonical IR text stream: start → open text block → `text` delta → close → terminal delta
+/// (EndTurn, 7 in / 3 out) → stop.
 fn canonical_text_events(text: &str) -> [IrStreamEvent; 6] {
     [
         crate::codec::ir::IrStreamEvent::MessageStart {
@@ -39,6 +40,9 @@ fn canonical_text_events(text: &str) -> [IrStreamEvent; 6] {
 }
 
 /// STRUCTURAL ROUND-TRIP MATRIX (the test class that would have caught the cohere object-shape
+/// and openai usage bugs): for EVERY protocol, writing a canonical IR stream through that
+/// protocol's WRITER and reading the frames back through its OWN READER must preserve the streamed
+/// text and a terminal signal.
 #[test]
 fn test_all_protocols_stream_write_read_roundtrip_preserves_text_and_terminal() {
     let text = "Hello, world";
@@ -121,6 +125,9 @@ fn test_all_protocols_stream_write_read_roundtrip_preserves_text_and_terminal() 
 }
 
 /// Encode one IR-derived `(event_type, json)` frame as wire bytes for the given protocol's
+/// transport: binary AWS event-stream framing (bedrock) or blank-line-terminated SSE (everyone
+/// else) — the two transports `StreamTranslate::feed` actually decodes on the egress side, and the
+/// two shapes `StreamTranslate`'s own output takes on the ingress side.
 fn encode_wire_frame(
     is_eventstream: bool,
     event_type: &str,
@@ -224,6 +231,7 @@ fn encode_ir_events_as_wire(
 }
 
 /// Decode wire bytes (as produced by a protocol's own writer, OR by `StreamTranslate::feed`/
+/// `finish` on the INGRESS side) back into `(event_type, json)` frames, for both transports.
 fn decode_wire_frames(is_eventstream: bool, bytes: &[u8]) -> Vec<(String, serde_json::Value)> {
     if is_eventstream {
         let mut buf = bytes.to_vec();
@@ -257,6 +265,15 @@ fn decode_wire_frames(is_eventstream: bool, bytes: &[u8]) -> Vec<(String, serde_
 }
 
 /// FULL CROSS-PRODUCT STRUCTURAL TRANSLATION MATRIX: for every DIRECTED (ingress, egress) pair
+/// with ingress != egress — all 30 of them — genuinely drive a `StreamTranslate::new(ingress,
+/// egress)` translator (the exact production seam: `egress.reader()` → IR → `ingress.writer()`,
+/// including every framing/fan-out quirk) with EGRESS-shaped wire bytes, and assert THREE
+/// invariants survive on the INGRESS-shaped output: (1) the streamed text content, (2) a terminal
+/// signal (`MessageStop` / a stop-reason-bearing `MessageDelta`), and (3) block-index consistency
+/// (every decoded text delta's index was actually opened by a preceding `BlockStart`, so an
+/// off-by-N or cross-wired block index — which would desync a real streaming SDK's content
+/// accumulator even though the concatenated text still matched — cannot hide behind a naive
+/// concatenation check).
 #[test]
 fn test_all_protocol_pairs_stream_translate_roundtrip_preserves_text_and_terminal() {
     let text = "Hello, world";
@@ -379,6 +396,8 @@ fn test_all_protocol_pairs_stream_translate_roundtrip_preserves_text_and_termina
 }
 
 /// NON-STREAMING round-trip matrix (the class the responses `write_response` bug fell in): for
+/// every protocol, an assistant text response written by `write_response` and read back by
+/// `read_response` must preserve the text.
 #[test]
 fn test_all_protocols_nonstream_write_read_roundtrip_preserves_text() {
     let text = "Hello, world";
@@ -443,6 +462,7 @@ fn test_all_protocols_nonstream_write_read_roundtrip_preserves_text() {
 }
 
 /// Build a minimal native assistant response body for `proto` carrying `usage` verbatim. Used to
+/// drive read→IR→write and assert usage re-emission fidelity.
 fn native_response_with_usage(name: &str, usage: serde_json::Value) -> serde_json::Value {
     use serde_json::json;
     match name {
@@ -481,6 +501,8 @@ fn native_response_with_usage(name: &str, usage: serde_json::Value) -> serde_jso
 }
 
 /// (A) ROUND-TRIP FIDELITY with cache tokens: each protocol that carries cache fields, read a
+/// native usage block WITH cache tokens → IR → write, and assert the re-emitted usage is
+/// semantically identical to the native wire (same field names, numbers, nesting, presence).
 #[test]
 fn a2_roundtrip_usage_fidelity_with_cache() {
     use serde_json::json;
@@ -622,6 +644,8 @@ fn a2_roundtrip_usage_fidelity_with_cache() {
 }
 
 /// (A) NO-CACHE fidelity: a response with NO cache fields must emit NO cache sub-object/field for
+/// EVERY protocol (no spurious `prompt_tokens_details` / `cachedContentTokenCount` /
+/// `input_tokens_details` / `cache_read_input_tokens`).
 #[test]
 fn a2_roundtrip_usage_fidelity_no_cache_emits_no_cache_object() {
     use serde_json::json;
@@ -759,6 +783,7 @@ fn a2_roundtrip_usage_fidelity_no_cache_emits_no_cache_object() {
 }
 
 /// (B) BILLING PARITY + FIX. OpenAI/Gemini/Responses/Cohere: billable UNCHANGED vs before
+/// (prompt_total + output).
 #[test]
 fn a2_billing_parity_and_fix() {
     use serde_json::json;
@@ -885,6 +910,7 @@ fn a2_billing_parity_and_fix() {
 }
 
 /// CROSS-PROTOCOL cache_creation reconstruction: an Anthropic/Bedrock-ingress response carries
+/// `cache_creation_input_tokens`, which is part of the OpenAI-family TOTAL prompt count.
 #[test]
 fn a2_cross_protocol_cache_creation_included_in_prompt_total() {
     use serde_json::json;
@@ -985,6 +1011,7 @@ fn a2_cached_exceeds_prompt_saturates_to_zero() {
 }
 
 /// The gemini JSON-array framer turns gemini SSE `data:` frames into one streaming JSON array
+/// (`[obj,obj,...]`).
 #[test]
 fn test_gemini_json_array_framer_basic() {
     let mut f = GeminiJsonArrayFramer::new();
@@ -1003,6 +1030,7 @@ fn test_gemini_json_array_framer_basic() {
 }
 
 /// An empty stream (no data frame) still finishes as a valid empty JSON array `[]`, and the
+/// `[DONE]`/keepalive SSE sentinels are dropped (the array close is `finish`'s job).
 #[test]
 fn test_gemini_json_array_framer_empty_and_done() {
     let mut f = GeminiJsonArrayFramer::new();
@@ -1014,6 +1042,9 @@ fn test_gemini_json_array_framer_empty_and_done() {
 }
 
 /// The agnostic `finish_with_server_error` seam (proxy engine:`poll_next`) reaches the framer through
+/// a `Box<dyn ArrayStreamFramer>` — exercise THAT dispatch path: the trait method must produce the
+/// native Gemini server-error element (HTTP 500 / gRPC `INTERNAL`) carrying the supplied message,
+/// closed into a valid JSON array.
 #[test]
 fn test_finish_with_server_error_through_trait_object_is_gemini_500_internal() {
     let mut framer: Box<dyn ArrayStreamFramer> = Box::new(gemini::GeminiJsonArrayFramer::new());
@@ -1028,6 +1059,7 @@ fn test_finish_with_server_error_through_trait_object_is_gemini_500_internal() {
 }
 
 /// `finish_with_error` after real chunks appends a gemini-shaped error element + `]`, so
+/// the body stays a valid JSON array (used on a mid-stream transport failure).
 #[test]
 fn test_gemini_json_array_framer_finish_with_error_closes_array() {
     let mut f = GeminiJsonArrayFramer::new();
@@ -1047,6 +1079,8 @@ fn test_gemini_json_array_framer_finish_with_error_closes_array() {
 }
 
 /// When the framer ABORTS (reassembly buffer overran `MAX_BUF` without a terminator),
+/// `finish` must emit a gemini error element instead of a bare `]` that would make the silently
+/// truncated stream look complete.
 #[test]
 fn test_gemini_json_array_framer_finish_signals_abort() {
     let mut f = GeminiJsonArrayFramer::new();
@@ -1066,6 +1100,13 @@ fn test_gemini_json_array_framer_finish_signals_abort() {
 }
 
 /// Regression: on the GEMINI JSON-ARRAY ingress path the buffer-overflow abort of the
+/// UPSTREAM `StreamTranslate` must surface as a trailing error element, NOT a silently truncated
+/// bare `]`. The framer's OWN `aborted` flag stays clear (the translate simply stops feeding it),
+/// and the caller discards the translate's SSE `finish()` bytes (an SSE error can't ride inside a
+/// JSON-array body), so `finish_for_translate(translate.aborted())` must observe the translate-side
+/// abort and emit the gemini error-close — mirroring the SSE-ingress terminal-error path. Against
+/// the old code (no `aborted()` accessor, plain `framer.finish()`) the array closed with a bare
+/// `]` and the truncation was swallowed.
 #[test]
 fn test_gemini_json_array_surfaces_upstream_translate_abort() {
     let mut st = StreamTranslate::new("gemini", "openai").expect("translator");
@@ -1110,6 +1151,8 @@ fn test_gemini_json_array_surfaces_upstream_translate_abort() {
 }
 
 /// A MALFORMED Bedrock EGRESS
+/// prelude (an out-of-range `total_len`) must ABORT the stream — surfacing the ingress protocol's
+/// native terminal error from `finish()` — not be silently swallowed.
 #[test]
 fn test_egress_eventstream_malformed_prelude_aborts_and_surfaces_error() {
     let mut st = StreamTranslate::new("anthropic", "bedrock").expect("translator");
@@ -1144,6 +1187,8 @@ fn test_egress_eventstream_malformed_prelude_aborts_and_surfaces_error() {
 }
 
 /// On a SAME-PROTOCOL
+/// bedrock→bedrock stream, a malformed prelude must NOT splice the cleared garbage tail into the
+/// client stream ahead of the synthesized exception frame.
 #[test]
 fn same_proto_bedrock_malformed_prelude_emits_only_valid_frames_not_garbage() {
     let mut st = StreamTranslate::new_same_proto("bedrock").expect("same-proto translator");
@@ -1174,6 +1219,7 @@ fn same_proto_bedrock_malformed_prelude_emits_only_valid_frames_not_garbage() {
 }
 
 /// Gemini URL sources have no Anthropic encrypted search index. A multi-citation batch must
+/// report that loss while keeping the text and provider work, without inventing opaque state.
 #[test]
 fn stream_gemini_multi_citation_without_anthropic_state_is_audited() {
     let mut st = StreamTranslate::new("anthropic", "gemini").expect("translator");
@@ -1215,6 +1261,7 @@ fn stream_gemini_multi_citation_without_anthropic_state_is_audited() {
 }
 
 /// CF6 (wire-conformance): the same Gemini multi-citation fan-out, but egressing into the COHERE v2
+/// dialect.
 #[test]
 fn stream_gemini_multi_citation_yields_separate_single_object_cohere_events() {
     let mut st = StreamTranslate::new("cohere", "gemini").expect("translator");
@@ -1278,6 +1325,8 @@ fn stream_gemini_multi_citation_yields_separate_single_object_cohere_events() {
 }
 
 /// HIGH-1 reverse direction: 3 Anthropic single-citation `citations_delta` events (as a native
+/// Anthropic stream emits — one citation per delta) → Gemini EGRESS-shaped `citationMetadata`
+/// chunks that are VALID Gemini (candidate-level `citationSources`), never an array-bodied frame.
 #[test]
 fn stream_anthropic_single_citations_project_to_valid_gemini_citation_metadata() {
     let writer = GeminiWriter;
@@ -1315,6 +1364,9 @@ fn stream_anthropic_single_citations_project_to_valid_gemini_citation_metadata()
 }
 
 /// A REDACTED reasoning block (`Thinking { redacted: true }`) holds opaque encrypted bytes. On a
+/// NON-Bedrock egress (Anthropic re-emits its own `redacted_thinking`; the others have no analog),
+/// Gemini/Responses/OpenAI/Cohere MUST DROP it — the opaque bytes must never reach the wire as
+/// visible text, and no busbar marker exists to leak.
 #[test]
 fn redacted_reasoning_drops_on_writers_without_a_native_form() {
     let ir = crate::codec::ir::IrResponse {
@@ -1405,6 +1457,8 @@ fn es_frame(event_type: &str, payload: &[u8]) -> Vec<u8> {
 }
 
 /// HIGH/conformance regression (eventstream.rs): a Bedrock EGRESS that sends a mid-stream
+/// MODELED-EXCEPTION frame (`:message-type: exception` + `:exception-type`, NO `:event-type`)
+/// must surface as a translated ERROR event on the ingress stream, not be silently dropped.
 #[test]
 fn test_translate_bedrock_egress_exception_frame_surfaces_error_to_ingress() {
     let mut st = StreamTranslate::new("anthropic", "bedrock").expect("bedrock egress translator");
@@ -1429,6 +1483,7 @@ fn test_translate_bedrock_egress_exception_frame_surfaces_error_to_ingress() {
 }
 
 /// a Bedrock ConverseStream (binary event-stream egress) translates to Anthropic SSE for
+/// the caller — proving the eventstream decoder → IR → ingress-writer path end to end.
 #[test]
 fn test_translate_bedrock_eventstream_egress_to_anthropic_ingress() {
     let mut st = StreamTranslate::new("anthropic", "bedrock").expect("bedrock egress translator");
@@ -1478,6 +1533,7 @@ fn test_translate_bedrock_eventstream_egress_to_anthropic_ingress() {
 }
 
 /// Chat#5 (end-to-end): a STREAMING Bedrock-backend → Anthropic-client turn carrying REDACTED
+/// (encrypted) extended-thinking must PRESERVE the opaque bytes end-to-end.
 #[test]
 fn test_bedrock_egress_redacted_reasoning_preserved_to_anthropic_ingress() {
     let mut st = StreamTranslate::new("anthropic", "bedrock").expect("bedrock egress translator");
@@ -1525,6 +1581,8 @@ fn test_bedrock_egress_redacted_reasoning_preserved_to_anthropic_ingress() {
 }
 
 /// Delta-before-stop regression at the reader→writer level (independent of eventstream framing): the
+/// Bedrock reader must emit the combined `MessageDelta` BEFORE the terminal `MessageStop`, so the
+/// Anthropic writer maps them to `message_delta` then `message_stop` — the native order.
 #[test]
 fn test_bedrock_reader_emits_delta_before_stop_for_anthropic_ingress() {
     use crate::codec::ir::IrStreamEvent;
@@ -1572,6 +1630,8 @@ fn test_bedrock_reader_emits_delta_before_stop_for_anthropic_ingress() {
 }
 
 /// Regression: the post-`MessageStop` ordering guard must drop a DUPLICATE terminal
+/// `MessageDelta` (one carrying a `stop_reason`), not only the usage-only
+/// `MessageDelta{stop_reason: None}` flavour.
 #[test]
 fn test_duplicate_terminal_message_delta_after_stop_is_dropped() {
     let mut st = StreamTranslate::new("openai", "anthropic").expect("translator");
@@ -1599,6 +1659,7 @@ fn test_duplicate_terminal_message_delta_after_stop_is_dropped() {
 }
 
 /// BYTE-IDENTITY GUARD: locks the wire shape of the OpenAI chunk-identity replay +
+/// include_usage trailing-usage split.
 #[test]
 fn openai_egress_chunk_identity_and_trailing_usage_byte_shape() {
     let mut st = StreamTranslate::new("openai", "anthropic").expect("translator");
@@ -1658,6 +1719,9 @@ fn openai_egress_chunk_identity_and_trailing_usage_byte_shape() {
 }
 
 /// Unsolicited trailing usage chunk: a client that did NOT send
+/// `stream_options.include_usage` must receive a stream with NO usage anywhere — no trailing
+/// `{choices:[], usage}` chunk (which would `choices[0]` IndexError) and no folded usage on the finish
+/// chunk.
 #[test]
 fn openai_egress_without_include_usage_emits_no_usage_chunk() {
     let mut st = StreamTranslate::new("openai", "anthropic").expect("translator");
@@ -1716,6 +1780,9 @@ fn openai_egress_without_include_usage_emits_no_usage_chunk() {
 }
 
 /// 0-based streaming tool_calls index: an Anthropic backend stream with a leading text
+/// block (block 0) followed by TWO tool_use blocks (blocks 1 and 2) must translate to an OpenAI
+/// ingress stream whose `tool_calls[].index` starts at 0 and increments per tool call — NOT the raw
+/// IR block indices 1 and 2.
 #[test]
 fn openai_egress_multi_tool_stream_uses_0_based_tool_call_indices() {
     let mut st = StreamTranslate::new("openai", "anthropic").expect("translator");
@@ -1791,6 +1858,7 @@ fn openai_egress_multi_tool_stream_uses_0_based_tool_call_indices() {
 }
 
 /// BYTE-IDENTITY GUARD: locks the wire shape of the Bedrock messageStop/metadata two-frame
+/// deferral.
 #[test]
 fn bedrock_egress_emits_exactly_one_metadata_frame() {
     let mut a = StreamTranslate::new("bedrock", "anthropic").expect("translator");
@@ -1844,6 +1912,7 @@ fn bedrock_egress_emits_exactly_one_metadata_frame() {
 }
 
 /// Bedrock *ingress* streaming: an Anthropic SSE backend stream → a native AWS SDK Bedrock
+/// client.
 #[test]
 fn test_translate_anthropic_egress_to_bedrock_ingress_binary_frames() {
     let mut t = StreamTranslate::new("bedrock", "anthropic").expect("bedrock ingress translator");
@@ -1946,6 +2015,9 @@ fn test_translate_anthropic_egress_to_bedrock_ingress_binary_frames() {
 }
 
 /// CF7 (wire-conformance): a cross-protocol TEXT stream egressing into Bedrock ConverseStream must
+/// emit NO `contentBlockStart` frame — the `ContentBlockStart$start` union models only `toolUse`
+/// (AWS Bedrock Runtime API reference), so a real ConverseStream opens a text block IMPLICITLY with
+/// its first `contentBlockDelta` carrying `text`.
 #[test]
 fn test_translate_anthropic_text_to_bedrock_ingress_has_no_content_block_start() {
     let mut t = StreamTranslate::new("bedrock", "anthropic").expect("bedrock ingress translator");
@@ -1995,6 +2067,9 @@ fn test_translate_anthropic_text_to_bedrock_ingress_has_no_content_block_start()
 }
 
 /// CF8 (wire-conformance): a cross-protocol REASONING stream egressing into Bedrock ConverseStream
+/// must stream reasoning ENTIRELY through `contentBlockDelta.delta.reasoningContent`
+/// (text/signature) with NO `contentBlockStart` — `ContentBlockStart$start` has no
+/// `reasoningContent` member (only `toolUse`).
 #[test]
 fn test_translate_anthropic_reasoning_to_bedrock_ingress_uses_delta_not_start() {
     let mut t = StreamTranslate::new("bedrock", "anthropic").expect("bedrock ingress translator");
@@ -2062,6 +2137,9 @@ fn test_translate_anthropic_reasoning_to_bedrock_ingress_uses_delta_not_start() 
 }
 
 /// Bedrock *ingress* streaming, TOOL-CALL path: an Anthropic SSE `content_block_start` with a
+/// `tool_use` block + `input_json_delta` + `content_block_stop` must translate through the binary
+/// Bedrock encoder into a `contentBlockStart` frame carrying a `toolUse` start, a
+/// `contentBlockDelta` carrying the tool input, and a `contentBlockStop`.
 #[test]
 fn test_translate_anthropic_egress_to_bedrock_ingress_tool_call() {
     let mut t = StreamTranslate::new("bedrock", "anthropic").expect("bedrock ingress translator");
@@ -2130,6 +2208,8 @@ fn test_translate_anthropic_egress_to_bedrock_ingress_tool_call() {
 }
 
 /// INV-A: a Cohere stream truncated after `tool-call-start`/`tool-call-delta` (no `tool-call-end`),
+/// followed directly by `message-end`, must still close the tool block on the Anthropic-ingress
+/// wire BEFORE `message_delta`/`message_stop`.
 #[test]
 fn cohere_stream_truncated_tool_call_is_closed_before_message_stop() {
     let mut t = StreamTranslate::new("anthropic", "cohere").expect("anthropic ingress translator");
@@ -2198,6 +2278,7 @@ fn cohere_stream_truncated_tool_call_is_closed_before_message_stop() {
 }
 
 /// INV-A: the same truncation hole exists in every reader's terminal branch when the terminal frame
+/// never arrives at all — `finishReason` never fires, so the per-reader terminal close never runs.
 #[test]
 fn gemini_stream_truncated_before_finish_reason_closes_blocks() {
     let mut t = StreamTranslate::new("anthropic", "gemini").expect("anthropic ingress translator");
@@ -2233,6 +2314,8 @@ fn gemini_stream_truncated_before_finish_reason_closes_blocks() {
 }
 
 /// INV-A: same truncation hole in the OpenAI reader — a tool_calls stream that never reaches its
+/// `finish_reason` chunk (the only place the OpenAI reader closes tool blocks) must still be closed
+/// by `finish()`.
 #[test]
 fn openai_stream_truncated_tool_call_is_closed() {
     let mut t = StreamTranslate::new("anthropic", "openai").expect("anthropic ingress translator");
@@ -2271,6 +2354,7 @@ fn openai_stream_truncated_tool_call_is_closed() {
 }
 
 /// INV-A, and the specific guard against the fatal v1 bug: tracking must happen on the IR event
+/// BEFORE the writer runs.
 #[test]
 fn cohere_truncated_tool_call_survives_gemini_ingress() {
     let mut t = StreamTranslate::new("gemini", "cohere").expect("gemini ingress translator");
@@ -2314,6 +2398,7 @@ fn cohere_truncated_tool_call_survives_gemini_ingress() {
 }
 
 /// Every `IrBlockMeta` variant, with a witness value. The no-catch-all `match` is the point: a
+/// fifth variant makes THIS a compile error rather than a silently-unexercised table row.
 fn all_block_metas() -> Vec<IrBlockMeta> {
     let witnesses = vec![
         IrBlockMeta::Text,
@@ -2427,6 +2512,7 @@ fn every_writer_that_suppresses_a_block_start_suppresses_its_stop() {
 }
 
 /// The deferred `redacted_thinking` start and its `content_block_stop` are decided by the SAME
+/// fact — that a start was written.
 #[test]
 fn anthropic_deferred_redacted_start_pairs_with_its_stop_exactly_once() {
     let protocol = protocol_for(PROTO_ANTHROPIC).expect("anthropic protocol");
@@ -2486,6 +2572,10 @@ fn anthropic_deferred_redacted_start_pairs_with_its_stop_exactly_once() {
 }
 
 /// An Anthropic `content_block_start{type:"image"}` streamed block has no Bedrock ConverseStream
+/// projection (`BedrockWriter`'s `BlockStart` arm maps `IrBlockMeta::Image` to `None`), but the
+/// `BlockStop` arm previously emitted `contentBlockStop` unconditionally regardless of whether the
+/// start was suppressed — an orphan close for an index a real ConverseStream client never saw
+/// opened.
 #[test]
 fn anthropic_image_stream_to_bedrock_ingress_has_no_orphan_content_block_stop() {
     let mut t = StreamTranslate::new("bedrock", "anthropic").expect("bedrock ingress translator");
@@ -2533,6 +2623,8 @@ fn anthropic_image_stream_to_bedrock_ingress_has_no_orphan_content_block_stop() 
 }
 
 /// HIGH/conformance regression: a mid-stream upstream ERROR on a Bedrock-INGRESS cross-protocol
+/// stream must be framed as a MODELED EXCEPTION (`:message-type: exception` + `:exception-type`),
+/// NOT a normal `:message-type: event` frame.
 #[test]
 fn test_translate_error_to_bedrock_ingress_is_exception_frame() {
     let mut t = StreamTranslate::new("bedrock", "anthropic").expect("bedrock ingress translator");
@@ -2578,6 +2670,8 @@ fn test_translate_error_to_bedrock_ingress_is_exception_frame() {
 }
 
 /// Conformance regression: on a cross-protocol Gemini-INGRESS stream, the MessageStart
+/// frame must still carry a `responseId` even though `StreamTranslate` strips the foreign id/model
+/// to `None` — a native google-genai SDK reads `chunk.response_id` off the first chunk.
 #[test]
 fn test_translate_to_gemini_ingress_synthesizes_response_id() {
     let mut t = StreamTranslate::new("gemini", "openai").expect("gemini ingress translator");
@@ -2596,6 +2690,8 @@ fn test_translate_to_gemini_ingress_synthesizes_response_id() {
 }
 
 /// Regression: a CROSS-PROTOCOL tool call streamed to a Gemini client
+/// must surface as a SINGLE native `functionCall` part `{name, args}` — not a `{name, args:{}}`
+/// opening frame followed by a separate nameless `{args}` part.
 #[test]
 fn test_translate_to_gemini_tool_call_single_functioncall_part() {
     let mut t = StreamTranslate::new("gemini", "openai").expect("gemini ingress translator");
@@ -2653,6 +2749,7 @@ fn test_translate_to_gemini_tool_call_single_functioncall_part() {
 }
 
 /// A CRLF-delimited SSE upstream (`\r\n\r\n` frame terminators — spec-legal, emitted by some
+/// gateways/CDNs) must reassemble and translate correctly.
 #[test]
 fn test_translate_crlf_sse_frames() {
     let mut t = StreamTranslate::new("anthropic", "openai").expect("translator");
@@ -2671,6 +2768,7 @@ fn test_translate_crlf_sse_frames() {
 }
 
 /// Decoder also works when the binary frames arrive split across feed() calls (partial frame
+/// buffered, then completed) — the realistic chunked-transport case.
 #[test]
 fn test_translate_bedrock_eventstream_split_chunks() {
     let mut st = StreamTranslate::new("anthropic", "bedrock").expect("translator");
@@ -2932,6 +3030,7 @@ fn test_translate_anthropic_egress_to_responses_ingress() {
 }
 
 /// A mid-stream terminal error must be framed by the writer that has been driving THIS stream, not
+/// by a freshly-resolved one.
 #[test]
 fn responses_ingress_terminal_error_continues_the_live_stream_identity() {
     let mut t =
@@ -3186,6 +3285,7 @@ fn test_translate_same_protocol_is_none() {
 }
 
 /// Drain `n` complete SSE frames through one `feed` and return (frames translated, time in the
+/// translator only).
 #[cfg(test)]
 fn drain_frames_once(n: usize) -> (usize, std::time::Duration) {
     let mut t = StreamTranslate::new("openai", "anthropic").expect("translator");
@@ -3203,7 +3303,20 @@ fn drain_frames_once(n: usize) -> (usize, std::time::Duration) {
 }
 
 #[test]
-fn test_translate_many_frames_in_one_feed_is_linear_and_complete() {
+fn test_translate_many_frames_in_one_feed_is_complete() {
+    for n in [20_000, 40_000] {
+        assert_eq!(
+            drain_frames_once(n).0,
+            n,
+            "every frame translates exactly once"
+        );
+    }
+}
+
+// Run explicitly on an isolated host; scheduling noise makes this unsuitable for CI correctness.
+#[test]
+#[ignore = "wall-clock scaling benchmark; run explicitly on an isolated host"]
+fn benchmark_translate_many_frames_in_one_feed_is_linear() {
     const N: usize = 20_000;
     const REPS: usize = 3;
 
@@ -3277,6 +3390,7 @@ fn test_translate_frames_split_across_chunks_reassemble() {
 }
 
 /// Multiple `data:` lines in one SSE frame must be concatenated with `\n` (SSE spec),
+/// not collapsed to the last line.
 #[test]
 fn test_parse_sse_frame_concatenates_multiple_data_lines() {
     let frame = b"event: e\ndata: {\"a\":1,\ndata: \"b\":2}\n\n";
@@ -3297,6 +3411,7 @@ fn test_parse_sse_frame_event_only_is_none() {
 }
 
 /// A `data:` line with empty value still yields Some (caller treats empty payload as a
+/// terminator/keepalive); the OpenAI `[DONE]` sentinel survives leading-space stripping.
 #[test]
 fn test_parse_sse_frame_done_sentinel() {
     let (et, data) = parse_sse_frame(b"data: [DONE]\n\n").expect("data line present");
@@ -3305,6 +3420,7 @@ fn test_parse_sse_frame_done_sentinel() {
 }
 
 /// An upstream that splits a single JSON event across two `data:` lines must still translate
+/// correctly end-to-end (the payload is rejoined before JSON parsing).
 #[test]
 fn test_translate_multiline_data_payload() {
     let mut t = StreamTranslate::new("openai", "anthropic").expect("translator");
@@ -3317,6 +3433,8 @@ fn test_translate_multiline_data_payload() {
 }
 
 /// An upstream that streams bytes without ever emitting a frame terminator must not grow the
+/// reassembly buffer without bound: once past the cap the stream is abandoned and the buffer
+/// is released.
 #[test]
 fn test_feed_aborts_on_unbounded_buffer() {
     let mut t = StreamTranslate::new("openai", "anthropic").expect("translator");
@@ -3349,6 +3467,8 @@ fn test_feed_aborts_on_unbounded_buffer() {
 }
 
 /// Conformance (`StreamTranslate::abort` / `finish` for bedrock ingress): when the SSE
+/// reassembly buffer overflows MAX_BUF without a frame terminator on a BEDROCK-INGRESS stream, the
+/// stream must NOT end with a bare TCP close.
 #[test]
 fn test_bedrock_ingress_overflow_abort_emits_exception_frame() {
     let mut t = StreamTranslate::new("bedrock", "openai").expect("translator");
@@ -3377,6 +3497,7 @@ fn test_bedrock_ingress_overflow_abort_emits_exception_frame() {
 }
 
 /// Regression: an SSE-INGRESS stream aborted by reassembly-buffer overflow must NOT
+/// end with a silently-truncated body.
 #[test]
 fn test_sse_ingress_overflow_abort_emits_native_error_frame() {
     let chunk = vec![b'x'; 1024 * 1024];
@@ -3451,6 +3572,7 @@ fn test_sse_ingress_overflow_abort_emits_native_error_frame() {
 }
 
 /// The scanned-offset optimization must not break terminator detection when `\n\n` straddles a
+/// chunk boundary (one `\n` at the end of chunk A, the next at the start of chunk B).
 #[test]
 fn test_feed_terminator_straddles_chunk_boundary() {
     let mut t = StreamTranslate::new("openai", "anthropic").expect("translator");
@@ -4164,6 +4286,9 @@ fn test_bedrock_and_responses_register() {
 }
 
 /// SAME-PROTOCOL verbatim strip, OPTED-OUT client: busbar forces
+/// `stream_options.include_usage` UPSTREAM so it can bill, so an OpenAI upstream emits a NATIVE
+/// trailing usage-only chunk (`{... "choices":[], "usage":{...}}`) even on an OpenAI->OpenAI
+/// same-protocol passthrough.
 #[test]
 fn same_proto_openai_opted_out_strips_trailing_usage_chunk() {
     let mut st = StreamTranslate::new_same_proto("openai").expect("same-proto translator");
@@ -4218,6 +4343,8 @@ fn same_proto_openai_opted_out_strips_trailing_usage_chunk() {
 }
 
 /// SAME-PROTOCOL verbatim, OPTED-IN client: when the client DID send
+/// `stream_options.include_usage:true`, the native trailing usage-only chunk is exactly what it asked
+/// for, so it must reach the client verbatim - AND billing still holds the usage.
 #[test]
 fn same_proto_openai_opted_in_keeps_trailing_usage_chunk() {
     let mut st = StreamTranslate::new_same_proto("openai").expect("same-proto translator");
@@ -4260,6 +4387,8 @@ fn same_proto_openai_opted_in_keeps_trailing_usage_chunk() {
 }
 
 /// INDISTINGUISHABILITY (same-proto OpenAI->OpenAI, OPTED-OUT client): busbar forces
+/// `stream_options.include_usage` UPSTREAM to bill, so an OpenAI upstream stamps `"usage":null` on
+/// EVERY intermediate `chat.completion.chunk` AND the finish chunk.
 #[test]
 fn same_proto_openai_opted_out_strips_usage_from_every_chunk() {
     let mut st = StreamTranslate::new_same_proto("openai").expect("same-proto translator");
@@ -4316,6 +4445,9 @@ fn same_proto_openai_opted_out_strips_usage_from_every_chunk() {
 }
 
 /// INDISTINGUISHABILITY (same-proto OpenAI->OpenAI, OPTED-IN client): a client that DID request
+/// `stream_options.include_usage:true` must see the native wire exactly - `usage:null` on the
+/// intermediate/finish chunks and the real `usage` object on the trailing chunk, all byte-for-byte, so
+/// nothing is stripped when the client opted in.
 #[test]
 fn same_proto_openai_opted_in_keeps_usage_on_every_chunk() {
     let mut st = StreamTranslate::new_same_proto("openai").expect("same-proto translator");
@@ -4351,6 +4483,9 @@ fn same_proto_openai_opted_in_keeps_usage_on_every_chunk() {
 }
 
 /// INDISTINGUISHABILITY (byte-safety, string-content corruption guard): a content chunk whose message
+/// text literally contains the substring `"usage":null` must be re-emitted with its message text
+/// intact - the stripper only removes the TOP-LEVEL `usage` member, never the substring inside a string
+/// value.
 #[test]
 fn same_proto_openai_opted_out_preserves_usage_text_in_content() {
     let mut st = StreamTranslate::new_same_proto("openai").expect("same-proto translator");
@@ -4412,6 +4547,10 @@ fn anthropic_cross_protocol_stream_emits_ping_after_message_start() {
 }
 
 /// On the Anthropic same-proto verbatim path, only the two usage-bearing event types
+/// (`message_start`, `message_delta`) plus `error` may reach the `crate::codec::json::parse_str` DOM parse —
+/// every other frame (here, five `content_block_delta`s and a `content_block_start`/`_stop` pair) must
+/// skip it entirely, because the Anthropic reader is stateless and the framing seams it would feed are
+/// constant-false defaults for this egress.
 #[test]
 fn same_proto_anthropic_skips_decode_for_non_usage_frames() {
     let mut t = StreamTranslate::new_same_proto("anthropic").expect("translator");
@@ -4446,6 +4585,8 @@ fn same_proto_anthropic_skips_decode_for_non_usage_frames() {
 }
 
 /// Every same-proto SSE dialect reads only the frames that can carry its usage or terminal
+/// failure: content frames relay verbatim without a DOM parse, the usage still bills, and a piece
+/// of whole frames that needs no edit comes back BORROWED (no copy of the relayed bytes).
 #[test]
 fn same_proto_reads_only_usage_and_failure_frames() {
     let cases: [(&str, &str, usize); 4] = [
@@ -4504,6 +4645,12 @@ fn same_proto_reads_only_usage_and_failure_frames() {
 }
 
 /// THE TERMINAL-USAGE FOLD CARRIES THE SUB-BUCKETS, end to end through the translator. The
+/// reader/writer-in-isolation test (`streamed_usage_sub_buckets_are_not_zeroed`) proved both ends
+/// speak `IrUsageDetail`, but the FOLD SEAM between them (`pending_terminal` +
+/// `merge_trailing_usage`) merged only the four token totals — so a streamed `/v1/responses` call
+/// over an OpenAI-chat reasoning egress (whose real usage arrives in a SEPARATE trailing
+/// usage-only chunk after the finish chunk) answered `output_tokens_details.reasoning_tokens: 0`
+/// while the identical `stream:false` call answered the real value.
 #[test]
 fn fold_path_merges_trailing_usage_detail_sub_buckets_end_to_end() {
     let mut st = StreamTranslate::new("responses", "openai")
@@ -4608,6 +4755,8 @@ fn test_buffered_as_stream_remaps_tool_ids_exactly_once() {
 }
 
 /// A Responses stream that ends on `response.failed` still REPORTS the usage the far end generated
+/// before it failed; the billing source `usage()` must carry it (#62: a failed stream is a cut, and
+/// a cut is not a refund).
 #[test]
 fn responses_failed_stream_bills_its_reported_usage() {
     let created = b"event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"created_at\":1,\"status\":\"in_progress\",\"model\":\"m\",\"output\":[],\"usage\":null}}\n\n";
@@ -4644,6 +4793,11 @@ fn responses_failed_stream_bills_its_reported_usage() {
 }
 
 /// A TRANSLATED STREAM INTO A RESPONSES CLIENT IS STAMPED WITH THE HOST'S CLOCK, NOT 1970. The
+/// translator clears the upstream's creation time, and the Responses writer then stamped
+/// `UNSTAMPED_CREATED_AT` (`0`) on `response.created` and every terminal event. 1.5.5 stamped
+/// `now_unix_secs()` (v1.5.5 `crates/busbar/src/proto/openai_responses/writer.rs:479`); the plane
+/// reads the wall clock of the host it is handed (`CodecHost::wall_clock_now`), as the Chat
+/// writer's `created` does.
 #[test]
 fn a_translated_stream_into_responses_carries_the_host_clock_created_at() {
     let host = crate::codec::test_host::HOST;

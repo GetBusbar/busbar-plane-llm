@@ -26,6 +26,8 @@ fn operation_handler_serves_chat_only() {
 }
 
 /// A request path ending in `/v1/messages` resolves to `Chat`; anything else resolves to
+/// `None` (no-handler 404) — the body is never consulted (Anthropic names the operation in the
+/// path only).
 #[test]
 fn resolve_operation_matches_the_messages_path_only() {
     let h = AnthropicRequestHandler;

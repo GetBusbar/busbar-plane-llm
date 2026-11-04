@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::codec::usage_census::{
-    at, bump, class_of, ledgered, lock_counts, moved, slot, Ledgered, IN, NONE, OUT,
+    at, bump, class_of, ledgered, lock_counts, moved, slot, Ledgered, CR, IN, NONE, OUT,
 };
 
 /// Which turn a count is measured on: one that reports the `billed_units` bucket beside the raw
@@ -20,10 +20,18 @@ enum Turn {
 }
 
 /// What each Cohere `usage` count IS, as the move one more of it makes on the ledgered units
+/// (the four token tiers and every open class), and the turn it is measured on.
 const COHERE_COUNT_CLASSES: &[(&str, (Turn, Ledgered))] = &[
     ("tokens.input_tokens", (Turn::Raw, at(IN, 1))),
     ("tokens.output_tokens", (Turn::Raw, at(OUT, 1))),
-    ("cached_tokens", (Turn::Raw, NONE)),
+    (
+        "cached_tokens",
+        (Turn::Raw, {
+            let mut movement = at(IN, -1);
+            movement[CR] = 1;
+            movement
+        }),
+    ),
     ("billed_units.input_tokens", (Turn::Billed, NONE)),
     ("billed_units.output_tokens", (Turn::Billed, NONE)),
     (
@@ -141,6 +149,7 @@ fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {
 }
 
 /// A chat's billed search units reach the ledger as `search_units` and its billed classifications
+/// as `classifications`, one line each, on every read path (owner LEDGER-100).
 #[test]
 fn chat_search_units_and_classifications_each_ledger_one_line() {
     let usage = base_usage(Turn::Billed);

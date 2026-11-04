@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR MAPPING: a field the Bedrock Converse wire carries, that the neutral IR
+//! and the other dialect can carry, must map.
 
 use super::*;
 use serde_json::{json, Value};
@@ -81,6 +82,7 @@ fn cited_response() -> Value {
 }
 
 /// BED-01 (buffered): the cited ANSWER TEXT lives inside `citationsContent`; with no reader arm it
+/// was deleted on every foreign client, not only its sources.
 #[test]
 fn bed01_buffered_citations_content_text_and_citations_reach_foreign_clients() {
     for client in ["anthropic", "openai", "responses", "gemini", "cohere"] {
@@ -102,6 +104,7 @@ fn bed01_buffered_citations_content_text_and_citations_reach_foreign_clients() {
 }
 
 /// BED-01 (request history): an assistant turn carried as `citationsContent` arrived as an EMPTY
+/// turn (`content: []`, an Anthropic 400); its text must cross with its citations.
 #[test]
 fn bed01_request_history_citations_content_is_not_an_empty_turn() {
     let body = json!({
@@ -140,6 +143,7 @@ fn bed01_request_history_citations_content_is_not_an_empty_turn() {
 }
 
 /// BED-01 (stream): a ConverseStream `contentBlockDelta.delta.citation` was dropped; it must reach
+/// a foreign streaming client as that client's citation event.
 #[test]
 fn bed01_stream_citation_delta_reaches_a_foreign_client() {
     let wire = xstream_from_bedrock(
@@ -217,6 +221,7 @@ fn a_bedrock_url_without_an_anthropic_opaque_index_is_an_audited_loss() {
 }
 
 /// BED-02: `guardContent` text was kept only in a stash the seam clears, so the guarded prompt
+/// text vanished cross-protocol.
 #[test]
 fn bed02_guard_content_text_reaches_a_foreign_backend_and_round_trips_once() {
     let body = json!({
@@ -251,6 +256,7 @@ fn bed02_guard_content_text_reaches_a_foreign_backend_and_round_trips_once() {
 }
 
 /// BED-03: a TEXT document (`source.text` / chunked `source.content[]`) became a bedrock-only
+/// Vendor reference every foreign writer dropped; it is a text/plain document.
 #[test]
 fn bed03_text_document_source_becomes_a_text_plain_document() {
     let body = json!({
@@ -330,6 +336,7 @@ fn bed05_tool_result_document_and_video_are_modelled() {
 }
 
 /// BED-07: an Anthropic `cache_control` on an image / document / thinking block got no Bedrock
+/// `cachePoint`; the breakpoint must follow the block it closes.
 #[test]
 fn bed07_cache_control_on_image_document_thinking_projects_a_cache_point() {
     let body = json!({
@@ -372,6 +379,7 @@ fn bed07_cache_control_on_image_document_thinking_projects_a_cache_point() {
 }
 
 /// BED-09: a refusal wrote Converse `end_turn` — indistinguishable from a normal answer. It is a
+/// content-policy stop: `content_filtered`.
 #[test]
 fn bed09_refusal_writes_content_filtered() {
     let resp = crate::codec::ir::IrResponse {
@@ -403,6 +411,8 @@ fn bed09_refusal_writes_content_filtered() {
 }
 
 /// BED-10: `model_context_window_exceeded` is a token-limit cut. `malformed_*` reads as `Other`,
+/// as in 1.5.5 (v1.5.5 `crates/busbar/src/proto/bedrock/mod.rs:705-716`, `_ => S::Other`): the
+/// answer is served and billed, never a generation failure (no 502, no lane fault).
 #[test]
 fn bed10_context_window_and_malformed_stop_reasons_map() {
     let mut body = cited_response();
@@ -436,6 +446,7 @@ fn bed10_context_window_and_malformed_stop_reasons_map() {
 }
 
 /// BED-11 (buffered half): Anthropic-on-Bedrock echoes the matched stop string under
+/// `additionalModelResponseFields.stop_sequence`; the reader carries it into the IR slot.
 #[test]
 fn bed11_buffered_stop_sequence_is_read() {
     let mut body = cited_response();
@@ -448,6 +459,7 @@ fn bed11_buffered_stop_sequence_is_read() {
 }
 
 /// BED-12: a buffered answer synthesized as a ConverseStream (Bedrock client, buffered upstream)
+/// dropped the citations the buffered body carries.
 #[test]
 fn bed12_synthesized_stream_carries_citations() {
     let ir = BedrockReader
@@ -468,6 +480,7 @@ fn bed12_synthesized_stream_carries_citations() {
 }
 
 /// BED-13: text citations in assistant HISTORY were dropped on a Bedrock egress; Converse accepts
+/// them as `citationsContent`.
 #[test]
 fn bed13_history_citations_write_citations_content() {
     let body = json!({
@@ -491,6 +504,7 @@ fn bed13_history_citations_write_citations_content() {
 }
 
 /// BED-14: a web citation's `url` was dropped (or folded into `title`); Converse's
+/// `CitationLocation` has a `web` member carrying it.
 #[test]
 fn bed14_web_citation_url_rides_the_web_location() {
     let cit = crate::codec::ir::IrCitation {

@@ -1,4 +1,5 @@
 //! The invoke-model envelope, sans I/O: an Anthropic Messages exchange carried over Amazon Bedrock's
+//! `InvokeModel` / `InvokeModelWithResponseStream`.
 
 use std::borrow::Cow;
 
@@ -46,6 +47,8 @@ pub fn path(model: &str, stream: bool) -> String {
 pub type HeadField = (String, Vec<u8>);
 
 /// The far request's head fields over the envelope: the Messages API version is not sent (the body
+/// states the envelope's), the caller's beta flags are taken out to ride in the body, and a streamed
+/// answer is asked for in the event-stream framing.
 #[must_use]
 pub fn fields(fields: Vec<HeadField>, stream: bool) -> (Vec<HeadField>, Vec<Vec<u8>>) {
     let (beta, rest): (Vec<_>, Vec<_>) = fields
@@ -66,6 +69,8 @@ pub fn fields(fields: Vec<HeadField>, stream: bool) -> (Vec<HeadField>, Vec<Vec<
 }
 
 /// The far request's body over the envelope, a byte-level edit of the Messages body (never a
+/// re-serialization): `model` and `stream` removed, `anthropic_version` stated, and the caller's beta
+/// flags (each field's comma-separated list, in order) as `anthropic_beta`.
 #[must_use]
 pub fn body(messages: &[u8], beta: &[Vec<u8>]) -> Option<Vec<u8>> {
     let flags: Vec<Value> = beta
@@ -95,6 +100,7 @@ pub fn body(messages: &[u8], beta: &[Vec<u8>]) -> Option<Vec<u8>> {
 }
 
 /// The Anthropic dialect's error kind for a Bedrock exception name (`ValidationException`, or the
+/// event-stream form `validationException`, with or without a `:…` suffix).
 fn kind_of(exception: &str) -> &'static str {
     let name = exception.split(':').next().unwrap_or("").trim();
     match name.to_ascii_lowercase().as_str() {
@@ -118,6 +124,7 @@ fn envelope(kind: &str, message: &str) -> Vec<u8> {
 }
 
 /// A refused answer's body, re-stated in the Anthropic dialect's error envelope from Bedrock's
+/// `{"message": …}` and its `x-amzn-ErrorType` field.
 #[must_use]
 pub fn error_body(head: HeadFields<'_>, body: &[u8]) -> Vec<u8> {
     let parsed: Option<Value> = serde_json::from_slice(body).ok();
@@ -206,6 +213,15 @@ impl Transcoder {
                     .ok()
                     .and_then(|v| v.get("type").and_then(Value::as_str).map(str::to_string))
                     .unwrap_or_default();
+                if kind.contains(['\r', '\n']) {
+                    sse(
+                        &mut out,
+                        "error",
+                        &envelope("api_error", "malformed InvokeModel stream event type"),
+                    );
+                    self.ended = true;
+                    return out;
+                }
                 sse(&mut out, &kind, &event);
             } else if !event_type.is_empty() {
                 let message = serde_json::from_slice::<Value>(&payload)
@@ -235,12 +251,13 @@ impl Transcoder {
 }
 
 /// One `chunk` frame's event: its `bytes` member, base64-decoded. An event that spans lines is
+/// written on one, since a server-sent event's data is one line here.
 fn chunk_event(payload: &[u8]) -> Option<Vec<u8>> {
     let v: Value = serde_json::from_slice(payload).ok()?;
     let encoded = v.get("bytes")?.as_str()?;
     let event = busbar_contract::media::base64_decode(encoded)?.to_vec();
-    if event.contains(&b'\n') {
-        let parsed: Value = serde_json::from_slice(&event).ok()?;
+    let parsed: Value = serde_json::from_slice(&event).ok()?;
+    if event.contains(&b'\n') || event.contains(&b'\r') {
         return serde_json::to_vec(&parsed).ok();
     }
     Some(event)
@@ -254,3 +271,7 @@ fn sse(out: &mut Vec<u8>, event: &str, data: &[u8]) {
     out.extend_from_slice(data);
     out.extend_from_slice(b"\n\n");
 }
+
+#[cfg(test)]
+#[path = "tests/audit_malformed_invoke_tests.rs"]
+mod audit_malformed_invoke_tests;

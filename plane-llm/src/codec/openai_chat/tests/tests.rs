@@ -40,6 +40,7 @@ fn buffered_annotations_index_content_without_refusal_text() {
 use crate::codec::ir::{IrBlock, IrBlockMeta, IrDelta, IrMessage, IrRole, IrStreamEvent, IrUsage};
 
 /// The streaming `include_usage` trailer must be its OWN chunk, not folded onto the finish
+/// chunk.
 #[test]
 fn test_split_openai_trailing_usage_unfolds_finish_chunk() {
     let mut finish = serde_json::json!({
@@ -82,6 +83,7 @@ fn test_split_openai_trailing_usage_unfolds_finish_chunk() {
 }
 
 /// A chunk WITHOUT a folded usage (every non-finish chunk, and a finish chunk that never
+/// folded one) is left untouched — the split is a no-op on the common path.
 #[test]
 fn test_split_openai_trailing_usage_noop_without_usage() {
     let mut finish = serde_json::json!({
@@ -105,6 +107,7 @@ fn test_split_openai_trailing_usage_noop_without_usage() {
 }
 
 /// The writer folds usage onto the terminal `MessageDelta` whenever the counts are nonzero — NOT
+/// only when that delta carries a stop reason.
 #[test]
 fn test_folded_usage_without_a_finish_reason_still_unfolds() {
     let writer = OpenAiWriter;
@@ -354,6 +357,8 @@ fn read_request_ignores_nonpositive_max_completion_tokens() {
 }
 
 /// Regression: a ToolResult whose content is multiple Text blocks
+/// (e.g. from an Anthropic tool_result content array) must serialize to OpenAI `content` by
+/// CONCATENATION with NO separator — matching the read path (`push_str`, no separator).
 #[test]
 fn write_request_tool_result_multi_text_concatenates_without_separator() {
     let req = crate::codec::ir::IrRequest {
@@ -677,6 +682,8 @@ fn write_request_keeps_tool_use_on_user_message() {
 }
 
 /// A Tool-role message carrying ONLY ToolResult blocks must
+/// emit ONLY the flat `{"role":"tool",...}` entries — `msg_obj` is NOT pushed (no spurious
+/// `{"role":"tool","content":null}` entry).
 #[test]
 fn write_request_pure_tool_result_message_emits_only_flat_entries() {
     let req = crate::codec::ir::IrRequest {
@@ -737,6 +744,8 @@ fn write_request_pure_tool_result_message_emits_only_flat_entries() {
 }
 
 /// A Tool-role message carrying BOTH a ToolResult block AND
+/// non-ToolResult content (Text here, plus a ToolUse) must NOT silently drop the non-ToolResult
+/// content.
 #[test]
 fn write_request_tool_role_mixed_content_not_dropped() {
     let req = crate::codec::ir::IrRequest {
@@ -828,6 +837,7 @@ fn write_request_tool_role_mixed_content_not_dropped() {
 }
 
 /// Regression: a Gemini `functionResponse` decodes to an IrRole::User message carrying
+/// a ToolResult block (Anthropic tool_results live on a User-role message too).
 #[test]
 fn write_request_tool_result_on_user_message_emits_tool_message() {
     let req = crate::codec::ir::IrRequest {
@@ -1413,6 +1423,7 @@ fn read_request_preserves_sampling_params_in_extra() {
 }
 
 /// `reasoning_effort` values the IR has no word for (a spelling newer than this build) must NOT be
+/// lost (`"xhigh"` and `"none"` now map to `XHigh` / `Off`, OAI-10 / IR-09).
 #[test]
 fn unknown_reasoning_effort_survives_in_extra() {
     let body = serde_json::json!({
@@ -1629,6 +1640,8 @@ fn extract_error_derives_code_and_type_single_parse() {
 }
 
 /// Regression: a context-length overflow signalled ONLY in the prose `message` with a
+/// null `code` must still synthesize `provider_code = "context_length_exceeded"` so the breaker
+/// pipeline triggers oversized-request failover instead of penalizing a healthy lane.
 #[test]
 fn extract_error_synthesizes_context_length_from_prose_message() {
     let body = br#"{"error":{"message":"This model's maximum context length is 8192 tokens, however you requested 9000 tokens. Please reduce the length of the messages.","type":"invalid_request_error","param":"messages","code":null}}"#;
@@ -1659,6 +1672,9 @@ fn extract_error_synthesizes_context_length_from_prose_message() {
 }
 
 /// Regression: the context-length message scan was OVER-BROAD — it ORed weak tokens
+/// `(token|context) && (too long|exceeds|maximum)`, so unrelated errors that merely mention a
+/// `maximum` and a `token` (or are `too long` over some non-context budget) misclassified as
+/// ContextLength and triggered a no-penalty failover.
 #[test]
 fn extract_error_context_length_scan_is_precise_no_false_positives() {
     let quota = br#"{"error":{"message":"You have reached the maximum number of tokens allowed per day for this organization.","type":"insufficient_quota","code":null}}"#;
@@ -2324,6 +2340,8 @@ fn stream_tool_call_index_close_does_not_overflow_on_finish() {
 }
 
 /// When a tool opens BEFORE any text, then text arrives, a later tool-argument delta must be
+/// emitted at the IR index the tool's BlockStart was RECORDED with (`tool_ir_index`), NOT a
+/// recomputed `ir_idx` (which shifts once text is present).
 #[test]
 fn stream_tool_arg_delta_uses_recorded_block_start_index() {
     let reader = OpenAiReader;
@@ -3676,6 +3694,7 @@ fn test_ir_request() -> crate::codec::ir::IrRequest {
 }
 
 /// Opt-out strips usage: with `client_include_usage == false` (the default), the OpenAI
+/// framing STRIPS a folded usage off the finish chunk and emits NO trailing usage chunk.
 #[test]
 fn test_framing_gates_usage_on_client_include_usage() {
     use super::super::proto_codec::StreamFraming;
@@ -3736,6 +3755,7 @@ fn bytes(payload: &serde_json::Value) -> Vec<u8> {
 }
 
 /// Usage-strip object gate: an OpenAI-COMPATIBLE upstream may omit the `object` field on its
+/// content chunks while still stamping the forced-`include_usage` `"usage":null` tell.
 #[test]
 fn strip_same_proto_usage_fires_without_object_field() {
     use super::super::proto_codec::StreamFraming;
@@ -3780,6 +3800,7 @@ fn strip_same_proto_usage_fires_without_object_field() {
 }
 
 /// Usage-trailer suppression object gate: an OpenAI-COMPATIBLE upstream may omit (or vary) the
+/// `object` field on the forced-`include_usage` trailing usage-only chunk.
 #[test]
 fn suppress_same_proto_frame_fires_without_object_field() {
     use super::super::proto_codec::StreamFraming;
@@ -3824,6 +3845,7 @@ fn suppress_same_proto_frame_fires_without_object_field() {
 }
 
 /// 0-based streaming tool_calls index (unit): `remap_tool_call_index` rewrites the
+/// writer's raw IR-block index onto a 0-based per-call ordinal.
 #[test]
 fn test_remap_tool_call_index_is_0_based_per_call() {
     use super::super::proto_codec::StreamFraming;
@@ -3883,6 +3905,10 @@ fn test_remap_tool_call_index_is_0_based_per_call() {
 }
 
 /// N>1 cross-protocol: a request asking for N>1 candidate completions cannot round-trip
+/// through the single-candidate response IR, so the cross-protocol egress seam
+/// (`prepare_for_egress`) must CLAMP `n` to 1 before the egress writer emits it — otherwise the
+/// backend generates (and bills for) N candidates while translation keeps only choice 0 and
+/// silently drops the rest.
 #[test]
 fn test_n_gt_1_clamped_to_one_on_cross_protocol_egress() {
     use crate::codec::egress_prep::EgressPrep;
@@ -4121,6 +4147,7 @@ fn phase0_sampling_fields_roundtrip_same_protocol() {
 }
 
 /// A Responses `file_id` image (the FILE_ID_IMAGE_SENTINEL media_type) reaching the OpenAI
+/// egress is an unresolvable cross-vendor reference.
 #[test]
 fn test_write_request_file_id_image_dropped_not_corrupted() {
     let writer = OpenAiWriter;
@@ -4200,6 +4227,8 @@ fn test_write_request_file_id_image_dropped_not_corrupted() {
 }
 
 /// HIGH (asymmetric twin of the file_id leak): a Bedrock S3-source image (the IMAGE_S3_SENTINEL
+/// media_type, `data` = serialized s3Location JSON) reaching the OpenAI egress is an unresolvable
+/// cross-vendor reference.
 #[test]
 fn test_write_request_image_s3_dropped_not_corrupted() {
     let writer = OpenAiWriter;
@@ -4315,6 +4344,8 @@ fn test_modeled_request_keys_are_the_mapping_rows() {
 }
 
 /// Non-stream `read_response` cache-token NORMALIZATION (ir.rs:457): OpenAI's `prompt_tokens` is a
+/// TOTAL that INCLUDES the cached prefix, so the reader must SUBTRACT `cached_tokens` to leave
+/// `input_tokens` UNCACHED and store the cached count additively in `cache_read_input_tokens`.
 #[test]
 fn read_response_subtracts_cached_prefix_from_prompt_tokens() {
     let body = serde_json::json!({
@@ -4349,6 +4380,8 @@ fn read_response_subtracts_cached_prefix_from_prompt_tokens() {
 }
 
 /// The write side RECONSTRUCTS the native wire shape: it must ADD the cached prefix BACK onto the
+/// uncached IR `input_tokens` to re-derive OpenAI's TOTAL `prompt_tokens`, and re-emit
+/// `prompt_tokens_details.cached_tokens`.
 #[test]
 fn write_response_reconstructs_prompt_tokens_total_with_cached_details() {
     let resp = crate::codec::ir::IrResponse {
@@ -4381,6 +4414,7 @@ fn write_response_reconstructs_prompt_tokens_total_with_cached_details() {
 }
 
 /// A cache-free response must NOT emit a spurious `prompt_tokens_details` object — matching the
+/// native OpenAI shape (the details object appears only when a cache read occurred).
 #[test]
 fn write_response_omits_cached_details_when_no_cache_read() {
     let mut resp = crate::codec::ir::IrResponse {
@@ -4414,6 +4448,9 @@ fn write_response_omits_cached_details_when_no_cache_read() {
 }
 
 /// A `response_format` json_schema directive must round-trip read→IR→write byte-faithful: the
+/// nested `{type:"json_schema", json_schema:{name,schema,strict,description}}` OpenAI shape reads
+/// into the typed `IrResponseFormat` and writes back to the same nested shape (the canonicalized
+/// carrier that stops a foreign shape from being echoed cross-protocol — ir.rs:348).
 #[test]
 fn response_format_json_schema_round_trips() {
     let schema = serde_json::json!({
@@ -4464,6 +4501,9 @@ fn response_format_json_schema_round_trips() {
 }
 
 /// An UNKNOWN native `finish_reason` (a token OpenAI may add after this build) reads to
+/// `IrStopReason::Other` (ir.rs:186 — no String payload, nothing foreign to carry), and on egress
+/// `Other` degrades to the SDK-safe `stop` rather than leaking an off-enum value a strict client
+/// SDK rejects.
 #[test]
 fn read_response_unknown_finish_reason_maps_to_other_and_degrades_to_stop() {
     assert_eq!(
@@ -4498,6 +4538,8 @@ fn read_response_unknown_finish_reason_maps_to_other_and_degrades_to_stop() {
 }
 
 /// Multi-element `stop` must emit as a JSON ARRAY on the wire (not a bare string), and an empty
+/// `stop` vec must be OMITTED entirely (ir.rs:57 — a request that never carried stops must not
+/// gain a spurious empty `stop` on translation).
 #[test]
 fn write_request_stop_sequences_array_and_empty_omitted() {
     let mut req = test_ir_request();
@@ -4519,6 +4561,7 @@ fn write_request_stop_sequences_array_and_empty_omitted() {
 }
 
 /// A structured-outputs / safety refusal arrives as `content: null` + `refusal: "..."` with
+/// `finish_reason: "stop"`.
 #[test]
 fn read_response_surfaces_a_refusal_as_text_and_promotes_the_stop_reason() {
     let body = serde_json::json!({
@@ -4576,6 +4619,7 @@ fn read_response_refusal_does_not_override_a_length_stop() {
 }
 
 /// The streaming refusal is the same defect on the other path: `delta.refusal` carries the text in
+/// the same incremental shape as `delta.content`, and the terminal frame still says `stop`.
 #[test]
 fn stream_refusal_deltas_open_a_text_block_and_promote_the_stop_reason() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -4642,6 +4686,8 @@ fn stream_refusal_deltas_open_a_text_block_and_promote_the_stop_reason() {
 }
 
 /// Chat Completions has a native `annotations`/`url_citation` shape, and the writer emitted no
+/// annotations key at all — so a grounded Anthropic or Gemini response reached an OpenAI-dialect
+/// client with its sources gone.
 #[test]
 fn write_response_carries_citations_with_join_relative_offsets() {
     let cite = |quote: &str, title: &str, url: &str| crate::codec::ir::IrCitation {
@@ -4706,6 +4752,7 @@ fn write_response_carries_citations_with_join_relative_offsets() {
 }
 
 /// `start_index: i64::MAX` (upstream-controlled, only sign-checked) must not panic on
+/// the response path.
 #[test]
 fn url_annotation_offset_saturates_on_absurd_upstream_index() {
     let citations = vec![crate::codec::ir::IrCitation {
@@ -4732,6 +4779,7 @@ fn url_annotation_offset_saturates_on_absurd_upstream_index() {
 }
 
 /// The writer's base accumulator must advance in CHARACTERS, not bytes — the
+/// IR citation contract is characters.
 #[test]
 fn url_annotation_base_accumulates_in_characters() {
     let cite = |quote: &str, url: &str| crate::codec::ir::IrCitation {
@@ -4793,6 +4841,8 @@ fn url_annotation_base_accumulates_in_characters() {
 }
 
 /// The quote-recovery arm's `text.find(q)`/`q.len()` are byte offsets/lengths;
+/// converting to chars at the point of use must report character-based indices even when the
+/// quoted text follows non-ASCII content in the same block.
 #[test]
 fn url_annotation_quote_recovery_reports_character_indices() {
     let citations = vec![crate::codec::ir::IrCitation {
@@ -4823,6 +4873,7 @@ fn url_annotation_quote_recovery_reports_character_indices() {
 }
 
 /// A completion with no sources must carry NO annotations key. OpenAI omits it when none were
+/// produced, so a hardcoded empty array would be a proxy tell in the other direction.
 #[test]
 fn write_response_omits_annotations_when_there_are_no_citations() {
     let resp = crate::codec::ir::IrResponse {
@@ -4845,6 +4896,7 @@ fn write_response_omits_annotations_when_there_are_no_citations() {
 }
 
 /// `image_url.detail` is carried in the Image block's typed slot (IR-08) — `high` reaches the IR
+/// (and a same-lane re-serialize) without a drop warn.
 #[test]
 fn image_detail_is_carried_and_only_an_unknown_word_warns() {
     let body = |detail: &str| {
@@ -4905,6 +4957,7 @@ fn image_detail_is_carried_and_only_an_unknown_word_warns() {
 }
 
 /// REGRESSION PROOF: an Anthropic-sourced citation's
+/// `start_char_index`/`end_char_index` are ALREADY characters (the IR contract).
 #[test]
 fn anthropic_sourced_citation_indices_are_not_double_converted() {
     let citations = vec![crate::codec::ir::IrCitation {
@@ -4933,6 +4986,9 @@ fn anthropic_sourced_citation_indices_are_not_double_converted() {
 }
 
 /// A Chat response's `message.annotations` (`url_citation` entries) must be read into the IR
+/// Text block's `citations`, carrying url/title — but NOT the offsets: `IrCitation::start_index`/
+/// `end_index` are deliberately left `None` because OpenAI does not document whether its
+/// `start_index`/`end_index` count bytes or characters (see `read_url_annotations`).
 #[test]
 fn chat_response_annotations_read_into_ir_citations() {
     let body = serde_json::json!({
@@ -4988,6 +5044,7 @@ fn chat_response_annotations_read_into_ir_citations() {
 }
 
 /// A `url_citation` annotation with no usable `url` must be skipped — symmetric with
+/// `url_annotations`' never-invent-a-fact rule in the write direction.
 #[test]
 fn openai_annotation_without_a_url_is_skipped() {
     let body = serde_json::json!({
@@ -5027,6 +5084,7 @@ fn openai_annotation_without_a_url_is_skipped() {
 }
 
 /// An OpenAI URL citation remains in the IR, but lacks the native source text and opaque index
+/// required by Anthropic.
 #[test]
 fn openai_chat_citation_unavailable_on_anthropic_is_audited() {
     let body = serde_json::json!({
@@ -5366,6 +5424,7 @@ fn write_response_tool_call_only_turn_still_carries_refusal_and_logprobs() {
 }
 
 /// An OpenAI-compatible upstream (OpenAI, Azure, vLLM, OpenRouter) that fails MID-STREAM emits an
+/// inline `data: {"error":{...}}` SSE chunk on an already-200 response.
 #[test]
 fn test_stream_inline_error_chunk_surfaces_ir_error() {
     let reader = OpenAiReader;
@@ -5419,6 +5478,9 @@ fn test_stream_inline_error_chunk_surfaces_ir_error() {
 }
 
 /// The inline error's class is derived from the upstream `type`/`code`, not hardcoded: a
+/// rate-limit reads as `RateLimit`, an auth failure as `Auth`, a context-length `code` as
+/// `ContextLength`, and an unrecognized/absent signal falls back to the transient `ServerError`
+/// bucket (the lane recovers via cooldown rather than being permanently penalized).
 #[test]
 fn test_stream_inline_error_class_derivation() {
     let cases: [(serde_json::Value, StatusClass); 4] = [
@@ -5461,6 +5523,8 @@ fn test_stream_inline_error_class_derivation() {
 }
 
 /// End-to-end money path: an Anthropic client relayed onto an OpenAI upstream that dies mid-stream
+/// must NOT receive a clean `message_stop` terminator, and the translator must report a
+/// `terminal_error()` so the stream-end billing/breaker arms treat the stream as failed.
 #[test]
 fn test_inline_error_chunk_reaches_anthropic_ingress_as_an_error_frame() {
     let mut t = crate::codec::proto_stream::StreamTranslate::new("anthropic", "openai")
@@ -5522,6 +5586,8 @@ fn status_word_golden() {
 }
 
 /// A `custom` tool call in the conversation history (a type the IR does not model) is skipped by
+/// the reader, never refused: the reader is a tap, and a same-dialect relay carries the call byte
+/// for byte (DIALECT-FIDELITY-DESIGN F2 reader tolerance).
 #[test]
 fn a_custom_tool_call_in_history_is_skipped_not_refused() {
     let body = serde_json::json!({

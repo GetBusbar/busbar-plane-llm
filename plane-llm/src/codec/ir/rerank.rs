@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Rerank IR (the seventh operation), cross-protocol across Cohere (`/v2/rerank`) and Bedrock (rerank
+//! models via `InvokeModel`), the only protocols with a rerank surface.
 
 use busbar_contract::billing::Billing;
 use busbar_contract::ir::SourceScopedExtra;
@@ -68,6 +69,8 @@ pub struct RerankResult {
 }
 
 /// The meter class billed searches are ledgered and priced under (a rerank's search units, and an
+/// Anthropic turn's server-side web searches via `IrUsage::to_token_usage`): the key an operator
+/// writes under `rate_card.<model>.units` (Cohere's own field name).
 pub const SEARCH_UNITS_CLASS: &str = "search_units";
 
 /// Rerank response IR.
@@ -81,6 +84,9 @@ pub struct RerankResp {
 
 impl RerankResp {
     /// Billing projection: no token meter on either wire. The search units Cohere billed
+    /// (`meta.billed_units.search_units`, read exactly by the response reader) are the price's quantity
+    /// and reach it as the open class [`SEARCH_UNITS_CLASS`] (item 134), so a 5,000-document rerank no
+    /// longer bills like a 1-document one.
     pub fn billing(&self) -> Option<Billing> {
         Some(match self.search_units {
             Some(count) => Billing::Counted {

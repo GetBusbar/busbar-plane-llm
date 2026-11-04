@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The per-dialect all-in-one classifiers behind `ProtocolReader::classify` (test-only: the release
+//! path runs `extract_error` + the host's `normalize_raw_error`).
 
 use crate::codec::keys;
 use busbar_contract::http::StatusCode;
@@ -276,6 +277,7 @@ pub(crate) fn bedrock(status: StatusCode, body: &[u8]) -> CanonicalSignal {
 }
 
 /// Canonical bearer-envelope error classification, shared verbatim by `OpenAiReader::classify` and
+/// `ResponsesReader::classify` (the two were word-for-word identical).
 pub(crate) fn bearer(status: u16, body: &[u8]) -> CanonicalSignal {
     let code_is_context = crate::codec::json::parse::<serde_json::Value>(body)
         .ok()

@@ -1,6 +1,7 @@
 use super::*;
 
 /// One Responses SSE frame: the event name, and its data, whose `type` IS the event name (spelled
+/// once per frame here; `sequence_number` is stamped by `write_response_events`).
 fn event(name: &'static str, mut data: serde_json::Value) -> (String, serde_json::Value) {
     if let Some(obj) = data.as_object_mut() {
         obj.insert(keys::TYPE.to_string(), serde_json::Value::from(name));
@@ -14,6 +15,7 @@ impl ProtocolWriter for ResponsesWriter {
     }
 
     /// Latch the original ingress request body so `write_response_events` can answer the spec's
+    /// request-echo members with the client's values (see `ResponsesWriter::store_request_echo`).
     fn set_request_echo(&self, ingress_request_body: &serde_json::Value) {
         self.store_request_echo(ingress_request_body);
     }
@@ -51,6 +53,7 @@ impl ProtocolWriter for ResponsesWriter {
     }
 
     /// `input` may be a list of items or a bare string (one implicit user turn); either is replaced
+    /// by the EasyInputMessage list.
     fn apply_rewrite_to_ingress_body(
         &self,
         obj: &mut serde_json::Map<String, serde_json::Value>,
@@ -565,6 +568,8 @@ impl ProtocolWriter for ResponsesWriter {
             return Ok(Vec::new());
         }
 
+        self.reserve_stream_event(ev)?;
+
         let frames: Vec<(String, serde_json::Value)> = match ev {
             IrStreamEvent::MessageStart {
                 id,
@@ -854,7 +859,7 @@ impl ProtocolWriter for ResponsesWriter {
                             obj.insert(ENCRYPTED_CONTENT.to_string(), serde_json::json!(sig));
                         }
                     }
-                    self.record_output_item(*index, item.clone());
+                    self.record_output_item(*index, &item)?;
                     if summary {
                         vec![
                             event(
@@ -916,15 +921,25 @@ impl ProtocolWriter for ResponsesWriter {
                         (keys::ARGUMENTS): accum.arguments,
                     });
 
-                    self.record_output_item(*index, item.clone());
-                    vec![event(
-                        EVT_OUTPUT_ITEM_DONE,
-                        serde_json::json!({
-                            (OUTPUT_INDEX): index,
-                            (ITEM_ID): item_id,
-                            (ITEM): item,
-                        }),
-                    )]
+                    self.record_output_item(*index, &item)?;
+                    vec![
+                        event(
+                            EVT_FUNCTION_CALL_ARGS_DONE,
+                            serde_json::json!({
+                                (OUTPUT_INDEX): index,
+                                (ITEM_ID): item_id,
+                                (keys::ARGUMENTS): accum.arguments,
+                            }),
+                        ),
+                        event(
+                            EVT_OUTPUT_ITEM_DONE,
+                            serde_json::json!({
+                                (OUTPUT_INDEX): index,
+                                (ITEM_ID): item_id,
+                                (ITEM): item,
+                            }),
+                        ),
+                    ]
                 } else if self.is_refusal(*index) && self.take_text_open(*index) {
                     self.take_refusal(*index);
                     let item_id = self.item_id_for(host, ITEM_ID_PREFIX_MSG, *index)?;
@@ -940,7 +955,7 @@ impl ProtocolWriter for ResponsesWriter {
                         (keys::STATUS): STATUS_COMPLETED,
                         (keys::CONTENT): [part.clone()]
                     });
-                    self.record_output_item(*index, item.clone());
+                    self.record_output_item(*index, &item)?;
                     vec![
                         event(
                             EVT_REFUSAL_DONE,
@@ -995,7 +1010,7 @@ impl ProtocolWriter for ResponsesWriter {
                         ]
                     });
 
-                    self.record_output_item(*index, item.clone());
+                    self.record_output_item(*index, &item)?;
                     vec![
                         event(
                             EVT_OUTPUT_TEXT_DONE,
@@ -1447,6 +1462,7 @@ impl ProtocolWriter for ResponsesWriter {
 }
 
 /// One IR image to a Responses `input_image` part, or `None` when the source has no Responses
+/// form.
 fn input_image_part(
     source: &crate::codec::ir::IrImageSource,
     detail: Option<crate::codec::ir::IrImageDetail>,
@@ -1511,7 +1527,8 @@ fn input_file_part(
                 serde_json::json!(format!("data:{media_type};base64,{data}")),
             );
         }
-        crate::codec::ir::IrImageSource::Url(url) => {
+        crate::codec::ir::IrImageSource::Url(url)
+        | crate::codec::ir::IrImageSource::UrlWithMime { url, .. } => {
             part.insert(FILE_URL.to_string(), serde_json::json!(url));
         }
 
@@ -1543,6 +1560,7 @@ fn input_file_part(
 }
 
 /// A `ToolResult`'s content as the `function_call_output.output` value (RSP-10): a string, or an
+/// array of `input_text` / `input_image` / `input_file` parts.
 fn function_call_output_value(content: &[crate::codec::ir::IrBlock]) -> serde_json::Value {
     let text_of = |b: &crate::codec::ir::IrBlock| -> Option<String> {
         match b {
@@ -1586,6 +1604,7 @@ fn function_call_output_value(content: &[crate::codec::ir::IrBlock]) -> serde_js
 }
 
 /// The response surface cannot carry a generated attachment. The scoped source origin names the
+/// loss; neither media bytes nor source URLs are included in diagnostics.
 fn drop_response_block(block: &crate::codec::ir::IrBlock) {
     crate::codec::drops::writer_drop!(
         crate::codec::drops::block(block.kind_name()),

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR mapping — the IR-CORE half of the typed slots: what the shared stream machinery does with
+//! a slot a reader set.
 
 use crate::codec::ir::{IrBlock, IrResponse, IrStopDetail, IrStopReason, IrStreamEvent, IrUsage};
 

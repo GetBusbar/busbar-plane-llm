@@ -219,6 +219,7 @@ async fn a_global_tap_leaves_an_access_amendment_only_when_handed_the_prompt() {
 }
 
 /// The exact strings a `prompt: ro` hook is shown for `body` posted to `path`, flattened across
+/// turns, and the size signal.
 async fn gate_view(path: &str, content_type: &str, body: &[u8]) -> (String, usize) {
     let (seen, policy) = capturing(true, false, None);
     let rig = Rig::new(
@@ -347,6 +348,7 @@ struct Seen {
 }
 
 /// A headroom-shaped compressor: echoes every turn as `{role, content}`, keeps a `system` turn and
+/// the last turn verbatim, and replaces every other turn's text.
 struct Compressor(Mutex<Option<Seen>>);
 
 #[async_trait::async_trait]
@@ -396,6 +398,7 @@ impl RoutingPolicy for Compressor {
 }
 
 /// One rw hook over `v` posted to `path` in a same-dialect pool served by `provider`: what the
+/// hook saw, and the body the far end was sent.
 async fn rewrite(path: &str, provider: &'static str, v: Value) -> (Seen, Value) {
     let hook = Arc::new(Compressor(Mutex::new(None)));
     let rig = Rig::new(
@@ -568,6 +571,7 @@ async fn responses_instructions_are_system_and_a_system_item_is_a_turn() {
 }
 
 /// `v` posted to `path` in a same-dialect pool served by `provider`, under a rw hook answering
+/// `messages`: the body the far end was sent.
 async fn rewritten(path: &str, provider: &'static str, v: Value, messages: Vec<Value>) -> Value {
     let rig = Rig::new(
         Pool {
@@ -599,6 +603,7 @@ async fn rewritten(path: &str, provider: &'static str, v: Value, messages: Vec<V
 }
 
 /// The plane's own rewrite step over `body` arriving at `target`: the rewritten body, `None` when
+/// the rewrite leaves the arrival untouched (and then the arrival's body is unchanged).
 fn applied(target: &str, body: &[u8], rewrite: &Value) -> Option<Value> {
     use busbar_plane_llm::exchange::arrive::arrive;
     use busbar_plane_llm::exchange::project::apply_rewrite;

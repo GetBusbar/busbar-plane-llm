@@ -340,5 +340,5 @@ fn genuine_errors_use_v2_error_even_when_the_signal_mentions_safety() {
             },
         )
         .unwrap();
-    assert_eq!(safe["delta"]["finish_reason"], "COMPLETE");
+    assert_eq!(safe["delta"]["finish_reason"], "ERROR");
 }

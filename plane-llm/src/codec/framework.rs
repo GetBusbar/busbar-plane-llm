@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The parts of the dialect framework only this plane names: the codec-row lookups, the media
+//! carriers, the duration rendering, and the error kinds, signals and head reader its dialects
+//! share.
 
 use busbar_contract::codec::{Cell, OperationHandler};
 use busbar_contract::operation::OpVerb;
@@ -9,6 +11,7 @@ use busbar_contract::protocol::HeadFields;
 use busbar_contract::{Count, SlabBytes};
 
 /// The row lookup every [`RequestHandler::operation_handler`] is, stated once. Rows are
+/// single-digit, so a few pointer comparisons beat a map.
 pub fn cell_of(cells: &'static [Cell], op: OpVerb) -> Option<&'static dyn OperationHandler> {
     cells
         .iter()
@@ -17,6 +20,7 @@ pub fn cell_of(cells: &'static [Cell], op: OpVerb) -> Option<&'static dyn Operat
 }
 
 /// The (verb to upstream path) lookup for protocols whose egress paths are constants rather than
+/// templates.
 pub fn path_of(paths: &'static [(OpVerb, &'static str)], op: OpVerb) -> Option<&'static str> {
     paths
         .iter()
@@ -81,15 +85,19 @@ pub const KIND_TIMEOUT: &str = "timeout";
 pub const KIND_SERVER_ERROR: &str = ERR_TYPE_SERVER_ERROR;
 
 /// Provider error-code token for a request exceeding the model's context window. Returned for
+/// `StatusClass::ContextLength`; the per-protocol writer emits the native context-length category.
 pub const PROVIDER_CODE_CONTEXT_LENGTH: &str = "context_length_exceeded";
 
 /// Busbar-internal `provider_signal` label for an IR-parse failure (the lane label the breaker and
+/// metrics read).
 pub const SIGNAL_IR_PARSE: &str = "ir_parse";
 
 /// Client-visible detail for a mid-stream abort (upstream dropped or a translate step failed after
+/// the first byte).
 pub const STREAM_ABORT_DETAIL: &str = "The response stream was interrupted.";
 
 /// The value of the first field in `fields` named `name` (any case) whose value is a legal header
+/// value (every byte `>= 0x20` but DEL, or a tab), else `None`.
 #[must_use]
 pub fn head_field<'a>(fields: HeadFields<'a>, name: &str) -> Option<&'a [u8]> {
     fields

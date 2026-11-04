@@ -41,6 +41,79 @@ impl std::error::Error for UnreadableCount {}
 /// How much of an unreadable value is quoted back: enough to diagnose, bounded against a hostile body.
 const SPELLING_BUDGET: usize = 64;
 
+// Limit string scanning as well as output: serde_json otherwise scans the entire
+// unescaped string before submitting its first fragment to the capped writer.
+fn spelling_string_prefix(s: &str) -> &str {
+    let end = s
+        .char_indices()
+        .nth(SPELLING_BUDGET + 1)
+        .map_or(s.len(), |(i, _)| i);
+    &s[..end]
+}
+
+struct SpellingValue<'a>(&'a serde_json::Value);
+
+impl serde::Serialize for SpellingValue<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{SerializeMap, SerializeSeq};
+        match self.0 {
+            serde_json::Value::String(s) => serializer.serialize_str(spelling_string_prefix(s)),
+            serde_json::Value::Array(values) => {
+                let mut seq = serializer.serialize_seq(Some(values.len()))?;
+                for value in values {
+                    seq.serialize_element(&SpellingValue(value))?;
+                }
+                seq.end()
+            }
+            serde_json::Value::Object(values) => {
+                let mut map = serializer.serialize_map(Some(values.len()))?;
+                for (key, value) in values {
+                    map.serialize_entry(spelling_string_prefix(key), &SpellingValue(value))?;
+                }
+                map.end()
+            }
+            value => serde::Serialize::serialize(value, serializer),
+        }
+    }
+}
+
+fn bounded_spelling(value: &serde_json::Value) -> String {
+    struct Prefix {
+        bytes: Vec<u8>,
+        truncated: bool,
+    }
+    impl std::io::Write for Prefix {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            let keep = bytes.len().min(SPELLING_BUDGET - self.bytes.len());
+            self.bytes.extend_from_slice(&bytes[..keep]);
+            if keep < bytes.len() {
+                self.truncated = true;
+                return Err(std::io::Error::other("diagnostic prefix complete"));
+            }
+            Ok(keep)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut prefix = Prefix {
+        bytes: Vec::with_capacity(SPELLING_BUDGET),
+        truncated: false,
+    };
+    // The only possible error for a JSON Value is our deliberate writer cutoff.
+    let _ = serde_json::to_writer(&mut prefix, &SpellingValue(value));
+    let valid = match std::str::from_utf8(&prefix.bytes) {
+        Ok(_) => prefix.bytes.len(),
+        Err(error) => error.valid_up_to(),
+    };
+    prefix.bytes.truncate(valid);
+    let mut spelling = String::from_utf8(prefix.bytes).expect("validated UTF-8 prefix");
+    if prefix.truncated {
+        spelling.push('…');
+    }
+    spelling
+}
+
 /// Read one billed count out of a usage object: absent is zero, unreadable is a refusal.
 pub fn billed_count(
     usage: &serde_json::Value,
@@ -51,23 +124,15 @@ pub fn billed_count(
         Some(v) if v.is_null() => Ok(0),
         Some(v) => read_count_u64(v).ok_or_else(|| UnreadableCount {
             field,
-            spelling: {
-                let mut s = v.to_string();
-                if s.len() > SPELLING_BUDGET {
-                    let mut cut = SPELLING_BUDGET;
-                    while !s.is_char_boundary(cut) {
-                        cut -= 1;
-                    }
-                    s.truncate(cut);
-                    s.push('…');
-                }
-                s
-            },
+            spelling: bounded_spelling(v),
         }),
     }
 }
 
 /// [`billed_count`] for a count whose absence is distinct from zero (a cache tier, a per-TTL
+/// split): an absent usage object, field or `null` is `None` (never `Some(0)`), a readable count is
+/// `Some(n)`, and a present-but-unreadable count is the same [`UnreadableCount`] refusal, never the
+/// `None` that reads as "no cache reported".
 pub fn billed_count_opt(
     usage: Option<&serde_json::Value>,
     field: &'static str,
@@ -79,6 +144,8 @@ pub fn billed_count_opt(
 }
 
 /// A recorded count (one the ledger notes and never bills): absent or `null` is `Some(0)` (as
+/// [`billed_count`] reads it), a readable count is `Some(n)`, and a present unreadable one is
+/// unknown, `None`.
 pub fn recorded_count(
     usage: &serde_json::Value,
     field: &'static str,
@@ -205,6 +272,7 @@ fn parent<'a>(
 }
 
 /// One optional counter: absent or `null` is `None`, readable is `Some`, unreadable is the
+/// [`UnreadableCount`] the walk refuses on.
 fn opt(
     usage: Option<&serde_json::Value>,
     path: &'static [&'static str],
@@ -214,6 +282,7 @@ fn opt(
 }
 
 /// One billed leaf-operation usage count that is present and unreadable, refused on its own: warned
+/// loudly, it bills nothing, nothing stands in for it, and the answer it rode on is served.
 pub fn refused_count(protocol: &'static str, unreadable: &UnreadableCount) {
     tracing::warn!(
         protocol,
@@ -225,6 +294,7 @@ pub fn refused_count(protocol: &'static str, unreadable: &UnreadableCount) {
 }
 
 /// Attribution is already included in a billed total: an unreadable split stays unknown,
+/// while its diagnostic must remain visible without refusing or changing that total.
 fn recorded_optional(
     protocol: &'static str,
     read: Result<Option<u64>, UnreadableCount>,
@@ -244,6 +314,8 @@ fn recorded_optional(
 }
 
 /// The one usage reader. Walks a dialect's usage table over one wire usage object (`None` when
+/// absent) and builds the IR usage it states, each row under [`billed_count`]'s contract (absent is
+/// zero or `None`, readable is the count, present-but-unreadable is refused).
 pub fn read_usage(
     protocol: &'static str,
     usage: Option<&serde_json::Value>,
@@ -345,6 +417,7 @@ pub fn read_usage(
 }
 
 /// Whether [`read_usage`] refused a count of `usage` under `table` (a billed row present, not
+/// `null`, not a count).
 #[must_use]
 pub fn refused_any(usage: Option<&serde_json::Value>, table: &[UsageCount]) -> bool {
     table.iter().any(|&(_, read)| match read {
@@ -368,6 +441,8 @@ pub fn refused_any(usage: Option<&serde_json::Value>, table: &[UsageCount]) -> b
 }
 
 /// The stated-total cross-check: the total a provider states beside its itemized counts, against
+/// what the usage table ledgers from them (the four meter classes: uncached input, cache read, cache
+/// write, output).
 #[must_use]
 pub fn stated_total_note(
     protocol: &'static str,

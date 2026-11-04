@@ -148,6 +148,8 @@ fn test_probe_signs_and_sends_same_encoded_path_for_reserved_chars() {
 }
 
 /// A probe of a lane carries the lane's declared static fields exactly as organic traffic on the
+/// lane does: an anthropic lane's probe without `anthropic-version` is answered 400 by the far end,
+/// and the breaker would read that refusal as the lane's health.
 #[test]
 fn a_probe_carries_the_lanes_static_fields_as_organic_traffic_does() {
     use busbar_plane_llm::exchange::arrive::arrive;

@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! `decode_native_tool_id`'s lowercase-hex guard. `native_for` only ever emits a lowercase-hex tail,
+//! so a client-authored id of the busbar-marker shape carrying an UPPERCASE/mixed-case hex tail must
+//! NOT be mis-detected as busbar-reshaped and mangled — it passes through verbatim.
 
 use crate::codec::proto_codec::{decode_native_tool_id, ToolIdRemap, TOOL_ID_REMAP_MAX_MEMO};
 
@@ -38,6 +40,8 @@ fn uppercase_hex_client_id_passes_through_verbatim() {
 }
 
 /// The memo is an OPTIMIZATION over a pure, deterministic encode, and it is fed from UNTRUSTED
+/// upstream bytes: the Anthropic reader has no per-stream gate on how many distinct `tool_use`
+/// blocks a response may open, so one long-lived stream can grow the map without bound.
 #[test]
 fn memo_is_capped_and_answers_identically_past_the_cap() {
     let mut remap = ToolIdRemap::default();

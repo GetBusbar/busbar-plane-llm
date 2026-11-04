@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Concrete chat IR types (request, response and stream structs and enums), shared by path with
+//! busbar-core's test build so `crate::codec::ir::IrRequest` resolves in both crates.
 
 use serde_json::Value;
 
@@ -125,6 +126,8 @@ pub enum IrToolChoice {
 }
 
 /// Normalize a native stop-sequence field (bare string or array) into `Vec<String>`. Non-string
+/// elements and empty strings are skipped, so `""` or `[""]` yields an empty vec (omitted) and
+/// never a spurious `stop: [""]`.
 pub fn read_stop_sequences(val: Option<&Value>) -> Vec<String> {
     match val {
         Some(Value::String(s)) if !s.is_empty() => vec![s.clone()],
@@ -139,6 +142,7 @@ pub fn read_stop_sequences(val: Option<&Value>) -> Vec<String> {
 }
 
 /// Truncate `stop` to the egress vendor's published cap (vendors 400 on more). Warns only when it
+/// truncates.
 pub fn clamp_stop(stop: &[String], cap: usize, proto: &'static str) -> Vec<String> {
     if stop.len() <= cap {
         return stop.to_vec();
@@ -280,6 +284,7 @@ pub struct IrSafetyVerdict {
 
 impl IrSafetyVerdict {
     /// A `{"<category>": true|false, …}` map (the OpenAI family's moderation `categories`) as one
+    /// flagged, non-blocking verdict per category that is `true`.
     pub fn flagged_categories(categories: Option<&Value>) -> Vec<IrSafetyVerdict> {
         categories
             .and_then(|c| c.as_object())
@@ -322,6 +327,7 @@ pub struct IrSearchResult {
 }
 
 /// An empty assistant answer, so construction sites can spread `..Default::default()` and survive
+/// new response slots.
 impl Default for IrResponse {
     fn default() -> Self {
         IrResponse {
@@ -376,10 +382,12 @@ pub enum IrReasoningEffort {
 }
 
 /// Compiled-in effort table (mirrors the config defaults), the writer fallback when the seam did
+/// not stamp [`IrRequest::reasoning_budgets`].
 pub const REASONING_BUDGET_DEFAULTS: [u32; 4] = [1024, 4096, 8192, 16384];
 
 impl IrReasoningAsk {
     /// Project to a numeric budget via the table. `None` for `Dynamic` and `Off`, which a writer
+    /// carries in its own form or drops, never substitutes.
     pub fn to_budget(self, table: [u32; 4]) -> Option<u32> {
         match self {
             IrReasoningAsk::Budget(n) => Some(n),
@@ -395,6 +403,7 @@ impl IrReasoningAsk {
     }
 
     /// Project to a word, bucketing a numeric budget to the largest effort whose table entry it
+    /// reaches.
     pub fn to_effort(self, table: [u32; 4]) -> Option<IrReasoningEffort> {
         match self {
             IrReasoningAsk::Effort(e) => Some(e),
@@ -416,6 +425,8 @@ impl IrReasoningAsk {
 
 impl IrReasoningEffort {
     /// The effort on the `low`/`medium`/`high` scale every reasoning model accepts. Same as
+    /// [`Self::as_str`] except `Minimal` maps to `"low"` (only gpt-5 accepts `"minimal"`) and
+    /// `XHigh`/`Max` map to `"high"`.
     pub fn as_three_word_str(self) -> &'static str {
         match self {
             IrReasoningEffort::Minimal => "low",
@@ -436,6 +447,7 @@ impl IrReasoningEffort {
     }
 
     /// The four words every reader has always accepted. Not widened to `xhigh`/`max`: a reader
+    /// opts in through [`Self::parse_extended`] once every reachable writer projects them.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "minimal" => Some(IrReasoningEffort::Minimal),
@@ -638,6 +650,7 @@ pub struct IrSearchResultParts<'a> {
 
 impl IrBlock {
     /// The block's IR kind, as a dropped block is named (`codec::drops::Member::Block`): `text`,
+    /// `thinking`, `tool_use`, `tool_result`, `image`, or the attachment's media kind.
     pub fn kind_name(&self) -> &'static str {
         match self {
             IrBlock::Text { .. } => "text",
@@ -661,6 +674,10 @@ impl IrBlock {
     }
 
     /// The search-result slot: one caller-supplied RAG passage (Anthropic `search_result`, Converse
+    /// `searchResult`) modelled as a `Text` block any dialect can read (a `title — source` header line,
+    /// then the passage), carrying one provenance citation of kind `search_result_location` with no
+    /// location indices (which tells it apart from an answer's search-result citation, which always has
+    /// them).
     pub fn search_result(
         source: &str,
         title: &str,
@@ -736,11 +753,16 @@ impl IrBlock {
     }
 
     /// COH-17: an empty text block that only carries citations (a grounded turn with no text
+    /// part).
     pub fn is_citation_carrier(&self) -> bool {
         matches!(self, IrBlock::Text { text, citations, .. } if text.is_empty() && !citations.is_empty())
     }
 
     /// Is this block's content opaque to busbar (carried verbatim, never readable as plaintext, never
+    /// disclosable to a sidecar)? Opaque shapes: Anthropic `redacted_thinking`, Bedrock
+    /// `redactedContent` (both `Thinking { redacted: true, text: <ciphertext> }`), and a Responses
+    /// `reasoning` item with only `encrypted_content` (`redacted: false`, empty text, blob in
+    /// `signature`), which a redaction check keyed on `redacted` would pass, hence this predicate.
     pub fn is_opaque(&self) -> bool {
         match self {
             IrBlock::Thinking { redacted: true, .. } => true,
@@ -796,6 +818,7 @@ impl IrMediaKind {
 }
 
 /// Image media types every protocol accepts: `image/{jpeg,png,gif,webp}`. Emitting anything else
+/// verbatim (e.g. a Gemini `audio/mp3` `inlineData` read as an image) 400s the backend.
 pub fn image_subtype_if_supported(media_type: &str) -> Option<&'static str> {
     let subtype = media_type.strip_prefix("image/").or_else(|| {
         media_type
@@ -821,6 +844,8 @@ pub enum IrImageSource {
     Base64 { media_type: String, data: String },
     /// A remote image URL.
     Url(String),
+    /// A remote media URL with an explicit MIME type supplied by the producer.
+    UrlWithMime { url: String, media_type: String },
     /// Opaque vendor-scoped reference with no neutral form. `vendor` is the producing protocol; only
     /// its writer re-emits `value`, others drop it.
     Vendor { vendor: &'static str, value: Value },
@@ -874,6 +899,7 @@ impl IrResponseFormat {
     }
 
     /// Inverse of [`Self::from_json_schema_members`]. OpenAI requires `name`, so one is synthesized
+    /// when the source had none.
     pub fn write_json_schema_members(
         &self,
         schema: &Value,
@@ -1099,6 +1125,7 @@ pub struct UsageIdentityNote {
 
 impl IrUsage {
     /// Total billable tokens: `input_tokens` (uncached) + cache reads + cache creation +
+    /// `output_tokens`.
     pub fn billable_tokens(&self) -> u64 {
         self.input_tokens
             .saturating_add(self.cache_read_input_tokens.unwrap_or(0))
@@ -1107,6 +1134,7 @@ impl IrUsage {
     }
 
     /// Project the four normalized totals into the core [`busbar_contract::billing::TokenUsage`],
+    /// so billing and metering need not name this IR type.
     pub fn to_token_usage(&self) -> busbar_contract::billing::TokenUsage {
         busbar_contract::billing::TokenUsage {
             input: self.input_tokens,
@@ -1120,6 +1148,7 @@ impl IrUsage {
     }
 
     /// Separately reported counts by open class. Each is a ledger line under its meter class; the
+    /// plane reports units, never a price.
     fn open_units(&self) -> std::collections::BTreeMap<String, u64> {
         use crate::codec::ir::open_class::{
             add, CLASSIFICATIONS_CLASS, UNITEMIZED_TOKENS_CLASS, WEB_FETCH_REQUESTS_CLASS,
@@ -1156,6 +1185,7 @@ impl IrUsage {
     }
 
     /// Residuals, never billed: [`IrUsageDetail::residual_units`]. Every reported unit has an open
+    /// class ([`Self::open_units`]), so the map is empty; it stays for a count a reader cannot class.
     fn residual_units(&self) -> std::collections::BTreeMap<String, u64> {
         self.detail.residual_units.clone()
     }
@@ -1214,6 +1244,10 @@ pub enum IrDelta {
 /// OpenAI's flat stream uses it to synthesize block boundaries from chunks.
 #[derive(Debug, Clone, Default)]
 pub struct StreamDecodeState {
+    /// Responses message parts retain distinct IR identities for the stream lifetime.
+    pub responses_parts: std::collections::BTreeMap<(usize, usize), usize>,
+    /// Responses blocks already stopped; late frames must not reopen their identities.
+    pub responses_closed: std::collections::BTreeSet<usize>,
     /// Native origins recorded at the reader's block creation sites, keyed by that exact IR
     /// stream index. Retained through late citations until this decoder is dropped.
     pub block_origins: std::collections::BTreeMap<usize, IrBlockOrigin>,
@@ -1291,12 +1325,23 @@ pub struct StreamDecodeState {
     pub streamed_char_marks: Vec<usize>,
 }
 
+/// Maximum number of distinct blocks allocated across one stream, including closed blocks.
+pub const MAX_STREAM_BLOCKS: usize = 4096;
+
 impl StreamDecodeState {
     /// Claim the next free IR block index. `reasoning_seen` reserves index 0 for the thinking block
-    pub fn claim_ir_index(&mut self) -> usize {
+    /// (the OpenAI reader emits it with a hardcoded 0).
+    pub fn claim_ir_index(&mut self) -> Result<usize, busbar_contract::protocol::IrError> {
         let idx = self.next_ir_index.max(usize::from(self.reasoning_seen));
+        if idx >= MAX_STREAM_BLOCKS {
+            return Err(busbar_contract::protocol::IrError {
+                class: busbar_contract::upstream::StatusClass::ServerError,
+                retry_after: None,
+                provider_signal: Some("Stream lifetime block limit exceeded".into()),
+            });
+        }
         self.next_ir_index = idx + 1;
-        idx
+        Ok(idx)
     }
 }
 
@@ -1512,6 +1557,7 @@ pub struct IrCustomTool {
 
 impl IrCustomTool {
     /// Read the tool's members from the object holding them (Chat `custom`, or the flat Responses
+    /// tool).
     pub fn read_members(
         obj: &serde_json::Map<String, serde_json::Value>,
         extra_ok: &[&str],

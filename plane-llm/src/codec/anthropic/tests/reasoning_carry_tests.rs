@@ -1,4 +1,6 @@
 //! The gated cross-protocol reasoning/thinking carry. The GATE lives at
+//! `IrReq::prepare_for_egress` (per-lane `reasoning` flag); these tests cover the codec halves
+//! (read the ask, project it) plus the gate itself, the clamp, and the sampling-knob omission.
 
 use super::super::proto_codec::{Protocol, ProtocolReader, ProtocolWriter};
 use super::{anthropic_writer, AnthropicReader};
@@ -7,6 +9,8 @@ use crate::codec::ir::{IrReasoningAsk, IrReasoningEffort};
 use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 /// A lane that declares adaptive thinking (Opus 4.7+/5.x, Sonnet 5, Fable). Every word-form
+/// assertion below that expects `thinking:{type:"adaptive"}` is about such a lane; a lane that
+/// declares nothing gets `budget_tokens` (see `effort_on_a_default_lane_is_budget_tokens`).
 fn adaptive(ir: &crate::codec::ir::IrRequest) -> serde_json::Value {
     anthropic_writer().write_request_for_lane(
         crate::codec::test_host::HOST,
@@ -46,6 +50,8 @@ fn openai_effort_projects_to_anthropic_adaptive_effort() {
 }
 
 /// The same word-form ask on a lane that does NOT declare adaptive thinking (the default — Haiku
+/// 4.5, Sonnet 4.5, Opus 4.5 and older, which reject adaptive) is `thinking.budget_tokens` through
+/// the effort table, and no `output_config.effort`.
 #[test]
 fn effort_on_a_default_lane_is_budget_tokens() {
     let ir = super::super::openai_chat::OpenAiReader
@@ -71,6 +77,7 @@ fn effort_on_a_default_lane_is_budget_tokens() {
 }
 
 /// Anthropic budget -> Gemini `thinkingBudget` is a straight number copy; and Gemini's
+/// dynamic -1 round-trips to Gemini verbatim.
 #[test]
 fn budgets_copy_between_anthropic_and_gemini() {
     let body = serde_json::json!({
@@ -150,6 +157,8 @@ fn budget_bucketizes_to_effort_words() {
 }
 
 /// The Anthropic clamp on a NUMERIC ask: budget must leave >=1024 answer tokens under
+/// max_tokens; too-small max_tokens drops the ask entirely (no thinking key, and sampling knobs
+/// survive).
 #[test]
 fn anthropic_clamps_and_drops_by_max_tokens() {
     let budget_ir = |max_tokens: u32| crate::codec::ir::IrRequest {
@@ -181,6 +190,7 @@ fn anthropic_clamps_and_drops_by_max_tokens() {
 }
 
 /// Anthropic rejects modified temperature/top_p alongside thinking: both are omitted (observably via
+/// warn) when the ask is emitted, and present when it is not.
 #[test]
 fn thinking_omits_incompatible_sampling_knobs() {
     let mut body = openai_effort_body("low");
@@ -222,6 +232,7 @@ fn thinking_omits_incompatible_sampling_knobs() {
 }
 
 /// Anthropic rejects top_k modifications alongside thinking: top_k must be dropped when the
+/// thinking ask is emitted, while `thinking` itself is present.
 #[test]
 fn thinking_omits_top_k() {
     let body = serde_json::json!({
@@ -256,6 +267,7 @@ fn thinking_omits_top_k() {
 }
 
 /// THE GATE: prepare_for_egress clears the ask when the lane did not claim the capability and
+/// stamps the budget table when it did.
 #[test]
 fn seam_gate_clears_or_stamps() {
     let prep = |allowed: bool| EgressPrep {
@@ -306,6 +318,7 @@ fn seam_gate_clears_or_stamps() {
 }
 
 /// CROSS-protocol Gemini egress MUST request `includeThoughts: true` alongside the budget, or
+/// a real Gemini backend spends the budget but returns no thought parts (empty carry).
 #[test]
 fn gemini_cross_protocol_egress_requests_include_thoughts() {
     let ir = super::super::openai_chat::OpenAiReader
@@ -353,6 +366,7 @@ fn responses_effort_round_trips() {
 }
 
 /// A tiny cross-protocol budget (below the `low` table entry) must NOT emit the o-series-
+/// invalid `reasoning_effort: "minimal"` on OpenAI egress — it maps to `"low"` to avoid a 400.
 #[test]
 fn small_budget_maps_to_low_not_minimal_on_openai() {
     let body = serde_json::json!({
@@ -370,6 +384,7 @@ fn small_budget_maps_to_low_not_minimal_on_openai() {
 }
 
 /// A disabled-form `thinking` param reads as the explicit OFF ask (IR-09, ANT-09) and still rides
+/// extra for same-proto fidelity; no foreign target gains an ENABLE ask from it.
 #[test]
 fn disabled_thinking_stays_in_extra() {
     let body = serde_json::json!({

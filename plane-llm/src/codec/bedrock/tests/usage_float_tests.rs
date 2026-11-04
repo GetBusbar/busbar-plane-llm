@@ -2,10 +2,13 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! MONEY BUG regression: `serde_json::Value::as_u64()` returns `None` for ANY float-backed
+//! number — `27.0` included.
 
 use super::*;
 
 /// stream:`metadata.usage` — the ConverseStream terminal usage frame. Float-encoded
+/// `inputTokens`/`outputTokens` AND the additive `cacheWriteInputTokens`/`cacheReadInputTokens`
+/// buckets must all survive as the exact integer, not 0.
 #[test]
 fn stream_metadata_float_token_counts_survive_as_integers() {
     let reader = BedrockReader;
@@ -54,6 +57,7 @@ fn stream_metadata_float_token_counts_survive_as_integers() {
 }
 
 /// Buffered `read_response().usage` — `inputTokens`/`outputTokens`/`cacheWriteInputTokens`/
+/// `cacheReadInputTokens`, all float-encoded, must survive as the exact integer.
 #[test]
 fn buffered_response_float_usage_counts_survive_as_integers() {
     let reader = BedrockReader;
@@ -89,6 +93,8 @@ fn buffered_response_float_usage_counts_survive_as_integers() {
 }
 
 /// MONEY BUG regression (truncated-tail recovery path): a HEAD-truncated non-stream billing buffer
+/// still carries a well-formed, self-contained trailing `usage` object that `recover_truncated_usage`
+/// isolates and parses on its own.
 #[test]
 fn recover_truncated_usage_float_token_counts_survive_as_integers() {
     let reader = BedrockReader;

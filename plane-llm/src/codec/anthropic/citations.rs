@@ -7,6 +7,8 @@ use super::*;
 use crate::codec::keys;
 
 /// Map one raw citation object to a neutral [`crate::codec::ir::IrCitation`], keeping the source
+/// verbatim in `raw` so the Anthropic writer re-emits it byte-exact while a cross-protocol writer
+/// has the neutral coordinates.
 pub(super) fn read_citation(val: &serde_json::Value) -> crate::codec::ir::IrCitation {
     let kind = val
         .get(keys::TYPE)
@@ -65,6 +67,8 @@ pub(super) fn read_citation(val: &serde_json::Value) -> crate::codec::ir::IrCita
 }
 
 /// True when `raw` is an Anthropic citation object (its `type` is a known variant). Gates the
+/// byte-exact passthrough so a foreign `raw` (Gemini `citationSources[]`) is rebuilt from neutral
+/// fields.
 pub(super) fn is_anthropic_citation_shape(raw: &serde_json::Value) -> bool {
     matches!(
         raw.get(keys::TYPE).and_then(|v| v.as_str()),
@@ -197,6 +201,7 @@ fn representable_citation(
 }
 
 /// The members every Anthropic document-location variant shares — `document_index`,
+/// `document_title` — then its span under the variant's own start/end names (char, page or block).
 fn document_location(
     c: &crate::codec::ir::IrCitation,
     obj: &mut serde_json::Map<String, serde_json::Value>,

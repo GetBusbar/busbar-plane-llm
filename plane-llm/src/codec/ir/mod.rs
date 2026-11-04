@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The superset intermediate representation (IR), request and response/stream sides, that every
+//! protocol's Reader/Writer maps to and from, so any ingress can reach any backend losslessly (see
+//! `docs/adr/0005-ir-fidelity.md`).
 
 pub mod audio;
 pub mod embeddings;
@@ -16,6 +18,7 @@ pub mod sig_envelope;
 pub use facts_impl::project;
 
 /// The concrete chat IR TYPES, split to `types.rs` so busbar-core can `#[path]`-share them
+/// (G6 A4b).
 mod types;
 pub use types::*;
 

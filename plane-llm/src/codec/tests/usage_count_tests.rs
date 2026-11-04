@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Tests for `usage_count.rs`. Lifted out of the implementation file so its line count
+//! measures implementation and nothing else; still a direct child module, so the `use
+//! super::…` below reaches the private items it always did.
 
 use super::{billed_count, read_count_u64, SPELLING_BUDGET};
 use serde_json::json;
@@ -367,6 +369,8 @@ fn billed_count_opt_is_none_when_absent_and_refuses_when_unreadable() {
 }
 
 /// Flatten one source file the way the scans in this file read it: full-line comments dropped,
+/// trailing ` //` comments cut, and then EVERY whitespace character removed, so no rustfmt line
+/// break or spacing choice can split an idiom the scan is looking for.
 fn squash(text: &str) -> String {
     text.lines()
         .filter(|l| !l.trim_start().starts_with("//"))
@@ -447,6 +451,7 @@ fn whole_ident(flat: &str, at: usize, len: usize) -> bool {
 }
 
 /// `read_count_u64` plus every local closure or `-> Option<u64>` fn in `flat` that wraps one (found
+/// by what they CALL, never by what they are named, to a fixpoint so a wrapper of a wrapper is one).
 fn lenient_wrappers(flat: &str) -> Vec<String> {
     let mut wrappers: Vec<String> = vec!["read_count_u64".to_string()];
     loop {
@@ -523,6 +528,9 @@ const BILLED_OPTION_FIELDS: &[&str] = &[
 ];
 
 /// Every `FIELD: <expr>` initializer in `flat` (a [`squash`]ed file) where FIELD is a
+/// [`BILLED_OPTION_FIELDS`] member and `<expr>` routes through a lenient read — the `None`-flavoured
+/// twin of [`lenient_defaults`]: nothing is defaulted, the unreadable count simply becomes the
+/// field's "not reported" `None` and the unit leaves the ledger (item 133 remainder).
 fn lenient_billed_fields(flat: &str) -> Vec<String> {
     let wrappers = lenient_wrappers(flat);
     let mut hits = Vec::new();
@@ -581,6 +589,7 @@ fn lenient_billed_fields(flat: &str) -> Vec<String> {
 }
 
 /// A lenient read whose `None` flows, undefaulted, through `.map(..)` into a STRUCT LITERAL — the
+/// third shape item 133 remainder missed.
 fn lenient_struct_maps(flat: &str) -> Vec<String> {
     let wrappers = lenient_wrappers(flat);
     let mut hits = Vec::new();
@@ -776,4 +785,41 @@ fn no_dialect_defaults_a_lenient_count_read() {
          `usage_count::billed_count`/`billed_count_opt` and refuse:\n  {}",
         offenders.join("\n  ")
     );
+}
+
+#[test]
+fn unreadable_prefix_matches_json_escaping_and_utf8_boundaries() {
+    for text in [
+        "x".repeat(63),
+        "x".repeat(64),
+        "é".repeat(1_000_000),
+        "🦀".repeat(1_000_000),
+        "\n\t\"\\\u{0000}".repeat(100_000),
+    ] {
+        for value in [
+            serde_json::Value::String(text.clone()),
+            serde_json::json!({"value": text}),
+            serde_json::json!([text]),
+            serde_json::json!({text: false}),
+        ] {
+            let mut expected = value.to_string();
+            if expected.len() > SPELLING_BUDGET {
+                let mut end = SPELLING_BUDGET;
+                while !expected.is_char_boundary(end) {
+                    end -= 1;
+                }
+                expected.truncate(end);
+                expected.push('…');
+            }
+            assert_eq!(super::bounded_spelling(&value), expected);
+        }
+    }
+}
+
+#[test]
+fn diagnostic_string_scan_is_bounded_before_serialization() {
+    let text = "🦀".repeat(1_000_000);
+    let prefix = super::spelling_string_prefix(&text);
+    assert_eq!(prefix.len(), (SPELLING_BUDGET + 1) * 4);
+    assert_eq!(prefix.as_ptr(), text.as_ptr());
 }

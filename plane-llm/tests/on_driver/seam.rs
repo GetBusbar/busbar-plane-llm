@@ -3,9 +3,6 @@
 
 //! Hook opt-in grants exercised through the LLM plane driver.
 
-
-
-
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -38,8 +35,6 @@ fn one_dead() -> Pool {
 }
 
 fn body() -> Value {
-
-
     json!({
         "model": "m0",
         "max_tokens": 16,
@@ -59,6 +54,7 @@ fn chat_body() -> Value {
 }
 
 /// The previous release's `run`: a one-member pool whose base route policy is a capturing
+/// policy with these grants and this decision, one unit of `v`; what it saw and the answer.
 async fn run(
     send_prompt: bool,
     send_user: bool,
@@ -121,7 +117,6 @@ async fn global_gate_abstain_does_not_reject() {
 
 #[test]
 fn enforce_restricts_reapplies_compliance_tags_across_pools() {
-
     let tags: Vec<Vec<String>> = vec![vec!["baa".to_string()], vec![]];
     let members = || tags.iter().enumerate().map(|(i, t)| (i, t.as_slice()));
     let restrict = |tag: &str, on_empty: PolicyOnError, name: &'static str| Constraint {
@@ -132,7 +127,6 @@ fn enforce_restricts_reapplies_compliance_tags_across_pools() {
         }],
         ..Constraint::default()
     };
-
 
     assert_eq!(
         restrict("baa", PolicyOnError::Reject, "baa-gate")
@@ -461,7 +455,6 @@ async fn pool_gate_reject_fires_from_pool_runtime_gates() {
 
 #[tokio::test]
 async fn reject_priority_tie_break_surfaces_lowest_priority() {
-
     let rig = Rig::new(
         one_dead(),
         None,
@@ -487,8 +480,8 @@ async fn reject_priority_tie_break_surfaces_lowest_priority() {
 async fn multi_restrict_disjoint_intersection_fails_closed() {
     let rig = Rig::new(
         pool(vec![
-            member("eu-lane", "eu-lane").tags(&["eu"]).dead(),
-            member("baa-lane", "baa-lane").tags(&["baa"]).dead(),
+            member("eu-lane", "eu-lane").tags(&["eu"]),
+            member("baa-lane", "baa-lane").tags(&["baa"]),
         ]),
         None,
         gates(vec![
@@ -503,6 +496,10 @@ async fn multi_restrict_disjoint_intersection_fails_closed() {
     assert_eq!(
         answer.status, 503,
         "disjoint concurrent restricts must intersect to empty and fail closed"
+    );
+    assert!(
+        answer.sent.is_empty(),
+        "disjoint restrictions must refuse before dispatch"
     );
 }
 
@@ -710,8 +707,6 @@ async fn send_user_projects_governance_key_identity() {
 
 #[tokio::test]
 async fn send_user_falls_back_to_synthesized_group_key_identity() {
-
-
     let captured = identity_seen(Some(CallerKey {
         id: "eng-oncall".to_string(),
         name: "eng-oncall".to_string(),
@@ -728,8 +723,6 @@ async fn send_user_falls_back_to_synthesized_group_key_identity() {
 
 #[tokio::test]
 async fn send_user_prefers_resolved_key_over_disabled_legacy_lookup() {
-
-
     let captured = identity_seen(Some(CallerKey {
         id: "synthesized-principal".to_string(),
         name: "synthesized-principal".to_string(),
@@ -838,6 +831,7 @@ async fn reject_rides_the_full_forward_path() {
 }
 
 /// The gate's status picks the refusal's kind, rendered in the caller's dialect (here Anthropic's
+/// `error.type`): 401, 403, 404, 408 and 429 their own kinds, every other 4xx an invalid request.
 #[tokio::test]
 async fn reject_kind_mapping_matches_status_semantics() {
     for (status, kind) in [
@@ -982,8 +976,6 @@ async fn request_id_is_recorded_as_native_u64_tracing_field() {
     );
 }
 
-
-
 /// The 503 body a decision gate that could not complete answers (1.5.5's literal).
 const GATE_COULD_NOT_COMPLETE: &str = "A required gate could not complete. Please retry shortly.";
 /// The 503 body a decision gate's restriction leaving no lane answers.
@@ -1047,8 +1039,8 @@ enum Seat {
 }
 
 /// The chat-completions caller's own spelling of busbar's overloaded 503 kind, read off the plane's
+/// own refusal renderer, so the test pins "the same kind as every other busbar 503" and no literal.
 fn overloaded_kind_on_chat_completions() -> String {
-
     struct NoHost;
     impl busbar_contract::codec::CodecHost for NoHost {
         fn fill_entropy(&self, _out: &mut [u8]) -> bool {
@@ -1071,6 +1063,7 @@ fn overloaded_kind_on_chat_completions() -> String {
 }
 
 /// One chat-completions request at a two-lane pool with the faulty hook in `seat`: (status, error
+/// kind, error message) off the caller's envelope, and whether a far end was reached.
 async fn fire_faulty(
     seat: Seat,
     fault: Fault,
@@ -1422,8 +1415,6 @@ async fn apply_rewrite_to_body_swaps_messages_and_is_fail_safe() {
     assert_eq!(tools.len(), 2, "tool injected, existing kept: {sent}");
     assert_eq!(sent["model"], "m0", "unrelated fields untouched");
 
-
-
     use busbar_plane_llm::exchange::arrive::arrive;
     use busbar_plane_llm::exchange::project::apply_rewrite;
     let head: &[(&[u8], &[u8])] = &[(b"content-type", b"application/json")];
@@ -1575,7 +1566,6 @@ async fn completion_tap_fires_once_on_the_walk_and_never_on_a_pre_forward_refusa
     assert_eq!(payload["stage"]["outcome"], "ok");
     assert_eq!(payload["stage"]["status"], 200);
 
-
     let (missed, entry) = counting_tap(Vec::new());
     let mut hooks = Hooks::default();
     hooks.taps.response = vec![entry];
@@ -1634,6 +1624,8 @@ async fn completion_tap_carries_no_response_tokens_out_as_in_1_5_5() {
 }
 
 /// Q128 arch u58 (HIGH): AN AD-HOC ROUTE THAT MISNAMES ITS MODEL'S PROVIDER is refused behind the
+/// caller's identity and grant, as 1.5.5's `adhoc()` ran its governance guard before it answered the
+/// mismatch.
 #[tokio::test]
 async fn an_adhoc_provider_mismatch_is_judged_behind_the_callers_grant() {
     use busbar_contract::caps::{Outcome, ReasonCode, StepName};

@@ -2,6 +2,45 @@ use super::*;
 use crate::codec::dialect::ir_parse_error;
 use crate::codec::ir_encode::{synth_response_tool_call_id, tool_input_from_arguments};
 
+/// Preserve the legacy item index for the first part and reserve a disjoint, bounded
+/// range for subsequent parts. Never clamp distinct malformed wire identities together.
+fn part_index(
+    data: &serde_json::Value,
+    state: &mut crate::codec::ir::StreamDecodeState,
+) -> Option<usize> {
+    let output = wire_index(data, OUTPUT_INDEX)?;
+    let content = wire_index(data, "content_index")?;
+    if let Some(&index) = state.responses_parts.get(&(output, content)) {
+        return Some(index);
+    }
+    if state.responses_parts.len() >= MAX_OPEN_TOOLS {
+        return None;
+    }
+    let index = if content == 0 {
+        output
+    } else {
+        MAX_OUTPUT_INDEX + 1 + state.responses_parts.len()
+    };
+    state.responses_parts.insert((output, content), index);
+    Some(index)
+}
+
+fn wire_index(data: &serde_json::Value, key: &str) -> Option<usize> {
+    let value = match data.get(key) {
+        None => 0,
+        Some(value) => value.as_u64()?,
+    };
+    (value <= MAX_OUTPUT_INDEX as u64).then_some(value as usize)
+}
+
+fn invalid_stream_index() -> IrStreamEvent {
+    IrStreamEvent::Error(IrError {
+        class: StatusClass::ServerError,
+        provider_signal: Some("invalid_response_index".to_string()),
+        retry_after: None,
+    })
+}
+
 fn emit_refusal_text(
     index: usize,
     text: &str,
@@ -10,7 +49,7 @@ fn emit_refusal_text(
     state: &mut crate::codec::ir::StreamDecodeState,
     out: &mut Vec<IrStreamEvent>,
 ) {
-    if text.is_empty() {
+    if text.is_empty() || state.responses_closed.contains(&index) {
         return;
     }
     state.refusal_seen = true;
@@ -20,10 +59,11 @@ fn emit_refusal_text(
         return;
     }
     if !seen {
-        if state.open_tools.contains(&index)
-            || state.open_tools.contains(&text_key)
-            || state.open_tools.len() >= MAX_OPEN_TOOLS
-        {
+        if state.open_tools.contains(&index) || state.open_tools.contains(&text_key) {
+            return;
+        }
+        if state.open_tools.len() >= MAX_OPEN_TOOLS {
+            out.push(invalid_stream_index());
             return;
         }
         state.open_tools.insert(text_key);
@@ -62,6 +102,7 @@ fn close_open_blocks(
     indices.sort_unstable();
     indices.dedup();
     for index in indices {
+        state.responses_closed.insert(index);
         out.push(IrStreamEvent::BlockStop { index });
     }
 }
@@ -680,6 +721,26 @@ impl ProtocolReader for ResponsesReader {
             return out;
         }
 
+        // Validate before payload guards so malformed identities cannot silently
+        // disappear on tool, reasoning, empty-delta, or completion paths.
+        if matches!(
+            event_type,
+            EVT_OUTPUT_ITEM_ADDED
+                | EVT_OUTPUT_ITEM_DONE
+                | EVT_CONTENT_PART_DONE
+                | EVT_OUTPUT_TEXT_DELTA
+                | EVT_OUTPUT_TEXT_ANNOTATION_ADDED
+                | EVT_REFUSAL_DELTA
+                | EVT_REFUSAL_DONE
+                | EVT_FUNCTION_CALL_ARGS_DELTA
+                | EVT_REASONING_TEXT_DELTA
+                | EVT_REASONING_SUMMARY_TEXT_DELTA
+        ) && (wire_index(data, OUTPUT_INDEX).is_none()
+            || wire_index(data, "content_index").is_none())
+        {
+            return vec![invalid_stream_index()];
+        }
+
         match event_type {
             EVT_RESPONSE_CREATED | "response.in_progress" => {
                 if !state.started {
@@ -730,11 +791,24 @@ impl ProtocolReader for ResponsesReader {
                                 raw_call_id.to_string()
                             };
 
-                            let idx = (output_index as usize).min(MAX_OUTPUT_INDEX);
+                            let Some(idx) = wire_index(data, OUTPUT_INDEX) else {
+                                out.push(invalid_stream_index());
+                                return out;
+                            };
 
                             let already_open = state.open_tools.contains(&idx)
                                 || state.open_tools.contains(&(idx + TEXT_INDEX_KEY_OFFSET));
-                            if !already_open && state.open_tools.len() < MAX_OPEN_TOOLS {
+                            if !already_open
+                                && !state.responses_closed.contains(&idx)
+                                && state.open_tools.len() >= MAX_OPEN_TOOLS
+                            {
+                                out.push(invalid_stream_index());
+                                return out;
+                            }
+                            if !already_open
+                                && !state.responses_closed.contains(&idx)
+                                && state.open_tools.len() < MAX_OPEN_TOOLS
+                            {
                                 state.open_tools.insert(idx);
                                 state.block_origins.insert(
                                     idx,
@@ -753,12 +827,24 @@ impl ProtocolReader for ResponsesReader {
                     } else if item_obj.get(keys::TYPE).and_then(|t| t.as_str())
                         == Some(ITEM_TYPE_REASONING)
                     {
-                        if let Some(output_index) = data.get(OUTPUT_INDEX).and_then(|i| i.as_u64())
-                        {
-                            let idx = (output_index as usize).min(MAX_OUTPUT_INDEX);
+                        if data.get(OUTPUT_INDEX).and_then(|i| i.as_u64()).is_some() {
+                            let Some(idx) = wire_index(data, OUTPUT_INDEX) else {
+                                out.push(invalid_stream_index());
+                                return out;
+                            };
                             let already_open = state.open_tools.contains(&idx)
                                 || state.open_tools.contains(&(idx + TEXT_INDEX_KEY_OFFSET));
-                            if !already_open && state.open_tools.len() < MAX_OPEN_TOOLS {
+                            if !already_open
+                                && !state.responses_closed.contains(&idx)
+                                && state.open_tools.len() >= MAX_OPEN_TOOLS
+                            {
+                                out.push(invalid_stream_index());
+                                return out;
+                            }
+                            if !already_open
+                                && !state.responses_closed.contains(&idx)
+                                && state.open_tools.len() < MAX_OPEN_TOOLS
+                            {
                                 state.open_tools.insert(idx);
                                 state.block_origins.insert(
                                     idx,
@@ -785,15 +871,19 @@ impl ProtocolReader for ResponsesReader {
                     .unwrap_or("")
                     .to_string();
                 if !delta.is_empty() {
-                    let idx = data
-                        .get(OUTPUT_INDEX)
-                        .and_then(|i| i.as_u64())
-                        .map_or(0, |v| (v as usize).min(MAX_OUTPUT_INDEX));
+                    let Some(idx) = wire_index(data, OUTPUT_INDEX) else {
+                        out.push(invalid_stream_index());
+                        return out;
+                    };
+                    if state.responses_closed.contains(&idx) {
+                        return out;
+                    }
 
                     if !state.open_tools.contains(&idx)
                         && !state.open_tools.contains(&(idx + TEXT_INDEX_KEY_OFFSET))
                     {
                         if state.open_tools.len() >= MAX_OPEN_TOOLS {
+                            out.push(invalid_stream_index());
                             return out;
                         }
                         state.open_tools.insert(idx);
@@ -832,10 +922,13 @@ impl ProtocolReader for ResponsesReader {
                     .to_string();
 
                 if !delta.is_empty() {
-                    let idx = data
-                        .get(OUTPUT_INDEX)
-                        .and_then(|i| i.as_u64())
-                        .map_or(0, |v| (v as usize).min(MAX_OUTPUT_INDEX));
+                    let Some(idx) = part_index(data, state) else {
+                        out.push(invalid_stream_index());
+                        return out;
+                    };
+                    if state.responses_closed.contains(&idx) {
+                        return out;
+                    }
 
                     let text_key = idx + TEXT_INDEX_KEY_OFFSET;
                     if state.open_tools.contains(&idx) {
@@ -844,6 +937,7 @@ impl ProtocolReader for ResponsesReader {
                     let already_open = state.open_tools.contains(&text_key);
                     if !already_open {
                         if state.open_tools.len() >= MAX_OPEN_TOOLS {
+                            out.push(invalid_stream_index());
                             return out;
                         }
                         state.open_tools.insert(text_key);
@@ -873,10 +967,13 @@ impl ProtocolReader for ResponsesReader {
             }
 
             EVT_REFUSAL_DELTA | EVT_REFUSAL_DONE => {
-                let idx = data
-                    .get(OUTPUT_INDEX)
-                    .and_then(|i| i.as_u64())
-                    .map_or(0, |v| (v as usize).min(MAX_OUTPUT_INDEX));
+                let Some(idx) = part_index(data, state) else {
+                    out.push(invalid_stream_index());
+                    return out;
+                };
+                if state.responses_closed.contains(&idx) {
+                    return out;
+                }
                 let done = event_type == EVT_REFUSAL_DONE;
                 let field = if done { keys::REFUSAL } else { keys::DELTA };
                 let text = data.get(field).and_then(|v| v.as_str()).unwrap_or("");
@@ -890,15 +987,19 @@ impl ProtocolReader for ResponsesReader {
                     && state.tool_ir_index.contains_key(&idx)
                     && state.open_tools.remove(&(idx + TEXT_INDEX_KEY_OFFSET))
                 {
+                    state.responses_closed.insert(idx);
                     out.push(IrStreamEvent::BlockStop { index: idx });
                 }
             }
 
             EVT_OUTPUT_TEXT_ANNOTATION_ADDED => {
-                let idx = data
-                    .get(OUTPUT_INDEX)
-                    .and_then(|i| i.as_u64())
-                    .map_or(0, |v| (v as usize).min(MAX_OUTPUT_INDEX));
+                let Some(idx) = part_index(data, state) else {
+                    out.push(invalid_stream_index());
+                    return out;
+                };
+                if state.responses_closed.contains(&idx) {
+                    return out;
+                }
                 if state.open_tools.contains(&(idx + TEXT_INDEX_KEY_OFFSET)) {
                     if let Some(annotation) = data.get("annotation") {
                         let annotations = serde_json::Value::Array(vec![annotation.clone()]);
@@ -922,8 +1023,11 @@ impl ProtocolReader for ResponsesReader {
                     .unwrap_or("")
                     .to_string();
                 if !delta.is_empty() {
-                    if let Some(output_index) = data.get(OUTPUT_INDEX).and_then(|i| i.as_u64()) {
-                        let idx = (output_index as usize).min(MAX_OUTPUT_INDEX);
+                    if data.get(OUTPUT_INDEX).and_then(|i| i.as_u64()).is_some() {
+                        let Some(idx) = wire_index(data, OUTPUT_INDEX) else {
+                            out.push(invalid_stream_index());
+                            return out;
+                        };
 
                         if state.open_tools.contains(&idx) {
                             out.push(IrStreamEvent::BlockDelta {
@@ -936,11 +1040,21 @@ impl ProtocolReader for ResponsesReader {
             }
 
             EVT_OUTPUT_ITEM_DONE | EVT_CONTENT_PART_DONE => {
-                if let Some(output_index) = data.get(OUTPUT_INDEX).and_then(|i| i.as_u64()) {
-                    let idx = (output_index as usize).min(MAX_OUTPUT_INDEX);
-
-                    let item_done = event_type == EVT_OUTPUT_ITEM_DONE;
-                    if item_done && state.open_tools.remove(&idx) {
+                let Some(output) = wire_index(data, OUTPUT_INDEX) else {
+                    out.push(invalid_stream_index());
+                    return out;
+                };
+                if event_type == EVT_CONTENT_PART_DONE {
+                    let Some(idx) = part_index(data, state) else {
+                        out.push(invalid_stream_index());
+                        return out;
+                    };
+                    if state.open_tools.remove(&(idx + TEXT_INDEX_KEY_OFFSET)) {
+                        state.responses_closed.insert(idx);
+                        out.push(IrStreamEvent::BlockStop { index: idx });
+                    }
+                } else {
+                    if state.open_tools.remove(&output) {
                         if let Some(sig) = data
                             .get(ITEM)
                             .filter(|it| {
@@ -950,14 +1064,23 @@ impl ProtocolReader for ResponsesReader {
                             .and_then(read_reasoning_encrypted_content)
                         {
                             out.push(IrStreamEvent::BlockDelta {
-                                index: idx,
+                                index: output,
                                 delta: crate::codec::ir::IrDelta::SignatureDelta(sig.to_string()),
                             });
                         }
-
-                        out.push(IrStreamEvent::BlockStop { index: idx });
-                    } else if state.open_tools.remove(&(idx + TEXT_INDEX_KEY_OFFSET)) {
-                        out.push(IrStreamEvent::BlockStop { index: idx });
+                        state.responses_closed.insert(output);
+                        out.push(IrStreamEvent::BlockStop { index: output });
+                    }
+                    let indices: Vec<usize> = state
+                        .responses_parts
+                        .iter()
+                        .filter_map(|(&(item, _), &idx)| (item == output).then_some(idx))
+                        .collect();
+                    for idx in indices {
+                        if state.open_tools.remove(&(idx + TEXT_INDEX_KEY_OFFSET)) {
+                            state.responses_closed.insert(idx);
+                            out.push(IrStreamEvent::BlockStop { index: idx });
+                        }
                     }
                 }
             }
@@ -1051,7 +1174,7 @@ impl ProtocolReader for ResponsesReader {
                             else {
                                 continue;
                             };
-                            for block in content {
+                            for (content_pos, block) in content.iter().enumerate() {
                                 if block.get(keys::TYPE).and_then(|t| t.as_str())
                                     != Some(keys::REFUSAL)
                                 {
@@ -1060,8 +1183,17 @@ impl ProtocolReader for ResponsesReader {
                                 if let Some(text) =
                                     block.get(keys::REFUSAL).and_then(|r| r.as_str())
                                 {
+                                    let Some(idx) = part_index(
+                                        &serde_json::json!({
+                                            "output_index": item_pos, "content_index": content_pos
+                                        }),
+                                        state,
+                                    ) else {
+                                        out.push(invalid_stream_index());
+                                        return out;
+                                    };
                                     emit_refusal_text(
-                                        item_pos.min(MAX_OUTPUT_INDEX),
+                                        idx,
                                         text,
                                         true,
                                         match event_type {
@@ -1463,6 +1595,7 @@ impl ProtocolReader for ResponsesReader {
     }
 
     /// Usage and terminal failures ride the terminal and error events; the reader reads the
+    /// event name, never the payload's `type`.
     fn same_proto_reads(&self, event_type: &str, _payload: &[u8]) -> bool {
         matches!(
             event_type,

@@ -87,6 +87,7 @@ const TOTAL_TOKENS_CAMEL: &str = "totalTokens";
 const VALIDATION_EXCEPTION: &str = "validationException";
 
 /// Classification shared by modeled exceptions and explicit AWS error-header frames. Unknown
+/// error codes are server failures; unknown normal events still bypass this function entirely.
 pub(crate) fn stream_error_class(code: &str) -> StatusClass {
     match code {
         THROTTLING_EXCEPTION => StatusClass::RateLimit,
@@ -140,6 +141,8 @@ pub fn protocol() -> Protocol {
 }
 
 /// Router detection. The AWS SigV4 `Authorization: AWS4-HMAC-SHA256…` signature is the tightest
+/// claim of any dialect (rung 1, path-independent), then `/converse` (rung 12) and
+/// `/model/{id}/invoke` (rung 13).
 fn claims(
     h: busbar_contract::protocol::HeadFields<'_>,
     path: &str,
@@ -161,6 +164,7 @@ fn claims(
 }
 
 /// Headerless residual detection: a `/model/{id}/converse[-stream]` path (rung 30). The
+/// `/converse` suffix is load-bearing: a non-Converse `/model/…` path must not wear a Bedrock envelope.
 fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrength> {
     if path.starts_with("/model/")
         && (path.ends_with("/converse") || path.ends_with("/converse-stream"))
@@ -179,6 +183,7 @@ fn vendor_response_metadata(body: &serde_json::Value) -> Vec<&'static str> {
 }
 
 /// Bedrock's declaration. The only protocol with SigV4 ingress auth and a non-SSE streaming
+/// content type.
 pub const DECL: ProtocolDecl = ProtocolDecl {
     name: VENDOR_NAME,
     codec: dialect_codec!(VENDOR_NAME),
@@ -257,22 +262,28 @@ pub(crate) const ENTRY: super::proto_codec::DialectEntry = super::proto_codec::D
 };
 
 /// The two response headers a native Bedrock endpoint always emits (lowercase): the request id the
+/// SDK surfaces via `*Output::request_id()`, and the error-type header it reads before the body
+/// `__type`.
 const HDR_AMZN_REQUEST_ID: &str = "x-amzn-requestid";
 const HDR_AMZN_ERROR_TYPE: &str = "x-amzn-errortype";
 
 /// Exception names used by both `error_kind_to_bedrock_type` and `bedrock_stream_exception_for`,
+/// named once so they cannot drift.
 const EXC_THROTTLING: &str = "ThrottlingException";
 const EXC_VALIDATION: &str = "ValidationException";
 const EXC_SERVICE_UNAVAILABLE: &str = "ServiceUnavailableException";
 const EXC_INTERNAL_SERVER: &str = "InternalServerException";
 
 /// The binary framing content-type of Converse streaming, for both the response `Content-Type` and
+/// the egress `Accept` of a `ConverseStream` call.
 const APPLICATION_VND_AMAZON_EVENTSTREAM: &str = "application/vnd.amazon.eventstream";
 
 /// AWS's spelling of the "overloaded" error type in `__type` (`ServiceUnavailableException` maps
+/// back to it).
 const ERR_TYPE_OVERLOADED: &str = crate::codec::framework::ERR_TYPE_OVERLOADED;
 
 /// The dialect's declared refusals (`refusals.json`): each row names the busbar refusal kinds it
+/// answers, the exception and its HTTP status.
 pub const REFUSALS_JSON: &str = include_str!("refusals.json");
 
 /// The exception [`REFUSALS_JSON`] declares for `kind`, or `None` when no row lists it.
@@ -303,6 +314,11 @@ fn declared_refusal(kind: &str) -> Option<&'static str> {
 }
 
 /// Map busbar's generic error `kind` to the Bedrock Converse exception name in `__type`. The
+/// Converse error model is a closed set (`AccessDeniedException`, `InternalServerException`,
+/// `ModelErrorException`, `ModelNotReadyException`, `ModelTimeoutException`,
+/// `ResourceNotFoundException`, `ServiceUnavailableException`, `ThrottlingException`,
+/// `ValidationException`) plus `ServiceQuotaExceededException`, which an exhausted quota or budget
+/// answers: it is not retryable, where AWS SDKs retry `ThrottlingException` with backoff.
 pub fn error_kind_to_bedrock_type(kind: &str) -> &'static str {
     if let Some(exception) = declared_refusal(kind) {
         return exception;
@@ -332,6 +348,7 @@ pub fn error_kind_to_bedrock_type(kind: &str) -> &'static str {
 }
 
 /// Mint a UUID-v4-shaped request id for the `x-amzn-RequestId` header, which a native response
+/// always carries (success and error, stream and non-stream; its absence is a proxy tell).
 pub fn synth_amzn_request_id(host: &dyn busbar_contract::codec::CodecHost) -> Option<String> {
     let mut buf = [0u8; 16];
     if !host.fill_entropy(&mut buf) {
@@ -353,6 +370,8 @@ pub fn synth_amzn_request_id(host: &dyn busbar_contract::codec::CodecHost) -> Op
 }
 
 /// Attach `x-amzn-RequestId` and `x-amzn-errortype` (mirroring the body `__type` via
+/// `error_kind_to_bedrock_type`) to an already-built error response, as a native one always
+/// carries.
 fn attach_bedrock_error_headers(
     host: &dyn busbar_contract::codec::CodecHost,
     headers: &mut busbar_contract::http::HeaderMap,
@@ -370,6 +389,7 @@ fn attach_bedrock_error_headers(
 }
 
 /// Map a mid-stream `IrError` to the ConverseStream output-union member name the SDK decoder
+/// recognizes, plus the message.
 fn bedrock_stream_exception_for(
     err: &busbar_contract::protocol::IrError,
 ) -> (&'static str, String) {
@@ -410,6 +430,8 @@ fn bedrock_stream_exception_for(
 const CACHE_POINTS_SENTINEL: &str = "__busbar_bedrock_cache_points";
 
 /// `extra` key under which the reader stashes native Converse `guardContent` blocks (inline
+/// Guardrails markers, `{"guardContent": {"text": {"text", "qualifiers"}}}` or `{"image": ...}`)
+/// found inside `system` and each message's `content`.
 const GUARD_CONTENT_SENTINEL: &str = "__busbar_bedrock_guard_content";
 
 /// `extra` key under which the reader stashes native Converse top-level `document` and `video`
@@ -424,13 +446,16 @@ const ET_MESSAGE_STOP: &str = "messageStop";
 const ET_METADATA: &str = "metadata";
 
 /// The `metadata`-frame `metrics` object and its `latencyMs`, the stream's end-to-end latency
+/// (injected by `BedrockStreamFraming::inject_streaming_metrics`).
 const FIELD_METRICS: &str = "metrics";
 const FIELD_LATENCY_MS: &str = "latencyMs";
 
 /// Source-spelling hint for `top_k`. Bedrock carries it in `additionalModelRequestFields` as
+/// `top_k` or `topK` (some model families need the camelCase form).
 const TOP_K_CAMEL_SENTINEL: &str = "__busbar_top_k_camel";
 
 /// The Converse request content grammar (`codec::drops`): a union keyed by its kind member. A block
+/// of any other kind (an inline `guardContent` marker) is named as dropped on a translate attempt.
 const REQUEST_BLOCKS: &[crate::codec::drops::Blocks] = &[
     crate::codec::drops::Blocks {
         at: &["messages[]", "content[]"],
@@ -559,7 +584,6 @@ const RESPONSE_DROPS: &[&str] = &[
 ];
 const STREAM_DROPS: &[&str] = &[
     "metadata.performanceConfig.latency",
-    "metadata.serviceTier",
     "metadata.trace.guardrail",
     "metadata.trace.promptRouter",
     "modelStreamErrorException.originalMessage",
@@ -567,6 +591,7 @@ const STREAM_DROPS: &[&str] = &[
 ];
 
 /// Read a Converse `reasoningContent` block into an IR `Thinking`, or `None` when it carries
+/// neither known member (a future union member is left undecoded, not mis-mapped).
 fn read_bedrock_reasoning_block(
     reasoning: &serde_json::Value,
 ) -> Option<crate::codec::ir::IrBlock> {
@@ -606,6 +631,7 @@ fn read_bedrock_reasoning_block(
 }
 
 /// Build a `{"reasoningContent": ...}` block from an IR `Thinking`; inverse of
+/// `read_bedrock_reasoning_block`.
 fn bedrock_reasoning_block(
     text: &str,
     signature: &Option<String>,
@@ -653,6 +679,7 @@ fn bedrock_image_block(source: &crate::codec::ir::IrImageSource) -> Option<serde
         }
 
         crate::codec::ir::IrImageSource::Url(_)
+        | crate::codec::ir::IrImageSource::UrlWithMime { .. }
         | crate::codec::ir::IrImageSource::Vendor { .. } => {
             crate::codec::drops::writer_drop!(
                 crate::codec::drops::IMAGE,
@@ -682,9 +709,11 @@ fn bedrock_image_block(source: &crate::codec::ir::IrImageSource) -> Option<serde
 }
 
 /// This dialect's name: the `vendor` tag on an [`crate::codec::ir::IrImageSource::Vendor`] it
+/// produces (an `s3Location` source names an object in the caller's AWS account, meaningless elsewhere).
 const VENDOR_NAME: &str = "bedrock";
 
 /// A Converse `searchResult` block (`{source, title, content: [{text}], citations: {enabled}}`) to
+/// the search-result slot (`IrBlock::search_result`), shared with Anthropic `search_result`.
 fn read_bedrock_search_result(sr: &serde_json::Value) -> crate::codec::ir::IrBlock {
     let source = sr.get(keys::SOURCE).and_then(|v| v.as_str()).unwrap_or("");
     let title = sr.get(keys::TITLE).and_then(|v| v.as_str()).unwrap_or("");
@@ -709,6 +738,7 @@ fn read_bedrock_search_result(sr: &serde_json::Value) -> crate::codec::ir::IrBlo
 }
 
 /// The search-result slot to a Converse `{"searchResult": {...}}` block (inverse of
+/// [`read_bedrock_search_result`]).
 fn write_bedrock_search_result(
     sr: &crate::codec::ir::IrSearchResultParts<'_>,
 ) -> serde_json::Value {
@@ -749,21 +779,19 @@ fn bedrock_media_block(
             data: bytes.to_string(),
         },
 
-        None if bedrock_document_text(source).is_some() => {
-            crate::codec::ir::IrImageSource::Base64 {
+        None => match bedrock_document_text(source) {
+            Some(text) => crate::codec::ir::IrImageSource::Base64 {
                 media_type: bedrock_text_media_type(format),
-                data: busbar_contract::media::base64_encode(
-                    bedrock_document_text(source).unwrap_or_default().as_bytes(),
-                ),
-            }
-        }
+                data: busbar_contract::media::base64_encode(text.as_bytes()),
+            },
 
-        None => crate::codec::ir::IrImageSource::Vendor {
-            vendor: VENDOR_NAME,
-            value: serde_json::json!({
-                (keys::FORMAT): format,
-                (keys::SOURCE): source.cloned().unwrap_or_else(|| serde_json::json!({})),
-            }),
+            None => crate::codec::ir::IrImageSource::Vendor {
+                vendor: VENDOR_NAME,
+                value: serde_json::json!({
+                    (keys::FORMAT): format,
+                    (keys::SOURCE): source.cloned().unwrap_or_else(|| serde_json::json!({})),
+                }),
+            },
         },
     };
 
@@ -807,6 +835,7 @@ fn bedrock_document_text(source: Option<&serde_json::Value>) -> Option<String> {
 }
 
 /// Mime type of a text document source: the format's own text type (`md`, `csv`, `html`, `txt`),
+/// else `text/plain`.
 fn bedrock_text_media_type(format: &str) -> String {
     let m = bedrock_media_type_for_format(crate::codec::ir::IrMediaKind::Document, format);
     if m.starts_with("text/") {
@@ -817,6 +846,7 @@ fn bedrock_text_media_type(format: &str) -> String {
 }
 
 /// Converse's bare container token (`pdf`, `csv`, `mp4`) to a mime type. Unknown tokens fall back to
+/// the kind's generic type rather than inventing `application/<token>`.
 fn bedrock_media_type_for_format(kind: crate::codec::ir::IrMediaKind, format: &str) -> String {
     let token = format.to_ascii_lowercase();
     if let Some(m) =
@@ -842,6 +872,7 @@ fn bedrock_media_type_for_format(kind: crate::codec::ir::IrMediaKind, format: &s
 }
 
 /// Project an [`crate::codec::ir::IrBlock::Media`] into its Converse content block, or `None` when
+/// there is no slot (caller has warned).
 fn bedrock_media_content_block(
     kind: crate::codec::ir::IrMediaKind,
     source: &crate::codec::ir::IrImageSource,
@@ -874,6 +905,7 @@ fn bedrock_media_content_block(
             value.get(keys::SOURCE).unwrap_or(value).clone()
         }
         crate::codec::ir::IrImageSource::Url(_)
+        | crate::codec::ir::IrImageSource::UrlWithMime { .. }
         | crate::codec::ir::IrImageSource::Vendor { .. } => {
             crate::codec::drops::writer_drop!(
                 crate::codec::drops::block(kind.as_str()),
@@ -904,6 +936,7 @@ fn bedrock_media_content_block(
         let usable = name.filter(|name| {
             let mut whitespace = false;
             !name.is_empty()
+                && name.chars().count() <= 200
                 && name.chars().all(|ch| {
                     let repeated_whitespace = whitespace && ch.is_whitespace();
                     whitespace = ch.is_whitespace();
@@ -1018,11 +1051,13 @@ fn bedrock_video_format(source: &crate::codec::ir::IrImageSource) -> Option<&'st
 }
 
 /// Build a Converse prompt-cache marker (`{"cachePoint": {"type": "default"}}`): everything before
+/// it in the same array is cached as a prefix.
 fn bedrock_cache_point() -> serde_json::Value {
     serde_json::json!({ (CACHE_POINT): { (keys::TYPE): "default" } })
 }
 
 /// Read `outputConfig.textFormat` (`{type: "json_schema", structure: {jsonSchema: {schema, name,
+/// description}}}`) into [`crate::codec::ir::IrResponseFormat`] (BED-08).
 fn read_bedrock_response_format(
     body: &serde_json::Map<String, serde_json::Value>,
 ) -> Option<crate::codec::ir::IrResponseFormat> {
@@ -1048,6 +1083,11 @@ fn read_bedrock_response_format(
 }
 
 /// Project [`crate::codec::ir::IrResponseFormat`] into `outputConfig.textFormat` (BED-08), or
+/// `None`: `OutputFormat.type` is `json_schema` only, so schema-less JSON and plain text have no form.
+fn bedrock_text_format_representable(rf: &crate::codec::ir::IrResponseFormat) -> bool {
+    rf.json && rf.schema.is_some()
+}
+
 fn write_bedrock_text_format(rf: &crate::codec::ir::IrResponseFormat) -> Option<serde_json::Value> {
     if !rf.json {
         return None;
@@ -1071,6 +1111,8 @@ fn write_bedrock_text_format(rf: &crate::codec::ir::IrResponseFormat) -> Option<
 }
 
 /// Set `cache_control` on the last block of an IR content vector from a following `cachePoint`, so
+/// the boundary survives cross-protocol (the positional `CACHE_POINTS_SENTINEL` stash is cleared on
+/// the seam).
 fn set_preceding_block_cache_control(blocks: &mut [crate::codec::ir::IrBlock]) {
     if let Some(last) = blocks.last_mut() {
         let cc = Some(crate::codec::ir::CacheControl {
@@ -1093,6 +1135,7 @@ fn set_preceding_block_cache_control(blocks: &mut [crate::codec::ir::IrBlock]) {
 }
 
 /// Splice captured `cachePoint` blocks back into a written content array at the original absolute
+/// positions, reconstructing the native ordering on a same-protocol passthrough.
 fn splice_cache_points(arr: &mut Vec<serde_json::Value>, entries: &[serde_json::Value]) {
     let mut pending: Vec<(usize, serde_json::Value)> = Vec::new();
     for entry in entries {
@@ -1105,10 +1148,21 @@ fn splice_cache_points(arr: &mut Vec<serde_json::Value>, entries: &[serde_json::
         pending.push((idx as usize, block.clone()));
     }
     pending.sort_by_key(|(idx, _)| *idx);
+    // Sorted insertions can only affect the uncommitted suffix. Keep that suffix in a
+    // deque so duplicate indices retain Vec::insert's reverse ordering without shifts.
+    let mut original = std::mem::take(arr).into_iter();
+    let mut suffix = std::collections::VecDeque::new();
     for (idx, block) in pending {
-        let pos = idx.min(arr.len());
-        arr.insert(pos, block);
+        while arr.len() < idx {
+            let Some(next) = suffix.pop_front().or_else(|| original.next()) else {
+                break;
+            };
+            arr.push(next);
+        }
+        suffix.push_front(block);
     }
+    arr.extend(suffix);
+    arr.extend(original);
 }
 
 /// Concatenate two optional `{ "i", "block" }` slices (e.g. the `cachePoint` and `guardContent`
@@ -1136,6 +1190,8 @@ fn declared_sigv4_region(host: &str) -> Option<&str> {
 }
 
 /// Derive the AWS region for the SigV4 scope from a Bedrock endpoint host. A bare
+/// `strip_prefix("bedrock-runtime.")` signs for the wrong region on non-vanilla endpoints, which
+/// AWS rejects as a 403 `SignatureDoesNotMatch`.
 pub(crate) fn derive_sigv4_region(host: &str) -> Option<&str> {
     fn looks_like_region(label: &str) -> bool {
         let parts: Vec<&str> = label.split('-').collect();
@@ -1211,6 +1267,7 @@ fn read_bedrock_image_block(image: &serde_json::Value) -> Option<crate::codec::i
 }
 
 /// A `guardContent` block's content (BED-02): `{text: {text, qualifiers}}` is prompt text and
+/// `{image: {format, source}}` a prompt image.
 fn guard_content_block(guard: &serde_json::Value) -> Option<crate::codec::ir::IrBlock> {
     if let Some(t) = guard
         .get(keys::TEXT)
@@ -1223,6 +1280,7 @@ fn guard_content_block(guard: &serde_json::Value) -> Option<crate::codec::ir::Ir
 }
 
 /// IR indices of the blocks the reader modelled out of a stashed wire block (the `b` member of a
+/// `guardContent` / `document` / `video` record), for one message (`Some(m)`) or `system` (`None`).
 fn stashed_ir_indices<'a>(
     stashes: impl IntoIterator<Item = Option<&'a Vec<serde_json::Value>>>,
     msg: Option<usize>,
@@ -1238,6 +1296,7 @@ fn stashed_ir_indices<'a>(
 }
 
 /// Normalize Converse `toolConfig.toolChoice` into the IR union: `{"auto":{}}` to `Auto`,
+/// `{"any":{}}` to `Required`, `{"tool":{"name":"X"}}` to `Tool{name:"X"}`.
 fn read_bedrock_tool_choice(
     tool_config: Option<&serde_json::Value>,
 ) -> Option<crate::codec::ir::IrToolChoice> {
@@ -1258,6 +1317,7 @@ fn read_bedrock_tool_choice(
 }
 
 /// Emit the IR tool-choice union in Bedrock's `toolChoice` shape. `IrToolChoice::None` gives
+/// `None` (Converse has no "don't call a tool", so `toolChoice` is omitted).
 fn write_bedrock_tool_choice(tc: &crate::codec::ir::IrToolChoice) -> Option<serde_json::Value> {
     match tc {
         crate::codec::ir::IrToolChoice::Auto => Some(serde_json::json!({(keys::AUTO): {}})),
@@ -1293,6 +1353,7 @@ fn stop_reason_map(ward: &str) -> crate::codec::ir::IrStopReason {
 }
 
 /// Whether a Bedrock model id names a Claude model (`anthropic.` / `claude`, covering bare ids,
+/// inference profiles and ARNs).
 fn bedrock_model_is_claude(model: &str) -> bool {
     let m = model.to_ascii_lowercase();
     m.contains("anthropic.") || m.contains("claude")
@@ -1324,6 +1385,7 @@ fn bedrock_signature_origin(model: Option<&str>) -> Option<crate::codec::ir::IrS
 }
 
 /// Converse `requestMetadata` (string to string) to the typed [`crate::codec::ir::IrRequest::metadata`]
+/// (IR-03).
 fn read_bedrock_request_metadata(
     body: &serde_json::Map<String, serde_json::Value>,
 ) -> Option<Vec<(String, String)>> {
@@ -1341,6 +1403,7 @@ const FIELD_REQUEST_METADATA: &str = "requestMetadata";
 const REQUEST_METADATA_MAX_ENTRIES: usize = 16;
 
 /// Whether `s` fits a Converse `requestMetadata` key/value: `min..=256` characters from
+/// `[a-zA-Z0-9\s:_@$#=/+,-.]` (the service model's pattern).
 fn bedrock_request_metadata_fits(s: &str, min: usize) -> bool {
     let n = s.chars().count();
     (min..=256).contains(&n)
@@ -1349,6 +1412,8 @@ fn bedrock_request_metadata_fits(s: &str, min: usize) -> bool {
 }
 
 /// The typed [`crate::codec::ir::IrRequest::metadata`] to `requestMetadata` (IR-03). An entry
+/// Converse would reject (pattern, length, or past the 16-entry cap) is dropped with a warn and the
+/// rest kept, so one bad entry does not cost a 400.
 fn write_bedrock_request_metadata(pairs: &[(String, String)]) -> Option<serde_json::Value> {
     let mut out = serde_json::Map::new();
     for (k, v) in pairs {
@@ -1385,6 +1450,8 @@ fn stop_detail_map(ward: &str) -> Option<crate::codec::ir::IrStopDetail> {
 const STOP_MODEL_CONTEXT_WINDOW_EXCEEDED: &str = "model_context_window_exceeded";
 
 /// Canonical IR stop reason (plus its [`crate::codec::ir::IrStopDetail`]) to Bedrock stopReason. A
+/// context-window detail is written as `model_context_window_exceeded` (IR-16, BED-10); every
+/// other detail has no Converse spelling, so the coarse reason is written.
 fn stop_reason_reverse_detailed(
     canonical: crate::codec::ir::IrStopReason,
     detail: Option<&crate::codec::ir::IrStopDetail>,
@@ -1414,6 +1481,8 @@ fn stop_reason_reverse(canonical: crate::codec::ir::IrStopReason) -> &'static st
 }
 
 /// Bedrock's usage counts, as data. The cache write is `cacheWriteInputTokens` (Anthropic's
+/// creation) and the read `cacheReadInputTokens`; both are optional on the wire, so absent maps to
+/// `None`, not `Some(0)`.
 const USAGE: &[UsageCount] = &[
     (CountSlot::Input, CountRead::Zero(&[INPUT_TOKENS_CAMEL])),
     (CountSlot::Output, CountRead::Zero(&[OUTPUT_TOKENS_CAMEL])),
@@ -1446,6 +1515,7 @@ const USAGE: &[UsageCount] = &[
 ];
 
 /// Identity [`read_bedrock_usage`] checks `usage.totalTokens` against
+/// ([`crate::codec::ir::UsageIdentityNote::identity`]).
 const BEDROCK_USAGE_IDENTITY: &str = "bedrock.usage";
 
 /// A Converse `usage` object (`None` when absent) to IR usage through [`USAGE`].
@@ -1468,6 +1538,7 @@ fn read_bedrock_usage(
 }
 
 /// Members of a Converse `TokenUsage`: a `usage` object naming none of them is not the turn's
+/// token usage (a guardrail's `invocationMetrics.usage` names policy units).
 const TOKEN_USAGE_MEMBERS: &[&str] = &[
     INPUT_TOKENS_CAMEL,
     OUTPUT_TOKENS_CAMEL,
@@ -1548,6 +1619,8 @@ const CACHE_TTL_5M: &str = "5m";
 const CACHE_TTL_1H: &str = "1h";
 
 /// Write the IR's per-TTL cache-write split onto a Converse `usage` object (inverse of the
+/// `cacheDetails` rows in [`USAGE`]), 1h before 5m, only for tiers the IR carries: the spec says
+/// `cacheDetails` is empty if no cache creation occurred, so no split means no member.
 fn write_cache_details(
     usage_obj: &mut serde_json::Map<String, serde_json::Value>,
     usage: &crate::codec::ir::IrUsage,
@@ -1565,6 +1638,8 @@ fn write_cache_details(
 }
 
 /// Write the IR's cache token fields onto a Converse `usage` object (inverse of the cache rows in
+/// [`USAGE`]): `cacheWriteInputTokens` from `cache_creation_input_tokens`, `cacheReadInputTokens`
+/// from `cache_read_input_tokens`, only when `Some`.
 fn write_cache_usage(
     usage_obj: &mut serde_json::Map<String, serde_json::Value>,
     usage: &crate::codec::ir::IrUsage,
@@ -1580,14 +1655,16 @@ fn write_cache_usage(
 }
 
 /// Upper bound on the upstream-controlled ConverseStream `contentBlockIndex` at every stream read
+/// site.
 const MAX_CONTENT_BLOCK_INDEX: u64 = 1023;
 
-/// Read `contentBlockIndex` off a stream frame (0 when absent or non-numeric), clamped to
-fn clamp_content_block_index(data: &serde_json::Value) -> usize {
-    data.get(CONTENT_BLOCK_INDEX)
-        .and_then(|i| i.as_u64())
-        .unwrap_or(0)
-        .min(MAX_CONTENT_BLOCK_INDEX) as usize
+/// Read a bounded stream block identity without aliasing malformed indices to live blocks.
+fn read_content_block_index(data: &serde_json::Value) -> Option<usize> {
+    let index = match data.get(CONTENT_BLOCK_INDEX) {
+        Some(value) => value.as_u64()?,
+        None => 0,
+    };
+    (index <= MAX_CONTENT_BLOCK_INDEX).then_some(index as usize)
 }
 
 #[derive(Clone)]
@@ -1735,6 +1812,7 @@ impl BedrockWriter {
     }
 
     /// Record that block `index` was opened and owes a `contentBlockStop` (Text/Thinking open
+    /// implicitly, ToolUse emits a start).
     fn mark_block_open(&self, index: usize) -> usize {
         let mut stream = self.stream.lock();
         stream.open_block_indices.insert(index);
@@ -1742,6 +1820,7 @@ impl BedrockWriter {
     }
 
     /// True and forget `index` if the block was opened (its `BlockStop` must emit
+    /// `contentBlockStop`); false if never opened (e.g. `Image`), then `BlockStop` emits nothing.
     fn take_block_open(&self, index: usize) -> bool {
         self.stream.lock().open_block_indices.remove(&index)
     }
@@ -1963,6 +2042,7 @@ fn has_valid_metrics(value: &serde_json::Value) -> bool {
 }
 
 /// Ensure a Converse JSON object carries `metrics.latencyMs`. An upstream `metrics` is kept;
+/// otherwise busbar's measured latency is written.
 pub fn ensure_metrics(value: &mut serde_json::Value, elapsed_ms: Option<u64>) {
     if has_valid_metrics(value) {
         return;
@@ -2027,6 +2107,7 @@ const ACTION: &str = "action";
 const ACTION_BLOCKED: &str = "BLOCKED";
 
 /// A guardrail trace's content-policy filters to IR safety verdicts: one per filter that
+/// `detected` or blocked, `type` as the category.
 fn read_guardrail_verdicts(
     trace: Option<&serde_json::Value>,
 ) -> Vec<crate::codec::ir::IrSafetyVerdict> {
@@ -2070,3 +2151,15 @@ mod search_result_slot_tests;
 #[cfg(test)]
 #[path = "tests/identity_projection_regressions.rs"]
 mod identity_projection_regressions;
+
+#[cfg(test)]
+#[path = "tests/audit_fidelity_tests.rs"]
+mod audit_fidelity_tests;
+
+#[cfg(test)]
+#[path = "tests/audit_malformed_response_tests.rs"]
+mod audit_malformed_response_tests;
+
+#[cfg(test)]
+#[path = "tests/audit_performance_tests.rs"]
+mod audit_performance_tests;

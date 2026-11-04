@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE PROVIDER OPTIONS (`busbar_plane_llm::options`): a provider's block takes busbar's keys and
+//! the names its dialect's far end accepts, nothing else.
 
 mod common;
 
@@ -63,6 +64,7 @@ fn send(s: &Shaping, target: &str, h: &[(&'static str, &'static str)], body: &st
 }
 
 /// A set option reaches the wire, on every dialect's placement: head fields under their wire name,
+/// whatever case the operator wrote it in, and a query parameter on the target.
 #[test]
 fn a_set_option_reaches_the_wire() {
     let s = load(json!({
@@ -120,6 +122,7 @@ fn a_set_option_reaches_the_wire() {
 }
 
 /// A provider that sets no option writes exactly what it wrote before options existed: the
+/// anthropic dialect's declared version, and no other field or parameter.
 #[test]
 fn a_provider_that_sets_nothing_sends_nothing_extra() {
     let s = load(json!({ "protocol": "anthropic" })).expect("reads");
@@ -136,6 +139,7 @@ fn a_provider_that_sets_nothing_sends_nothing_extra() {
 }
 
 /// A name on no list fails the load, naming the key and listing what the dialect accepts in the
+/// provider's documented spelling.
 #[test]
 fn an_unknown_option_is_refused_with_the_dialects_list() {
     let e = load(json!({ "protocol": "openai", "hello": 1 })).expect_err("refused");
@@ -203,6 +207,7 @@ fn a_hop_by_hop_field_is_refused() {
 }
 
 /// A value of the wrong type is refused, saying what the name takes and echoing the name in the
+/// provider's spelling.
 #[test]
 fn a_wrong_type_is_refused_with_what_the_name_takes() {
     let e = load(json!({ "protocol": "gemini", "x-server-timeout": "soon" })).expect_err("refused");
@@ -225,6 +230,7 @@ fn a_wrong_type_is_refused_with_what_the_name_takes() {
 }
 
 /// PRECEDENCE. A same-dialect caller's own head field and query parameter beat the operator's
+/// default.
 #[test]
 fn per_request_beats_static_unless_forced() {
     let s = load(json!({
@@ -321,6 +327,7 @@ fn no_list_names_a_credential() {
 }
 
 /// Bedrock's `InvokeModel` headers reach a model served over the invoke envelope, and not a
+/// Converse model, which takes the same settings in its body.
 #[test]
 fn bedrock_invoke_headers_reach_only_invoke_models() {
     let block = json!({

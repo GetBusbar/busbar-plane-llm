@@ -103,6 +103,8 @@ fn empty_settings_are_an_empty_generation_with_the_defaults() {
 }
 
 /// THE TRANSLATE CAP IS THE SETTINGS': the cap a generation enforces is the
+/// `limits.request_body_max_bytes` the kernel handed in the settings it was opened or refreshed
+/// with, and the kernel's own 32 MiB default when it handed none.
 #[test]
 fn the_translate_cap_is_the_one_the_settings_carry_else_the_default() {
     let s = Shaping::from_settings(&json!({ "limits": { "request_body_max_bytes": 131072 } }))
@@ -174,6 +176,8 @@ fn effective_reasoning_member_override_wins() {
 }
 
 /// A MODEL'S OWN `protocol` OVERRIDES ITS PROVIDER'S: the
+/// model is spoken in the dialect it names, a sibling model on the same provider keeps the
+/// provider's, and a dialect the plane does not serve is refused naming the model (fail-closed).
 #[test]
 fn a_models_protocol_overrides_its_providers_and_an_unknown_one_is_refused() {
     let mut v = settings();
@@ -195,6 +199,8 @@ fn a_models_protocol_overrides_its_providers_and_an_unknown_one_is_refused() {
 }
 
 /// AN EMPTY `model_capabilities` READS AS AN ABSENT ONE: the
+/// kernel's resolved provider table now hands the plane `model_capabilities: []` where a catalog
+/// entry states none, where it used to leave the key out.
 #[test]
 fn an_empty_model_capabilities_reads_as_an_absent_one() {
     let absent = settings();

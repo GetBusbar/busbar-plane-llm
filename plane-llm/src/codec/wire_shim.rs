@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Body-shaping helpers on either side of a translate. They are pure over the plane's own
+//! declarations and the neutral billing carrier (no socket, clock or configuration but the host's
+//! translation cap), and the suites that pin them are codec suites, so they travel with the codecs.
 
 use serde_json::Value;
 
@@ -44,6 +46,9 @@ pub fn strip_router_shim_keys(v: &mut Value, egress_protocol: &str) -> bool {
 }
 
 /// Bytes-per-token divisor for the truncated-tail billing floor. Conservative (~4 bytes/token is
+/// typical English prose; a JSON envelope with field names and escaping runs higher), so it
+/// under-counts: the retained tail is only the last `cap` bytes of a larger body, making this a floor
+/// that cannot over-charge.
 pub const TRUNCATED_TAIL_BYTES_PER_TOKEN: u64 = 4;
 
 #[cfg(test)]

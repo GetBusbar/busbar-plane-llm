@@ -50,6 +50,7 @@ fn trailing_nonzero_overrides_zero_leaves_intact() {
 }
 
 /// EVERY `IrUsageDetail` bucket rides the Some-wins fold, not just the handful that had a bug filed
+/// against them.
 #[test]
 fn trailing_detail_merge_is_exhaustive_over_every_bucket() {
     let full = crate::codec::ir::IrUsageDetail {
@@ -111,6 +112,7 @@ fn trailing_detail_merge_is_exhaustive_over_every_bucket() {
 }
 
 /// A STALE STATED-TOTAL GAP IS NEVER BILLED (LEDGER-100 makes the gap the billed open class
+/// `unitemized_tokens`, REV-334 note 5).
 #[test]
 fn a_following_reconciled_frame_clears_an_earlier_gap() {
     let gap = crate::codec::ir::UsageIdentityNote {

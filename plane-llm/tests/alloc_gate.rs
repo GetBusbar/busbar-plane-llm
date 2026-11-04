@@ -3,19 +3,23 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 thread_local! { static FORWARD_ALLOCATIONS: Cell<u64> = const { Cell::new(0) }; }
+thread_local! { static FORWARD_ALLOCATED_BYTES: Cell<usize> = const { Cell::new(0) }; }
 struct ForwardAllocator;
 // SAFETY: forwards every allocation and layout unchanged to System; the counter is thread-local.
 unsafe impl GlobalAlloc for ForwardAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         FORWARD_ALLOCATIONS.with(|n| n.set(n.get() + 1));
+        FORWARD_ALLOCATED_BYTES.with(|n| n.set(n.get() + layout.size()));
         unsafe { System.alloc(layout) }
     }
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         FORWARD_ALLOCATIONS.with(|n| n.set(n.get() + 1));
+        FORWARD_ALLOCATED_BYTES.with(|n| n.set(n.get() + layout.size()));
         unsafe { System.alloc_zeroed(layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         FORWARD_ALLOCATIONS.with(|n| n.set(n.get() + 1));
+        FORWARD_ALLOCATED_BYTES.with(|n| n.set(n.get() + size));
         unsafe { System.realloc(ptr, layout, size) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -61,6 +65,8 @@ const HOST: &dyn busbar_contract::codec::CodecHost = &ForwardHost;
 const FAR_OK: &[u8] = br#"{"id":"chatcmpl-gate","object":"chat.completion","created":0,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
 
 /// ONE served forward, as the plane's door runs it for a unit: the arrival read off the caller's
+/// head and body, the far-end request the attempt writes for the member, and the far end's whole
+/// answer relayed back to the caller.
 fn one_forward(shaping: &busbar_plane_llm::exchange::shaping::Shaping, body: &[u8]) -> u16 {
     one_forward_with_host(shaping, body, HOST)
 }
@@ -220,4 +226,104 @@ fn resolving_every_dialect_by_name_adds_no_allocation_overhead() {
     resolution_costs_what_the_writer_costs(p::PROTO_GEMINI, &gemini, &body);
     resolution_costs_what_the_writer_costs(p::PROTO_OPENAI, &openai, &body);
     resolution_costs_what_the_writer_costs(p::PROTO_RESPONSES, &responses, &body);
+}
+
+#[test]
+fn carried_payload_controls_allocate_nothing() {
+    use busbar_plane_llm::codec::{carry::Slot, ir::IrRequest};
+    let req = IrRequest {
+        metadata: Some(vec![("key".into(), "x".repeat(1_000_000))]),
+        stop: vec!["x".repeat(1_000_000)],
+        safety_identifier: Some("x".repeat(1_000_000)),
+        prompt_cache_key: Some("x".repeat(1_000_000)),
+        ..Default::default()
+    };
+    let allocations = count_forward_allocations(|| {
+        for slot in [
+            Slot::Metadata,
+            Slot::Stop,
+            Slot::SafetyIdentifier,
+            Slot::PromptCacheKey,
+        ] {
+            assert!(std::hint::black_box(
+                slot.carried(std::hint::black_box(&req))
+            ));
+        }
+    });
+    assert_eq!(allocations, 0);
+}
+
+#[test]
+fn invalid_usage_diagnostic_allocations_do_not_scale_with_payload() {
+    use busbar_plane_llm::codec::usage_count::billed_count;
+    for value in [
+        serde_json::json!("x".repeat(4_000_000)),
+        serde_json::json!({"first": "🦀".repeat(1_000_000), "tail": vec![false; 100_000]}),
+        serde_json::json!({"x".repeat(4_000_000): false}),
+    ] {
+        let usage = serde_json::json!({"tokens": value});
+        let before = FORWARD_ALLOCATED_BYTES.with(Cell::get);
+        let error = billed_count(&usage, "tokens").unwrap_err();
+        let bytes = FORWARD_ALLOCATED_BYTES.with(|n| n.get() - before);
+        assert!(bytes < 4096, "bounded diagnostic allocated {bytes} bytes");
+        assert!(error.spelling.len() <= 67);
+        assert!(error.spelling.ends_with('…'));
+    }
+}
+
+fn assert_shape_counts_without_payload_allocation(
+    facts: &dyn busbar_contract::ir::facts::IrFacts,
+    expected: busbar_contract::ir::facts::Shape,
+) {
+    let before = FORWARD_ALLOCATED_BYTES.with(Cell::get);
+    let shape = std::hint::black_box(facts).shape();
+    let allocated = FORWARD_ALLOCATED_BYTES.with(|n| n.get() - before);
+    assert_eq!(shape, expected);
+    assert!(
+        allocated < 64 * 1024,
+        "counting structured content allocated {allocated} bytes"
+    );
+}
+
+#[test]
+fn request_and_snapshot_shape_stream_large_structured_content_counts() {
+    use busbar_contract::ir::facts::Shape;
+    use busbar_contract::ir::handle::IrHandle;
+    use busbar_plane_llm::codec::chat_handle::ChatReqHandle;
+    use busbar_plane_llm::codec::ir::{IrBlock, IrMessage, IrRequest, IrRole};
+
+    // Unicode, escaped control characters, quotes and nested data must count exactly as
+    // screenable_text does, without allocating its multi-megabyte serialized String.
+    let data = serde_json::json!({
+        "é😀": ["é😀\n\t\"\\".repeat(1_000_000), {"nested": [true, null, 42]}],
+    });
+    let data_chars = data.to_string().chars().count();
+    let request = IrRequest {
+        system: vec![IrBlock::Json(data.clone()), IrBlock::text("前置")],
+        messages: vec![IrMessage {
+            role: IrRole::Assistant,
+            content: vec![IrBlock::ToolUse {
+                id: "call".into(),
+                name: "tool".into(),
+                input: data,
+                cache_control: None,
+                thought_signature: None,
+            }],
+        }],
+        max_tokens: Some(123),
+        ..Default::default()
+    };
+    let expected = Shape {
+        turn_count: 1,
+        has_tools: false,
+        tool_count: 0,
+        text_chars: data_chars * 2 + 2,
+        system_chars: data_chars + 2,
+        max_tokens: Some(123),
+    };
+    assert_shape_counts_without_payload_allocation(&request, expected);
+    let handle = ChatReqHandle(request, Default::default());
+    let snapshot = handle.facts();
+    drop(handle);
+    assert_shape_counts_without_payload_allocation(snapshot.as_ref(), expected);
 }

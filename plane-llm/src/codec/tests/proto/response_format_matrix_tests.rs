@@ -16,6 +16,7 @@ fn req_with_format(rf: IrResponseFormat) -> crate::codec::ir::IrRequest {
 }
 
 /// ONE typed directive, projected by EVERY native-structured-output writer, must land in THAT
+/// writer's own wire shape — never a foreign one — with the schema preserved.
 #[test]
 fn every_writer_emits_its_native_shape() {
     let schema = serde_json::json!({"type":"object","properties":{"x":{"type":"string"}}});
@@ -89,6 +90,7 @@ fn every_writer_emits_its_native_shape() {
 }
 
 /// And the read side: each protocol's NATIVE structured-output request canonicalizes into the
+/// same typed directive — proving readers feed the agnostic IR, not a protocol-shaped blob.
 #[test]
 fn every_reader_canonicalizes_to_typed_ir() {
     let oi = OpenAiReader
@@ -142,6 +144,8 @@ fn req_with_tool_choice_no_tools() -> crate::codec::ir::IrRequest {
 }
 
 /// A `tool_choice` with NO accompanying `tools` is a guaranteed 400 on every vendor that models the
+/// constraint (Anthropic/OpenAI/Gemini/Cohere/Responses all reject it; only Bedrock's Converse ALSO
+/// documents + guards this today).
 #[test]
 fn tool_choice_without_tools_is_omitted_on_every_writer() {
     let req = req_with_tool_choice_no_tools();
@@ -228,6 +232,8 @@ fn req_with_stop(stop: Vec<String>) -> crate::codec::ir::IrRequest {
 }
 
 /// The IR's `stop` is an unbounded `Vec<String>` (no protocol enforces a cap on ingress), so a
+/// cross-protocol request can carry more stop sequences than a smaller target vendor allows:
+/// OpenAI caps at 4, Gemini/Cohere at 5 — exceeding any is a guaranteed 400.
 #[test]
 fn stop_sequences_clamped_per_vendor_cap() {
     let stops: Vec<String> = (0..8).map(|i| format!("STOP{i}")).collect();
@@ -281,6 +287,8 @@ fn stop_sequences_clamped_per_vendor_cap() {
 }
 
 /// Egress: an OpenAI/Anthropic caller who DID set `parallel_tool_calls` and routes to
+/// Gemini/Cohere/Bedrock (none of which model any parallelism control) must get a WARN naming the
+/// drop — the flag silently vanishing was the exact class-9-adjacent bug this fix removes.
 #[test]
 fn parallel_tool_calls_discarded_on_gemini_cohere_bedrock_warns() {
     let req = |parallel: Option<bool>| crate::codec::ir::IrRequest {

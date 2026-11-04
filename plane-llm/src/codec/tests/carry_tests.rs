@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The flat field walker (`codec/carry.rs`) over a test table: read, write, word tables, nested
+//! paths, the same-dialect fidelity park and the modelled keys.
 
 use super::*;
 use crate::codec::ir::{IrModality, IrRequest, IrServiceTier, IrVerbosity};
@@ -271,4 +272,28 @@ fn the_name_resolver_reads_the_wire_path_from_the_rows() {
     );
 
     assert_eq!(wire_path(table, "seed"), None);
+}
+
+#[test]
+fn payload_presence_keeps_empty_and_nonempty_control_semantics() {
+    let slots = [
+        Slot::Metadata,
+        Slot::SafetyIdentifier,
+        Slot::PromptCacheKey,
+        Slot::Stop,
+    ];
+    let mut req = IrRequest::default();
+    for slot in slots {
+        assert!(!slot.carried(&req));
+    }
+    req.metadata = Some(vec![]);
+    req.safety_identifier = Some(String::new());
+    req.prompt_cache_key = Some(String::new());
+    for slot in slots {
+        assert_eq!(slot.carried(&req), slot.get(&req).is_some());
+    }
+    req.stop.push(String::new());
+    for slot in slots {
+        assert!(slot.carried(&req));
+    }
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! A SAME-DIALECT USAGE-TAPPING BODY PAST THE TAP'S CAP BILLS NO TOKENS (`$`): 1.5.5 kept only the body's first `cap` bytes, its
+//! Large same-dialect delivered answers retain reported billing with bounded root custody.
 
 mod common;
 
@@ -47,9 +47,9 @@ fn body(pad: usize) -> Vec<u8> {
     .into_bytes()
 }
 
-/// RED: the relay billed the floor over the bytes past the cap instead of none.
+/// The large embedding payload must not hide its independently reported usage.
 #[test]
-fn a_body_past_the_usage_taps_cap_bills_no_tokens_and_one_under_it_bills_its_usage() {
+fn a_body_past_the_usage_taps_cap_and_one_under_it_bill_reported_usage() {
     let over = body(200);
     assert!(over.len() > CAP);
     let mut r = relay();
@@ -61,11 +61,7 @@ fn a_body_past_the_usage_taps_cap_bills_no_tokens_and_one_under_it_bills_its_usa
         "nothing incurred past the cap"
     );
     let end = r.end(HOST);
-    assert!(
-        end.usage.is_none(),
-        "no tokens past the cap: {:?}",
-        end.usage
-    );
+    assert_eq!(end.usage.expect("reported usage above cap").input, 5);
 
     let under: &[u8] = br#"{"data":[],"usage":{"prompt_tokens":5,"total_tokens":5}}"#;
     assert!(under.len() <= CAP);
@@ -73,4 +69,111 @@ fn a_body_past_the_usage_taps_cap_bills_no_tokens_and_one_under_it_bills_its_usa
     let _ = r.feed(HOST, under);
     let end = r.end(HOST);
     assert!(end.usage.is_some(), "a body under the cap bills its usage");
+}
+
+#[test]
+fn capped_usage_is_chunk_independent_and_never_nested_or_fabricated() {
+    let reported = body(200);
+    for size in [1, 2, 7, 64, reported.len()] {
+        let mut r = relay();
+        for chunk in reported.chunks(size) {
+            let _ = r.feed(HOST, chunk);
+        }
+        assert_eq!(r.end(HOST).usage.unwrap().input, 5);
+    }
+    for body in [
+        format!(
+            r#"{{"data":[{{"usage":{{"prompt_tokens":999}}}}],"padding":"{}"}}"#,
+            "x".repeat(200)
+        ),
+        format!(
+            r#"{{"data":"{}","usage":{{"prompt_tokens":5,"padding":"{}"}}}}"#,
+            "x".repeat(200),
+            "x".repeat(200)
+        ),
+        format!(
+            r#"{{"data":"{}","usage":{{"prompt_tokens":5}},"usage":null}}"#,
+            "x".repeat(200)
+        ),
+        format!(
+            r#"{{"data":[1,,2],"padding":"{}","usage":{{"prompt_tokens":5}}}}"#,
+            "x".repeat(200)
+        ),
+    ] {
+        let mut r = relay();
+        for chunk in body.as_bytes().chunks(3) {
+            let _ = r.feed(HOST, chunk);
+        }
+        assert!(r.end(HOST).usage.is_none(), "{body}");
+    }
+}
+
+#[test]
+fn stream_media_types_match_the_complete_case_insensitive_token() {
+    use busbar_plane_llm::exchange::reply::wire::is_stream_content_type;
+    for ct in [
+        "Text/Event-Stream",
+        " text/event-stream ; charset=utf-8",
+        "APPLICATION/VND.AMAZON.EVENTSTREAM",
+    ] {
+        assert!(is_stream_content_type(ct), "{ct}");
+    }
+    for ct in [
+        "text/event-streamgarbage",
+        "application/vnd.amazon.eventstream-extra",
+        "application/json",
+    ] {
+        assert!(!is_stream_content_type(ct), "{ct}");
+    }
+}
+
+fn operation_relay(protocol: &str, verb: OpVerb) -> Relay {
+    let handler = busbar_plane_llm::codec::DECLS
+        .iter()
+        .find(|d| d.name == protocol)
+        .and_then(|d| d.handler)
+        .and_then(|rh| rh.operation_handler(verb))
+        .expect("operation handler");
+    Relay::new_for_operation(
+        RelayCtx {
+            ingress: protocol,
+            egress: protocol,
+            far_is_stream: false,
+            json_array: false,
+            client_include_usage: false,
+            request: None,
+            handler,
+            meter: true,
+            translate_cap: CAP,
+        },
+        verb,
+    )
+}
+
+#[test]
+fn capped_rerank_keeps_reported_open_billing() {
+    let body = format!(
+        r#"{{"results":[],"padding":"{}","meta":{{"billed_units":{{"search_units":2}}}}}}"#,
+        "x".repeat(200)
+    );
+    let mut relay = operation_relay("cohere", OpVerb::RERANK);
+    for chunk in body.as_bytes().chunks(1) {
+        let _ = relay.feed(HOST, chunk);
+    }
+    let usage = relay.end(HOST).usage.expect("reported rerank billing");
+    assert_eq!(usage.open_units.get("search_units"), Some(&2));
+    assert_eq!((usage.input, usage.output), (0, 0));
+}
+
+#[test]
+fn capped_provider_failure_does_not_bill_projected_usage() {
+    let body = format!(
+        r#"{{"status":"failed","error":{{"code":"server_error"}},"output":[],"padding":"{}","usage":{{"input_tokens":5,"output_tokens":2}}}}"#,
+        "x".repeat(200)
+    );
+    let mut relay = operation_relay("responses", OpVerb::CHAT);
+    for chunk in body.as_bytes().chunks(2) {
+        let _ = relay.feed(HOST, chunk);
+    }
+    assert!(relay.end(HOST).usage.is_none());
 }

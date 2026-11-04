@@ -1,4 +1,6 @@
 //! Regression net for the stop_reason bug class (closed by the typed `IrStopReason`). EVERY
+//! variant, projected by EVERY writer, must land on a value VALID in that protocol's finish enum —
+//! never an off-spec token.
 
 use super::*;
 use crate::codec::ir::{IrBlock, IrResponse, IrRole, IrStopReason, IrUsage};

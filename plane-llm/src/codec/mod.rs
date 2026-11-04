@@ -2,17 +2,22 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The LLM wire codecs: six dialects (Anthropic Messages, OpenAI Chat Completions, Google Gemini,
+//! AWS Bedrock Converse, OpenAI Responses, Cohere v2) translated between any pair through one
+//! neutral IR.
 
 /// The concrete chat IR and leaf-op IR (the substrate keeps the neutral `ir::facts`, `ir::handle`,
+/// `ir::invoke`, `ir::subscribe` traits).
 pub mod ir;
 
 /// The chat `IrHandle` (`ChatReqHandle`/`ChatRespHandle`) and its `prepare_for_egress`/`_ingress`/
+/// `usage` bodies; the handle writes itself onto the egress dialect by protocol string.
 pub mod chat_handle;
 
 /// This plane's request preparation context and dialect writer capabilities.
 pub mod egress_prep;
 
 /// The six leaf-op `IrHandle`s (embeddings/image/rerank/moderation/transcription/speech), writing
+/// themselves onto the peer dialect via the `leaf_codec` `(op,proto)` dispatchers.
 pub mod leaf_handles;
 
 /// One leaf operation's `OperationHandler`, written once for every dialect. Every leaf cell answers
@@ -90,15 +95,18 @@ pub mod carry;
 pub mod keys;
 
 /// The dialect framework's plane-only items: codec-row lookups, media carriers, the duration
+/// rendering, and the shared error kinds, signals and head reader.
 pub mod framework;
 
 /// The dialects' shared wire helpers: the OpenAI-family error helpers, the SSE `[DONE]` terminator
+/// and frame probe/parse/write, the base62 id alphabet, the `usage` stripper.
 pub mod dialect;
 
 /// The plane's own coded diagnostics, and the slice the composition root installs.
 pub mod diagnostics;
 
 /// The one drop path of a translate attempt: drop + warn + the path for the seam's audit, and the
+/// walkers that name what a dialect does not map.
 pub mod drops;
 
 /// The AWS event-stream framing codec the signing dialect streams in.
@@ -117,33 +125,42 @@ pub mod translate;
 pub mod usage_count;
 
 /// Dialect-neutral tail-usage isolation, shared by every reader's `recover_truncated_usage`. Public
+/// because the plane's metering locators name the same isolation.
 pub mod usage_tail;
 
 /// The `url_citation` annotations wire mapping the Chat and Responses codecs share.
 pub mod url_citation_wire;
 
 /// The per-token logprob wire object (`{content: [{token, logprob, bytes, top_logprobs}]}`) the
+/// Chat and Responses dialects read and write alike.
 pub mod logprob_wire;
 
 /// The rerank wire shape (`documents[]`, `results[]`) the rerank dialects read alike.
 pub mod rerank_wire;
 
 /// IR → wire encode helpers (image source, tool-result detection, strict-drop warn) shared by the
+/// dialect writers.
 pub mod ir_encode;
 
 /// The per-`(operation, egress-protocol)` leaf-op writer dispatch — the non-chat twin of chat's
+/// `protocol_for(proto).writer()`.
 pub mod leaf_codec;
 
 /// The concrete wire-codec surface (`ProtocolReader`/`ProtocolWriter`/`StreamFraming`/`Protocol`/
+/// `protocol_for`/`DialectRef`/`ToolIdRemap`).
 pub mod proto_codec;
 
 /// The concrete streaming byte-translator (`StreamTranslate`) the relay drives.
 pub mod proto_stream;
 
 /// The two body-shaping helpers a caller needs on either side of a translate, kept here because
+/// they are pure over the protocol registry and the neutral billing carrier — and because the
+/// suites that pin them are codec suites.
 pub mod wire_shim;
 
 /// This plane's own declaration of `name`, read off [`DECLS`]. Every codec lookup by dialect name
+/// (path-model shape, array-stream shim key, native tool-id prefix, provider-metadata reporter) is a
+/// fact about one of these six dialects, so it reads this table, never the host's registry.
 #[must_use]
 pub fn decl_of(name: &str) -> Option<&'static busbar_contract::protocol::ProtocolDecl> {
     DECLS.iter().copied().find(|d| d.name == name)
@@ -156,6 +173,7 @@ mod codec_host_tests;
 #[path = "tests/dialect_classify.rs"]
 pub(crate) mod dialect_classify;
 /// This crate's test host (the host and the classifier are dev-only): the codec host a shipped
+/// binary's host provides, supplied by the test so the codec tests never reach the host crate.
 #[cfg(test)]
 #[path = "tests/test_host.rs"]
 pub(crate) mod test_host;
@@ -174,6 +192,7 @@ pub(crate) const DIALECTS: &[&proto_codec::DialectEntry] = &[
 ];
 
 /// Every registered dialect's declaration, in [`DIALECTS`] order (the operator-visible order
+/// documented there).
 pub static DECLS: &[&busbar_contract::protocol::ProtocolDecl] = &decls::<{ DIALECTS.len() }>();
 
 /// [`DIALECTS`]' declarations as an array, evaluated at compile time.
@@ -200,6 +219,7 @@ mod decode_native_tool_id_tests;
 mod leaf_write_dispatch_tests;
 
 /// The cache-tier read tests, anchored to real recorded upstream bodies under
+/// `testing/shadow-oracle/golden/1.5.5/cells/` and `testing/llm-conformance/fixtures/`.
 #[cfg(test)]
 #[path = "tests/cache_tier_capture_tests.rs"]
 mod cache_tier_capture_tests;
@@ -209,11 +229,14 @@ mod cache_tier_capture_tests;
 mod image_detail_warn_tests;
 
 /// The codec/IR test suites: the detection, translate-parity, streaming, round-trip and IR goldens
+/// that name the dialects and the concrete wire codecs (see the module header for the `super::*`
+/// prelude reconstruction).
 #[cfg(test)]
 #[path = "tests/proto/mod.rs"]
 mod relocated_proto_tests;
 
 /// The bedrock buffered-response to ConverseStream eventstream synthesis suite, driving the
+/// witnessed `bedrock::bedrock_response_to_eventstream`.
 #[cfg(test)]
 #[path = "tests/bedrock_eventstream_tests.rs"]
 mod bedrock_eventstream_tests;
@@ -238,6 +261,7 @@ mod parked_rows_cross_dialect_tests;
 mod carry_probe_tests;
 
 /// The usage-tap count pin: every same-protocol tap fault counts once on the host's counter, under
+/// its reason, whichever cell or direct call raised it.
 #[cfg(test)]
 #[path = "tests/usage_tap_count_tests.rs"]
 mod usage_tap_count_tests;

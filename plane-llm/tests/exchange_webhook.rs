@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The OpenAI Responses webhook receiver, ported from the retiring engine crate's
+//! `openai_responses_webhook.rs` onto this plane: the plane's own
+//! `webhooks:` section switches it on, the auth kind verifies the sender, and the plane reads the
+//! delivery and acknowledges it.
 
 #![allow(unused_unsafe)]
 

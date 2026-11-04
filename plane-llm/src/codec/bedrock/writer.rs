@@ -2,6 +2,8 @@ use super::*;
 use crate::codec::keys;
 
 /// Converse `usage.totalTokens`: every token consumed, cache tokens included. AWS reports
+/// `inputTokens` as non-cached input only (full input is `inputTokens + cacheReadInputTokens +
+/// cacheWriteInputTokens`; its worked example totals 16 + 4 + 695 as 715).
 fn converse_total_tokens(usage: &crate::codec::ir::IrUsage) -> u64 {
     usage
         .input_tokens
@@ -72,7 +74,7 @@ impl ProtocolWriter for BedrockWriter {
         let mut dropped = Vec::new();
 
         if req.response_format.as_ref().is_some_and(|rf| {
-            !caps.native_structured_output || super::write_bedrock_text_format(rf).is_none()
+            !caps.native_structured_output || !super::bedrock_text_format_representable(rf)
         }) {
             dropped.push(keys::RESPONSE_FORMAT);
         }
@@ -91,6 +93,7 @@ impl ProtocolWriter for BedrockWriter {
     }
 
     /// The production write: the lane's [`LaneCaps`] choose the structured-output form (see
+    /// `write_request_with`).
     fn write_request_for_lane(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -180,10 +183,11 @@ impl ProtocolWriter for BedrockWriter {
 
                     crate::codec::ir::IrDelta::MediaDelta(block) => {
                         crate::codec::drops::writer_drop!(
-                        crate::codec::drops::block(block.kind_name()),
-                        &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                        [], "dropping generated media on Bedrock streaming egress: no native media delta"
-                    );
+                            crate::codec::drops::block(block.kind_name()),
+                            &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                            [],
+                            "dropping generated media on Bedrock streaming egress: no native media delta"
+                        );
                         None
                     }
                     crate::codec::ir::IrDelta::RedactedReasoningDelta(redacted) => Some((
@@ -207,12 +211,13 @@ impl ProtocolWriter for BedrockWriter {
 
                             None => {
                                 crate::codec::drops::writer_drop!(
-                                crate::codec::drops::TEXT,
-                                &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                                [],
-                                "dropping a streamed citation on a bedrock egress: it carried no \
+                                    crate::codec::drops::TEXT,
+                                    &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                                    [],
+                                    "dropping a streamed citation on a bedrock egress: it carried no \
                                  title, url, quoted text or resolvable character location, so there \
-                                 is no populated member for the Converse `citation` delta union");
+                                 is no populated member for the Converse `citation` delta union"
+                                );
                                 None
                             }
                         }
@@ -288,6 +293,7 @@ impl ProtocolWriter for BedrockWriter {
     }
 
     /// A `citation` delta carries one citation, so a multi-citation delta frames as several events at
+    /// the same `contentBlockIndex`, as a native stream interleaves them.
     fn write_response_events(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -317,6 +323,9 @@ impl ProtocolWriter for BedrockWriter {
     }
 
     /// Maps an IR error to the `(exception_name, message)` of the modeled-exception event-stream
+    /// frame (`:message-type: exception`) `StreamTranslate` emits via
+    /// `eventstream::encode_exception_frame`, using `bedrock_stream_exception_for` (the five-member
+    /// stream union, not the request-level HTTP set) so an SDK decoder recognizes it.
     fn write_response_exception(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -337,7 +346,8 @@ impl ProtocolWriter for BedrockWriter {
             crate::codec::drops::writer_drop!(
                 crate::codec::drops::wire("choices[].message.audio"),
                 &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                [], "dropping native Chat audio on Bedrock response egress: no native output-audio member"
+                [],
+                "dropping native Chat audio on Bedrock response egress: no native output-audio member"
             );
         }
 
@@ -362,10 +372,11 @@ impl ProtocolWriter for BedrockWriter {
                             crate::codec::drops::writer_drop!(
                                 crate::codec::drops::TEXT,
                                 &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                                [dropped = citations.len(), ],
+                                [dropped = citations.len(),],
                                 "dropping citation(s) on a bedrock response egress: none carried a \
                                  title, url, quoted text or resolvable character location, so there \
-                                 is no populated member for the Converse `Citation` shape");
+                                 is no populated member for the Converse `Citation` shape"
+                            );
                         }
                         content_arr.push(serde_json::json!({ (keys::TEXT): text }));
                     } else {
@@ -382,7 +393,8 @@ impl ProtocolWriter for BedrockWriter {
                     crate::codec::drops::writer_drop!(
                         crate::codec::drops::block(block.kind_name()),
                         &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                        [], "dropping generated media on Bedrock response egress: no native attachment member"
+                        [],
+                        "dropping generated media on Bedrock response egress: no native attachment member"
                     );
                 }
 
@@ -408,7 +420,8 @@ impl ProtocolWriter for BedrockWriter {
                     crate::codec::drops::writer_drop!(
                         crate::codec::drops::block(block.kind_name()),
                         &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                        [], "dropping an answer block on Bedrock response egress: no native assistant member"
+                        [],
+                        "dropping an answer block on Bedrock response egress: no native assistant member"
                     );
                 }
 
@@ -471,6 +484,7 @@ impl ProtocolWriter for BedrockWriter {
     }
 
     /// Native Converse error envelope: a flat body with the detail in lowercase `message` and the
+    /// exception name in `__type` (the two fields `BedrockReader::extract_error` reads).
     fn write_error(
         &self,
         _host: &dyn busbar_contract::codec::CodecHost,
@@ -523,6 +537,7 @@ impl ProtocolWriter for BedrockWriter {
     }
 
     /// IR-18: a `reasoningText.signature` reads back as Claude's or the Bedrock model's own (told
+    /// apart by the conversation's model id).
     fn reads_signature_origin_as_own(&self, origin: crate::codec::ir::IrSignatureOrigin) -> bool {
         matches!(
             origin,
@@ -538,6 +553,7 @@ impl ProtocolWriter for BedrockWriter {
 
 impl BedrockWriter {
     /// The request write for a lane with the declared [`LaneCaps`] (the model gate has already
+    /// run — see `write_request_for_lane`).
     fn write_request_with(
         &self,
         req: &crate::codec::ir::IrRequest,
@@ -611,6 +627,40 @@ impl BedrockWriter {
         }
 
         let emit_inline_message_cache = message_cache_points.is_none();
+        // Partition once; preserve stash order for equal-position markers and retain
+        // projected indices even when an entry has no usable wire marker.
+        let mut markers_by_message: std::collections::HashMap<u64, Vec<serde_json::Value>> =
+            std::collections::HashMap::new();
+        let mut modelled_by_message: std::collections::HashMap<
+            u64,
+            std::collections::BTreeSet<usize>,
+        > = std::collections::HashMap::new();
+        for (entries, modelled) in [
+            (message_cache_points, false),
+            (message_guard_content, true),
+            (message_doc_video, true),
+        ] {
+            for entry in entries.into_iter().flatten() {
+                let Some(message) = entry.get(keys::M).and_then(|v| v.as_u64()) else {
+                    continue;
+                };
+                if message >= req.messages.len() as u64 {
+                    continue;
+                }
+                if modelled {
+                    if let Some(index) = entry.get(B).and_then(|v| v.as_u64()) {
+                        modelled_by_message
+                            .entry(message)
+                            .or_default()
+                            .insert(index as usize);
+                    }
+                }
+                markers_by_message
+                    .entry(message)
+                    .or_default()
+                    .push(entry.clone());
+            }
+        }
         let mut msgs_arr: Vec<serde_json::Value> = Vec::new();
         for (msg_idx, msg) in req.messages.iter().enumerate() {
             let _message_origins = req
@@ -631,13 +681,12 @@ impl BedrockWriter {
 
             let mut content_arr: Vec<serde_json::Value> = Vec::new();
 
-            let stashed_here =
-                stashed_ir_indices([message_doc_video, message_guard_content], Some(msg_idx));
+            let stashed_here = modelled_by_message.get(&(msg_idx as u64));
             for (block_idx, block) in msg.content.iter().enumerate() {
                 let _block_origin =
                     crate::codec::drops::block_scope(_message_origins.get(block_idx));
 
-                if stashed_here.contains(&block_idx) {
+                if stashed_here.is_some_and(|indices| indices.contains(&block_idx)) {
                     continue;
                 }
 
@@ -758,7 +807,8 @@ impl BedrockWriter {
                                         crate::codec::drops::THINKING,
                                         &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
                                         [],
-                                        "dropping non-representable Thinking block inside a Bedrock toolResult");
+                                        "dropping non-representable Thinking block inside a Bedrock toolResult"
+                                    );
                                 }
 
                                 crate::codec::ir::IrBlock::Media {
@@ -849,15 +899,7 @@ impl BedrockWriter {
                 }
             }
 
-            let for_this_msg: Vec<serde_json::Value> = message_cache_points
-                .into_iter()
-                .chain(message_guard_content)
-                .chain(message_doc_video)
-                .flatten()
-                .filter(|e| e.get(keys::M).and_then(|v| v.as_u64()) == Some(msg_idx as u64))
-                .cloned()
-                .collect();
-            if !for_this_msg.is_empty() {
+            if let Some(for_this_msg) = markers_by_message.remove(&(msg_idx as u64)) {
                 splice_cache_points(&mut content_arr, &for_this_msg);
             }
 
@@ -939,12 +981,14 @@ impl BedrockWriter {
             .unwrap_or_default();
 
         if let Some(rf) = &req.response_format {
-            match super::write_bedrock_text_format(rf) {
+            match super::bedrock_text_format_representable(rf) {
                 _ if output_config.contains_key(super::TEXT_FORMAT) => {}
-                Some(tf) if caps.native_structured_output => {
-                    output_config.entry(super::TEXT_FORMAT).or_insert(tf);
+                true if caps.native_structured_output => {
+                    if let Some(tf) = super::write_bedrock_text_format(rf) {
+                        output_config.entry(super::TEXT_FORMAT).or_insert(tf);
+                    }
                 }
-                Some(_) => {
+                true => {
                     crate::codec::drops::writer_drop!(
                         crate::codec::drops::RESPONSE_FORMAT,
                         &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
@@ -954,7 +998,7 @@ impl BedrockWriter {
                          rejects `outputConfig.textFormat` on a model without them"
                     );
                 }
-                None => {
+                false => {
                     crate::codec::drops::writer_drop!(
                         crate::codec::drops::RESPONSE_FORMAT,
                         &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
@@ -1039,7 +1083,8 @@ impl BedrockWriter {
                             &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
                             [],
                             "dropping tool_choice=None: Bedrock Converse has no 'do not call a tool' \
-                             directive, so toolChoice is omitted and the backend may still call a tool");
+                             directive, so toolChoice is omitted and the backend may still call a tool"
+                        );
                     }
                 }
             }

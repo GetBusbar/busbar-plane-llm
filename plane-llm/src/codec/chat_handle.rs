@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The chat `IrHandle`: the request/response handle `ChatOperation` yields. Wraps the concrete
+//! `crate::codec::ir::{IrRequest,IrResponse}` and carries chat's cross-protocol prep and write,
+//! keyed by the peer protocol string: the handle writes itself onto the target dialect via
+//! `super::proto_codec::protocol_for(proto).writer()`, without downcasting the request handle.
 
 use crate::codec::drops::{self, Dropped};
 use crate::codec::egress_prep::EgressPrep;
@@ -217,6 +220,7 @@ pub fn chat_prepare_for_egress(ir: &mut IrRequest, prep: &EgressPrep) {
 }
 
 /// The members the caller's request holds in `extra` do not cross a translate attempt: each is
+/// dropped through the one drop path, named by its wire path, and `extra` is emptied.
 pub fn drop_request_extra(ir: &mut IrRequest, ingress_protocol: &str) {
     if ir
         .extra
@@ -264,6 +268,8 @@ pub fn drop_request_extra(ir: &mut IrRequest, ingress_protocol: &str) {
 }
 
 /// What a translate attempt's answer drops: the far end's vendor-scoped response metadata, content
+/// blocks its reader does not model, and every other member its dialect does not carry (the answer
+/// walk), each named by wire path.
 pub fn drop_untranslatable_response(egress_protocol: &str, body: &Value) {
     crate::codec::dialect::drop_untranslatable_response_metadata(egress_protocol, body);
     super::proto_codec::with_reader(egress_protocol, |r| {
@@ -291,6 +297,9 @@ pub fn chat_prepare_for_ingress(ir: &mut IrResponse, ingress_protocol: &str, now
 }
 
 /// IR-18: a reasoning signature another family minted is wrapped in the busbar provenance envelope
+/// before the ingress writer places it in a client carrier with no origin field, so the next turn
+/// brings back the original bytes and origin (the ingress reader unwraps it), not a blob its own
+/// family would reject.
 fn envelope_foreign_signatures(ir: &mut IrResponse, ingress_protocol: &str) {
     let Some(p) = super::proto_codec::protocol_for(ingress_protocol) else {
         return;
@@ -311,13 +320,18 @@ fn envelope_foreign_signatures(ir: &mut IrResponse, ingress_protocol: &str) {
 }
 
 /// Chat token-usage billing projection. It delegates to [`crate::codec::ir::IrUsage::to_token_usage`],
+/// the function the streaming A-tap and same-protocol usage tap ledger through, so one completion
+/// bills one figure whatever the caller's `stream` flag (a separate projection once could drift).
 pub fn chat_usage(r: &IrResponse) -> Option<Billing> {
     Some(Billing::Tokens(r.usage.to_token_usage()))
 }
 
 /// The chat request handle: the request, plus the egress lane's declared capabilities, which the
+/// seam hands over in the [`EgressPrep`] and the egress write passes to the writer.
 pub struct ChatReqHandle(pub IrRequest, pub crate::codec::egress_prep::LaneCaps);
 /// The chat response handle: the response, and the translation cap its plane enforces
+/// ([`IrHandle::apply_translate_cap`]; [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`]
+/// until set), which bounds what a writer accumulates when re-emitting the response as a stream.
 pub struct ChatRespHandle(pub IrResponse, pub usize);
 
 impl Sealed for ChatReqHandle {}
@@ -331,7 +345,7 @@ impl IrHandle for ChatReqHandle {
         self.0.stream
     }
     fn facts(&self) -> Box<dyn IrFacts + Send + Sync> {
-        Box::new(self.0.clone())
+        Box::new(self.0.facts_snapshot())
     }
     fn prepare_for_egress(&mut self, context: &dyn std::any::Any) -> Result<(), CodecError> {
         let prep = context.downcast_ref::<EgressPrep>().ok_or_else(|| {
@@ -435,12 +449,68 @@ impl IrHandle for ChatRespHandle {
 }
 
 /// A protocol's chat operation. The field names the protocol whose `proto_codec` reader/writer are
+/// this instance's codec; `read_request`/`read_response` yield `Box<dyn IrHandle>` (a
+/// `ChatReqHandle`/`ChatRespHandle`) and the write half runs on those handles by egress-protocol
+/// string.
 pub struct ChatOperation(pub &'static str);
 
 impl ChatOperation {
     fn proto(&self) -> Option<super::proto_codec::Protocol> {
         super::proto_codec::protocol_for(self.0)
     }
+}
+
+/// Validate a chat response once, retaining its provider-failure classification and usage tap.
+pub(crate) fn inspect_response_usage(
+    host: &dyn busbar_contract::codec::CodecHost,
+    ingress_protocol: &str,
+    body: &[u8],
+) -> (
+    bool,
+    Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault>,
+) {
+    let mut reported_failure = false;
+    let tapped = (|| {
+        use busbar_contract::codec::UsageTapFault;
+        let Some(p) = super::proto_codec::protocol_for(ingress_protocol) else {
+            ::tracing::debug!(diag = %crate::codec::diagnostics::USAGE_TAP_UNKNOWN_PROTOCOL.banner(),
+                protocol = ingress_protocol,
+                "usage tap: unknown ingress protocol for a same-protocol 2xx body; \
+                 billing 0 tokens for this request"
+            );
+            return Err(UsageTapFault::UnknownProtocol);
+        };
+        let v = match crate::codec::json::parse::<Value>(body) {
+            Ok(v) => v,
+            Err(_e) => {
+                ::tracing::debug!(diag = %crate::codec::diagnostics::USAGE_TAP_BAD_JSON.banner(),
+                    protocol = ingress_protocol,
+                    error = %crate::codec::json::parse_err_log(body.len()),
+                    "usage tap: failed to parse a same-protocol 2xx body as JSON; \
+                     billing 0 tokens for this request"
+                );
+                return Err(UsageTapFault::BadJson);
+            }
+        };
+        match p.reader().read_response(host, &v) {
+            Ok(ir) => Ok(Some(ir.usage.to_token_usage())),
+            Err(e) => {
+                reported_failure =
+                    e.provider_signal.as_deref() != Some(crate::codec::framework::SIGNAL_IR_PARSE);
+                if let Some(usage) = p.reader().recover_response_usage(&v) {
+                    return Ok(Some(usage));
+                }
+                ::tracing::debug!(diag = %busbar_contract::diagnostic::USAGE_TAP_DECODE_FAILED.banner(),
+                    protocol = ingress_protocol,
+                    error = ?e,
+                    "usage tap: read_response failed to decode a same-protocol 2xx body; \
+                     billing 0 tokens for this request"
+                );
+                Err(UsageTapFault::Decode)
+            }
+        }
+    })();
+    (reported_failure, tapped)
 }
 
 impl OperationHandler for ChatOperation {
@@ -475,42 +545,7 @@ impl OperationHandler for ChatOperation {
         body: &[u8],
     ) -> Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault>
     {
-        use busbar_contract::codec::UsageTapFault;
-        let Some(p) = super::proto_codec::protocol_for(ingress_protocol) else {
-            ::tracing::debug!(diag = %crate::codec::diagnostics::USAGE_TAP_UNKNOWN_PROTOCOL.banner(),
-                protocol = ingress_protocol,
-                "usage tap: unknown ingress protocol for a same-protocol 2xx body; \
-                 billing 0 tokens for this request"
-            );
-            return Err(UsageTapFault::UnknownProtocol);
-        };
-        let v = match crate::codec::json::parse::<Value>(body) {
-            Ok(v) => v,
-            Err(_e) => {
-                ::tracing::debug!(diag = %crate::codec::diagnostics::USAGE_TAP_BAD_JSON.banner(),
-                    protocol = ingress_protocol,
-                    error = %crate::codec::json::parse_err_log(body.len()),
-                    "usage tap: failed to parse a same-protocol 2xx body as JSON; \
-                     billing 0 tokens for this request"
-                );
-                return Err(UsageTapFault::BadJson);
-            }
-        };
-        match p.reader().read_response(host, &v) {
-            Ok(ir) => Ok(Some(ir.usage.to_token_usage())),
-            Err(e) => {
-                if let Some(usage) = p.reader().recover_response_usage(&v) {
-                    return Ok(Some(usage));
-                }
-                ::tracing::debug!(diag = %busbar_contract::diagnostic::USAGE_TAP_DECODE_FAILED.banner(),
-                    protocol = ingress_protocol,
-                    error = ?e,
-                    "usage tap: read_response failed to decode a same-protocol 2xx body; \
-                     billing 0 tokens for this request"
-                );
-                Err(UsageTapFault::Decode)
-            }
-        }
+        inspect_response_usage(host, ingress_protocol, body).1
     }
 
     fn recover_response_billing(

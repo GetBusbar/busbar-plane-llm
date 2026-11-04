@@ -32,6 +32,8 @@ impl IrSignatureOrigin {
 }
 
 /// Wrap `signature` (minted by `origin`) for a carrier with no provenance field. Idempotent: an
+/// existing envelope is returned unchanged, so a pass that runs twice (buffered prep, then
+/// buffered-to-stream synthesis) never nests envelopes.
 pub fn wrap(origin: IrSignatureOrigin, signature: &str) -> String {
     if unwrap(signature).is_some() {
         return signature.to_string();
@@ -44,6 +46,7 @@ pub fn wrap(origin: IrSignatureOrigin, signature: &str) -> String {
 }
 
 /// Unwrap an envelope: `Some((origin, original signature))`, or `None` when `carried` is not a
+/// well-formed envelope (then it is the carrier dialect's own blob, read as before).
 pub fn unwrap(carried: &str) -> Option<(IrSignatureOrigin, String)> {
     let rest = carried.strip_prefix(ENVELOPE_PREFIX)?;
     let (word, payload) = rest.split_once(':')?;
@@ -53,6 +56,7 @@ pub fn unwrap(carried: &str) -> Option<(IrSignatureOrigin, String)> {
 }
 
 /// READER helper: a signature read off a carrier whose own family is `own`. An envelope yields the
+/// original bytes and the origin it recorded; anything else is the carrier family's own blob.
 pub fn read_carried(
     carried: String,
     own: Option<IrSignatureOrigin>,
@@ -78,6 +82,7 @@ pub fn read_carried_opt(
 }
 
 /// Client-writer helper: the string for a client carrier for a signature minted by `origin`, where
+/// `accepts` says which origins the carrier's family reads as its own.
 pub fn for_client(
     signature: &str,
     origin: Option<IrSignatureOrigin>,

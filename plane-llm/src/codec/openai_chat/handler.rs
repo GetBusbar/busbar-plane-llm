@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! OpenAI `RequestHandler` and its OperationHandlers. OperationHandlers are pure codecs — wire ↔ IR,
+//! both directions, nothing else: moderation, embeddings, images, audio, and chat each get one.
 
 use crate::codec::ir::moderation::{
     ModerationInput, ModerationReq, ModerationResp, ModerationResult,
@@ -20,6 +21,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 /// Endpoint paths — each appears on BOTH the egress side (`upstream_path`) and the ingress match
+/// (`resolve_operation`); single-sourced so the two sides cannot drift.
 const PATH_CHAT_COMPLETIONS: &str = "/v1/chat/completions";
 const PATH_EMBEDDINGS: &str = "/v1/embeddings";
 const PATH_MODERATIONS: &str = "/v1/moderations";
@@ -31,6 +33,7 @@ const PATH_RERANK: &str = "/v1/rerank";
 
 pub struct OpenAiRequestHandler;
 /// This protocol's OWN chat instance — delete this line (and the registry arm) and this
+/// protocol's chat 404s via the standard no-handler path; everything else keeps working.
 static CHAT: super::super::chat_handle::ChatOperation =
     super::super::chat_handle::ChatOperation(super::VENDOR_NAME);
 
@@ -41,6 +44,9 @@ static TRANSCRIPTION: OpenAiTranscription = OpenAiTranscription;
 static SPEECH: OpenAiSpeech = OpenAiSpeech;
 
 /// OPENAI'S ROW OF THE SUPPORT MATRIX — the verbs this protocol speaks, as data. A verb absent from
+/// this table is the standard no-handler 404, which is what the enumerated `None` arm used to say:
+/// OpenAI ships no rerank surface, and the protocol-surface verbs are MCP's and A2A's, so the pair
+/// is unrepresentable rather than refused at runtime.
 static CELLS: &[busbar_contract::codec::Cell] = &[
     (OpVerb::CHAT, &CHAT),
     (OpVerb::MODERATION, &MODERATION),
@@ -51,6 +57,7 @@ static CELLS: &[busbar_contract::codec::Cell] = &[
 ];
 
 /// The egress half of the path constants above; `resolve_operation` reads the same constants on the
+/// ingress side, so the two directions cannot drift.
 static PATHS: &[(OpVerb, &str)] = &[
     (OpVerb::CHAT, PATH_CHAT_COMPLETIONS),
     (OpVerb::EMBEDDINGS, PATH_EMBEDDINGS),
@@ -113,6 +120,7 @@ fn sanitize_mime_type(raw: &str) -> String {
 }
 
 /// Decode an audio blob at the egress boundary. A failed decode is an unwritable-body sentinel,
+/// never an empty audio part in an otherwise successful form or response.
 fn decode_ir_b64(s: &str) -> Option<SlabBytes> {
     let decoded = base64_decode(s);
     if decoded.is_none() {
@@ -125,6 +133,7 @@ fn decode_ir_b64(s: &str) -> Option<SlabBytes> {
 }
 
 /// Minimal byte-level `multipart/form-data` parser: enough for the OpenAI audio form (a `model` text
+/// part + a binary `file` part).
 fn parse_multipart<'a>(body: &'a [u8], content_type: &str) -> Vec<MultipartField<'a>> {
     crate::exchange::multipart::transcription_fields(content_type, body)
 }
@@ -143,6 +152,14 @@ leaf_op! {
     fn taps_usage(&self) -> bool {
         true
     }
+    fn recover_response_billing(
+        &self,
+        _host: &dyn busbar_contract::codec::CodecHost,
+        body: &[u8],
+    ) -> Option<Billing> {
+        let value: Value = crate::codec::json::parse(body).ok()?;
+        parse_transcription_usage(body, value.get(keys::USAGE)?).ok().flatten()
+    }
     fn egress_request_content_type(&self) -> &'static str {
         // write_request rebuilds the multipart form around `TRANSCRIPTION_BOUNDARY`.
         TRANSCRIPTION_CONTENT_TYPE
@@ -150,31 +167,49 @@ leaf_op! {
 }
 
 /// The multipart boundary the transcription egress form is framed with: a constant, so the
+/// plugin keeps no process-global state for it (a plugin holds no process-global state) and the
+/// upstream receives the same bytes each time.
 pub const TRANSCRIPTION_BOUNDARY: &str = "----busbaraudioMIME";
 
 /// The Content-Type the transcription egress form is declared with; names [`TRANSCRIPTION_BOUNDARY`].
 const TRANSCRIPTION_CONTENT_TYPE: &str = "multipart/form-data; boundary=----busbaraudioMIME";
 
 /// Does `part` contain the multipart delimiter, i.e. can splicing it into a body framed with
+/// `boundary` terminate its own part and start a new one?
 fn part_carries_delimiter(part: &[u8], boundary: &str) -> bool {
     let head = format!("--{boundary}");
     let head = head.as_bytes();
     if part.starts_with(head) {
         return true;
     }
-    let needle = [b"\r\n".as_slice(), head].concat();
+    let needle = [b"\n".as_slice(), head].concat();
     part.windows(needle.len()).any(|w| w == needle)
 }
 
 /// IR → openai multipart transcription request wire (the body of
+/// [`OpenAiTranscription::write_request`], moved behind the `(transcription, openai)` key).
 pub fn write_transcription_request(r: &TranscriptionReq) -> Bytes {
     let boundary = TRANSCRIPTION_BOUNDARY;
+    if [
+        Some(r.model.as_str()),
+        r.source_language.as_deref(),
+        r.prompt.as_deref(),
+        r.response_format.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| part_carries_delimiter(value.as_bytes(), boundary))
+    {
+        tracing::warn!(
+            "openai transcription egress: text field carries multipart delimiter; refusing request"
+        );
+        return Bytes::new();
+    }
     let mut out: Vec<u8> = Vec::new();
     let mut push_field = |name: &str, val: &str| {
-        let safe: String = val.chars().filter(|&c| c != '\r' && c != '\n').collect();
         out.extend_from_slice(
             format!(
-                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{safe}\r\n"
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{val}\r\n"
             )
             .as_bytes(),
         );
@@ -223,6 +258,7 @@ pub fn write_transcription_request(r: &TranscriptionReq) -> Bytes {
 }
 
 /// IR → openai transcription response wire (the body of [`OpenAiTranscription::write_response`], moved
+/// behind the `(transcription, openai)` key).
 pub fn write_transcription_response(r: &TranscriptionResp) -> WireBody {
     if matches!(
         r.response_format.as_deref(),
@@ -338,6 +374,7 @@ leaf_op! {
 }
 
 /// IR → openai speech (TTS) request wire (the body of [`OpenAiSpeech::write_request`], moved behind
+/// the `(speech, openai)` key).
 pub fn write_speech_request(r: &SpeechReq) -> Bytes {
     let mut body = json!({ (keys::MODEL): r.model, (keys::INPUT): r.input, "voice": r.timbre });
     if let Some(f) = &r.response_format {
@@ -354,6 +391,7 @@ pub fn write_speech_request(r: &SpeechReq) -> Bytes {
 }
 
 /// IR → openai speech (TTS) response wire (the body of [`OpenAiSpeech::write_response`], moved behind
+/// the `(speech, openai)` key): raw audio bytes with the blob's own content-type.
 pub fn write_speech_response(r: &SpeechResp) -> WireBody {
     let Some(blob) = &r.audio else {
         return WireBody::json(SlabBytes::default());
@@ -387,9 +425,29 @@ leaf_op! {
     fn taps_usage(&self) -> bool {
         true
     }
+    fn extract_usage(
+        &self,
+        _host: &dyn busbar_contract::codec::CodecHost,
+        _ingress: &str,
+        body: &[u8],
+    ) -> Result<Option<busbar_contract::billing::TokenUsage>, busbar_contract::codec::UsageTapFault> {
+        let value: Value = crate::codec::json::parse(body)
+            .map_err(|_| busbar_contract::codec::UsageTapFault::Decode)?;
+        Ok(read_embeddings_usage(&value))
+    }
+    fn recover_response_billing(
+        &self,
+        _host: &dyn busbar_contract::codec::CodecHost,
+        body: &[u8],
+    ) -> Option<busbar_contract::billing::Billing> {
+        let value: Value = crate::codec::json::parse(body).ok()?;
+        read_embeddings_usage(&value).map(busbar_contract::billing::Billing::Tokens)
+    }
+
 }
 
 /// IR → openai embeddings request wire (the body of [`OpenAiEmbeddings::write_request`], moved behind
+/// the `(embeddings, openai)` key).
 pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
     let input = match &r.input {
         EmbInput::Text(v) if v.len() == 1 => json!(v[0]),
@@ -421,6 +479,7 @@ pub fn write_embeddings_request(r: &EmbeddingsReq) -> Bytes {
 }
 
 /// IR → openai embeddings response wire (the body of [`OpenAiEmbeddings::write_response`], moved
+/// behind the `(embeddings, openai)` key).
 pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
     let data: Vec<Value> = r
         .embeddings
@@ -464,9 +523,20 @@ leaf_op! {
     fn taps_usage(&self) -> bool {
         true
     }
+    fn recover_response_billing(
+        &self,
+        _host: &dyn busbar_contract::codec::CodecHost,
+        body: &[u8],
+    ) -> Option<Billing> {
+        let value: Value = crate::codec::json::parse(body).ok()?;
+        let usage = read_image_usage(&value, &mut Vec::new())?;
+        crate::codec::ir::image::ImageResp { usage: Some(usage), ..Default::default() }.billing()
+    }
+
 }
 
 /// IR → openai image request wire (the body of [`OpenAiImage::write_request`], moved behind the
+/// `(image, openai)` key).
 pub fn write_image_request(r: &ImageReq) -> Bytes {
     let mut body = json!({ (keys::MODEL): r.model });
     if let Some(p) = &r.prompt {
@@ -512,6 +582,7 @@ pub fn write_image_request(r: &ImageReq) -> Bytes {
 }
 
 /// IR → openai image response wire (the body of [`OpenAiImage::write_response`], moved behind the
+/// `(image, openai)` key).
 pub fn write_image_response(r: &ImageResp) -> WireBody {
     let data: Vec<Value> = r
         .images
@@ -563,12 +634,14 @@ leaf_op! {
 }
 
 /// IR → openai moderation request wire (the body of [`OpenAiModeration::write_request`], moved behind
+/// the `(moderation, openai)` key).
 pub fn write_moderation_request(r: &ModerationReq) -> Bytes {
     let body = json!({ (keys::MODEL): r.model, (keys::INPUT): input_to_value(&r.input) });
     Bytes::from(serde_json::to_vec(&body).unwrap_or_default())
 }
 
 /// IR → openai moderation response wire (the body of [`OpenAiModeration::write_response`], moved
+/// behind the `(moderation, openai)` key).
 pub fn write_moderation_response(r: &ModerationResp) -> WireBody {
     let results: Vec<Value> = r
         .results
@@ -640,12 +713,14 @@ fn input_to_value(input: &[ModerationInput]) -> Value {
     )
 }
 
-fn parse_result(v: &Value) -> ModerationResult {
-    ModerationResult {
+fn parse_result(v: &Value) -> Result<ModerationResult, CodecError> {
+    Ok(ModerationResult {
         flagged: v
             .get(super::FLAGGED)
             .and_then(Value::as_bool)
-            .unwrap_or(false),
+            .ok_or_else(|| {
+                CodecError::Malformed("moderation result requires a boolean flagged verdict".into())
+            })?,
         categories: obj_map(v.get(super::CATEGORIES), |x| x.as_bool()),
         category_scores: obj_map(v.get(super::CATEGORY_SCORES), |x| x.as_f64()),
         applied_input_types: obj_map(v.get(super::CATEGORY_APPLIED_INPUT_TYPES), |x| {
@@ -655,7 +730,7 @@ fn parse_result(v: &Value) -> ModerationResult {
                     .collect()
             })
         }),
-    }
+    })
 }
 
 fn obj_map<T>(v: Option<&Value>, f: impl Fn(&Value) -> Option<T>) -> BTreeMap<String, T> {
@@ -727,9 +802,9 @@ pub fn read_transcription_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::audio::TranscriptionResp, CodecError> {
     let v = match serde_json::from_slice::<Value>(wire) {
-        Ok(v) => v,
+        Ok(v) if v.get(keys::TEXT).is_some_and(Value::is_string) => v,
 
-        Err(_) => {
+        _ => {
             return Ok(TranscriptionResp {
                 text: String::from_utf8_lossy(wire).into_owned(),
                 response_format: Some(keys::TEXT.to_string()),
@@ -851,6 +926,7 @@ pub fn read_speech_response(
 }
 
 /// Recover the audio Content-Type of an OpenAI speech (TTS) response body from its container magic
+/// bytes, mapping onto the mime for each `response_format` the endpoint can emit.
 fn sniff_speech_audio_mime(wire: &[u8]) -> &'static str {
     if wire.starts_with(b"ID3") {
         keys::AUDIO_MPEG
@@ -898,7 +974,7 @@ pub fn read_embeddings_request(
         _ => {
             return Err(IngressReject::BadRequest(
                 "embeddings request missing `input`".into(),
-            ))
+            ));
         }
     };
     let dimensions = wire
@@ -931,47 +1007,45 @@ pub fn read_embeddings_response(
     let embeddings = v
         .get(keys::DATA)
         .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .enumerate()
-                .map(|(idx, d)| {
-                    let index = d
-                        .get(keys::INDEX)
-                        .and_then(Value::as_u64)
-                        .unwrap_or(idx as u64) as usize;
-                    let mut item = EmbeddingItem {
-                        index,
-                        ..Default::default()
-                    };
-                    if let Some(f) = d.get(keys::EMBEDDING).and_then(Value::as_array) {
-                        item.vectors.insert(
-                            EncFmt::Float,
-                            VectorData::Float(
-                                f.iter()
-                                    .filter_map(|x| x.as_f64().map(|n| n as f32))
-                                    .collect(),
-                            ),
-                        );
-                    } else if let Some(b) = d.get(keys::EMBEDDING).and_then(Value::as_str) {
-                        item.vectors
-                            .insert(EncFmt::Base64, VectorData::Base64(b.to_string()));
-                    }
-                    item
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let usage =
-        v.get(keys::USAGE)
-            .map(|u| busbar_contract::billing::TokenUsage {
-                input: crate::codec::usage_count::billed_count(u, super::PROMPT_TOKENS)
-                    .unwrap_or_else(|unreadable| {
-                        crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
-                        0
-                    }),
+        .ok_or_else(|| {
+            CodecError::Malformed("OpenAI embeddings response missing data array".into())
+        })?
+        .iter()
+        .enumerate()
+        .map(|(idx, d)| {
+            let index = d
+                .get(keys::INDEX)
+                .and_then(Value::as_u64)
+                .unwrap_or(idx as u64) as usize;
+            let mut item = EmbeddingItem {
+                index,
                 ..Default::default()
-            });
+            };
+            if let Some(f) = d.get(keys::EMBEDDING).and_then(Value::as_array) {
+                let malformed =
+                    || CodecError::Malformed("invalid OpenAI embedding component".into());
+                let coordinates = f
+                    .iter()
+                    .map(|value| {
+                        let number = value.as_f64().ok_or_else(malformed)? as f32;
+                        number.is_finite().then_some(number).ok_or_else(malformed)
+                    })
+                    .collect::<Result<Vec<_>, CodecError>>()?;
+                item.vectors
+                    .insert(EncFmt::Float, VectorData::Float(coordinates));
+            } else if let Some(b) = d.get(keys::EMBEDDING).and_then(Value::as_str) {
+                item.vectors
+                    .insert(EncFmt::Base64, VectorData::Base64(b.to_string()));
+            } else {
+                return Err(CodecError::Malformed(
+                    "OpenAI embedding must be an array or base64 string".into(),
+                ));
+            }
+            Ok(item)
+        })
+        .collect::<Result<Vec<_>, CodecError>>()?;
+
+    let usage = read_embeddings_usage(&v);
     Ok(EmbeddingsResp {
         model: v
             .get(keys::MODEL)
@@ -982,6 +1056,19 @@ pub fn read_embeddings_response(
         usage,
         ..Default::default()
     })
+}
+
+fn read_embeddings_usage(v: &Value) -> Option<busbar_contract::billing::TokenUsage> {
+    v.get(keys::USAGE)
+        .map(|u| busbar_contract::billing::TokenUsage {
+            input: crate::codec::usage_count::billed_count(u, super::PROMPT_TOKENS).unwrap_or_else(
+                |unreadable| {
+                    crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
+                    0
+                },
+            ),
+            ..Default::default()
+        })
 }
 
 /// Wire -> concrete `ImageReq` parse, extracted from the `OperationHandler::read_request`
@@ -1064,6 +1151,17 @@ pub fn read_image_request(
     })
 }
 
+fn read_image_usage(
+    v: &Value,
+    warnings: &mut Vec<String>,
+) -> Option<crate::codec::ir::image::ImageTokens> {
+    v.get(keys::USAGE)
+        .map(|u| crate::codec::ir::image::ImageTokens {
+            input: crate::codec::usage_count::recorded_count(u, keys::INPUT_TOKENS, warnings),
+            output: crate::codec::usage_count::recorded_count(u, keys::OUTPUT_TOKENS, warnings),
+        })
+}
+
 /// Wire -> concrete `ImageResp` parse, extracted from the `OperationHandler::read_response`
 pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::ImageResp, CodecError> {
     let v: Value =
@@ -1071,35 +1169,30 @@ pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::Image
     let images: Vec<ImageOutput> = v
         .get(keys::DATA)
         .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .map(|d| ImageOutput {
-                    b64: d
-                        .get(super::B64_JSON)
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    url: d.get(keys::URL).and_then(Value::as_str).map(str::to_string),
-                    revised_prompt: d
-                        .get(super::REVISED_PROMPT)
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    ..Default::default()
-                })
-                .collect()
+        .ok_or_else(|| CodecError::Malformed("image response requires a data array".into()))?
+        .iter()
+        .map(|d| {
+            let b64 = d.get(super::B64_JSON).and_then(Value::as_str);
+            let url = d.get(keys::URL).and_then(Value::as_str);
+            if b64.is_none() && url.is_none() {
+                return Err(CodecError::Malformed(
+                    "image response entry requires b64_json or url".into(),
+                ));
+            }
+            Ok(ImageOutput {
+                b64: b64.map(str::to_string),
+                url: url.map(str::to_string),
+                revised_prompt: d
+                    .get(super::REVISED_PROMPT)
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                ..Default::default()
+            })
         })
-        .unwrap_or_default();
+        .collect::<Result<_, CodecError>>()?;
 
     let mut warnings = Vec::new();
-    let usage = v
-        .get(keys::USAGE)
-        .map(|u| crate::codec::ir::image::ImageTokens {
-            input: crate::codec::usage_count::recorded_count(u, keys::INPUT_TOKENS, &mut warnings),
-            output: crate::codec::usage_count::recorded_count(
-                u,
-                keys::OUTPUT_TOKENS,
-                &mut warnings,
-            ),
-        });
+    let usage = read_image_usage(&v, &mut warnings);
 
     let cost_basis = if usage.is_none() {
         Some(crate::codec::ir::image::CostBasis {
@@ -1148,8 +1241,12 @@ pub fn read_moderation_response(
     let results = v
         .get(keys::RESULTS)
         .and_then(Value::as_array)
-        .map(|arr| arr.iter().map(parse_result).collect())
-        .unwrap_or_default();
+        .ok_or_else(|| {
+            CodecError::Malformed("moderation response requires a results array".into())
+        })?
+        .iter()
+        .map(parse_result)
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(ModerationResp {
         id: v.get(keys::ID).and_then(Value::as_str).map(str::to_string),
         model: v
@@ -1196,3 +1293,7 @@ pub(crate) const LEAF: crate::codec::leaf_codec::LeafCodecs =
         }),
         ..crate::codec::leaf_codec::LeafCodecs::NONE
     };
+
+#[cfg(test)]
+#[path = "tests/audit_embedding_billing_tests.rs"]
+mod audit_embedding_billing_tests;

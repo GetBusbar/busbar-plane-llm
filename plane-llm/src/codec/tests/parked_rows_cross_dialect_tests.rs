@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! CROSS-DIALECT behaviour of every member CARRY-TABLE moved from "always raw in `extra`" into a
+//! parked mapping row: Anthropic `service_tier`; Responses `metadata`, `service_tier`, `store`,
+//! `safety_identifier`, `prompt_cache_key`.
 
 use crate::codec::proto_codec::protocol_for;
 use serde_json::{json, Value};
@@ -175,6 +177,7 @@ fn gemini_service_tier_and_store_cross_both_ways() {
 }
 
 /// Gemini -> Gemini through the IR keeps the caller's exact `serviceTier`, a word the slot cannot
+/// reproduce included (the row is parked).
 #[test]
 fn gemini_service_tier_same_dialect_keeps_the_raw_word() {
     for tier in ["standard", "unspecified"] {

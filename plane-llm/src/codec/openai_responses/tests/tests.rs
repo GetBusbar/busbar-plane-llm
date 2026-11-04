@@ -786,6 +786,7 @@ fn refusal_events_respect_existing_block_limit_and_tool_collision() {
 }
 
 /// An `input_file` content block (a legitimate Responses input shape) must not
+/// silently vanish.
 #[test]
 fn responses_input_file_degrades_with_warn_not_silent_drop() {
     let body = serde_json::json!({
@@ -857,6 +858,8 @@ fn responses_input_file_degrades_with_warn_not_silent_drop() {
 }
 
 /// LOW (lossless-by-target): the Responses create API models no `top_k`. A request carrying
+/// `top_k` must NOT emit a `top_k` field (it would 400 a real `/v1/responses` call) — it is
+/// dropped with a `warn!` (the drop-with-warn branch is exercised here).
 #[test]
 fn write_request_drops_top_k_with_warn() {
     let mk = |top_k: Option<u32>| crate::codec::ir::IrRequest {
@@ -1238,6 +1241,8 @@ fn test_read_response_decode() {
 }
 
 /// Lenience: a Responses `read_response` body with NO `usage` object must parse to a
+/// zero IrUsage rather than hard-erroring with a ClientError — mirroring all five sibling readers
+/// (openai_chat.rs, etc.).
 #[test]
 fn read_response_without_usage_zero_defaults_no_error() {
     let json = serde_json::json!({
@@ -1319,6 +1324,8 @@ fn test_write_response_roundtrip_text_only() {
 }
 
 /// The NON-streaming `write_response` function_call
+/// item must carry the item-level opaque `id` (`fc_…`, distinct from `call_id`) that the streaming
+/// `output_item.done` emits, or a typed SDK reading `item.id` sees a missing field.
 #[test]
 fn test_write_response_function_call_item_has_native_id() {
     let resp = crate::codec::ir::IrResponse {
@@ -1366,6 +1373,7 @@ fn test_write_response_function_call_item_has_native_id() {
 }
 
 /// The NON-streaming `read_response` tool-use override must NOT clobber a
+/// truncation reason.
 #[test]
 fn test_read_response_incomplete_with_function_call_keeps_max_tokens() {
     let json = serde_json::json!({
@@ -1407,6 +1415,7 @@ fn test_read_response_incomplete_with_function_call_keeps_max_tokens() {
 }
 
 /// A native Responses refusal rides on a
+/// `{type:"refusal", refusal:"..."}` content part with `status:"completed"`.
 #[test]
 fn read_response_refusal_part_survives_and_promotes_stop_reason() {
     let json = serde_json::json!({
@@ -1449,6 +1458,7 @@ fn read_response_refusal_part_survives_and_promotes_stop_reason() {
 }
 
 /// `write_response` must build the `output` array in IR ENCOUNTER order so it
+/// mirrors the streaming `drain_output_items` order.
 #[test]
 fn test_write_response_preserves_text_after_tool_order() {
     let resp = crate::codec::ir::IrResponse {
@@ -1534,6 +1544,7 @@ fn test_write_error_native_responses_envelope() {
 }
 
 /// Each generic `kind` maps to the canonical Responses `error.type`; an unrecognized kind is
+/// passed through verbatim (no catch-all swallowing of a precise upstream type).
 #[test]
 fn test_write_error_kind_mapping() {
     let writer = ResponsesWriter;
@@ -1561,6 +1572,7 @@ fn test_write_error_kind_mapping() {
 }
 
 /// Same-protocol passthrough: `read_response` captures the upstream `id`/`created_at`, and
+/// `write_response` emits them verbatim — identity is preserved exactly, not regenerated.
 #[test]
 fn test_same_protocol_roundtrip_preserves_identity() {
     let json = serde_json::json!({
@@ -1603,6 +1615,7 @@ fn test_same_protocol_roundtrip_preserves_identity() {
 }
 
 /// The streaming start event captures the nested `response` identity for same-protocol
+/// passthrough.
 #[test]
 fn test_stream_message_start_captures_identity() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -1779,6 +1792,7 @@ fn test_stream_fanout() {
 }
 
 /// A terminal-only Responses refusal still needs the buffered-body fallback when no
+/// refusal.delta or refusal.done events preceded response.completed.
 #[test]
 fn read_response_events_streamed_refusal_surfaces_text_and_refusal_stop_reason() {
     use crate::codec::ir::{IrDelta, IrStopReason, IrStreamEvent};
@@ -1883,6 +1897,7 @@ fn reader_read_response_events(
 }
 
 /// Regression: a text part arriving at a non-zero `output_index` must open AND write to the
+/// same block index.
 #[test]
 fn test_text_delta_index_pairing_nonzero() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -1906,6 +1921,7 @@ fn test_text_delta_index_pairing_nonzero() {
 }
 
 /// Regression: an empty-delta keepalive chunk must produce no events, even when a text block is
+/// already open.
 #[test]
 fn test_empty_delta_keepalive_emits_nothing() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -1939,6 +1955,7 @@ fn test_empty_delta_keepalive_emits_nothing() {
 }
 
 /// Regression: output_item.done must clear the open TEXT index so a subsequent text part can
+/// lazily re-open its own block instead of silently reusing stale open state.
 #[test]
 fn test_done_clears_text_block_open() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -2078,6 +2095,7 @@ fn test_stream_completed_without_function_call_stays_end_turn() {
 }
 
 /// A terminal event arriving while a content block is STILL OPEN must
+/// close that block (BlockStop) before MessageStop.
 #[test]
 fn test_terminal_closes_open_blocks_balanced() {
     fn assert_balanced(etype: &str, data: serde_json::Value) {
@@ -2206,6 +2224,7 @@ fn test_content_part_done_closes_block() {
 }
 
 /// Regression: a minimal `response.completed` lacking a nested `response` object must still
+/// terminate the stream with MessageDelta + MessageStop, not leave it hanging.
 #[test]
 fn test_completed_without_response_object_terminates() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -2248,6 +2267,7 @@ fn test_incomplete_without_response_object_terminates() {
 }
 
 /// Regression: an input item carrying BOTH a `type` and a `role` must be processed exactly once
+/// (by the type arm), not duplicated by the role-keyed fallback.
 #[test]
 fn test_typed_item_with_role_not_duplicated() {
     let json = serde_json::json!({
@@ -2319,6 +2339,8 @@ fn test_tool_only_assistant_turn_no_empty_message_wrapper() {
 }
 
 /// Regression: an assistant turn carrying BOTH text and a tool call must emit the assistant
+/// `message` (with the text) FIRST, then the flat `function_call` item AFTER it — preserving
+/// the conversation order the assistant produced.
 #[test]
 fn test_assistant_text_then_tool_call_order() {
     let ir = crate::codec::ir::IrRequest {
@@ -2373,6 +2395,8 @@ fn test_assistant_text_then_tool_call_order() {
 }
 
 /// Regression: a streaming `response.failed` (status=="failed") must surface an
+/// IrStreamEvent::Error followed by MessageStop, NOT a successful end_turn MessageDelta that
+/// would mask the failure from a downstream client.
 #[test]
 fn test_stream_failed_status_emits_error_not_end_turn() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -2411,6 +2435,7 @@ fn test_stream_failed_status_emits_error_not_end_turn() {
 }
 
 /// A streamed `response.failed` must classify the IrError by the captured
+/// provider signal, not a hardcoded ServerError.
 #[test]
 fn test_stream_failed_invalid_api_key_classifies_as_auth() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -2451,7 +2476,7 @@ fn test_stream_failed_invalid_api_key_classifies_as_auth() {
     );
     assert_eq!(
         class_for_response_failed(ERR_TYPE_INSUFFICIENT_QUOTA),
-        StatusClass::RateLimit
+        StatusClass::Billing
     );
     assert_eq!(
         class_for_response_failed(crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH),
@@ -2477,6 +2502,7 @@ fn test_stream_failed_invalid_api_key_classifies_as_auth() {
 }
 
 /// The NON-streaming `read_response` `status:"failed"` path must
+/// also classify by the captured provider signal rather than hardcoding ServerError.
 #[test]
 fn test_read_response_failed_body_classifies_by_signal() {
     let reader = ResponsesReader;
@@ -2511,6 +2537,7 @@ fn test_read_response_failed_body_classifies_by_signal() {
 }
 
 /// Regression: an unknown terminal status must not be decoded as a successful end_turn; its
+/// stop_reason is None (terminal, but no success claim).
 #[test]
 fn test_stream_unknown_status_not_end_turn() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -2533,6 +2560,7 @@ fn test_stream_unknown_status_not_end_turn() {
 }
 
 /// Regression: a streaming `incomplete` status with NO `incomplete_details` must NOT decode to
+/// `stop_reason = Some("end_turn")` — that masks the truncation as a clean completion.
 #[test]
 fn test_stream_incomplete_without_details_is_none() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -2653,6 +2681,9 @@ fn write_request_tool_result_multi_text_concatenates_without_separator() {
 }
 
 /// Regression: the streaming error event nests the error inside the `response` object the
+/// official SDK streaming decoder reads via `event.response`, and the error object is the
+/// Responses-native `ResponseError` shape `{code, message}` with a NON-NULL `code` enum — NOT
+/// the Chat-Completions `{message, type, code:null, param:null}` envelope.
 #[test]
 fn test_write_error_stream_event_full_shape() {
     let writer = ResponsesWriter;
@@ -2690,6 +2721,7 @@ fn test_write_error_stream_event_full_shape() {
 }
 
 /// Regression: an unknown/unmapped stop_reason must map to a `completed` status (not `failed`),
+/// so a future IR reason that did not signal an error is not misclassified as a failure.
 #[test]
 fn test_unknown_stop_reason_maps_to_completed() {
     let writer = ResponsesWriter;
@@ -2750,6 +2782,7 @@ fn test_unknown_stop_reason_maps_to_completed() {
 }
 
 /// Regression: malformed function_call arguments must be preserved as the raw string, not
+/// dropped to Null (mirrors the OpenAI reader).
 #[test]
 fn test_malformed_function_call_args_preserved() {
     let reader = ResponsesReader;
@@ -2796,6 +2829,7 @@ fn test_malformed_function_call_args_preserved() {
 }
 
 /// Regression: a base64 `input_image` data URI of the canonical single-`;` shape
+/// (`data:image/png;base64,<payload>`) must parse the FULL payload, not drop it to "".
 #[test]
 fn test_input_image_base64_payload_preserved() {
     let payload = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -2835,6 +2869,8 @@ fn test_input_image_base64_payload_preserved() {
 }
 
 /// Regression: a base64 `input_image` must survive a same-protocol read -> write -> read
+/// round-trip with its payload intact (the writer emits `data:<mime>;base64,<payload>` which the
+/// reader must parse back to the identical pair).
 #[test]
 fn test_input_image_roundtrip_lossless() {
     let payload = "QUJDMTIzKz0=";
@@ -2914,6 +2950,7 @@ fn test_input_image_https_url_sentinel_roundtrip() {
 }
 
 /// Regression: `write_request` must emit the `stream` field (a modeled key excluded from
+/// `extra`); omitting it answers a `stream: true` request non-streaming and stalls SSE.
 #[test]
 fn test_write_request_emits_stream() {
     let make = |stream: bool| crate::codec::ir::IrRequest {
@@ -2942,6 +2979,7 @@ fn test_write_request_emits_stream() {
 }
 
 /// Regression: a typed `{"type":"message","role":...,"content":[...]}` input item (the official
+/// SDK conversation-turn shape) must be read, not silently dropped.
 #[test]
 fn test_typed_message_item_read() {
     let json = serde_json::json!({
@@ -3035,6 +3073,7 @@ fn test_message_start_emits_identity() {
 }
 
 /// Regression: synthesized response ids stay distinct even across many calls in the same second
+/// (the old `timestamp << 24 ^ counter` folding collided once the counter advanced by 2^24).
 #[test]
 fn test_synthesize_response_id_unique() {
     let n = 1000;
@@ -3050,6 +3089,8 @@ fn test_synthesize_response_id_unique() {
 }
 
 /// `synth_token<const N>` documents and now ENFORCES a
+/// `N >= 11` floor via a compile-time `const _: () = assert!(N >= 11, ...)` evaluated per
+/// monomorphization.
 #[test]
 fn test_synth_token_meets_minimum_width() {
     const MIN_TOKEN_LEN: usize = 11;
@@ -3079,6 +3120,8 @@ fn test_synth_token_meets_minimum_width() {
 }
 
 /// The streaming `response.failed` terminal event
+/// (emitted from an IR `Error`) must carry the native non-error skeleton — specifically a
+/// present-but-empty `output` array (REQUIRED by the SDK's typed `Response`), never omitting it.
 #[test]
 fn test_response_failed_carries_empty_output_skeleton() {
     let writer = ResponsesWriter;
@@ -3125,6 +3168,7 @@ fn test_response_failed_carries_empty_output_skeleton() {
 }
 
 /// A top-level `metadata` object is carried by the typed slot (IR-03) and re-emitted by
+/// `write_request`.
 #[test]
 fn test_metadata_round_trips_through_the_slot() {
     let json = serde_json::json!({
@@ -3221,6 +3265,7 @@ fn test_role_only_item_still_processed() {
 }
 
 /// An array `input` must be iterated without the prior
+/// `is_array()` + `.as_array().unwrap()` pattern.
 #[test]
 fn test_read_request_array_input_no_unwrap() {
     let json = serde_json::json!({
@@ -3278,6 +3323,8 @@ fn test_failed_event_without_body_surfaces_error() {
 }
 
 /// A `response.completed`/`response.incomplete` terminal event with no nested `response` object
+/// must still terminate the stream with a success MessageDelta + MessageStop (must NOT become an
+/// Error — only `response.failed` does).
 #[test]
 fn test_completed_event_without_body_emits_end_turn() {
     let reader = ResponsesReader;
@@ -3305,6 +3352,9 @@ fn test_completed_event_without_body_emits_end_turn() {
 }
 
 /// The writer's `IrStreamEvent::Error` arm must emit a
+/// `response.failed` event whose error lives inside a `response` object (the shape the official
+/// SDK streaming decoder reads via `event.response`), with a synthesized `resp_` id and
+/// `status: "failed"` — NOT a top-level `{"error":{...}}`.
 #[test]
 fn test_error_event_wraps_in_response_object() {
     let writer = ResponsesWriter;
@@ -3416,6 +3466,7 @@ fn test_every_stream_event_carries_top_level_type() {
 }
 
 /// A full single-stream sequence of emitted Responses events. The events go through the writer in
+/// the order `StreamTranslate::feed` would emit them.
 fn usage_fixture() -> crate::codec::ir::IrUsage {
     crate::codec::ir::IrUsage {
         input_tokens: 1,
@@ -3427,6 +3478,7 @@ fn usage_fixture() -> crate::codec::ir::IrUsage {
 }
 
 /// EVERY emitted Responses SSE event must carry a top-level
+/// `sequence_number` that is monotonic from 0 within a single stream.
 #[test]
 fn test_sequence_number_monotonic_from_zero() {
     let writer = ResponsesWriter;
@@ -3477,6 +3529,8 @@ fn test_sequence_number_monotonic_from_zero() {
 }
 
 /// Regression: a SECOND stream must restart its `sequence_number` from 0 — the counter is
+/// per-stream, not per-process, so one stream's numbering never bleeds into the next on the same
+/// worker.
 #[test]
 fn test_sequence_number_resets_per_stream() {
     let writer = ResponsesWriter;
@@ -3517,6 +3571,7 @@ fn test_sequence_number_resets_per_stream() {
 }
 
 /// Regression: every writer arm that produces a body carries `sequence_number`, not just the
+/// deltas.
 #[test]
 fn test_every_stream_event_carries_sequence_number() {
     let writer = ResponsesWriter;
@@ -3573,6 +3628,7 @@ fn test_every_stream_event_carries_sequence_number() {
 }
 
 /// Regression: `response.output_text.delta` must carry `item_id` and `content_index` (native
+/// shape), and the `output_item.added` for a function call must carry `item_id`.
 #[test]
 fn test_delta_and_item_added_carry_item_id_and_content_index() {
     let writer = ResponsesWriter;
@@ -3648,6 +3704,7 @@ fn test_delta_and_item_added_carry_item_id_and_content_index() {
 }
 
 /// The `sequence_number` counter is PER-STREAM INSTANCE state,
+/// not thread-local.
 #[test]
 fn test_sequence_number_is_per_instance_not_thread_local() {
     let stream_a = ResponsesWriter;
@@ -3744,6 +3801,8 @@ fn test_output_item_done_carries_matching_item_id_and_item() {
 }
 
 /// The in-band `response.failed` error object is the
+/// Responses-native `ResponseError` shape `{code, message}` with a NON-NULL `code` enum — NOT
+/// the Chat-Completions `{message, type, code:null, param:null}` envelope.
 #[test]
 fn test_response_failed_uses_native_responseerror_shape() {
     let writer = ResponsesWriter;
@@ -3805,6 +3864,9 @@ fn test_response_failed_uses_native_responseerror_shape() {
 }
 
 /// On a cross-protocol / transport-abort path `provider_signal` carries
+/// a HUMAN sentence (e.g. `STREAM_ABORT_DETAIL`), NOT a Responses code enum. `error.code` must be
+/// DERIVED from the class (a valid enum an SDK can switch on), while `error.message` keeps the
+/// human text — the old code forwarded the sentence as the `code` enum, breaking typed SDKs.
 #[test]
 fn test_response_failed_code_is_enum_even_for_human_provider_signal() {
     let writer = ResponsesWriter;
@@ -3949,6 +4011,8 @@ fn test_text_block_emits_message_item_lifecycle() {
 }
 
 /// An interleaved tool+text stream closes the tool index with a
+/// `function_call` done and the text index with a `message` done — each with its own typed
+/// item, never cross-typed.
 #[test]
 fn test_tool_and_text_block_stop_emit_correctly_typed_done() {
     let writer = ResponsesWriter;
@@ -4069,6 +4133,7 @@ fn test_completed_event_carries_id_and_created_at() {
 }
 
 /// `write_error` must emit `code:"invalid_api_key"` for an
+/// authentication failure (mirrors `openai_chat.rs` `write_error_emits_invalid_api_key_code_for_auth_failure`).
 #[test]
 fn write_error_emits_invalid_api_key_code_for_auth_failure() {
     let writer = ResponsesWriter;
@@ -4088,6 +4153,8 @@ fn write_error_emits_invalid_api_key_code_for_auth_failure() {
 }
 
 /// Non-auth, non-quota error kinds keep `code:null` — the
+/// native shape when no machine-readable code applies — so only the auth and quota paths are
+/// special-cased.
 #[test]
 fn write_error_keeps_null_code_for_non_auth_errors() {
     let writer = ResponsesWriter;
@@ -4108,6 +4175,8 @@ fn write_error_keeps_null_code_for_non_auth_errors() {
 }
 
 /// The over-quota path carries a populated machine-readable
+/// `code` — native OpenAI/Responses emits `{"type":"insufficient_quota","code":"insufficient_quota"}`
+/// — so a `code:null` here (the old behavior) would be a fingerprintable divergence.
 #[test]
 fn write_error_insufficient_quota_keeps_type_and_sets_code() {
     let writer = ResponsesWriter;
@@ -4162,6 +4231,7 @@ fn test_paired_content_and_item_done_emits_single_block_stop() {
 }
 
 /// A tool item opened by `output_item.added` is closed by a
+/// single `output_item.done`, and a stray second `done` at that index emits nothing.
 #[test]
 fn test_tool_item_done_emits_single_block_stop() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -4195,6 +4265,7 @@ fn test_tool_item_done_emits_single_block_stop() {
 }
 
 /// Every lifecycle event in ONE
+/// stream must carry the SAME `response.id`.
 #[test]
 fn test_terminal_id_matches_created_id_cross_protocol() {
     let writer = ResponsesWriter;
@@ -4237,6 +4308,8 @@ fn test_terminal_id_matches_created_id_cross_protocol() {
 }
 
 /// A `response.failed` (from an IR Error) must carry
+/// the SAME `response.id` as the opening `response.created`, so an SDK correlates the failure
+/// with the in-flight Response.
 #[test]
 fn test_failed_id_matches_created_id_cross_protocol() {
     let writer = ResponsesWriter;
@@ -4273,6 +4346,7 @@ fn test_failed_id_matches_created_id_cross_protocol() {
 }
 
 /// A same-protocol passthrough forwards the upstream
+/// `id` on `response.created`, and that SAME id must be replayed on the terminal event.
 #[test]
 fn test_terminal_id_matches_forwarded_created_id() {
     let writer = ResponsesWriter;
@@ -4308,6 +4382,8 @@ fn test_terminal_id_matches_forwarded_created_id() {
 }
 
 /// A stream's id is scoped to ONE writer instance, and a second `MessageStart` on that instance is
+/// a DUPLICATE rather than a new stream — the same fact the `started` latch already uses to keep
+/// `sequence_number` from rewinding.
 #[test]
 fn test_carried_id_resets_per_stream() {
     let writer = ResponsesWriter;
@@ -4401,6 +4477,8 @@ fn test_reader_open_tools_is_capped() {
 }
 
 /// A crafted huge `output_index` must be clamped to
+/// MAX_OUTPUT_INDEX before the usize cast/insert, so the tracked index never exceeds the cap and
+/// downstream index arithmetic stays bounded.
 #[test]
 fn test_reader_output_index_clamped() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -4423,6 +4501,8 @@ fn test_reader_output_index_clamped() {
 }
 
 /// The writer's open-text-index set is also capped so a
+/// pathological stream of unique text BlockStarts cannot grow per-stream writer memory without
+/// bound.
 #[test]
 fn test_writer_open_text_indices_capped() {
     let writer = ResponsesWriter;
@@ -4459,6 +4539,9 @@ fn test_writer_open_text_indices_capped() {
 }
 
 /// `mark_tool_open` must apply the same cardinality
+/// discipline as `open_text_item` — a `contains` guard (idempotent re-mark) plus a
+/// `MAX_OPEN_TOOLS` cap — so a pathological backend streaming an unbounded run of distinct
+/// function-call indices cannot grow `open_tool_indices` without bound (memory exhaustion).
 #[test]
 fn test_writer_open_tool_indices_capped() {
     let writer = ResponsesWriter;
@@ -4478,6 +4561,7 @@ fn test_writer_open_tool_indices_capped() {
 }
 
 /// A function-call open the cap REFUSED must emit no
+/// `response.output_item.added`.
 #[test]
 fn test_writer_refused_tool_open_emits_no_output_item_added() {
     let writer = ResponsesWriter;
@@ -4531,6 +4615,8 @@ fn test_writer_refused_tool_open_emits_no_output_item_added() {
 }
 
 /// Production `extract_error` must synthesize the
+/// canonical `context_length_exceeded` code when an oversized-context error carries the
+/// condition only in its MESSAGE (null/generic `code`).
 #[test]
 fn test_extract_error_synthesizes_context_length_from_message() {
     let reader = ResponsesReader;
@@ -4549,6 +4635,7 @@ fn test_extract_error_synthesizes_context_length_from_message() {
 }
 
 /// A native body that already carries `code: "context_length_exceeded"` must pass through
+/// unchanged (the synthesis is `.or_else`, so a real code always wins).
 #[test]
 fn test_extract_error_preserves_native_context_length_code() {
     let reader = ResponsesReader;
@@ -4561,6 +4648,7 @@ fn test_extract_error_preserves_native_context_length_code() {
 }
 
 /// A non-context-length error must NOT be mislabelled as context-length (no false positives
+/// from the message scan).
 #[test]
 fn test_extract_error_unrelated_error_not_context_length() {
     let reader = ResponsesReader;
@@ -4570,6 +4658,7 @@ fn test_extract_error_unrelated_error_not_context_length() {
 }
 
 /// The message-only context-length synthesis is GATED to
+/// the oversized HTTP statuses (400/413), mirroring `OpenAiReader::extract_error`.
 #[test]
 fn test_extract_error_oversized_phrase_on_non_oversized_status_not_synthesized() {
     let reader = ResponsesReader;
@@ -4608,6 +4697,7 @@ fn test_responses_classify_delegates() {
 }
 
 /// A max_tokens-truncated stream's terminal event must
+/// be `response.incomplete` (event name AND inner `type`), NOT `response.completed`.
 #[test]
 fn test_terminal_incomplete_emits_response_incomplete_for_max_tokens() {
     let writer = ResponsesWriter;
@@ -4655,6 +4745,7 @@ fn test_terminal_incomplete_emits_response_incomplete_for_max_tokens() {
 }
 
 /// A safety/content-filter stop is also `incomplete`,
+/// so its terminal event is `response.incomplete` with reason `content_filter`.
 #[test]
 fn test_terminal_incomplete_emits_response_incomplete_for_safety() {
     let writer = ResponsesWriter;
@@ -4688,6 +4779,8 @@ fn test_terminal_incomplete_emits_response_incomplete_for_safety() {
 }
 
 /// A normally-completed stream still emits
+/// `response.completed` with inner type/status `completed` — the fix must not regress the
+/// success path.
 #[test]
 fn test_terminal_completed_unchanged_for_end_turn() {
     let writer = ResponsesWriter;
@@ -4727,6 +4820,7 @@ fn test_terminal_completed_unchanged_for_end_turn() {
 }
 
 /// Write_error must NOT leak the Anthropic-vocabulary
+/// `overloaded` type to an OpenAI-family client.
 #[test]
 fn test_write_error_maps_overloaded_to_server_error() {
     let writer = ResponsesWriter;
@@ -4748,6 +4842,8 @@ fn test_write_error_maps_overloaded_to_server_error() {
 }
 
 /// Synthesized `resp_` ids must be opaque base62 of
+/// native length with NO embedded timestamp or sequential structure, so an observer cannot
+/// fingerprint a proxied response or extract the server clock from the id.
 #[test]
 fn test_synthesize_response_id_is_opaque_native_length() {
     let id = synthesize_response_id(crate::codec::test_host::HOST).expect("test entropy");
@@ -4774,6 +4870,7 @@ fn test_synthesize_response_id_is_opaque_native_length() {
 }
 
 /// Synthesized `msg_`/`fc_` item ids must be opaque
+/// base62 of native length, NOT the old sequential `msg_00000000` positional hex.
 #[test]
 fn test_synthesize_item_id_is_opaque_native_length() {
     for prefix in ["msg", "fc"] {
@@ -4800,6 +4897,7 @@ fn test_synthesize_item_id_is_opaque_native_length() {
 }
 
 /// Synthesized ids must be unique across calls even in a tight loop (the monotonic counter folded
+/// into the token guarantees this independent of the RNG).
 #[test]
 fn test_synthesized_ids_are_unique() {
     let mut seen = std::collections::HashSet::new();
@@ -4820,6 +4918,8 @@ fn test_synthesized_ids_are_unique() {
 }
 
 /// The writer's `item_id_for` cache must return the SAME opaque id for a `(prefix, index)` across
+/// the item's lifecycle (so `output_item.added`/delta/`output_item.done` correlate), distinct ids
+/// for different indices, and a fresh id for a new stream after `reset_sequence_number`.
 #[test]
 fn test_item_id_for_is_stream_stable_and_opaque() {
     let writer = ResponsesWriter;
@@ -4858,6 +4958,8 @@ fn test_item_id_for_is_stream_stable_and_opaque() {
 }
 
 /// Full streamed text item: the `output_item.added`, the `content_part.added`, every
+/// `output_text.delta`, and the closing `output_text.done` / `content_part.done` /
+/// `output_item.done` must ALL carry the SAME `item_id` so a typed SDK correlates the lifecycle.
 #[test]
 fn test_streamed_text_item_shares_one_item_id() {
     let writer = ResponsesWriter;
@@ -4917,6 +5019,8 @@ fn test_streamed_text_item_shares_one_item_id() {
 }
 
 /// The cardinality-cap guard on
+/// `response.output_item.added` was inverted (`if already_open || ...`), re-emitting a BlockStart
+/// for an index that was already open.
 #[test]
 fn test_repeated_output_item_added_does_not_reemit_block_start() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -4948,6 +5052,7 @@ fn test_repeated_output_item_added_does_not_reemit_block_start() {
 }
 
 /// The fixed guard must STILL bound new distinct
+/// indices under MAX_OPEN_TOOLS — the inversion fix must not weaken the DoS cap.
 #[test]
 fn test_cap_still_bounds_new_indices_after_guard_fix() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -5030,6 +5135,8 @@ fn test_args_delta_routed_for_opened_index() {
 }
 
 /// Every lifecycle event in a stream must carry the
+/// SAME `created_at` as the opening `response.created` — the terminal event must replay the
+/// captured timestamp, not a fresh `now_unix_secs()` wall-clock read.
 #[test]
 fn test_created_at_is_constant_across_stream_events() {
     let writer = ResponsesWriter;
@@ -5067,6 +5174,7 @@ fn test_created_at_is_constant_across_stream_events() {
 }
 
 /// The `response.failed` event must also replay the
+/// captured `created_at`, matching `response.created`.
 #[test]
 fn test_failed_event_replays_created_at() {
     let writer = ResponsesWriter;
@@ -5102,6 +5210,9 @@ fn test_failed_event_replays_created_at() {
 }
 
 /// The proxy engine transient/upstream error kinds
+/// (`timeout`/`network`/`connect`/`5xx`/`transient`/`api_error`) must map to the native
+/// `server_error` type, and `context_length_exceeded`/`bad_request` to `invalid_request_error`,
+/// never leaking a non-native `error.type` to a Responses client.
 #[test]
 fn test_write_error_maps_forward_transient_kinds() {
     let writer = ResponsesWriter;
@@ -5209,6 +5320,7 @@ fn test_function_call_done_carries_finalized_item() {
 }
 
 /// The streaming READER must track open text blocks
+/// PER `output_index`, not with a single index-blind bool.
 #[test]
 fn test_reader_multiple_text_items_distinct_indices() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -5271,6 +5383,8 @@ fn test_reader_multiple_text_items_distinct_indices() {
 }
 
 /// A tool item and a text item at DISTINCT indices
+/// in the same stream must not interfere — the tool index routes its arguments delta and closes
+/// as a tool, while the text index opens/closes independently.
 #[test]
 fn test_reader_text_and_tool_indices_coexist() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -5330,6 +5444,10 @@ fn test_reader_text_and_tool_indices_coexist() {
 }
 
 /// `write_response` must emit the SDK-required non-nullable
+/// `model` even when the IR carries none (cross-protocol path, e.g. Bedrock/Anthropic →
+/// Responses). A prior revision emitted `model` only when `resp.model` was `Some`, dropping the
+/// key entirely on cross-protocol responses — a strict-decoder failure and a distinguishability
+/// tell. Absent IR model must fall back to DEFAULT_MODEL; a present model is preserved verbatim.
 #[test]
 fn test_write_response_emits_model_fallback() {
     let make_resp = |model: Option<String>| crate::codec::ir::IrResponse {
@@ -5376,6 +5494,9 @@ fn test_write_response_emits_model_fallback() {
 }
 
 /// On a cross-protocol stream (IR `model` is `None` on
+/// `MessageStart`), `response.created` AND every terminal lifecycle event
+/// (`response.completed`/`.incomplete`/`.failed`) must carry the same non-nullable `model`
+/// (DEFAULT_MODEL here).
 #[test]
 fn test_stream_terminal_events_carry_model_fallback() {
     let writer = ResponsesWriter;
@@ -5454,6 +5575,8 @@ fn test_stream_terminal_events_carry_model_fallback() {
 }
 
 /// The non-streaming `write_response` body must carry
+/// the REQUIRED nullable `error` field (`null` on a non-failed response), mirroring the
+/// streaming `response.created` skeleton.
 #[test]
 fn test_write_response_emits_error_null_for_completed_and_incomplete() {
     let make_resp = |stop: crate::codec::ir::IrStopReason| crate::codec::ir::IrResponse {
@@ -5500,6 +5623,8 @@ fn test_write_response_emits_error_null_for_completed_and_incomplete() {
 }
 
 /// A non-streaming
+/// Responses body with `status:"failed"` and `output:null` is an upstream provider failure, NOT
+/// a parse error.
 #[test]
 fn test_read_response_failed_surfaces_upstream_error() {
     let reader = ResponsesReader;
@@ -5554,6 +5679,8 @@ fn test_read_response_failed_surfaces_upstream_error() {
 }
 
 /// The writer emits a failed body as
+/// `{"status":"failed","output":[],"error":{...}}` — `output` is a PRESENT EMPTY array, not
+/// null/absent.
 #[test]
 fn test_read_response_failed_with_empty_output_array_not_masked() {
     let reader = ResponsesReader;
@@ -5582,6 +5709,7 @@ fn test_read_response_failed_with_empty_output_array_not_masked() {
 }
 
 /// `system`/`developer` input turns carry the system
+/// prompt.
 #[test]
 fn test_read_request_system_and_developer_turns_feed_system() {
     let reader = ResponsesReader;
@@ -5627,6 +5755,7 @@ fn test_read_request_system_and_developer_turns_feed_system() {
 }
 
 /// `max_output_tokens` was read via
+/// `.as_i64()...map(|v| v as u32)`, silently truncating a value larger than `u32::MAX`.
 #[test]
 fn test_read_request_max_output_tokens_out_of_range_drops_to_none() {
     let reader = ResponsesReader;
@@ -5653,6 +5782,9 @@ fn test_read_request_max_output_tokens_out_of_range_drops_to_none() {
 }
 
 /// The terminal `response.completed`/
+/// `response.incomplete`/`response.failed` events' inner `response` object must carry the
+/// REQUIRED `output` array (present-but-empty) and (on non-failed terminals) `error: null`,
+/// mirroring the `response.created` skeleton.
 #[test]
 fn test_stream_terminal_events_carry_output_and_error() {
     let writer = ResponsesWriter;
@@ -5959,6 +6091,8 @@ fn test_same_output_index_tool_and_text_single_open_single_close() {
 }
 
 /// Even if two open keys for the same IR index somehow
+/// coexist in `open_tools` (raw `N` and `N + TEXT_INDEX_KEY_OFFSET`), the terminal drain must
+/// collapse them to a SINGLE `BlockStop{N}`.
 #[test]
 fn test_terminal_drain_dedups_colliding_keys() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -5986,6 +6120,7 @@ fn test_terminal_drain_dedups_colliding_keys() {
 }
 
 /// A tool item must not open at an `output_index` already
+/// held by an OPEN TEXT block.
 #[test]
 fn test_tool_open_suppressed_when_text_block_open_at_index() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -6019,6 +6154,7 @@ fn test_tool_open_suppressed_when_text_block_open_at_index() {
 }
 
 /// `synth_token` must emit ONLY base62 characters, drawn uniformly via
+/// rejection sampling (no biased `byte % 62`).
 #[test]
 fn test_synth_token_uniform_base62_only() {
     let alphabet: std::collections::HashSet<char> = BASE62.iter().map(|&b| b as char).collect();
@@ -6121,6 +6257,7 @@ fn test_responses_tool_choice_absent_is_none() {
 }
 
 /// Build a minimal IR request for writer tests, with every Phase-0 / sampling field None/empty so
+/// individual tests can set just the one knob under test.
 fn empty_ir_request() -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
         block_origins: Default::default(),
@@ -6223,6 +6360,8 @@ fn test_reasoning_item_thinking_round_trip() {
 }
 
 /// Request-input reasoning: a prior-turn `reasoning` INPUT item must read into an IR
+/// assistant Thinking block (no longer silently dropped) AND the writer must re-emit it as a
+/// top-level `reasoning` input item — a same-protocol Responses->Responses request round-trip.
 #[test]
 fn reasoning_input_item_round_trips_through_request() {
     let body = serde_json::json!({
@@ -6278,6 +6417,7 @@ fn reasoning_input_item_round_trips_through_request() {
 }
 
 /// F5 role guard: a `reasoning` INPUT item asserts "this is the model's own prior reasoning" —
+/// only an Assistant-role message can truthfully carry that.
 #[test]
 fn user_role_thinking_is_not_emitted_as_a_reasoning_item() {
     let req = crate::codec::ir::IrRequest {
@@ -6644,6 +6784,9 @@ fn test_streaming_cached_tokens_round_trip() {
 }
 
 /// Non-stream `read_response` cache-token NORMALIZATION (ir.rs:457): the Responses API's
+/// `input_tokens` is a TOTAL that INCLUDES the cached prefix, so the reader SUBTRACTS
+/// `input_tokens_details.cached_tokens` to leave `input_tokens` UNCACHED and stores the cached
+/// count additively in `cache_read_input_tokens` (the OpenAI-family convention).
 #[test]
 fn read_response_subtracts_cached_prefix_from_input_tokens() {
     let body = serde_json::json!({
@@ -6677,6 +6820,8 @@ fn read_response_subtracts_cached_prefix_from_input_tokens() {
 }
 
 /// The write side RECONSTRUCTS the wire shape: it ADDS the cached prefix BACK onto the uncached IR
+/// `input_tokens` to re-derive the Responses TOTAL `input_tokens`, and re-emits the FLAT
+/// `input_tokens_details.cached_tokens`.
 #[test]
 fn write_response_reconstructs_input_tokens_total_with_cached_details() {
     let resp = crate::codec::ir::IrResponse {
@@ -6716,6 +6861,8 @@ fn write_response_reconstructs_input_tokens_total_with_cached_details() {
 }
 
 /// `incomplete_details.reason` normalization must be EXHAUSTIVE (ir.rs:186): `max_output_tokens`→
+/// MaxTokens, `content_filter`→Safety, `refusal`→Refusal, and any unknown/future reason→Other (no
+/// String payload).
 #[test]
 fn incomplete_reason_codec_is_exhaustive() {
     use crate::codec::ir::IrStopReason as S;
@@ -6793,6 +6940,8 @@ fn read_response_incomplete_details_promote_stop_reason() {
 }
 
 /// A `response_format` json_schema round-trips read→IR→write through the Responses FLAT
+/// `text.format` shape (name/schema/strict/description sit BESIDE `type`, not nested under
+/// `json_schema` like OpenAI Chat).
 #[test]
 fn text_format_json_schema_flat_round_trips() {
     let schema = serde_json::json!({
@@ -6842,6 +6991,9 @@ fn text_format_json_schema_flat_round_trips() {
 }
 
 /// Hosted tools: a Responses request whose `tools` array mixes a HOSTED tool
+/// (`web_search`, `file_search`) with a CUSTOM function tool must round-trip the hosted specs
+/// — never mangled into empty `{"type":"function","name":""}` tools — while the function
+/// tool keeps its flat Responses shape.
 #[test]
 fn test_hosted_tools_pass_through_intact() {
     let json = serde_json::json!({
@@ -6919,6 +7071,9 @@ fn test_hosted_tools_pass_through_intact() {
 }
 
 /// Hosted tools, CROSS-protocol drop: a Responses hosted tool routed to a NON-Responses egress
+/// has no function-tool analog, so `IrReq::prepare_for_egress` (the cross-protocol seam) must DROP it
+/// with a warn - never let a non-Responses writer emit a malformed empty-name function tool the
+/// backend 400s on.
 #[test]
 fn test_hosted_tools_dropped_cross_protocol() {
     let json = serde_json::json!({
@@ -7094,6 +7249,12 @@ fn test_responses_usage_carries_all_required_fields() {
 }
 
 /// EVERY member the pinned OpenAI spec marks REQUIRED on a `Response` object — including the
+/// request-echo members the IR cannot carry (`instructions`, `tools`, `tool_choice`,
+/// `parallel_tool_calls`, `metadata`, `temperature`, `top_p`) and the nullable
+/// `incomplete_details` — must be PRESENT on the non-stream body and on the inner `response` of
+/// every lifecycle event (`response.created`, `response.completed`, `response.failed`), with the
+/// spec's default values where the IR carries nothing; and every `output_text` part (and the
+/// streaming `output_text.delta`/`.done` events) must carry `logprobs`.
 #[test]
 fn responses_spec_required_members_present_on_every_response_shape() {
     fn assert_required(resp: &serde_json::Value, ctx: &str) {
@@ -7271,6 +7432,8 @@ fn responses_spec_required_members_present_on_every_response_shape() {
 }
 
 /// Streamed token logprobs (an IR `LogprobsDelta`) are buffered and emitted on the
+/// `output_text.done` event (event shape: token/logprob/top_logprobs) and on the finalized
+/// `output_text` part (part shape: token/logprob/bytes/top_logprobs), instead of being dropped.
 #[test]
 fn responses_stream_logprobs_ride_text_done_and_finalized_part() {
     let writer = ResponsesWriter;
@@ -7346,6 +7509,8 @@ fn responses_stream_logprobs_ride_text_done_and_finalized_part() {
 }
 
 /// Grounding citations were dropped on the way into Responses: the writer hardcoded
+/// `annotations: []`, so an Anthropic web-search or Gemini grounding response arrived at an
+/// OpenAI-dialect client with its sources gone.
 #[test]
 fn write_response_emits_url_citations_without_inventing_fields() {
     let cite = |kind: &str,
@@ -7458,6 +7623,8 @@ fn write_response_emits_url_citations_without_inventing_fields() {
 }
 
 /// The streaming path dropped citations outright: Responses carries them as `annotations` on the
+/// assembled `output_text` part, not as a delta frame, so a `CitationsDelta` had nowhere to go at
+/// arrival time and was discarded instead of buffered until `BlockStop` built that part.
 #[test]
 fn streamed_citations_reach_the_assembled_output_item() {
     let w = ResponsesWriter;
@@ -7528,6 +7695,10 @@ fn streamed_citations_reach_the_assembled_output_item() {
 }
 
 /// STRICT-CLIENT CONTRACT: the Responses egress writer, driven with the IR event stream a
+/// CROSS-protocol egress produces (an Anthropic/Gemini backend re-framed to `/v1/responses` — the
+/// shape a Codex CLI client consumes), must emit the intermediate `response.content_part.added`
+/// between `output_item.added` and the first `output_text.delta`, and must close the text part with
+/// `output_text.done` → `content_part.done` before `output_item.done`.
 #[test]
 fn cross_protocol_egress_into_responses_emits_content_part_bracket() {
     let writer = ResponsesWriter;
@@ -7648,6 +7819,9 @@ fn cross_protocol_egress_into_responses_emits_content_part_bracket() {
 }
 
 /// A `developer`/`system` item AFTER an earlier conversational turn is still hoisted
+/// (behavior unchanged — the IR cannot express a positioned system turn), but must now WARN, since
+/// hoisting silently changes when the instruction takes effect relative to native Responses
+/// semantics.
 #[test]
 fn mid_conversation_developer_item_is_flagged() {
     let body = serde_json::json!({
@@ -7683,6 +7857,7 @@ fn mid_conversation_developer_item_is_flagged() {
 }
 
 /// Negative half (REGRESSION PROOF): a `developer`/`system` item BEFORE any conversational turn is
+/// the ordinary shape and must NOT warn.
 #[test]
 fn leading_developer_item_does_not_warn() {
     let body = serde_json::json!({
@@ -7708,6 +7883,7 @@ fn leading_developer_item_does_not_warn() {
 }
 
 /// A Responses `output_text` content part's sibling `annotations` (`url_citation` entries) must be
+/// read into the IR Text block's `citations`, including its URL, title and character offsets.
 #[test]
 fn responses_output_text_annotations_read_into_ir_citations() {
     let json = serde_json::json!({
@@ -7756,6 +7932,7 @@ fn responses_output_text_annotations_read_into_ir_citations() {
 }
 
 /// Exactly one text-bearing part — whether it lives in `content[]` alone or `summary[]` alone —
+/// must borrow straight from the item, not allocate.
 #[test]
 fn read_reasoning_text_single_part_borrows() {
     let content_only = serde_json::json!({
@@ -7778,6 +7955,9 @@ fn read_reasoning_text_single_part_borrows() {
 }
 
 /// Two `content[]` parts + one `summary[]` part must still allocate and concatenate in order —
+/// `content[]` fully, then `summary[]` — with NO separator between parts (the existing,
+/// deliberately separator-less concat behavior; this test only pins the Cow variant, not a new
+/// separator).
 #[test]
 fn read_reasoning_text_multi_part_concatenates() {
     let item = serde_json::json!({
@@ -7794,6 +7974,7 @@ fn read_reasoning_text_multi_part_concatenates() {
 }
 
 /// Cross-array edge cases: exactly one accepted part in EITHER array alone still borrows; one in
+/// each array must allocate and concatenate BOTH (not silently drop one).
 #[test]
 fn read_reasoning_text_cross_array_borrow_vs_allocate() {
     let content_one_summary_zero = serde_json::json!({
@@ -7831,6 +8012,8 @@ fn read_reasoning_text_cross_array_borrow_vs_allocate() {
 }
 
 /// Empty-case discipline: no accepted part in either array must return `Cow::Borrowed("")`, never
+/// `Cow::Owned(String::new())` — a caller that only wants a length (`total_text_chars`) must not
+/// pay an allocation for zero text.
 #[test]
 fn read_reasoning_text_empty_case_borrows_not_owns() {
     let no_arrays = serde_json::json!({"type": "reasoning"});
@@ -7913,6 +8096,7 @@ fn response_object_function_arguments_preserved() {
 }
 
 /// The writer's four per-item accumulators (`tool_calls`, `text_accum`, `citation_accum`,
+/// `reasoning_accum`) grow one entry per distinct block index a backend streams.
 #[test]
 fn writer_accumulators_are_bounded_in_entry_count() {
     let writer = ResponsesWriter;
@@ -7965,6 +8149,7 @@ fn writer_accumulators_are_bounded_in_entry_count() {
 }
 
 /// A single tool-call `arguments` accumulator must also stop growing at the operator's translate-body
+/// cap — one open index fed an unbounded run of fragments was previously unbounded in BYTES.
 #[test]
 fn writer_tool_arguments_stop_growing_at_the_translate_cap() {
     let cap = busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT;
@@ -8066,6 +8251,9 @@ fn writer_logprob_accumulator_is_bounded_in_entries_and_bytes() {
 }
 
 /// LLM3#4: THE CITATION ACCUMULATOR IS LINEAR. Each item keeps its held text weight beside its
+/// citations, so an append weighs only the batch it brings, never the held list again (which made
+/// a long run of citation deltas against one item quadratic), and the weight it keeps is exactly
+/// [`citation_bytes`] summed over what it holds, through the cap's refusals.
 #[test]
 fn writer_citation_accumulator_keeps_its_held_weight() {
     let raw = serde_json::json!({"type": "url_citation", "url": "https://example.invalid/r"});

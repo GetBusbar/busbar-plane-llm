@@ -2,8 +2,11 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The `url_citation` `annotations` wire to IR-citation mapping shared by the Chat and Responses
+//! codecs, in a module named for the mechanism so neither dialect imports the other (design F3
+//! self-contained).
 
 /// Build a Responses `annotations` array from the IR citations annotating a span of assistant text
+/// (the flat `UrlCitationBody`).
 pub fn url_annotations(
     text: &str,
     base: usize,
@@ -63,6 +66,7 @@ fn citation_title<'a>(c: &'a crate::codec::ir::IrCitation, url: &'a str) -> &'a 
 }
 
 /// Resolve a citation's character span within `text`, shifted by `base`; shared by both shapes so the
+/// offset rules cannot drift.
 pub(crate) fn citation_span(
     text: &str,
     base: usize,
@@ -97,6 +101,7 @@ pub(crate) fn citation_span(
 }
 
 /// Read an OpenAI-family `annotations` array (`url_citation` entries) into IR citations, shared by
+/// the Chat and Responses readers (mirroring `url_annotations` in the write direction).
 pub fn read_url_annotations(annotations: &serde_json::Value) -> Vec<crate::codec::ir::IrCitation> {
     let mut out = Vec::new();
     let Some(arr) = annotations.as_array() else {
@@ -146,6 +151,11 @@ pub fn read_url_annotations(annotations: &serde_json::Value) -> Vec<crate::codec
 }
 
 /// The OpenAI Files API id an IR attachment references, if any (SHR-03). OpenAI Chat
+/// (`file.file_id`) and Responses (`input_file.file_id`, `input_image.file_id`) name one namespace,
+/// the organisation's Files uploads, but each reader tags the opaque
+/// [`crate::codec::ir::IrImageSource::Vendor`] with its own dialect name (`"openai"`, `"responses"`)
+/// and each writer re-emitted only its own tag, so a Chat caller's uploaded PDF never reached a
+/// Responses lane (or back) though the id is valid on both.
 pub fn files_api_id(source: &crate::codec::ir::IrImageSource) -> Option<&str> {
     match source {
         crate::codec::ir::IrImageSource::Vendor { vendor, value }
@@ -161,4 +171,5 @@ pub fn files_api_id(source: &crate::codec::ir::IrImageSource) -> Option<&str> {
 }
 
 /// The `Vendor` tags naming the OpenAI Files namespace (the Chat and Responses readers'), kept in
+/// step with their `VENDOR_NAME` consts by `openai_file_vendor_tags_are_the_dialect_names`.
 pub const FILES_API_VENDOR_TAGS: [&str; 2] = ["openai", "responses"];

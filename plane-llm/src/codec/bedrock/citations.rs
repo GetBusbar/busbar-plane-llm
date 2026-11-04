@@ -1,6 +1,8 @@
 //! Converse `Citation` projection: the neutral [`crate::codec::ir::IrCitation`] to and from the Bedrock
+//! `Citation` object and the buffered `citationsContent` block.
 
 /// Project an [`crate::codec::ir::IrCitation`] into the Converse `Citation` object, the same field
+/// set the streaming `citation` delta carries, so one helper serves both paths.
 use crate::codec::keys;
 pub(super) fn write_bedrock_citation(
     c: &crate::codec::ir::IrCitation,
@@ -57,6 +59,31 @@ pub(super) fn write_bedrock_citation(
         }
     }
 
+    let document_location = match c.kind.as_deref() {
+        Some(keys::PAGE_LOCATION) => Some("documentPage"),
+        Some(keys::CONTENT_BLOCK_LOCATION) => Some("documentChunk"),
+        _ => None,
+    };
+    if let Some(member) = document_location {
+        if let (Some(index), Some(start), Some(end)) =
+            (c.document_index, c.start_index, c.end_index)
+        {
+            if index >= 0 && start >= 0 && end >= start {
+                obj.insert(
+                    super::LOCATION.to_string(),
+                    serde_json::json!({
+                        (member): {
+                            (super::DOCUMENT_INDEX): index,
+                            (keys::START): start,
+                            (keys::END): end,
+                        }
+                    }),
+                );
+                located = true;
+            }
+        }
+    }
+
     if !located && c.kind.as_deref() == Some(keys::SEARCH_RESULT_LOCATION) {
         if let (Some(idx), Some(start), Some(end)) = (c.document_index, c.start_index, c.end_index)
         {
@@ -87,7 +114,7 @@ pub(super) fn write_bedrock_citation(
                 &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
                 [url = %u, ],
                 "dropping citation `url` on a bedrock egress: the Converse `CitationLocation` is a \
-                 union and this citation's `documentChar` member already fills it");
+                 union and this citation's document member already fills it");
         } else {
             let mut web = serde_json::Map::new();
             web.insert(keys::URL.to_string(), serde_json::json!(u));
@@ -105,6 +132,8 @@ pub(super) fn write_bedrock_citation(
 }
 
 /// Read one Converse `Citation` (buffered `citationsContent.citations[]` entry, or streamed
+/// `delta.citation`, the same field set) into [`crate::codec::ir::IrCitation`]; inverse of
+/// [`write_bedrock_citation`] (BED-01).
 pub(super) fn read_bedrock_citation(c: &serde_json::Value) -> crate::codec::ir::IrCitation {
     let loc = c.get(super::LOCATION);
     let member = |k: &str| loc.and_then(|l| l.get(k)).filter(|v| v.is_object());
@@ -186,6 +215,7 @@ pub(super) fn read_bedrock_citation(c: &serde_json::Value) -> crate::codec::ir::
 }
 
 /// Read a `citationsContent` block (`{content: [{text}], citations: [Citation]}`) into one IR
+/// `Text` block with the cited answer text and its citations (BED-01).
 pub(super) fn read_bedrock_citations_content(v: &serde_json::Value) -> crate::codec::ir::IrBlock {
     let text: String = v
         .get(keys::CONTENT)

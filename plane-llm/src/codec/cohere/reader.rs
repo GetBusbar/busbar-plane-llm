@@ -41,6 +41,17 @@ impl ProtocolReader for CohereReader {
         (!token.is_empty()).then(|| read_cohere_stop_reason(token))
     }
 
+    fn recover_response_usage(
+        &self,
+        body: &serde_json::Value,
+    ) -> Option<busbar_contract::billing::TokenUsage> {
+        Some(
+            read_cohere_usage(Some(body.get(keys::USAGE)?))
+                .ok()?
+                .to_token_usage(),
+        )
+    }
+
     fn recover_truncated_usage(&self, tail: &[u8]) -> Option<busbar_contract::billing::TokenUsage> {
         let v = super::super::usage_tail::isolate_tail_usage_object(tail, b"\"usage\"")?;
 
@@ -91,6 +102,7 @@ impl ProtocolReader for CohereReader {
         body: &serde_json::Value,
     ) -> Result<crate::codec::ir::IrRequest, IrError> {
         let obj = body.as_object().ok_or_else(ir_parse_error)?;
+        let mut citation_budget = super::CohereCitationBudget::default();
 
         let mut extra = serde_json::Map::new();
         let mut block_origins = crate::codec::ir::IrBlockOrigins::default();
@@ -322,26 +334,14 @@ impl ProtocolReader for CohereReader {
                 if role != crate::codec::ir::IrRole::Tool {
                     if let Some(cits_val) = msg_val.get(keys::CITATIONS) {
                         let cits = super::read_cohere_citations(cits_val);
-                        if !cits.is_empty() {
-                            if let Some(crate::codec::ir::IrBlock::Text { citations, .. }) =
-                                msg_content
-                                    .iter_mut()
-                                    .find(|b| matches!(b, crate::codec::ir::IrBlock::Text { .. }))
-                            {
-                                *citations = cits;
-                            } else {
-                                {
-                                    msg_origins.push(crate::codec::ir::IrBlockOrigin::at(
-                                        &SOURCE_MESSAGE_CITATIONS,
-                                    ));
-                                    msg_content.push(crate::codec::ir::IrBlock::Text {
-                                        text: String::new(),
-                                        cache_control: None,
-                                        citations: cits,
-                                        refusal: false,
-                                    })
-                                };
-                            }
+                        if super::attach_cohere_citations(
+                            &mut msg_content,
+                            cits,
+                            &mut citation_budget,
+                        )? {
+                            msg_origins.push(crate::codec::ir::IrBlockOrigin::at(
+                                &SOURCE_MESSAGE_CITATIONS,
+                            ));
                         }
                     }
                 }
@@ -696,6 +696,8 @@ impl ProtocolReader for CohereReader {
                                 delta: crate::codec::ir::IrDelta::ThinkingDelta(text.to_string()),
                             });
                         }
+                    } else {
+                        out.push(cohere_frame_limit_error());
                     }
                 }
             }
@@ -714,14 +716,31 @@ impl ProtocolReader for CohereReader {
                         cohere_open_thinking_block(state, &mut out, &SOURCE_STREAM_THINKING_DELTA)
                     }
                 };
-                if let Some(index) = index.filter(|_| !text.is_empty()) {
+                let Some(index) = index else {
+                    out.push(cohere_frame_limit_error());
+                    return out;
+                };
+                if !text.is_empty() {
                     out.push(IrStreamEvent::BlockDelta {
                         index,
                         delta: crate::codec::ir::IrDelta::ThinkingDelta(text.to_string()),
                     });
                 }
             }
-            ET_CONTENT_START if !state.text_block_closed => {
+            ET_CONTENT_START => {
+                if state.text_block_closed {
+                    let seen = state
+                        .tool_ir_index
+                        .range(TEXT_FRAME_BASE..THINKING_FRAME_BASE)
+                        .count();
+                    let Some(index) = cohere_assign_tool_ir_index(state, TEXT_FRAME_BASE + seen)
+                    else {
+                        out.push(cohere_frame_limit_error());
+                        return out;
+                    };
+                    state.text_index = Some(index);
+                    state.text_block_closed = false;
+                }
                 cohere_close_thinking_block(state, &mut out);
 
                 if !state.text_block_open {
@@ -896,9 +915,12 @@ impl ProtocolReader for CohereReader {
             }
 
             ET_TOOL_CALL_START => {
+                let frame_idx = match cohere_frame_index(data) {
+                    Ok(index) => index,
+                    Err(error) => return vec![IrStreamEvent::Error(error)],
+                };
                 cohere_close_thinking_block(state, &mut out);
                 cohere_close_text_slot(state, &mut out);
-                let frame_idx = clamp_frame_index(data);
                 let tc = data
                     .get(keys::DELTA)
                     .and_then(|d| d.get(keys::MESSAGE))
@@ -937,10 +959,15 @@ impl ProtocolReader for CohereReader {
                             delta: crate::codec::ir::IrDelta::InputJsonDelta(args.to_string()),
                         });
                     }
+                } else if !state.tool_ir_index.contains_key(&frame_idx) {
+                    out.push(cohere_frame_limit_error());
                 }
             }
             ET_TOOL_CALL_DELTA => {
-                let frame_idx = clamp_frame_index(data);
+                let frame_idx = match cohere_frame_index(data) {
+                    Ok(index) => index,
+                    Err(error) => return vec![IrStreamEvent::Error(error)],
+                };
 
                 if let Some(ir_idx) = state.tool_ir_index.get(&frame_idx).copied() {
                     if let Some(args) = data
@@ -960,7 +987,10 @@ impl ProtocolReader for CohereReader {
                 }
             }
             ET_TOOL_CALL_END => {
-                let frame_idx = clamp_frame_index(data);
+                let frame_idx = match cohere_frame_index(data) {
+                    Ok(index) => index,
+                    Err(error) => return vec![IrStreamEvent::Error(error)],
+                };
 
                 if let Some(ir_idx) = state.tool_ir_index.get(&frame_idx).copied() {
                     out.push(IrStreamEvent::BlockStop { index: ir_idx });
@@ -1022,7 +1052,11 @@ impl ProtocolReader for CohereReader {
         body: &serde_json::Value,
     ) -> Result<crate::codec::ir::IrResponse, IrError> {
         let obj = body.as_object().ok_or_else(ir_parse_error)?;
-        let message_val = obj.get(keys::MESSAGE).ok_or_else(ir_parse_error)?;
+        let mut citation_budget = super::CohereCitationBudget::default();
+        let message_val = obj
+            .get(keys::MESSAGE)
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(ir_parse_error)?;
 
         let mut content: Vec<crate::codec::ir::IrBlock> = Vec::new();
         let mut block_origins = crate::codec::ir::IrBlockOrigins::default();
@@ -1051,7 +1085,7 @@ impl ProtocolReader for CohereReader {
             .get(keys::CITATIONS)
             .map(super::read_cohere_citations)
             .unwrap_or_default();
-        let mut citations_pending = response_citations;
+
         if let Some(content_arr) = message_val.get(keys::CONTENT).and_then(|c| c.as_array()) {
             for block_val in content_arr {
                 if let Some(block_obj) = block_val.as_object() {
@@ -1065,7 +1099,7 @@ impl ProtocolReader for CohereReader {
                                     content.push(crate::codec::ir::IrBlock::Text {
                                         text: text.to_string(),
                                         cache_control: None,
-                                        citations: std::mem::take(&mut citations_pending),
+                                        citations: Vec::new(),
                                         refusal: false,
                                     })
                                 };
@@ -1101,20 +1135,12 @@ impl ProtocolReader for CohereReader {
             }
         }
 
-        if !citations_pending.is_empty() {
-            {
-                block_origins
-                    .response
-                    .push(crate::codec::ir::IrBlockOrigin::at(
-                        &SOURCE_RESPONSE_CITATIONS,
-                    ));
-                content.push(crate::codec::ir::IrBlock::Text {
-                    text: String::new(),
-                    cache_control: None,
-                    citations: std::mem::take(&mut citations_pending),
-                    refusal: false,
-                })
-            };
+        if super::attach_cohere_citations(&mut content, response_citations, &mut citation_budget)? {
+            block_origins
+                .response
+                .push(crate::codec::ir::IrBlockOrigin::at(
+                    &SOURCE_RESPONSE_CITATIONS,
+                ));
         }
 
         if let Some(tool_calls_arr) = message_val.get(keys::TOOL_CALLS).and_then(|t| t.as_array()) {
@@ -1206,11 +1232,14 @@ impl ProtocolReader for CohereReader {
 }
 
 /// Cohere's usage counts, as data. The raw `tokens` bucket gives the totals; `billed_units` is the
+/// provider-metered bucket (token counts, `search_units`, `classifications`).
 const USAGE: &[UsageCount] = &[
     (
         CountSlot::Input,
         CountRead::Zero(&[keys::TOKENS, keys::INPUT_TOKENS]),
     ),
+    (CountSlot::Input, CountRead::Less(&[keys::CACHED_TOKENS])),
+    (CountSlot::CacheRead, CountRead::Opt(&[keys::CACHED_TOKENS])),
     (
         CountSlot::Output,
         CountRead::Zero(&[keys::TOKENS, keys::OUTPUT_TOKENS]),
@@ -1234,6 +1263,8 @@ const USAGE: &[UsageCount] = &[
 ];
 
 /// A Cohere `usage` / `meta` object (`None` when absent) → the IR usage, through [`USAGE`]. Every
+/// count it reads is ledgered under its class (`IrUsage::to_token_usage`), the billed
+/// `classifications` included.
 fn read_cohere_usage(
     usage: Option<&serde_json::Value>,
 ) -> Result<crate::codec::ir::IrUsage, IrError> {
@@ -1245,77 +1276,13 @@ fn read_cohere_usage(
 mod unreadable_count_refusal_tests;
 
 #[cfg(test)]
-mod native_stream_origin_tests {
-    use super::*;
-    use serde_json::json;
+#[path = "tests/native_stream_origin_tests.rs"]
+mod native_stream_origin_tests;
 
-    #[test]
-    fn actual_stream_creation_sites_never_claim_buffered_answer_containers() {
-        let host = crate::codec::test_host::HOST;
-        for (frame, path) in [
-            (
-                json!({"type": "content-start", "delta": {"message": {"content": {"type": "thinking", "thinking": "thought"}}}}),
-                "content-start.delta.message.content",
-            ),
-            (
-                json!({"type": "content-delta", "delta": {"message": {"content": {"thinking": "thought"}}}}),
-                "content-delta.delta.message.content",
-            ),
-            (json!({"type": "content-start"}), "content-start"),
-            (json!({"type": "content-delta"}), "content-delta"),
-            (json!({"type": "tool-plan-delta"}), "tool-plan-delta"),
-            (
-                json!({"type": "tool-call-start", "index": 0, "delta": {"message": {"tool_calls": {"id": "fixture-call", "function": {"name": "fixture_tool"}}}}}),
-                "tool-call-start",
-            ),
-        ] {
-            let mut state = crate::codec::ir::StreamDecodeState::default();
-            let events = CohereReader.read_response_events(
-                host,
-                frame
-                    .get(keys::TYPE)
-                    .and_then(|value| value.as_str())
-                    .unwrap(),
-                &frame,
-                &mut state,
-            );
-            let index = events
-                .iter()
-                .find_map(|event| match event {
-                    IrStreamEvent::BlockStart { index, .. } => Some(index),
-                    _ => None,
-                })
-                .expect("existing native creation branch");
-            let source = state.block_origins.get(index).unwrap().source.unwrap();
-            assert_eq!(source.dialect, "cohere");
-            assert_eq!(source.path, path);
-        }
-    }
-
-    #[test]
-    fn missing_tool_content_keeps_synthesized_child_origin_explicitly_unknown() {
-        let request = CohereReader
-            .read_request(&json!({"messages": [
-                {"role": "tool", "tool_call_id": "fixture-call"}
-            ]}))
-            .expect("native request");
-        let origin = request
-            .block_origins
-            .messages
-            .first()
-            .unwrap()
-            .first()
-            .unwrap();
-        assert!(origin.source.is_none());
-        assert!(origin.children.first().unwrap().source.is_none());
-        let mut state = crate::codec::ir::StreamDecodeState::default();
-        let ignored = CohereReader.read_response_events(
-            crate::codec::test_host::HOST,
-            "future_fixture",
-            &json!({"type": "future_fixture"}),
-            &mut state,
-        );
-        assert!(ignored.is_empty());
-        assert!(state.block_origins.is_empty());
-    }
+fn cohere_frame_limit_error() -> IrStreamEvent {
+    IrStreamEvent::Error(busbar_contract::protocol::IrError {
+        class: busbar_contract::upstream::StatusClass::ServerError,
+        provider_signal: Some("Cohere stream block limit exceeded".to_string()),
+        retry_after: None,
+    })
 }

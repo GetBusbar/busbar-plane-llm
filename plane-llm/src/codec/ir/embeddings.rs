@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Embeddings IR, cross-protocol across OpenAI, Cohere, Gemini, Bedrock (not Anthropic: no embeddings
+//! API).
 
 use busbar_contract::billing::{Billing, TokenUsage};
 use busbar_contract::ir::SourceScopedExtra;
@@ -67,6 +68,7 @@ pub struct EmbeddingsReq {
 }
 
 /// The embeddings family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`], the
+/// family-blind seam the shared pipeline (hook/gate/tap) reads a request through.
 impl busbar_contract::ir::facts::IrFacts for EmbeddingsReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::EMBEDDINGS

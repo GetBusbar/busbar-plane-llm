@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE USAGE CENSUS HARNESS (MONEY-AUDIT A-F1): what every dialect's census test reads its wire
+//! lock and its ledgered units through, so each census measures the same projections the same way.
 
 use busbar_contract::billing::TokenUsage;
 
@@ -11,6 +12,8 @@ use crate::codec::ir::open_class::{OPEN_CLASSES, OPEN_CLASS_COUNT};
 pub(crate) const CLASSES: usize = 4 + OPEN_CLASS_COUNT;
 
 /// The ledgered units, in this order: input, output, cache read, cache write, then every open
+/// class in [`OPEN_CLASSES`] order (`search_units` first, at index 4) (owner LEDGER-100: every
+/// reported unit is a ledger line, so the census reads every class the plane declares).
 pub(crate) type Ledgered = [i64; CLASSES];
 
 /// The index of the input tier in a [`Ledgered`] reading.
@@ -25,6 +28,7 @@ pub(crate) const CW: usize = 3;
 pub(crate) const NONE: Ledgered = [0; CLASSES];
 
 /// The index of open class `class` in a [`Ledgered`] reading; a class the plane does not declare
+/// fails the build.
 pub(crate) const fn slot(class: &str) -> usize {
     let mut k = 0;
     while k < OPEN_CLASSES.len() {
@@ -74,6 +78,8 @@ pub(crate) fn lock_counts(dialect: &str, section: &str, prefix: &str) -> Vec<Str
 }
 
 /// The one ledgered reading of a usage, through BOTH projections a ledger row is built from (the
+/// governance ledger's `tier_usage` and the plane's `Units`); they must agree, class for class, and
+/// neither may hold a class the plane does not declare.
 pub(crate) fn ledgered(u: &TokenUsage) -> Ledgered {
     let n = |x: u64| i64::try_from(x).expect("small fixture");
     let map = tier_usage(u).usage_units;
@@ -142,6 +148,9 @@ pub(crate) fn moved(after: Ledgered, before: Ledgered) -> Ledgered {
 }
 
 /// Project the IR's normalized usage into the neutral name-keyed [`busbar_contract::billing::Usage`]
+/// carrier: the four reserved units (`input`/`output`/`cache_read`/`cache_write`) as canonical map
+/// keys, and every open class the reader counted beside them (`TokenUsage::open_units`, a turn's
+/// billed searches) under its declared class.
 pub(crate) fn tier_usage(
     u: &busbar_contract::billing::TokenUsage,
 ) -> busbar_contract::billing::Usage {

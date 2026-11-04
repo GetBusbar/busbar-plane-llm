@@ -1,4 +1,5 @@
 //! `arrive`, sans I/O: which dialect an arrival speaks, which operation it asks for, which model it
+//! names, and the bytes a unit forwards; or the refusal answered instead.
 
 use std::borrow::Cow;
 
@@ -48,6 +49,9 @@ impl Decline {
     }
 
     /// The arrival names an action its dialect has that this plane does not serve: a resolved
+    /// operation with no handler, or a path-model URL naming no served model and action
+    /// (`REFUSED_UNSUPPORTED_ACTION`, counted by the root as a refusal of a read request, like an
+    /// unsupported action or malformed path).
     #[must_use]
     pub const fn unsupported_action(self) -> bool {
         matches!(self, Decline::UnsupportedOperation | Decline::PathNotFound)
@@ -123,6 +127,7 @@ impl Catalogue for () {
 }
 
 /// THE DETECTION FOLD: every dialect's claim on `(fields, path)`, the tightest winning, a tie going
+/// to the earlier declaration.
 #[must_use]
 pub fn detect(path: &str, fields: HeadFields<'_>) -> Option<&'static str> {
     DECLS
@@ -143,6 +148,7 @@ pub fn residual(path: &str) -> Option<&'static str> {
 }
 
 /// The envelope a refusal on `path` is rendered in: the dialect the path's shape names, else the
+/// residual default, else the agnostic envelope (empty).
 #[must_use]
 pub fn envelope_for(path: &str) -> &'static str {
     residual(path)
@@ -224,6 +230,7 @@ fn content_type(fields: HeadFields<'_>) -> String {
 }
 
 /// The two convenience surfaces: `/{name}/v1/messages` (a pool or model named in the path) and
+/// `/{provider}/{model}/v1/messages` (an ad-hoc route).
 enum Convenience {
     Named(String),
     Adhoc(String, String),
@@ -243,6 +250,7 @@ fn convenience(path: &str) -> Option<Convenience> {
 }
 
 /// Read one arrival. `method` is the request method, `target` the request target (path and query),
+/// `fields` its head fields, `body` the whole body.
 pub fn arrive(
     method: &str,
     target: &str,
@@ -309,6 +317,7 @@ pub fn arrive(
 }
 
 /// A body-model arrival: the operation off the path and body, then the arrival step (the body
+/// read), then the decode step (the handler, then the model ladder).
 fn body_arrival(
     proto: &'static str,
     path: &str,
@@ -341,7 +350,10 @@ fn body_arrival(
         }),
     };
     let ct = content_type(fields);
-    let parsed = if handled.is_ok() && (ct.starts_with("application/json") || ct.is_empty()) {
+    let media_type = ct.split(';').next().unwrap_or_default().trim();
+    let parsed = if handled.is_ok()
+        && (media_type.eq_ignore_ascii_case("application/json") || media_type.is_empty())
+    {
         match crate::codec::json::parse::<Value>(body) {
             Ok(v) => Some(v),
             Err(_) => {
@@ -351,7 +363,7 @@ fn body_arrival(
                     proto,
                     KIND_INVALID_REQUEST,
                     "We could not parse the JSON body of your request.",
-                ))
+                ));
             }
         }
     } else {
@@ -360,7 +372,12 @@ fn body_arrival(
     handled?;
     let model = match model_hint {
         Some(m) => Some(m),
-        None if ct.starts_with("multipart/") => super::multipart::multipart_model(&ct, body),
+        None if media_type
+            .split_once('/')
+            .is_some_and(|(kind, _)| kind.eq_ignore_ascii_case("multipart")) =>
+        {
+            super::multipart::multipart_model(&ct, body)
+        }
         None => parsed
             .as_ref()
             .and_then(|v| v.get("model"))
@@ -376,7 +393,7 @@ fn body_arrival(
                 proto,
                 KIND_INVALID_REQUEST,
                 "Missing required parameter: 'model'.",
-            ))
+            ));
         }
     };
     Ok(Arrived {
@@ -409,6 +426,7 @@ fn gemini_api_version(path: &str) -> &'static str {
 }
 
 /// The not-found a path-model dialect answers for its own URL space: its native sentence when it has
+/// one, else the router's.
 fn path_not_found(path: &str, native: impl FnOnce() -> String) -> Declined {
     let envelope = envelope_for(path);
     if decl(envelope).is_some_and(|d| d.has_native_path_not_found) {
@@ -443,8 +461,10 @@ fn gemini_arrival(
         Some((m, a)) if !m.is_empty() && !a.is_empty() => (m.to_string(), a.to_string()),
         _ => {
             return Err(path_not_found(path, || {
-                format!("Invalid resource path: models/{rest} is not found for API version {api_version}.")
-            }))
+                format!(
+                    "Invalid resource path: models/{rest} is not found for API version {api_version}."
+                )
+            }));
         }
     };
     let operation = decl(PROTO_GEMINI)
@@ -544,6 +564,7 @@ fn bedrock_arrival(
 }
 
 /// The path-model carry: the URL's facts (`model`, `stream`, and when asked the array-stream shim key)
+/// spliced into the caller's object as byte-level member edits.
 #[must_use]
 pub fn splice_path_facts(
     body: &[u8],
@@ -567,6 +588,7 @@ pub fn splice_path_facts(
 }
 
 /// A path-model arrival's arrival step (the model and the stream flag spliced into the caller's
+/// object) and decode step (the handler, in the path surface's one sentence).
 #[allow(clippy::too_many_arguments)]
 fn path_model_arrival(
     proto: &'static str,
@@ -586,7 +608,7 @@ fn path_model_arrival(
             return refuse(
                 Decline::BodyParse,
                 "We could not parse the JSON body of your request.",
-            )
+            );
         }
     };
     match v.as_object_mut() {

@@ -6,6 +6,9 @@
 use super::*;
 
 /// Structural class fix: on a CROSS-protocol request hop the source-protocol-only passthrough
+/// keys swept into `IrRequest.extra` (e.g. OpenAI `logit_bias`) must NOT reach the foreign
+/// egress backend body. The seam in `forward_with_pool` clears `ir.extra` before the egress
+/// `write_request`; this mirrors that exact sequence (reader → clear → writer).
 #[test]
 fn cross_protocol_strips_source_only_extra_keys() {
     let body = serde_json::json!({
@@ -53,6 +56,7 @@ fn cross_protocol_strips_source_only_extra_keys() {
 }
 
 /// SAME-protocol openai→openai must still carry `logprobs` (now via the first-class IR field
+/// rather than `extra`) and the genuinely-unmapped `logit_bias` (still via `extra`).
 #[test]
 fn same_protocol_passthrough_preserves_extra_keys() {
     let body = serde_json::json!({

@@ -18,11 +18,13 @@ fn write_req(ir: &crate::codec::ir::IrRequest) -> serde_json::Value {
 }
 
 /// Read a request JSON, translate to IR, and write it back on the SAME dialect — the round-trip a
+/// same-protocol Responses→Responses hop performs.
 fn roundtrip_req(body: &serde_json::Value) -> serde_json::Value {
     write_req(&read_req(body))
 }
 
 /// Every content-part object across the written `input` array (flattening message `content[]` and
+/// the flat top-level tool/reasoning items), so an assertion can look for one by shape.
 fn input_parts(body: &serde_json::Value) -> Vec<serde_json::Value> {
     let mut out = Vec::new();
     for item in body
@@ -242,6 +244,8 @@ fn responses_request_reasoning_survives_roundtrip() {
 }
 
 /// responses/request/{max_tool_calls,top_logprobs,store,stream_options,truncation,include,metadata,
+/// prompt,prompt_cache_key,safety_identifier,service_tier,background,user} — provider-specific knobs
+/// with no cross-protocol target, carried LOSSLESS SAME-PROTOCOL via the pass-through `extra` map.
 #[test]
 fn responses_request_provider_specific_fields_survive_same_protocol() {
     let body = serde_json::json!({
@@ -290,6 +294,7 @@ fn responses_request_provider_specific_fields_survive_same_protocol() {
 }
 
 /// responses/request/content[].type={input_text.text,output_text.text,input_image.image_url,
+/// input_image.file_id}
 #[test]
 fn responses_request_content_parts_survive_roundtrip() {
     let body = serde_json::json!({
@@ -335,6 +340,8 @@ fn responses_request_content_parts_survive_roundtrip() {
 }
 
 /// responses/request/content[].type=input_image.detail — IR-08: the detail rides the IR
+/// `Image.detail` slot (Chat and Cohere carry the same three words), and an unknown word is dropped
+/// with a warn naming the field.
 #[test]
 fn responses_request_input_image_detail_carried() {
     let body = serde_json::json!({
@@ -506,6 +513,7 @@ fn responses_request_reasoning_items_survive_roundtrip() {
 }
 
 /// responses/request/input[].type=reasoning.id — the opaque reasoning-item id has no IR slot and no
+/// cross-protocol analog, so it is a DOCUMENTED DROP+WARN (the reasoning text/blob still survive).
 #[test]
 fn responses_request_reasoning_id_dropped_with_warn() {
     let body = serde_json::json!({
@@ -557,6 +565,8 @@ fn responses_response_identity_fields_emitted() {
 }
 
 /// E8 (tracker): the pinned spec's `Response` schema REQUIRES `temperature`/`top_p`/`instructions`/
+/// `metadata`/`tool_choice`/`parallel_tool_calls`/`tools` on every response object, and they must
+/// MIRROR the client's actual request values on a cross-dialect hop — not the spec's bare defaults.
 #[test]
 fn responses_response_request_echo_members_mirror_the_client_request_buffered() {
     let mut resp = mk_response(
@@ -609,6 +619,8 @@ fn responses_response_request_echo_members_mirror_the_client_request_buffered() 
 }
 
 /// E8: absent `request_echo` (no parsed ingress body was available to thread) falls back to the
+/// spec's own documented defaults, exactly as before this change — never a panic, never an omitted
+/// required member.
 #[test]
 fn responses_response_request_echo_absent_falls_back_to_spec_defaults() {
     let out = write_response(&mk_response(
@@ -636,6 +648,9 @@ fn responses_response_request_echo_absent_falls_back_to_spec_defaults() {
 }
 
 /// E8: a `null` echoed member (the client's wire body carried the key as JSON `null`, distinct from
+/// "absent") still falls back to the spec default rather than emitting a bare `null` for a
+/// non-nullable member — `temperature`/`top_p` are typed numbers, not `anyOf null`, on the pinned
+/// schema.
 #[test]
 fn responses_response_request_echo_null_member_falls_back_to_default() {
     let mut resp = mk_response(
@@ -652,6 +667,9 @@ fn responses_response_request_echo_null_member_falls_back_to_default() {
 }
 
 /// E8 (tracker): the STREAMING twin — `set_request_echo` (called once by the cross-protocol stream
+/// seam before the first event) latches the ORIGINAL ingress request onto the writer's per-stream
+/// state, and `response.created`'s embedded `response` object answers with those values rather than
+/// the spec's bare defaults.
 #[test]
 fn responses_response_request_echo_members_mirror_the_client_request_streaming() {
     let w = ResponsesWriter;
@@ -830,6 +848,7 @@ fn responses_response_cached_tokens_survive_roundtrip() {
 }
 
 /// responses/response/output[].type={message.id,message.status,message.content,reasoning.summary,
+/// reasoning.encrypted_content,function_call.call_id,function_call.name,function_call.arguments}
 #[test]
 fn responses_response_output_items_emitted() {
     let content = vec![
@@ -896,6 +915,7 @@ fn responses_response_output_items_emitted() {
 }
 
 /// responses/response/output[].type=file_search_call — a hosted-tool invocation record with no
+/// neutral IR form and no cross-protocol analog: DOCUMENTED DROP+WARN.
 #[test]
 fn responses_response_hosted_tool_item_dropped_with_warn() {
     let body = serde_json::json!({
@@ -945,6 +965,8 @@ fn responses_response_hosted_tool_item_dropped_with_warn() {
 }
 
 /// responses/response/{instructions,metadata} — the request-echo members a native response carries
+/// have no IrResponse slot and no other-protocol analog: DOCUMENTED DROP+WARN on read (the request
+/// side of instructions/metadata is separately carried on the request hop).
 #[test]
 fn responses_response_instructions_metadata_dropped_with_warn() {
     let body = serde_json::json!({
@@ -980,6 +1002,8 @@ fn responses_response_instructions_metadata_dropped_with_warn() {
 }
 
 /// responses/response/stream:{response.created,response.output_item.added,response.output_item.done,
+/// response.content_part.added,response.content_part.done,response.output_text.delta,
+/// response.output_text.done,response.function_call_arguments.delta,response.completed}
 #[test]
 fn responses_stream_events_emitted_by_writer() {
     let w = ResponsesWriter;
@@ -1067,6 +1091,8 @@ fn responses_stream_events_emitted_by_writer() {
 }
 
 /// A duplicate `MessageStart` must not restart the stream. Five of the six readers gate
+/// `MessageStart` on `state.started`, but the Anthropic reader emits it 1:1 with the upstream
+/// `message_start` frame, so a responses-egress stream fed from an Anthropic ingress can see two.
 #[test]
 fn responses_duplicate_message_start_does_not_restart_stream() {
     let w = ResponsesWriter;
@@ -1157,6 +1183,7 @@ fn responses_duplicate_message_start_does_not_restart_stream() {
 }
 
 /// The per-stream reset clears every accumulator a reused or cloned writer could otherwise leak
+/// into the next stream — including the citation and logprob buffers, which it used to skip.
 #[test]
 fn responses_reset_clears_citation_and_logprob_accumulators() {
     let w = ResponsesWriter;
@@ -1279,6 +1306,7 @@ fn responses_stream_failed_event_emitted() {
 }
 
 /// responses/response/stream:response.in_progress — the reader CONSUMES the in-progress lifecycle
+/// event (aliased with response.created) to open the translated message.
 #[test]
 fn responses_stream_in_progress_consumed_by_reader() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -1300,6 +1328,7 @@ fn responses_stream_in_progress_consumed_by_reader() {
 }
 
 /// responses/response/stream:response.reasoning_summary_text.delta — the reader CONSUMES the
+/// reasoning-summary delta event, routing it to the reasoning block as a ThinkingDelta.
 #[test]
 fn responses_stream_reasoning_summary_delta_consumed_by_reader() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -1384,6 +1413,7 @@ fn responses_drops_penalties_seed_n_observably() {
 }
 
 /// responses/request/{previous_response_id,store} — the server-side conversation-state knobs a proxy
+/// must carry LOSSLESSLY.
 #[test]
 fn responses_stateful_previous_response_id_and_store_survive_same_protocol() {
     let body = serde_json::json!({
@@ -1412,6 +1442,8 @@ fn responses_stateful_previous_response_id_and_store_survive_same_protocol() {
 }
 
 /// responses/response/id — the STORED-RESPONSE id echo / `response.id` correlation. When a client uses
+/// server-side conversation state, THIS response's `id` becomes the NEXT request's
+/// `previous_response_id`, so the id must survive a read→IR→write hop unchanged.
 #[test]
 fn responses_stateful_response_id_correlation_round_trips() {
     let upstream = serde_json::json!({

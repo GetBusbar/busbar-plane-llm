@@ -422,6 +422,7 @@ fn test_gemini_read_response_events_function_call() {
 }
 
 /// Helper: split a concatenated OpenAI SSE byte stream into its per-frame JSON chunk objects
+/// (skipping the `[DONE]` sentinel and any keepalive).
 fn openai_sse_chunks(bytes: &[u8]) -> Vec<serde_json::Value> {
     let text = std::str::from_utf8(bytes).expect("openai SSE is utf-8");
     let mut chunks = Vec::new();
@@ -441,6 +442,7 @@ fn openai_sse_chunks(bytes: &[u8]) -> Vec<serde_json::Value> {
 }
 
 /// OpenAI per-chunk identity: the real OpenAI API repeats the top-level
+/// `id`/`created`/`model` on EVERY `chat.completion.chunk`, not just the opening role chunk.
 #[test]
 fn test_openai_ingress_per_chunk_identity_repeated() {
     let mut t = StreamTranslate::new("openai", "anthropic").expect("openai ingress translator");
@@ -564,6 +566,10 @@ fn test_openai_ingress_mid_stream_error_envelope_unchanged_by_identity() {
 }
 
 /// Bedrock messageStop+metadata fan-out (real latencyMs): a bedrock->bedrock stream must
+/// round-trip — the egress reader collapses the native two-frame stop/usage split into ONE
+/// combined IR MessageDelta, and the ingress writer fan-out RE-SPLITS it back into the native
+/// `messageStop` + `metadata` frame pair (metadata carrying the real usage AND a real
+/// `metrics.latencyMs`).
 #[test]
 fn test_bedrock_to_bedrock_stream_roundtrips_stop_and_metadata() {
     assert!(
@@ -639,6 +645,8 @@ fn test_bedrock_to_bedrock_stream_roundtrips_stop_and_metadata() {
 }
 
 /// On a BEDROCK-ingress cross-protocol stream the translator's OUTPUT is binary
+/// eventstream framing, so the deleted JSON byte-scanner would have mis-parsed the
+/// length-prefixes/CRC32s and zeroed token accounting.
 #[test]
 fn test_bedrock_ingress_ir_usage_carries_real_tokens() {
     let mut t = StreamTranslate::new("bedrock", "openai").expect("bedrock ingress translator");
@@ -677,6 +685,9 @@ fn test_bedrock_ingress_ir_usage_carries_real_tokens() {
 }
 
 /// A Gemini `cachedContent` reference is dropped on the cross-protocol seam (no
+/// protocol can project a server-side Google context cache into its own request shape) — but
+/// SILENTLY, unlike the two sibling clears in the same function (prompt-cache breakpoints, hosted
+/// tools) which both warn.
 #[test]
 fn gemini_cached_content_warns_naming_truncation_and_billing() {
     let body = serde_json::json!({
@@ -755,6 +766,7 @@ fn gemini_cached_content_warns_naming_truncation_and_billing() {
 }
 
 /// Google's `CitationSource.startIndex`/`endIndex` are documented measured in
+/// BYTES; the IR's `IrCitation::start_index`/`end_index` contract is CHARACTERS.
 #[test]
 fn gemini_citation_byte_indices_convert_to_characters() {
     let text = "héllo wörld";

@@ -2,12 +2,15 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The list-models catalog, rendered: `GET /v1/models` and `GET /v1beta/models` answer the names the
+//! kernel lists for the caller in the envelope of the dialect the request names (answered with no
+//! unit; the plane renders, the kernel lists).
 
 use busbar_contract::protocol::ProtocolDecl;
 
 use crate::codec::DECLS;
 
 /// The path the catalog's detection reads for a `/v1beta` listing: the dialect convention that
+/// names the model-scoped surface.
 const BETA_SNIFF_PATH: &str = "/v1beta/models/";
 /// The path the catalog's detection reads for every other listing.
 const SNIFF_PATH: &str = "/v1/models";
@@ -28,6 +31,8 @@ pub struct ModelsCatalogAnswer {
 }
 
 /// The dialect a listing at `path` answers in, read off the request's head `fields` (lower-case
+/// names, every value in arrival order): the fingerprint headers the dialects declare, each with
+/// its first value, then the tightest claim over the sniff path, then the residual default.
 #[must_use]
 pub fn dialect(path: &str, fields: &[(Vec<u8>, Vec<u8>)]) -> Option<&'static ProtocolDecl> {
     let mut sniff: Vec<(&[u8], &[u8])> = Vec::new();
@@ -60,6 +65,7 @@ pub fn dialect(path: &str, fields: &[(Vec<u8>, Vec<u8>)]) -> Option<&'static Pro
 }
 
 /// RENDER the listing of `names` for a request at `path` with head `fields`: `200`, a JSON body in
+/// the dialect's list envelope, `content-type: application/json`.
 #[must_use]
 pub fn render_listing(
     path: &str,

@@ -1,4 +1,6 @@
 //! A far end's error answer, judged: what the error means (the far end's dialect reads it, the
+//! provider's error map places it in a class, the class names its disposition) and what the caller
+//! reads for it.
 
 use std::collections::HashMap;
 
@@ -23,6 +25,7 @@ pub struct FarError<'a> {
 }
 
 /// The request-id head field a caller of `ingress` reads, forwarding the far end's own id (the
+/// first head field the caller's dialect relays) when it sent one.
 pub(crate) fn request_id_field(
     host: &dyn busbar_contract::codec::CodecHost,
     ingress: &str,
@@ -37,6 +40,7 @@ pub(crate) fn request_id_field(
 }
 
 /// What the far end's dialect reads off its error answer: the codes and types its error shape
+/// names, or the status alone when the dialect does not serve `operation`.
 #[must_use]
 pub fn raw_error(far: &str, operation: OpVerb, status: u16, body: &[u8]) -> RawUpstreamError {
     raw_error_with_head(far, operation, status, &[], body)
@@ -65,6 +69,8 @@ pub fn raw_error_with_head(
 const OVERLOADED_STATUS: u16 = 529;
 
 /// The class an operator's `error_map` entry names. An entry that names no class is ignored, and
+/// the operator is told (an uncoded warning, as 1.5.5: [`crate::codec::diagnostics::warn_error_map_class_unrecognized`]):
+/// a typo'd entry (`rate_limt`) does not silently never take effect.
 fn mapped_class(value: &str) -> Option<StatusClass> {
     let class = StatusClass::parse(value);
     if class.is_none() {
@@ -74,6 +80,8 @@ fn mapped_class(value: &str) -> Option<StatusClass> {
 }
 
 /// The class of a far-end error of `status` (the status its dialect's reading carries) under the
+/// provider's `error_map`: a mapped provider code first, then the built-in context-length code on a
+/// request-size status, then a mapped structured type, then the status.
 #[must_use]
 pub fn normalize(
     status: u16,
@@ -118,6 +126,8 @@ pub fn normalize(
 }
 
 /// The far end's error relayed as it arrived (busbar is invisible on a same-dialect answer): its
+/// status, every head field except those busbar governs ([`wire::governed_response`]; the engine drops
+/// the per-connection ones), and its body.
 #[must_use]
 pub fn relay_verbatim(ingress: &str, far: &FarError<'_>) -> Rendered {
     let fields: Vec<(String, Vec<u8>)> = far
@@ -134,6 +144,7 @@ pub fn relay_verbatim(ingress: &str, far: &FarError<'_>) -> Rendered {
 }
 
 /// The far end's error as the caller reads it when the walk ends on it: across dialects, reshaped
+/// into the caller's envelope (a foreign error body is never relayed); within one, verbatim.
 #[must_use]
 pub fn relay(
     host: &dyn busbar_contract::codec::CodecHost,
@@ -149,6 +160,7 @@ pub fn relay(
 }
 
 /// A client fault as the caller reads it: across dialects, reshaped with the kind its class names
+/// and the far end's own message (else the generic one); within one, verbatim.
 #[must_use]
 pub fn client_fault(
     host: &dyn busbar_contract::codec::CodecHost,
@@ -173,6 +185,7 @@ pub fn client_fault(
 }
 
 /// The caller dialect's own authentication refusal, for a far end that refused the deployment's
+/// credential: its native status, kind and vendor sentence, never the far end's status or body.
 #[must_use]
 pub fn auth_failure(host: &dyn busbar_contract::codec::CodecHost, ingress: &str) -> Rendered {
     let d = decl(ingress);
@@ -198,6 +211,7 @@ pub struct Judged {
 }
 
 /// JUDGE a far-end error: `passthrough` says the far end was reached with the caller's own
+/// credential (the kernel's fact), whose 401 or 403 is the caller's and is relayed unjudged.
 #[must_use]
 pub fn judge(
     host: &dyn busbar_contract::codec::CodecHost,

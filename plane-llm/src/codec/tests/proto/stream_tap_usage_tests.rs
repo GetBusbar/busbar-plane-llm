@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The same-proto `StreamTranslate` A-tap unit checks RELOCATED HERE from `busbar-core`'s
+//! `test_support/tests/tests.rs::test_stream_inspection_tap_usage_parsing`.
 
 use super::*;
 
@@ -34,6 +35,7 @@ fn test_stream_inspection_tap_usage_parsing() {
 }
 
 /// A bare CR is one of the three line terminators the event-stream grammar names, and the frame
+/// scanner already frames such a stream correctly.
 #[test]
 fn same_proto_anthropic_bare_cr_frames_still_tap_usage() {
     let mut t = StreamTranslate::new_same_proto("anthropic").expect("same-proto translator");
@@ -53,6 +55,10 @@ fn same_proto_anthropic_bare_cr_frames_still_tap_usage() {
 }
 
 /// The same-protocol A-tap must carry the usage DETAIL sub-buckets, not just the four totals. The
+/// trailing `include_usage` chunk of an OpenAI stream carries the identical `usage` object the
+/// buffered response does, and the reader decodes every sub-bucket off it; the A-tap that feeds
+/// billing and the client-visible usage object must not drop them, or the same request reports its
+/// attribution at `stream:false` and a hard absent at `stream:true`.
 #[test]
 fn same_proto_tap_carries_usage_detail_sub_buckets() {
     let mut t = StreamTranslate::new_same_proto("openai").expect("same-proto translator");
@@ -143,6 +149,7 @@ fn same_proto_tap_carries_cohere_billed_units() {
 }
 
 /// A stream that ends before its terminal `message_delta` (the far end cut it, or the caller left)
+/// still bills what the far end REPORTED so far (#62).
 #[test]
 fn anthropic_stream_start_usage_bills_before_the_terminal_delta() {
     let start = b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"usage\":{\"input_tokens\":100000,\"cache_read_input_tokens\":7,\"output_tokens\":1}}}\n\n";

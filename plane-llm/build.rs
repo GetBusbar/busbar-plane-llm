@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE ROOT CELLS' AND THE DRIVER PROOFS' ADDRESSES (this crate's `links` row): the composition root
+//! compiles this plane's own root cells and its driver proofs from the paths printed here, reading
+//! them as `DEP_BUSBAR_DOOR_CELLS_<CRATE>_CELLS` and `DEP_BUSBAR_DOOR_CELLS_<CRATE>_DRIVER` (the same
+//! for a path dependency and a pinned one).
 
 use std::error::Error;
 use std::path::PathBuf;

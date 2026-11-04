@@ -1,4 +1,5 @@
 //! The reply's byte helpers: pure functions the answer path calls between its reads and writes, one
+//! copy shared by the served path and the plane.
 
 use std::collections::BTreeMap;
 
@@ -20,6 +21,7 @@ use crate::exchange::decl;
 pub const GENERIC_REJECTED_DETAIL: &str = "The request could not be processed.";
 
 /// The message an answer that could not be relayed is answered with: a transfer that failed, a
+/// body over the translation cap, or a shape the caller's dialect cannot be written from.
 pub const GENERIC_RESPONSE_ERROR_DETAIL: &str =
     "An internal error occurred while processing the response.";
 
@@ -32,21 +34,26 @@ fn stream_ct(d: &ProtocolDecl) -> Option<&'static str> {
 }
 
 /// True for a content type that carries an incremental answer: a content type some dialect
+/// declares for a streamed answer.
 #[must_use]
 pub fn is_stream_content_type(ct: &str) -> bool {
+    let media_type = ct.split(';').next().unwrap_or_default().trim();
     DECLS
         .iter()
         .filter_map(|d| stream_ct(d))
-        .any(|p| ct.starts_with(p))
+        .any(|p| media_type.eq_ignore_ascii_case(p))
 }
 
 /// The content type the caller's dialect expects on a streamed answer, or `None` for a dialect the
+/// plane does not hold (the far end's content type is then kept).
 #[must_use]
 pub fn ingress_stream_content_type(ingress: &str) -> Option<&'static str> {
     decl(ingress).and_then(stream_ct)
 }
 
 /// Whether busbar governs the answer head field `name` (compared without case) for a caller of
+/// `dialect`: the far end's echo of busbar's own credential or tenant, or the operator's own
+/// account state (its cookies, its rate-limit headers), never relayed.
 #[must_use]
 pub fn governed_response(dialect: &str, name: &str) -> bool {
     crate::dialect::account_scoped_response(name)
@@ -58,6 +65,8 @@ pub fn governed_response(dialect: &str, name: &str) -> bool {
 }
 
 /// Relay the far end's head onto a same-dialect answer (busbar is invisible to the caller too): each
+/// far field in order, under a name the answer's own `fields` do not already carry, except those the
+/// dialect governs ([`governed_response`]).
 pub fn relay_far_head(
     dialect: &str,
     fields: &mut Vec<(String, Vec<u8>)>,
@@ -78,12 +87,14 @@ pub fn relay_far_head(
 }
 
 /// The far-end head field names a caller of `ingress` has relayed verbatim on a same-dialect
+/// answer; the first is the primary request id.
 #[must_use]
 pub fn ingress_relayed_response_header_names(ingress: &str) -> &'static [&'static str] {
     decl(ingress).map_or(&[], |d| d.ingress_relayed_response_header_names)
 }
 
 /// The request-id head field a caller of `ingress` reads on its answer: the far end's own id when
+/// one was captured, else a minted one; `None` for a dialect that carries none.
 #[must_use]
 pub fn response_request_id(
     host: &dyn busbar_contract::codec::CodecHost,
@@ -119,6 +130,7 @@ fn name_byte(b: u8) -> bool {
 }
 
 /// A head field as a caller reads it: the name in its wire (lower-case) form, so a dialect may
+/// declare a relayed field the way its vendor spells it.
 #[must_use]
 pub fn head_field(name: &str, value: &[u8]) -> Option<(String, Vec<u8>)> {
     (!name.is_empty() && name.bytes().all(name_byte))
@@ -126,6 +138,7 @@ pub fn head_field(name: &str, value: &[u8]) -> Option<(String, Vec<u8>)> {
 }
 
 /// The error kind a far-end status is reshaped into for a caller of another dialect: the native
+/// discriminant a single-vendor API uses for that status.
 #[must_use]
 pub fn cross_protocol_error_kind(status: u16) -> &'static str {
     match status {
@@ -156,6 +169,7 @@ pub fn client_fault_kind(class: StatusClass) -> &'static str {
 }
 
 /// The human message of a far-end error body (`error.message`, else a top-level `message`), or
+/// `None` when the body is not JSON or names none.
 #[must_use]
 pub fn extract_error_message(bytes: &[u8]) -> Option<String> {
     let v: Value = crate::codec::json::parse(bytes).ok()?;
@@ -167,6 +181,7 @@ pub fn extract_error_message(bytes: &[u8]) -> Option<String> {
 }
 
 /// The kind and message a far-end error of `status` is reshaped with for a caller of another
+/// dialect: its own message when it has one, else the generic one.
 #[must_use]
 pub fn cross_protocol_error(status: u16, bytes: &[u8]) -> (&'static str, String) {
     let kind = cross_protocol_error_kind(status);
@@ -175,6 +190,9 @@ pub fn cross_protocol_error(status: u16, bytes: &[u8]) -> (&'static str, String)
 }
 
 /// The bytes a stream cut after its first byte ends on, in the caller's own framing: a modeled
+/// exception frame for a binary event-stream caller, else the caller's in-band error event, asked of
+/// the live translator first (so the frame continues the stream's identity) and the dialect second; a
+/// dialect the plane does not hold, or one framing no in-band error, gets a bare `data:` frame.
 #[must_use]
 pub fn mid_stream_error_bytes(
     host: &dyn busbar_contract::codec::CodecHost,
@@ -232,6 +250,7 @@ pub fn estimate_usage_from_truncated_tail(tail_len: usize) -> TokenUsage {
 }
 
 /// The usage the far end reported in the bytes in hand (the dialect's own scan for its usage
+/// object), and nothing else.
 #[must_use]
 pub fn reported_usage(protocol: &str, buf: &[u8]) -> Option<TokenUsage> {
     decl(protocol)
@@ -240,6 +259,7 @@ pub fn reported_usage(protocol: &str, buf: &[u8]) -> Option<TokenUsage> {
 }
 
 /// The usage of a delivered body whose usage could not be read whole: what the dialect's scan
+/// recovers, else the floor over the bytes in hand.
 #[must_use]
 pub fn unrecovered_usage(protocol: &str, buf: &[u8]) -> TokenUsage {
     reported_usage(protocol, buf).unwrap_or_else(|| estimate_usage_from_truncated_tail(buf.len()))
@@ -286,6 +306,7 @@ pub fn open_units_of(usage: &Option<Billing>) -> BTreeMap<String, u64> {
 }
 
 /// Whether the far end reported this whole answer's generation as failed: its dialect's reader
+/// reads the stop reason as the error reason.
 #[must_use]
 pub fn generation_failed(
     host: &dyn busbar_contract::codec::CodecHost,

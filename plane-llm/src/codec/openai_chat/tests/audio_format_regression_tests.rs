@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Regression net: OpenAI Chat audio egress must map an audio mime onto the CLOSED
+//! `input_audio.format` enum (`{wav, mp3}`, openai-openapi
+//! `ChatCompletionRequestMessageContentPartAudio`), not emit the raw mime subtype.
 
 use super::*;
 use crate::codec_diagnostics::{diagnostic_texts, warnings};

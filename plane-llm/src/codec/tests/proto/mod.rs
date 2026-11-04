@@ -2,6 +2,11 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE CODEC/IR TEST SUITES, RELOCATED HERE from `busbar-core`'s `proto/tests/*`. They NAME DIALECTS
+//! and the concrete wire codecs (`Protocol`/`protocol_for`/
+//! `StreamTranslate`/the six dialect modules), which a neutral crate's tests must not — so they live
+//! beside the types they exercise, in the LLM plugin, linking `busbar-core` as a `test-support`
+//! dev-dependency for the neutral seams (registry accessors, `proxy`/`handlers`/`egress_auth`,
+//! substrate atoms).
 
 #![allow(unused_imports)]
 
@@ -65,6 +70,7 @@ pub fn array_stream_shim_keys() -> &'static [&'static str] {
 }
 
 /// The global `max_tokens` fallback a caller hands the egress preparation when neither the request
+/// nor the lane names one.
 pub use crate::exchange::shaping::DEFAULT_MAX_TOKENS;
 
 pub use busbar_contract::protocol::{ArrayStreamFramer, DialectCodec};

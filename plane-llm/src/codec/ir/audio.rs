@@ -45,6 +45,8 @@ pub struct TranscriptionReq {
 }
 
 /// The transcription family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. The
+/// audio blob is binary and unscreenable: one [`busbar_contract::ir::facts::ContentItem::Opaque`]
+/// (present, never silently empty).
 impl busbar_contract::ir::facts::IrFacts for TranscriptionReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::TRANSCRIPTION
@@ -134,6 +136,8 @@ impl SpeechReq {
 }
 
 /// The speech family's walk, this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. Every caller
+/// free-text field is a [`busbar_contract::ir::facts::ContentItem::Text`]: the `input`, the
+/// `instructions` style prompt (forwarded verbatim by both writers), and each multi-speaker name.
 impl busbar_contract::ir::facts::IrFacts for SpeechReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::SPEECH

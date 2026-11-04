@@ -2,12 +2,16 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! `default_max_tokens` precedence and `cache_control` clamping on the IR egress-prep seam,
+//! RELOCATED here from `busbar-core`'s `proxy/tests/`.
 
 use super::*;
 use crate::codec::ir::IrRequest;
 use crate::codec_diagnostics::{diagnostic_texts, warnings};
 
 /// `default_max_tokens` resolution precedence on the translation seam (only fires when the source
+/// omitted `max_tokens` AND the egress protocol REQUIRES it): per-model lane default wins → else
+/// the global `limits.default_max_tokens` (the `global` arg) → else the historical 4096 (which is
+/// just the value the global itself defaults to).
 #[test]
 fn per_model_then_global_then_4096() {
     let global = 8192;

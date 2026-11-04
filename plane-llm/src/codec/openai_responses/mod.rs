@@ -38,6 +38,7 @@ mod slots;
 mod writer;
 
 /// Build this dialect's wire codec. A fresh instance per resolution: `ResponsesWriter` carries
+/// per-stream mutable state (`sequence`, `response_id`).
 pub fn protocol() -> Protocol {
     Protocol::new(VENDOR_NAME, ResponsesReader, ResponsesWriter)
 }
@@ -62,6 +63,7 @@ fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrengt
 }
 
 /// The `/v1/responses` declaration. Shares OpenAI's `call_…` tool-id shape but declares its own
+/// name, since a metric label is a protocol's own.
 pub const DECL: ProtocolDecl = ProtocolDecl {
     name: VENDOR_NAME,
     codec: dialect_codec!(VENDOR_NAME),
@@ -123,16 +125,21 @@ pub(crate) const ENTRY: super::proto_codec::DialectEntry = super::proto_codec::D
     leaf: &crate::codec::leaf_codec::LeafCodecs::NONE,
 };
 
-/// Largest wire `output_index` accepted in a streaming event. The API documents at most 128
+/// Largest wire item or content index accepted in a streaming event. Out-of-range
+/// indices are rejected before casting, rather than aliased to a legitimate block.
 const MAX_OUTPUT_INDEX: usize = 127;
 
 /// Fallback `model` when the IR carries none (cross-protocol paths). Strict SDKs type
+/// `Response.model` as a required string, and a real endpoint never omits it.
 const DEFAULT_MODEL: &str = crate::codec::dialect::FALLBACK_MODEL;
 
 /// Cap on distinct output indices tracked per stream (`open_tools` and the writer's open-item
+/// sets), bounding memory against a backend that emits a unique `output_index` per event.
 const MAX_OPEN_TOOLS: usize = crate::codec::dialect::MAX_OPEN_TOOL_CALLS;
 
 /// Append `fragment` to the buffer at `index`, honouring both bounds: a new index is refused once
+/// `MAX_OPEN_TOOLS` items accumulate, and a buffer stops growing at `cap`
+/// ([`ResponsesWriter::accum_byte_cap`]).
 fn append_capped(
     map: &mut std::collections::BTreeMap<usize, String>,
     index: usize,
@@ -167,10 +174,11 @@ fn logprob_bytes(lp: &crate::codec::ir::IrTokenLogprob) -> usize {
     std::mem::size_of::<crate::codec::ir::IrTokenLogprob>()
         .saturating_add(lp.token.len())
         .saturating_add(lp.bytes.as_ref().map_or(0, Vec::len))
-        .saturating_add(lp.top.iter().map(alt).sum::<usize>())
+        .saturating_add(lp.top.iter().map(alt).fold(0usize, usize::saturating_add))
 }
 
 /// Carried text weight of one buffered citation (the owned strings, which upstream controls). The
+/// verbatim `raw` entry weighs its compact serialised length.
 fn citation_bytes(c: &crate::codec::ir::IrCitation) -> usize {
     fn len(s: &Option<String>) -> usize {
         s.as_ref().map_or(0, String::len)
@@ -192,7 +200,8 @@ fn citation_bytes(c: &crate::codec::ir::IrCitation) -> usize {
         let _ = serde_json::to_writer(&mut n, v);
         n.0
     });
-    len(&c.kind)
+    std::mem::size_of::<crate::codec::ir::IrCitation>()
+        .saturating_add(len(&c.kind))
         .saturating_add(len(&c.cited_text))
         .saturating_add(len(&c.title))
         .saturating_add(len(&c.url))
@@ -218,12 +227,15 @@ struct LogprobAccum {
 }
 
 /// Key offset for OPEN TEXT output indices inside the shared `StreamDecodeState::open_tools` set. A
+/// stream can carry several message items, each at its own `output_index`, so a single
+/// `text_block_open` bool cannot pair BlockStart/BlockStop per index.
 const TEXT_INDEX_KEY_OFFSET: usize = 1_000;
 
 /// Base62 alphabet for the opaque suffix of native ids ([`synthesize_item_id`], [`synthesize_response_id`]).
 const BASE62: &[u8; 62] = crate::codec::dialect::BASE62_ALPHABET;
 
 /// Width of the base62 suffix on a synthesized item id. Native ids carry a long opaque token, so 48
+/// chars keeps a length- or regex-checking client from fingerprinting it as non-native.
 const ITEM_ID_TOKEN_LEN: usize = 48;
 
 /// Width of the base62 suffix on a synthesized `resp_` id (native ones are ~38+ chars).
@@ -244,6 +256,7 @@ const EVT_REFUSAL_DELTA: &str = "response.refusal.delta";
 const EVT_REFUSAL_DONE: &str = "response.refusal.done";
 
 const EVT_OUTPUT_TEXT_ANNOTATION_ADDED: &str = "response.output_text.annotation.added";
+const EVT_FUNCTION_CALL_ARGS_DONE: &str = "response.function_call_arguments.done";
 const EVT_FUNCTION_CALL_ARGS_DELTA: &str = "response.function_call_arguments.delta";
 const EVT_REASONING_TEXT_DELTA: &str = "response.reasoning_text.delta";
 
@@ -257,6 +270,7 @@ const EVT_RESPONSE_COMPLETED: &str = "response.completed";
 const EVT_RESPONSE_FAILED: &str = "response.failed";
 const EVT_RESPONSE_INCOMPLETE: &str = "response.incomplete";
 /// `include` entry asking a backend for per-token logprobs on every `output_text` part (the
+/// Responses spelling of Chat `logprobs: true`).
 const INCLUDE_OUTPUT_TEXT_LOGPROBS: &str = "message.output_text.logprobs";
 
 const CALL_ID: &str = "call_id";
@@ -283,6 +297,7 @@ const SUMMARY_TEXT: &str = "summary_text";
 const TOP_P: &str = "top_p";
 
 /// Internal `provider_signal` sentinel for a `response.failed` event with no recognizable
+/// `error.code`/`error.type`.
 const SIGNAL_RESPONSE_FAILED: &str = "response_failed";
 
 /// Response status values on the `/v1/responses` wire.
@@ -329,6 +344,7 @@ const AUTH_FAILURE_MSG: &str = "Incorrect API key provided.";
 const ACCUMULATION_FAILURE_MSG: &str = "Responses stream accumulation limit exceeded";
 
 /// Fill a fixed-width base62 token entirely from the OS CSPRNG, with no counter overlay (a counter
+/// leaves constant high digits, a fingerprint a native random id never carries).
 fn synth_token<const N: usize>(
     host: &dyn busbar_contract::codec::CodecHost,
 ) -> Result<String, IrError> {
@@ -348,6 +364,7 @@ fn synth_token<const N: usize>(
 }
 
 /// Mint a fresh per-output-item id (`msg_…`, `fc_…`) for the streaming writer, since IR block events
+/// carry only the integer `output_index`.
 fn synthesize_item_id(
     host: &dyn busbar_contract::codec::CodecHost,
     prefix: &str,
@@ -359,6 +376,8 @@ fn synthesize_item_id(
 }
 
 /// Build the Responses `usage` object from [`crate::codec::ir::IrUsage`] with every member the
+/// official SDKs require: `total_tokens`, `input_tokens_details` (`cached_tokens`,
+/// `cache_write_tokens`) and `output_tokens_details` (`reasoning_tokens`).
 fn build_responses_usage(usage: &crate::codec::ir::IrUsage) -> serde_json::Value {
     let cache_read = usage.cache_read_input_tokens.unwrap_or(0);
     let cache_write = usage.cache_creation_input_tokens.unwrap_or(0);
@@ -387,6 +406,8 @@ fn zero_responses_usage() -> serde_json::Value {
 }
 
 /// Fill the members the spec marks required that the writer cannot derive from the IR: the
+/// request-echo fields (`instructions`, `tools`, `tool_choice`, `parallel_tool_calls`, `metadata`,
+/// `temperature`, `top_p`) and nullable `incomplete_details`.
 fn fill_required_response_members(
     obj: &mut serde_json::Map<String, serde_json::Value>,
     echo: Option<&serde_json::Value>,
@@ -433,6 +454,7 @@ fn fill_required_response_members(
 }
 
 /// Neutral IR logprobs in the Responses `LogProb` shape on an `output_text` part, built by the
+/// shared encoder (`crate::codec::logprob_wire`).
 fn write_responses_part_logprobs(lps: &[crate::codec::ir::IrTokenLogprob]) -> serde_json::Value {
     if lps.is_empty() {
         return serde_json::json!([]);
@@ -444,6 +466,7 @@ fn write_responses_part_logprobs(lps: &[crate::codec::ir::IrTokenLogprob]) -> se
 }
 
 /// Neutral IR logprobs in the `ResponseLogProb` shape on `output_text.delta` / `.done` events
+/// (no `bytes`).
 fn write_responses_event_logprobs(lps: &[crate::codec::ir::IrTokenLogprob]) -> serde_json::Value {
     let entries: Vec<serde_json::Value> = lps
         .iter()
@@ -476,6 +499,7 @@ fn read_responses_logprobs(v: Option<&serde_json::Value>) -> Vec<crate::codec::i
 }
 
 /// Responses `reasoning.effort` word to the IR ask (RSP-14, IR-09). `none` is `Off` (not "said
+/// nothing"); `xhigh` is `XHigh`; the others map 1:1.
 fn read_responses_reasoning_effort(word: &str) -> Option<crate::codec::ir::IrReasoningAsk> {
     match word {
         keys::NONE_WORD => Some(crate::codec::ir::IrReasoningAsk::Off),
@@ -485,6 +509,7 @@ fn read_responses_reasoning_effort(word: &str) -> Option<crate::codec::ir::IrRea
 }
 
 /// Synthesize a `resp_<opaque base62>` id for cross-protocol responses where the backend supplied
+/// none.
 fn synthesize_response_id(host: &dyn busbar_contract::codec::CodecHost) -> Result<String, IrError> {
     Ok(format!(
         "{}{}",
@@ -494,6 +519,7 @@ fn synthesize_response_id(host: &dyn busbar_contract::codec::CodecHost) -> Resul
 }
 
 /// Accumulate a `system`/`developer` input turn's content into `system_blocks` (feeding
+/// `IrRequest.system`) so the prompt is not dropped cross-protocol.
 fn push_system_content(
     system_blocks: &mut Vec<crate::codec::ir::IrBlock>,
     origins: &mut Vec<crate::codec::ir::IrBlockOrigin>,
@@ -519,6 +545,7 @@ fn push_system_content(
 }
 
 /// IR content blocks for a message item's `content`, which is either a typed-block array or a bare
+/// string shorthand.
 fn message_content_blocks(
     content: Option<&serde_json::Value>,
 ) -> Option<(
@@ -538,6 +565,8 @@ fn message_content_blocks(
 }
 
 /// Normalize the Responses `tool_choice` into the IR union. String forms match Chat, but the
+/// targeted object is flat (`{"type":"function","name":"X"}`); the nested Chat shape is accepted as
+/// a fallback.
 fn read_responses_tool_choice(
     val: Option<&serde_json::Value>,
 ) -> (Option<crate::codec::ir::IrToolChoice>, Option<Vec<String>>) {
@@ -589,6 +618,7 @@ fn read_responses_tool_choice_directive(
 }
 
 /// Emit the IR tool-choice union natively: strings for auto/none/required, the flat
+/// `{"type":"function","name":...}` for a targeted tool.
 fn write_responses_tool_choice(tc: &crate::codec::ir::IrToolChoice) -> serde_json::Value {
     match tc {
         crate::codec::ir::IrToolChoice::Auto => serde_json::json!(keys::AUTO),
@@ -601,10 +631,12 @@ fn write_responses_tool_choice(tc: &crate::codec::ir::IrToolChoice) -> serde_jso
 }
 
 /// Map a terminal `response.failed` provider signal (`error.code`/`error.type`) to the breaker
+/// `StatusClass`.
 fn class_for_response_failed(signal: &str) -> StatusClass {
     match signal {
         CODE_INVALID_API_KEY | ERR_TYPE_AUTHENTICATION => StatusClass::Auth,
-        ERR_CODE_RATE_LIMIT | ERR_TYPE_INSUFFICIENT_QUOTA => StatusClass::RateLimit,
+        ERR_CODE_RATE_LIMIT => StatusClass::RateLimit,
+        ERR_TYPE_INSUFFICIENT_QUOTA => StatusClass::Billing,
         crate::codec::framework::PROVIDER_CODE_CONTEXT_LENGTH | ERR_CODE_STRING_ABOVE_MAX => {
             StatusClass::ContextLength
         }
@@ -618,6 +650,7 @@ fn class_for_response_failed(signal: &str) -> StatusClass {
 }
 
 /// The pinned ResponseError enum (`responses.wire.json`, response `error.code`). This differs
+/// from the HTTP error envelope's open-ended code/type strings.
 fn is_response_error_code(signal: &str) -> bool {
     matches!(
         signal,
@@ -683,9 +716,7 @@ fn responses_error_code(err: &busbar_contract::protocol::IrError) -> String {
 pub struct ResponsesReader;
 
 #[cfg(test)]
-fn responses_block(block_val: &serde_json::Value) -> Result<crate::codec::ir::IrBlock, IrError> {
-    responses_block_with_origin(block_val, origin::PartSite::Message).map(|(block, _)| block)
-}
+include!("tests/mod_responses_block_helper.rs");
 
 fn responses_parts_with_origins(
     arr: &[serde_json::Value],
@@ -814,6 +845,7 @@ fn responses_block_with_origin(
 }
 
 /// The request content grammar (`codec::drops`): a message item's `content[]` and a tool output
+/// item's `output[]`.
 const REQUEST_BLOCKS: &[crate::codec::drops::Blocks] = &[
     crate::codec::drops::Blocks {
         at: &["input[]", "content[]"],
@@ -897,6 +929,7 @@ const STREAM_CODE: &[&str] = &[
 ];
 
 /// Answer paths inside a carried subtree that its code does not carry (where a coarse map row
+/// covers them).
 pub(super) const ANSWER_DEFAULTS: &[(&str, &str)] = &[
     (keys::TOOLS, "[]"),
     (keys::TOOL_CHOICE, "\"auto\""),
@@ -1009,6 +1042,8 @@ const STREAM_REROOT: crate::codec::drops::Reroot = crate::codec::drops::Reroot {
 };
 
 /// Build an IR `Image` from a Responses `input_image` object. Prefers inline `image_url` (via
+/// `parse_image_url`), else an uploaded-file reference as the typed `FileId` source so the writer
+/// restores `file_id`.
 fn responses_input_image_block(item: &serde_json::Value) -> Option<crate::codec::ir::IrBlock> {
     let detail = slots::read_image_detail(item);
     let image_url = item.get(keys::IMAGE_URL).and_then(|u| u.as_str());
@@ -1076,6 +1111,7 @@ pub fn read_reasoning_text(item: &serde_json::Value) -> std::borrow::Cow<'_, str
 }
 
 /// The opaque `encrypted_content` blob of a `reasoning` item: a non-empty string, else `None`. The
+/// reader drops an item with no text and no blob.
 pub fn read_reasoning_encrypted_content(item: &serde_json::Value) -> Option<&str> {
     item.get(ENCRYPTED_CONTENT)
         .and_then(|s| s.as_str())
@@ -1094,6 +1130,7 @@ fn read_responses_incomplete_reason(reason: &str) -> crate::codec::ir::IrStopRea
 }
 
 /// [`crate::codec::ir::IrStopReason`] to terminal `status`. Only `max_tokens` and `safety` are
+/// `incomplete`; Error is `failed`, and the rest (incl. tool_use, refusal) are `completed`.
 fn write_responses_status(reason: crate::codec::ir::IrStopReason) -> &'static str {
     use crate::codec::ir::IrStopReason as S;
     match reason {
@@ -1104,6 +1141,7 @@ fn write_responses_status(reason: crate::codec::ir::IrStopReason) -> &'static st
 }
 
 /// [`crate::codec::ir::IrStopReason`] to `incomplete_details.reason` (consulted only for
+/// `MaxTokens`/`Safety`; others give `other`).
 fn write_responses_incomplete_reason(reason: crate::codec::ir::IrStopReason) -> &'static str {
     use crate::codec::ir::IrStopReason as S;
     match reason {
@@ -1114,6 +1152,7 @@ fn write_responses_incomplete_reason(reason: crate::codec::ir::IrStopReason) -> 
 }
 
 /// Normalize a Responses `text.format` into the IR's canonical `response_format`. Responses uses a
+/// flat json_schema shape, the IR (as the Chat reader stores it) nests it under `json_schema`.
 fn read_text_format(
     text_val: Option<&serde_json::Value>,
 ) -> Option<crate::codec::ir::IrResponseFormat> {
@@ -1132,6 +1171,7 @@ fn read_text_format(
 }
 
 /// Project [`crate::codec::ir::IrResponseFormat`] into a `text.format` object (inverse of
+/// [`read_text_format`]); the json_schema form is flat.
 fn write_text_format(rf: &crate::codec::ir::IrResponseFormat) -> serde_json::Value {
     if !rf.json {
         return serde_json::json!({(keys::TYPE): keys::TEXT});
@@ -1148,11 +1188,21 @@ fn write_text_format(rf: &crate::codec::ir::IrResponseFormat) -> serde_json::Val
 }
 
 /// The Responses usage counts, as data. `input_tokens` includes the cached prefix, so
+/// `input_tokens_details.cached_tokens` is subtracted (saturating) to leave uncached input and
+/// carried as the additive cache read (`None` when absent, never `Some(0)`).
 const USAGE: &[UsageCount] = &[
     (CountSlot::Input, CountRead::Zero(&[keys::INPUT_TOKENS])),
     (
         CountSlot::Input,
         CountRead::Less(&[INPUT_TOKENS_DETAILS, keys::CACHED_TOKENS]),
+    ),
+    (
+        CountSlot::Input,
+        CountRead::Less(&[INPUT_TOKENS_DETAILS, keys::CACHE_WRITE_TOKENS]),
+    ),
+    (
+        CountSlot::CacheWrite,
+        CountRead::Opt(&[INPUT_TOKENS_DETAILS, keys::CACHE_WRITE_TOKENS]),
     ),
     (CountSlot::Output, CountRead::Zero(&[keys::OUTPUT_TOKENS])),
     (
@@ -1166,9 +1216,11 @@ const USAGE: &[UsageCount] = &[
 ];
 
 /// Identity [`read_responses_usage`] checks `usage.total_tokens` against
+/// ([`crate::codec::ir::UsageIdentityNote::identity`]).
 const RESPONSES_USAGE_IDENTITY: &str = "openai_responses.usage";
 
 /// A Responses `usage` object (`None` when absent) to IR usage through [`USAGE`]; the served tier
+/// (RSP-17) is a word on `response`, not a count.
 fn read_responses_usage(
     usage: Option<&serde_json::Value>,
     response: Option<&serde_json::Value>,
@@ -1197,14 +1249,20 @@ pub const UNSTAMPED_CREATED_AT: u64 = 0;
 
 pub struct ResponsesWriter {
     /// Per-stream `sequence_number` counter, reset on the opening `MessageStart` and advanced once
+    /// per event.
     sequence: AtomicU64,
     /// Whether the opening `MessageStart` was already written. The anthropic reader emits it 1:1
+    /// with `message_start`, so a duplicate can arrive; an ungated reset would rewind
+    /// `sequence_number`, mint a different `response.id` and clear the open-text set.
     started: AtomicBool,
     /// Whether `response.failed` was already written or local accumulation failed. A `MessageDelta` after it (Cohere/Gemini emit
+    /// `Error` then `MessageDelta{Error}`) must write nothing, not a second terminal (RSP-11).
     failed: AtomicBool,
     /// A local accumulator refusal uses the existing encoding-error path with a truthful message.
     accumulation_failed: AtomicBool,
     /// Byte ceiling for any one per-item accumulator ([`Self::accum_byte_cap`]), set by the plane
+    /// ([`crate::codec::proto_codec::ProtocolWriter::set_translate_cap`]); until then
+    /// [`busbar_contract::codec::TRANSLATE_BODY_MAX_BYTES_DEFAULT`].
     translate_cap: AtomicUsize,
     /// All per-stream state behind one lock (`ResponsesStream`).
     stream: StreamCell<ResponsesStream>,
@@ -1215,6 +1273,9 @@ pub struct ResponsesWriter {
 /// each field to its fallback instead of panicking on the request path.
 #[derive(Clone)]
 struct ResponsesStream {
+    lifetime_blocks: usize,
+    lifetime_payload_bytes: usize,
+    finalized_bytes: usize,
     /// `response.id`, captured on the opening `MessageStart` and replayed on every later lifecycle
     /// event (`completed`/`incomplete`/`failed`), as native streams do. Without it the terminal
     /// event minted a fresh id on cross-protocol streams. Falls back to a fresh id.
@@ -1297,6 +1358,7 @@ struct ToolCallAccum {
 }
 
 /// Value-namespace constructor for [`ResponsesWriter`], so `Protocol::responses()` can write the
+/// bare literal.
 #[allow(non_upper_case_globals)]
 #[allow(clippy::declare_interior_mutable_const)]
 pub const ResponsesWriter: ResponsesWriter = ResponsesWriter {
@@ -1311,6 +1373,9 @@ pub const ResponsesWriter: ResponsesWriter = ResponsesWriter {
 impl ResponsesStream {
     /// A fresh stream: nothing captured, open or accumulated.
     const NEW: ResponsesStream = ResponsesStream {
+        lifetime_blocks: 0,
+        lifetime_payload_bytes: 0,
+        finalized_bytes: 0,
         response_id: None,
         created_at: None,
         model: None,
@@ -1361,6 +1426,8 @@ impl ResponsesWriter {
     }
 
     /// Byte ceiling for any one per-item accumulator. `MAX_OPEN_TOOLS` bounds how many items
+    /// accumulate; this bounds how large one grows (a single open index could otherwise exhaust
+    /// memory).
     fn accum_byte_cap(&self) -> usize {
         self.translate_cap.load(Ordering::Relaxed)
     }
@@ -1371,6 +1438,7 @@ impl ResponsesWriter {
     }
 
     /// Reset `sequence_number` to 0 when the opening `response.created` is written, and clear the
+    /// open-tool-index set so a reused writer carries no stale index into a fresh stream.
     fn reset_sequence_number(&self) {
         self.sequence.store(0, Ordering::Relaxed);
 
@@ -1386,37 +1454,44 @@ impl ResponsesWriter {
     }
 
     /// Store the `response.id` captured on `MessageStart` for terminal events. A poisoned lock is a
+    /// no-op (the terminal arm synthesizes a fresh id).
     fn set_response_id(&self, id: &str) {
         self.stream().response_id = Some(id.to_string());
     }
 
     /// The captured `response.id`, or `None` if never set (terminal event before `MessageStart`, or
+    /// a poisoned lock); the caller then synthesizes one.
     fn carried_response_id(&self) -> Option<String> {
         self.stream().response_id.clone()
     }
 
     /// Store the `created_at` captured on `MessageStart` for terminal events. A poisoned lock is a
+    /// no-op (falls back to `now_unix_secs`).
     fn set_created_at(&self, created_at: u64) {
         self.stream().created_at = Some(created_at);
     }
 
     /// The captured `created_at`, else the current unix time (never set, or poisoned lock). Replay
+    /// keeps every event's `created_at` identical, as a native stream does.
     pub fn carried_created_at(&self, host: &dyn busbar_contract::codec::CodecHost) -> u64 {
         let carried = self.stream().created_at;
         carried.unwrap_or_else(|| self.default_created_at(host))
     }
 
     /// The `created_at` for an answer that carries none: the host's wall clock
+    /// (`CodecHost::wall_clock_now`, as the Chat writer stamps).
     pub(crate) fn default_created_at(&self, host: &dyn busbar_contract::codec::CodecHost) -> u64 {
         host.wall_clock_now().unwrap_or(UNSTAMPED_CREATED_AT)
     }
 
     /// Store the `model` captured on `MessageStart` for terminal events. A poisoned lock is a no-op
+    /// (falls back to `DEFAULT_MODEL`).
     fn set_model(&self, model: &str) {
         self.stream().model = Some(model.to_string());
     }
 
     /// The captured `model`, else `DEFAULT_MODEL` (never set, or poisoned lock). Replay keeps every
+    /// event's `model` identical and non-null.
     fn carried_model(&self) -> String {
         self.stream()
             .model
@@ -1425,11 +1500,13 @@ impl ResponsesWriter {
     }
 
     /// Store the original ingress request body (see [`ProtocolWriter::set_request_echo`]). A
+    /// poisoned lock is a no-op (echo members take the spec defaults).
     fn store_request_echo(&self, body: &serde_json::Value) {
         self.stream().request_echo = Some(body.clone());
     }
 
     /// The captured request echo, or `None` if never set. `fill_required_response_members` treats
+    /// `None` like an empty object.
     fn carried_request_echo(&self) -> Option<serde_json::Value> {
         self.stream().request_echo.clone()
     }
@@ -1445,11 +1522,13 @@ impl ResponsesWriter {
     }
 
     /// True and forget `index` if a function-call item was opened there; false for e.g. a text
+    /// block, whose `BlockStop` must not emit `output_item.done` (also false on a poisoned lock).
     fn take_tool_open(&self, index: usize) -> bool {
         self.stream().open_tool_indices.remove(&index)
     }
 
     /// Record the `call_id`/`name` from the `BlockStart`'s `IrBlockMeta::ToolUse` so the
+    /// `output_item.done` can emit the finalized item.
     fn record_tool_meta(&self, index: usize, call_id: &str, name: &str) {
         let mut stream = self.stream();
         let entry = stream.tool_calls.entry(index).or_default();
@@ -1458,6 +1537,7 @@ impl ResponsesWriter {
     }
 
     /// Append a streamed `arguments` fragment for the function-call item at `index`, since the
+    /// native `output_item.done` carries the complete string.
     fn append_tool_arguments(&self, index: usize, fragment: &str) -> bool {
         let cap = self.accum_byte_cap();
         let map = &mut self.stream().tool_calls;
@@ -1480,17 +1560,20 @@ impl ResponsesWriter {
     }
 
     /// Remove and return the accumulated function-call fields for `index`; `None` if nothing was
+    /// accumulated (the `done` is then emitted without them).
     fn take_tool_accum(&self, index: usize) -> Option<ToolCallAccum> {
         self.stream().tool_calls.remove(&index)
     }
 
     /// Append a streamed text fragment for the message item at `index`, since the terminal
+    /// `response.output` carries the complete text.
     fn append_text(&self, index: usize, fragment: &str) -> bool {
         let cap = self.accum_byte_cap();
         append_capped(&mut self.stream().text_accum, index, fragment, cap)
     }
 
     /// Buffer streamed citations for the message item at `index` until `BlockStop` assembles the
+    /// annotated part.
     fn append_citations(&self, index: usize, cits: &[crate::codec::ir::IrCitation]) -> bool {
         if cits.is_empty() {
             return true;
@@ -1537,6 +1620,7 @@ impl ResponsesWriter {
     }
 
     /// Buffer streamed token logprobs for the message item at `index` until `BlockStop` builds
+    /// `output_text.done` and the finalized part.
     fn append_logprobs(&self, index: usize, lps: &[crate::codec::ir::IrTokenLogprob]) -> bool {
         if lps.is_empty() {
             return true;
@@ -1588,13 +1672,79 @@ impl ResponsesWriter {
     }
 
     /// Record a finalized `output[]` item at `index` (as `BlockStop` assembles it) for the terminal
-    fn record_output_item(&self, index: usize, item: serde_json::Value) {
+    /// event's `output` array.
+    fn record_output_item(&self, index: usize, item: &serde_json::Value) -> Result<(), IrError> {
+        struct Count(usize);
+        impl std::io::Write for Count {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0 = self.0.saturating_add(bytes.len());
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut bytes = Count(0);
+        self.require_accumulation(serde_json::to_writer(&mut bytes, item).is_ok())?;
         let mut stream = self.stream();
+        let total = stream.finalized_bytes.saturating_add(bytes.0);
+        self.require_accumulation(
+            total <= self.accum_byte_cap()
+                && (stream.output_items.contains_key(&index)
+                    || stream.output_items.len() < crate::codec::ir::MAX_STREAM_BLOCKS),
+        )?;
         let wire_index = stream.wire_indices.get(&index).copied().unwrap_or(index);
-        stream.output_items.insert(wire_index, item);
+        stream.finalized_bytes = total;
+        stream.output_items.insert(wire_index, item.clone());
+        Ok(())
+    }
+
+    /// Reserve lifetime retained payload before any writer clones or accumulator allocations.
+    /// Closed items remain charged because the terminal response retains their complete data.
+    fn reserve_stream_event(&self, event: &IrStreamEvent) -> Result<(), IrError> {
+        use crate::codec::ir::{IrBlockMeta, IrDelta};
+        let (blocks, bytes) = match event {
+            IrStreamEvent::BlockStart { block, .. } => (
+                1,
+                match block {
+                    IrBlockMeta::ToolUse { id, name } => id.len().saturating_add(name.len()),
+                    _ => 0,
+                },
+            ),
+            IrStreamEvent::BlockDelta { delta, .. } => (
+                0,
+                match delta {
+                    IrDelta::TextDelta(s)
+                    | IrDelta::ThinkingDelta(s)
+                    | IrDelta::InputJsonDelta(s)
+                    | IrDelta::SignatureDelta(s)
+                    | IrDelta::RedactedReasoningDelta(s) => s.len(),
+                    IrDelta::CitationsDelta(c) => c
+                        .iter()
+                        .map(citation_bytes)
+                        .fold(0usize, usize::saturating_add),
+                    IrDelta::LogprobsDelta(l) => l
+                        .iter()
+                        .map(logprob_bytes)
+                        .fold(0usize, usize::saturating_add),
+                    IrDelta::MediaDelta(_) => 0,
+                },
+            ),
+            _ => (0, 0),
+        };
+        let mut stream = self.stream();
+        let blocks = stream.lifetime_blocks.saturating_add(blocks);
+        let bytes = stream.lifetime_payload_bytes.saturating_add(bytes);
+        self.require_accumulation(
+            blocks <= crate::codec::ir::MAX_STREAM_BLOCKS && bytes <= self.accum_byte_cap(),
+        )?;
+        stream.lifetime_blocks = blocks;
+        stream.lifetime_payload_bytes = bytes;
+        Ok(())
     }
 
     /// Drain the finalized items in `output_index` order (the `BTreeMap` order), as a native stream
+    /// assembles them.
     fn drain_output_items(&self) -> Vec<serde_json::Value> {
         std::mem::take(&mut self.stream().output_items)
             .into_values()
@@ -1602,6 +1752,7 @@ impl ResponsesWriter {
     }
 
     /// Mark a text message item open at `index` if it is not open and under the cap; true when this
+    /// call opened it (so the caller emits `output_item.added`/`content_part.added` once).
     fn open_text_item(&self, index: usize) -> bool {
         open_bounded(&mut self.stream().open_text_indices, index)
     }
@@ -1622,16 +1773,19 @@ impl ResponsesWriter {
     }
 
     /// True and forget `index` if a text item was open there (so `BlockStop` emits the text
+    /// terminal frames for this index only).
     fn take_text_open(&self, index: usize) -> bool {
         self.stream().open_text_indices.remove(&index)
     }
 
     /// Mark a reasoning item open at `index` if not open and under the cap; true when this call
+    /// opened it (so `output_item.added` is emitted once).
     fn open_reasoning_item(&self, index: usize) -> bool {
         open_bounded(&mut self.stream().open_reasoning_indices, index)
     }
 
     /// IR-17: remember that the reasoning item at `index` is a summary, or ask whether it is. A
+    /// poisoned lock reads as "not a summary" (the `content[]` shape).
     fn mark_summary_reasoning(&self, index: usize) {
         self.stream().summary_reasoning_indices.insert(index);
     }
@@ -1645,6 +1799,7 @@ impl ResponsesWriter {
     }
 
     /// True and forget `index` if a reasoning item was open there (so `BlockStop` emits the
+    /// reasoning terminal frame for this index only).
     fn take_reasoning_open(&self, index: usize) -> bool {
         self.stream().open_reasoning_indices.remove(&index)
     }
@@ -1664,6 +1819,7 @@ impl ResponsesWriter {
     }
 
     /// Buffer a streamed thinking-signature fragment until `BlockStop` writes it as the item's
+    /// `encrypted_content` (RSP-01).
     fn append_reasoning_signature(&self, index: usize, fragment: &str) -> bool {
         if fragment.is_empty() {
             return true;
@@ -1673,6 +1829,7 @@ impl ResponsesWriter {
     }
 
     /// Refuse an unrepresentable stream through the existing fallible encoding contract. Keeping
+    /// this latch also stops direct writer callers from finalizing the retained prefix as success.
     fn require_accumulation(&self, accepted: bool) -> Result<(), IrError> {
         if accepted {
             return Ok(());
@@ -1687,6 +1844,7 @@ impl ResponsesWriter {
     }
 
     /// Remove and return the buffered signature for `index`; `None` when the stream carried none
+    /// (the item then has no `encrypted_content`).
     fn take_reasoning_signature(&self, index: usize) -> Option<String> {
         self.stream()
             .reasoning_sig_accum
@@ -1695,6 +1853,7 @@ impl ResponsesWriter {
     }
 
     /// Compact only emitted item starts; deltas and closes keep the mapping even after
+    /// their IR block closes.
     fn compact_output_index(&self, event_type: &str, data: &mut serde_json::Value) {
         let Some(index) = data.get(OUTPUT_INDEX).and_then(|v| v.as_u64()) else {
             return;
@@ -1713,6 +1872,8 @@ impl ResponsesWriter {
     }
 
     /// The stream-stable opaque `item_id` for `(prefix, index)`, minted on first reference and then
+    /// cached, so one item's `added`, `delta*` and `done` frames share an id the SDK correlates on
+    /// while the id itself stays opaque.
     fn item_id_for(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -1723,6 +1884,9 @@ impl ResponsesWriter {
             return Ok(id);
         }
 
+        self.require_accumulation(
+            self.stream().item_ids.len() < crate::codec::ir::MAX_STREAM_BLOCKS,
+        )?;
         let minted = synthesize_item_id(host, prefix);
         let mut stream = self.stream();
         if let Some(id) = stream.item_ids.get(&(prefix, index)) {
@@ -1782,6 +1946,7 @@ const CONTAINER_FILE_CITATION: &str = "container_file_citation";
 const FILE_PATH: &str = "file_path";
 
 /// A `web_search_call` output item -> [`crate::codec::ir::IrBlock::HostedToolRecord`]: its `id`, its
+/// `status`, and its search action's `sources[].url` as results (the query has no IR member).
 fn read_web_search_call(item: &serde_json::Value) -> crate::codec::ir::IrBlock {
     let text = |k: &str| item.get(k).and_then(|v| v.as_str()).map(String::from);
     let results = item
@@ -1810,6 +1975,8 @@ fn read_web_search_call(item: &serde_json::Value) -> crate::codec::ir::IrBlock {
 }
 
 /// A hosted web-search record -> a `web_search_call` output item (`id` synthesized when the record
+/// carries none, `status` `completed` when it names none, its results as the search action's
+/// `sources`).
 fn write_web_search_call(
     host: &dyn busbar_contract::codec::CodecHost,
     call_id: Option<&str>,
@@ -1832,6 +1999,8 @@ fn write_web_search_call(
 const ITEM_ID_PREFIX_WEB_SEARCH: &str = "ws";
 
 /// The file annotations of an `output_text` part (`file_citation`, `container_file_citation`,
+/// `file_path`) -> IR citations carrying [`crate::codec::ir::IrFileLocation`]; url citations are
+/// read by `url_citation_wire`.
 fn read_file_annotations(
     annotations: Option<&serde_json::Value>,
 ) -> Vec<crate::codec::ir::IrCitation> {
@@ -1861,6 +2030,7 @@ fn read_file_annotations(
 }
 
 /// The IR file citations of a text block as Responses `file_citation` annotations (a citation that
+/// arrived as a container or path annotation keeps its own kind, from `raw`).
 fn file_annotations(citations: &[crate::codec::ir::IrCitation]) -> Vec<serde_json::Value> {
     citations
         .iter()
@@ -1892,6 +2062,7 @@ const MODERATION_OUTPUT: &str = "output";
 const MODERATION_CATEGORIES: &str = "categories";
 
 /// A response's `moderation.{input,output}` (each a `moderation_result`) -> the IR's safety verdicts
+/// one flagged verdict per category set `true`; scores do not cross.
 fn read_moderation(body: &serde_json::Value) -> Vec<crate::codec::ir::IrSafetyVerdict> {
     [MODERATION_INPUT, MODERATION_OUTPUT]
         .into_iter()
@@ -1904,3 +2075,19 @@ fn read_moderation(body: &serde_json::Value) -> Vec<crate::codec::ir::IrSafetyVe
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "tests/audit_cache_usage_tests.rs"]
+mod audit_cache_usage_tests;
+
+#[cfg(test)]
+#[path = "tests/audit_part_indices_tests.rs"]
+mod audit_part_indices_tests;
+
+#[cfg(test)]
+#[path = "tests/audit_stream_lifetime_tests.rs"]
+mod audit_stream_lifetime_tests;
+
+#[cfg(test)]
+#[path = "tests/audit_completion_tests.rs"]
+mod audit_completion_tests;

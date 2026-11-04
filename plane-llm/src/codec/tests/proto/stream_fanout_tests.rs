@@ -119,6 +119,8 @@ fn test_openai_read_fanout_tool_call() {
 }
 
 /// INV-C: a backend that streams `tool_calls[{index:1}]` with NO index 0 (observed from vLLM /
+/// Azure / OpenRouter re-indexing) must not let the text block, which derives its slot from
+/// `open_tools.len()`, collide with the tool's own upstream-index-derived slot.
 #[test]
 fn openai_sparse_tool_index_does_not_collide_text_onto_tool_block() {
     let reader = OpenAiReader;
@@ -183,6 +185,8 @@ fn openai_sparse_tool_index_does_not_collide_text_onto_tool_block() {
 }
 
 /// INV-C: `tool_calls[{index:1}]`, then a text chunk, then `tool_calls[{index:0}]` (the OTHER
+/// half of the same collision — a second tool arriving with a LOWER upstream index than the first
+/// must not walk backward into an index text or the first tool already claimed).
 #[test]
 fn openai_tool_index_zero_after_text_does_not_collide() {
     let reader = OpenAiReader;
@@ -217,6 +221,7 @@ fn openai_tool_index_zero_after_text_does_not_collide() {
 }
 
 /// INV-C, the GAP case: a lone `tool_calls[{index:5}]` (no other blocks) must claim IR index 0,
+/// not the raw upstream index 5.
 #[test]
 fn openai_sparse_tool_indices_are_dense_from_zero() {
     let reader = OpenAiReader;
@@ -242,6 +247,10 @@ fn openai_sparse_tool_indices_are_dense_from_zero() {
 }
 
 /// REGRESSION PROOF. The current recomputed-base arithmetic happens to land on 2 here, a slot
+/// neither tool0 nor text ever claimed, so this passes today — but it FAILS against the withdrawn
+/// dense formula (`offset + text_index.is_some() + tool_ir_index.len()`), which computes 1 = text's own
+/// slot on this exact path, because the terminal branch's `mem::take` clears the tool maps but not
+/// `text_index`.
 #[test]
 fn openai_tool_after_finish_chunk_claims_a_fresh_index() {
     let reader = OpenAiReader;

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE RERANK WIRE SHAPE TWO DIALECTS SPEAK ALIKE: the `documents[]` a rerank request ranks and
+//! the `results[]` its answer carries.
 
 use crate::codec::ir::rerank::RerankResult;
 use crate::codec::keys;
@@ -61,6 +62,7 @@ pub fn read_results(v: Option<&Value>) -> Result<Vec<RerankResult>, &'static str
 }
 
 /// Search units are independent of the ranked payload. Keep them readable even when a malformed
+/// ranking must be refused, without estimating a missing or unreadable count.
 pub fn read_search_units(value: &Value, protocol: &'static str) -> Option<u64> {
     crate::codec::usage_count::billed_count_opt(
         value

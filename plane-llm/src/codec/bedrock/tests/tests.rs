@@ -593,6 +593,7 @@ fn test_extract_error_structured_type_from_type_field() {
 }
 
 /// `__type` is sometimes serialised as a shape ARN suffix
+/// (`com.amazon.coral.service#ValidationException`); only the trailing type token is kept.
 #[test]
 fn test_extract_error_strips_type_arn_prefix() {
     let reader = BedrockReader;
@@ -627,6 +628,10 @@ fn test_extract_error_non_json_body() {
 }
 
 /// A ConverseStream that ends after `messageStop` WITHOUT a trailing `metadata` event
+/// (malformed/truncated upstream) emits NO terminal MessageStop and NO combined MessageDelta:
+/// both are deferred to the `metadata` frame so the combined `MessageDelta{stop_reason, usage}`
+/// can precede the terminal `MessageStop` in IR order (delta-before-stop, so a
+/// non-eventstream ingress writes `message_delta` then `message_stop` — the native order).
 #[test]
 fn test_stream_metadata_less_defers_terminator() {
     use crate::codec::ir::IrStreamEvent;
@@ -671,6 +676,7 @@ fn test_stream_metadata_less_defers_terminator() {
 }
 
 /// Exactly one terminal MessageStop is emitted across the full happy-path sequence
+/// (messageStop + metadata) — no duplicate terminator.
 #[test]
 fn test_stream_emits_single_message_stop_with_metadata() {
     use crate::codec::ir::IrStreamEvent;
@@ -700,6 +706,7 @@ fn test_stream_emits_single_message_stop_with_metadata() {
 }
 
 /// The native Bedrock Converse error envelope is a flat `{"__type", "message"}` body (the exact
+/// shape `extract_error` reads back) — NOT the generic `{"error":{...}}` default.
 #[test]
 fn test_write_error_native_bedrock_shape() {
     let writer = BedrockWriter;
@@ -762,6 +769,7 @@ fn a_spent_budget_is_400_service_quota_exceeded_not_a_retryable_throttle() {
 }
 
 /// Kind → Bedrock exception-name mapping covers the common categories and falls back to a real
+/// exception name (never an invented one) for anything unmapped.
 #[test]
 fn test_error_kind_to_bedrock_type_mapping() {
     assert_eq!(
@@ -794,6 +802,8 @@ fn test_error_kind_to_bedrock_type_mapping() {
 }
 
 /// The native error envelope round-trips back through `extract_error`: a Bedrock SDK (and the
+/// breaker's own reader) recovers both the structured type from `__type` and the text from
+/// `message`.
 #[test]
 fn test_write_error_roundtrips_through_extract_error() {
     let writer = BedrockWriter;
@@ -811,6 +821,8 @@ fn test_write_error_roundtrips_through_extract_error() {
 }
 
 /// Same-protocol passthrough fidelity: reading a native Converse response and writing it back
+/// preserves stopReason + usage exactly, and the written body carries NO synthesized identity
+/// (`id`/`created`) — the native Converse body has none, so injecting one would be a tell.
 #[test]
 fn test_response_identity_same_protocol_roundtrip_no_synth() {
     let reader = BedrockReader;
@@ -860,6 +872,10 @@ fn test_response_identity_same_protocol_roundtrip_no_synth() {
 }
 
 /// A stream MessageDelta with `stop_reason = None` (the usage-only trailing
+/// delta the reader emits from the Bedrock `metadata` event, or a cross-protocol egress's usage
+/// frame) must be reframed as a native `metadata` frame carrying the real token usage — NOT a
+/// second `messageStop` (the old behavior, which both discarded usage and produced two
+/// `messageStop` frames, a distinguishable tell).
 #[test]
 fn test_write_response_event_usage_delta_is_metadata_frame() {
     let writer = BedrockWriter;
@@ -918,6 +934,9 @@ fn test_write_response_event_usage_delta_is_metadata_frame() {
 }
 
 /// A text BlockStart must emit NO frame. AWS Bedrock ConverseStream's
+/// `ContentBlockStart$start` union models ONLY `toolUse` (no text member — AWS Bedrock Runtime API
+/// reference, ContentBlockStart), so a real stream sends NO `contentBlockStart` for a text block;
+/// the block opens implicitly with its first `contentBlockDelta` carrying `text`.
 #[test]
 fn test_write_response_event_text_block_start_emits_no_frame() {
     let writer = BedrockWriter;
@@ -948,6 +967,9 @@ fn test_write_response_event_text_block_start_emits_no_frame() {
 }
 
 /// A mid-stream Bedrock exception event (`internalServerException` etc.)
+/// must surface as an `IrStreamEvent::Error` rather than being silently swallowed by a catch-all,
+/// so a client whose stream hits an upstream model error receives a protocol-shaped error frame
+/// instead of a hanging / EOF-without-terminator stream.
 #[test]
 fn test_stream_decode_surfaces_midstream_exception() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -1014,6 +1036,7 @@ fn test_stream_decode_surfaces_midstream_exception() {
 }
 
 /// `bedrock_image_block` must never emit `format: ""`, and never relabel an image as a format it
+/// is not (design F3: never a substitution).
 #[test]
 fn test_bedrock_image_block_empty_subtype_is_dropped() {
     assert!(
@@ -1054,6 +1077,7 @@ fn test_bedrock_image_block_empty_subtype_is_dropped() {
 }
 
 /// The injected `stream` flag on a Bedrock-INGRESS converse-stream request
+/// must be read into the IR so a cross-protocol egress writer produces a streaming body.
 #[test]
 fn test_read_request_honors_injected_stream_flag() {
     let reader = BedrockReader;
@@ -1079,6 +1103,8 @@ fn test_read_request_honors_injected_stream_flag() {
 }
 
 /// A System-role message that escapes the caller's system extraction is
+/// SKIPPED, not silently emitted as a `user` turn (which would inject system text as a user
+/// message).
 #[test]
 fn test_write_request_skips_system_role_message() {
     let writer = BedrockWriter;
@@ -1127,6 +1153,8 @@ fn test_write_request_skips_system_role_message() {
 }
 
 /// A non-Text block inside a ToolResult must be re-encoded faithfully
+/// (Image → Bedrock `{"image":...}`, ToolUse/ToolResult → `{"json":...}`), never collapsed to
+/// the constant string `"{}"` placeholder the old catch-all produced.
 #[test]
 fn test_write_request_tool_result_preserves_non_text_content() {
     let writer = BedrockWriter;
@@ -1174,6 +1202,9 @@ fn test_write_request_tool_result_preserves_non_text_content() {
 }
 
 /// A stream Error event names a REAL Converse exception (mapped from the IR
+/// error class) as its event-type token instead of the non-native literal `"error"`. (The
+/// `:message-type: exception` framing itself is the encoder's job — see the production
+/// mid-stream-error path in proxy engine — and is out of this unit's scope.)
 #[test]
 fn test_write_response_event_error_names_real_exception() {
     let writer = BedrockWriter;
@@ -1211,6 +1242,8 @@ fn test_write_response_event_error_names_real_exception() {
 }
 
 /// Unmodeled top-level request fields must be collected into `extra` so a
+/// same-protocol Bedrock->Bedrock passthrough re-emits them faithfully (via `write_request`'s
+/// extra-merge).
 #[test]
 fn test_read_request_collects_unmodeled_fields_into_extra() {
     let reader = BedrockReader;
@@ -1270,6 +1303,8 @@ fn test_read_request_collects_unmodeled_fields_into_extra() {
 }
 
 /// A full passthrough — read a native Converse request carrying
+/// unmodeled fields, then write it back — must re-emit `topP`/`stopSequences`/`guardrailConfig`
+/// onto the wire, never strip them.
 #[test]
 fn test_request_passthrough_preserves_unmodeled_fields() {
     let reader = BedrockReader;
@@ -1335,6 +1370,8 @@ fn test_request_passthrough_preserves_tool_choice() {
 }
 
 /// On the CROSS-protocol seam `extra` is cleared, so a writer driven
+/// by an IR with `ir.tools` but no `extra.toolConfig` must still emit a valid `toolConfig` built
+/// purely from the typed tools (no `toolChoice`, since the IR has no field for it).
 #[test]
 fn test_write_request_tool_config_cross_protocol_and_empty() {
     let writer = BedrockWriter;
@@ -1375,6 +1412,8 @@ fn test_write_request_tool_config_cross_protocol_and_empty() {
 }
 
 /// A text block that opens at index > 0 (after a preceding tool-use block,
+/// reachable via cross-protocol ingress) must have its `text_block_open` flag cleared on its
+/// contentBlockStop, so a LATER text block still emits a fresh BlockStart.
 #[test]
 fn test_stream_text_block_after_tool_not_dropped() {
     use crate::codec::ir::IrStreamEvent;
@@ -1442,6 +1481,8 @@ fn test_stream_text_block_after_tool_not_dropped() {
 }
 
 /// A `contentBlockStart` whose `start` object carries an UNRECOGNIZED key
+/// (not `toolUse`, and not the empty `{}` text shape — e.g. a future `image`/`reasoningContent`
+/// block) must NOT be mis-opened as a Text block.
 #[test]
 fn test_stream_unrecognized_start_does_not_open_text() {
     use crate::codec::ir::IrStreamEvent;
@@ -1499,6 +1540,7 @@ fn test_stream_unrecognized_start_does_not_open_text() {
 }
 
 /// A usage-only delta's `metadata` frame carries the real `usage` but does
+/// NOT fabricate a `metrics` object at the writer layer.
 #[test]
 fn test_write_response_event_metadata_no_fabricated_metrics() {
     let writer = BedrockWriter;
@@ -1531,6 +1573,9 @@ fn test_write_response_event_metadata_no_fabricated_metrics() {
 }
 
 /// `totalTokens` is computed with a saturating
+/// add, so a pathological/hostile upstream sending token counts near `u64::MAX` clamps to
+/// `u64::MAX` instead of panicking under overflow-checks (debug / opt-in release) or silently
+/// wrapping to a near-zero nonsense total in plain release.
 #[test]
 fn test_write_response_event_total_tokens_saturates() {
     let writer = BedrockWriter;
@@ -1572,6 +1617,9 @@ fn test_write_response_event_total_tokens_saturates() {
 }
 
 /// `bedrock/writer.rs`'s `BlockStop` arm is unconditional even though `BlockStart` suppresses the
+/// `Image` variant (`IrBlockMeta::Image => None`): a `BlockStop` for an index whose `BlockStart` was
+/// suppressed must ALSO be suppressed, exactly as the sibling writers (cohere, gemini, openai_responses)
+/// already do.
 #[test]
 fn bedrock_writer_image_block_stop_is_suppressed() {
     let writer = BedrockWriter;
@@ -1601,6 +1649,8 @@ fn bedrock_writer_image_block_stop_is_suppressed() {
 }
 
 /// `bedrock_response_to_eventstream` (buffered 2xx → synthesized
+/// ConverseStream, used when a Bedrock-streaming client gets a non-streaming cross-protocol 2xx)
+/// must NOT drop a `Thinking` (reasoningContent) block.
 #[test]
 fn eventstream_emits_reasoning_content_for_thinking_block() {
     let resp = crate::codec::ir::IrResponse {
@@ -1640,6 +1690,8 @@ fn eventstream_emits_reasoning_content_for_thinking_block() {
 }
 
 /// `bedrock_response_to_eventstream` derives `contentBlockIndex` from `enumerate()` over ALL
+/// `ir.content` blocks, but `ToolResult`/`Image`/`Json` blocks emit no frames — so a skipped block
+/// burns an index and the synthesized wire is non-contiguous.
 #[test]
 fn eventstream_content_block_index_is_contiguous_when_a_block_is_skipped() {
     let resp = crate::codec::ir::IrResponse {
@@ -1816,6 +1868,8 @@ fn test_write_response_total_tokens_saturates() {
 }
 
 /// An assistant response carrying
+/// an `IrBlock::Image` must be PROJECTED as a native Bedrock `{"image": ...}` content block, not
+/// silently dropped by the old combined `ToolResult | Image => {}` no-op arm.
 #[test]
 fn test_write_response_projects_image_block() {
     let writer = BedrockWriter;
@@ -1865,6 +1919,9 @@ fn test_write_response_projects_image_block() {
 }
 
 /// A response whose blocks are ALL
+/// non-representable in an assistant Converse message (here a lone `ToolResult`, which belongs to
+/// a user turn) must NOT emit an empty `content: []` array — Bedrock rejects that with a
+/// ValidationException.
 #[test]
 fn test_write_response_empty_content_emits_placeholder() {
     let writer = BedrockWriter;
@@ -1905,6 +1962,8 @@ fn test_write_response_empty_content_emits_placeholder() {
 }
 
 /// An `inferenceConfig` carrying sub-fields this reader
+/// does NOT type (`stopSequences`, `topP`, `topK`, future AWS additions) must survive a
+/// same-protocol Bedrock->Bedrock passthrough, NOT be silently dropped.
 #[test]
 fn test_inference_config_passthrough_preserves_unmodeled_subfields() {
     let reader = BedrockReader;
@@ -1961,6 +2020,7 @@ fn test_inference_config_passthrough_preserves_unmodeled_subfields() {
 }
 
 /// `top_k` (a first-class IR field) must reach a Bedrock egress via
+/// `additionalModelRequestFields.top_k`.
 #[test]
 fn test_top_k_reaches_bedrock_via_additional_model_request_fields() {
     let writer = BedrockWriter;
@@ -2004,6 +2064,9 @@ fn test_top_k_reaches_bedrock_via_additional_model_request_fields() {
 }
 
 /// Losslessness (top_k spelling preservation): a native Bedrock->Bedrock passthrough whose body
+/// spelled top_k as camelCase `topK` must round-trip byte-identically (NOT be renamed to
+/// `top_k`), while a cross-protocol egress (empty `extra`, no sentinel) still emits the canonical
+/// snake_case `top_k`.
 #[test]
 fn test_top_k_camel_spelling_round_trips_and_cross_protocol_stays_snake() {
     let reader = BedrockReader;
@@ -2063,6 +2126,7 @@ fn test_top_k_camel_spelling_round_trips_and_cross_protocol_stays_snake() {
 }
 
 /// PF (non-silent clamp): the Bedrock temperature clamp helper signals when it changes the value
+/// (so the writer can warn) and is a no-op (was_clamped=false) for in-range values.
 #[test]
 fn test_clamp_temperature_for_bedrock_signals_on_change() {
     assert_eq!(crate::codec::carry::clamp(1.8, 0.0, 1.0), (1.0, true));
@@ -2075,6 +2139,8 @@ fn test_clamp_temperature_for_bedrock_signals_on_change() {
 }
 
 /// The typed IR fields WIN over a same-named raw `inferenceConfig` entry
+/// (the structured IR is the source of truth for the values it models), and a cross-protocol
+/// egress (no `inferenceConfig` in `extra`) still emits a config built purely from the typed IR.
 #[test]
 fn test_inference_config_typed_fields_override_raw_and_cross_protocol() {
     let writer = BedrockWriter;
@@ -2132,6 +2198,7 @@ fn test_inference_config_typed_fields_override_raw_and_cross_protocol() {
 }
 
 /// A mid-stream `IrError` mapped for the ConverseStream output union must
+/// only ever name one of the FIVE legal stream-event exceptions.
 #[test]
 fn test_stream_exception_only_emits_converse_stream_union_members() {
     let writer = BedrockWriter;
@@ -2218,6 +2285,8 @@ fn test_stream_exception_only_emits_converse_stream_union_members() {
 }
 
 /// A cross-protocol ingress
+/// (OpenAI/Responses) parses an `https://…` image into the IR as
+/// `Image{media_type: "image_url", data: <url>}`.
 #[test]
 fn test_write_request_url_sentinel_image_not_emitted_as_base64() {
     let writer = BedrockWriter;
@@ -2282,6 +2351,8 @@ fn test_write_request_url_sentinel_image_not_emitted_as_base64() {
 }
 
 /// A user/assistant turn whose blocks are ALL non-representable on the
+/// Bedrock wire (here a user message holding only a URL-sentinel image) must NOT be silently
+/// dropped.
 #[test]
 fn test_write_request_all_nonrepresentable_turn_kept_with_placeholder() {
     let writer = BedrockWriter;
@@ -2361,6 +2432,8 @@ fn test_write_request_all_nonrepresentable_turn_kept_with_placeholder() {
 }
 
 /// The region is parsed robustly from the
+/// endpoint host across every real Bedrock shape (vanilla, FIPS, VPC-interface front,
+/// control-plane label), not just `bedrock-runtime.<region>.`.
 #[test]
 fn test_derive_sigv4_region_shapes() {
     assert_eq!(
@@ -2438,6 +2511,8 @@ fn test_derive_sigv4_region_shapes() {
 }
 
 /// A FIPS host in a non-us-east-1 region signs for THAT region's
+/// scope, not the silent `us-east-1` default the old prefix-only parser produced (which AWS
+/// rejects with SignatureDoesNotMatch).
 #[test]
 fn test_bedrock_sigv4_fips_host_derives_correct_region() {
     let Some(busbar_contract::protocol::EgressScheme::SigV4 {
@@ -2464,6 +2539,8 @@ fn test_bedrock_sigv4_fips_host_derives_correct_region() {
 }
 
 /// A non-derivable host falls back to us-east-1 (signing still
+/// proceeds, so a genuinely region-less endpoint is not failed closed) — the WARN is the
+/// operator-visible signal, asserted indirectly via the resulting scope.
 #[test]
 fn test_bedrock_sigv4_undecodable_host_falls_back_to_us_east_1() {
     let Some(busbar_contract::protocol::EgressScheme::SigV4 {
@@ -2481,6 +2558,10 @@ fn test_bedrock_sigv4_undecodable_host_falls_back_to_us_east_1() {
 }
 
 /// A `metadata` frame that lacks a `usage` key
+/// (a mock / Bedrock-compatible backend) must STILL emit the combined `MessageDelta` (consuming
+/// the stop_reason buffered from the preceding `messageStop`) BEFORE the terminal `MessageStop`,
+/// so a Bedrock→Anthropic translation keeps the native `message_delta`-before-`message_stop`
+/// ordering and never loses the stop_reason.
 #[test]
 fn test_stream_metadata_without_usage_still_emits_delta_with_stop_reason() {
     use crate::codec::ir::IrStreamEvent;
@@ -2548,6 +2629,8 @@ fn test_stream_metadata_without_usage_still_emits_delta_with_stop_reason() {
 }
 
 /// The same URL-sentinel guard
+/// applies to an `Image` nested in a `ToolResult`'s content — it must be dropped, not mangled
+/// into a base64 `image` block, while a base64 image inside a toolResult is still emitted.
 #[test]
 fn test_write_request_tool_result_url_sentinel_image_dropped() {
     let writer = BedrockWriter;
@@ -2594,6 +2677,8 @@ fn test_write_request_tool_result_url_sentinel_image_dropped() {
 }
 
 /// A `maxTokens` value above u32::MAX must be
+/// dropped to None (backend applies its default) rather than silently TRUNCATED (wrapped) into
+/// an arbitrary smaller cap by a bare `as u32`.
 #[test]
 fn test_read_request_max_tokens_overflow_dropped_not_truncated() {
     let reader = BedrockReader;
@@ -2625,6 +2710,8 @@ fn test_read_request_max_tokens_overflow_dropped_not_truncated() {
 }
 
 /// A message-level `image` block whose source is
+/// `s3Location` (not `bytes`) must be captured under the `image_s3` sentinel — not dropped with
+/// `data = ""` — so a same-protocol passthrough re-emits `source.s3Location` faithfully.
 #[test]
 fn test_read_request_image_s3_location_captured() {
     let reader = BedrockReader;
@@ -2675,6 +2762,8 @@ fn test_read_request_image_s3_location_captured() {
 }
 
 /// A Bedrock body carrying an S3-sourced image must
+/// survive a reader→writer round-trip with its `source.s3Location` (uri + bucketOwner) and
+/// `format` intact — the old reader dropped the source, so the writer emitted nothing.
 #[test]
 fn test_image_s3_location_round_trip() {
     let reader = BedrockReader;
@@ -2731,6 +2820,7 @@ fn test_image_s3_location_round_trip() {
 }
 
 /// An `image` block inside a `toolResult.content` array
+/// must be decoded into an IR Image — symmetric with the writer's toolResult-image emission.
 #[test]
 fn test_read_request_tool_result_decodes_image() {
     let reader = BedrockReader;
@@ -2773,6 +2863,8 @@ fn test_read_request_tool_result_decodes_image() {
 }
 
 /// An S3-sourced image inside a toolResult survives
+/// reader→writer with its `source.s3Location` intact (the writer already emits `image` inside a
+/// toolResult; the reader must now decode it symmetrically).
 #[test]
 fn test_tool_result_image_s3_round_trip() {
     let reader = BedrockReader;
@@ -2810,6 +2902,8 @@ fn test_tool_result_image_s3_round_trip() {
 }
 
 /// `bedrock_image_block` re-emits `source.s3Location` for a Bedrock-produced
+/// vendor reference (`{format, s3Location}`), and DROPS a vendor reference from another protocol
+/// (no Bedrock projection) rather than corrupting the source.
 #[test]
 fn test_bedrock_image_block_s3_vendor() {
     let source = crate::codec::ir::IrImageSource::Vendor {
@@ -2848,6 +2942,8 @@ fn test_bedrock_image_block_s3_vendor() {
 }
 
 /// A Converse response `usage` carrying
+/// `cacheReadInputTokens` / `cacheWriteInputTokens` must surface them on the IR usage as
+/// `cache_read_input_tokens` / `cache_creation_input_tokens`.
 #[test]
 fn test_read_response_plumbs_cache_tokens() {
     let reader = BedrockReader;
@@ -2878,6 +2974,7 @@ fn test_read_response_plumbs_cache_tokens() {
 }
 
 /// An absent cache field stays `None` (not `Some(0)`), so a no-cache
+/// response is distinguishable from a zero-token cache hit.
 #[test]
 fn test_read_response_absent_cache_tokens_are_none() {
     let reader = BedrockReader;
@@ -2894,6 +2991,7 @@ fn test_read_response_absent_cache_tokens_are_none() {
 }
 
 /// The `metadata` event's `usage` cache fields must surface on
+/// the combined MessageDelta's IR usage (old code hardcoded both to `None`).
 #[test]
 fn test_read_stream_metadata_plumbs_cache_tokens() {
     use crate::codec::ir::IrStreamEvent;
@@ -2929,6 +3027,8 @@ fn test_read_stream_metadata_plumbs_cache_tokens() {
 }
 
 /// IR usage cache fields must be emitted as
+/// `cacheReadInputTokens` / `cacheWriteInputTokens` on the native body (old writer omitted
+/// them entirely), and a full read→write round-trip of a cache-bearing usage is byte-identical.
 #[test]
 fn test_write_response_emits_cache_tokens_roundtrip() {
     let reader = BedrockReader;
@@ -2972,6 +3072,7 @@ fn test_write_response_emits_cache_tokens_roundtrip() {
 }
 
 /// A `None` cache field is OMITTED, not serialized as `0` — so a no-cache
+/// response stays byte-identical to native AWS (which omits the fields when caching was idle).
 #[test]
 fn test_write_response_omits_absent_cache_tokens() {
     let writer = BedrockWriter;
@@ -2996,6 +3097,7 @@ fn test_write_response_omits_absent_cache_tokens() {
 }
 
 /// A usage-only MessageDelta carrying cache fields must emit
+/// them on the `metadata` frame's `usage` (old writer dropped them).
 #[test]
 fn test_write_stream_metadata_emits_cache_tokens() {
     let writer = BedrockWriter;
@@ -3044,6 +3146,10 @@ fn test_write_stream_metadata_emits_cache_tokens() {
 }
 
 /// Native Converse `cachePoint` blocks (the prompt-cache markers) that
+/// appear inside the `system` array and inside a message's `content` array were SILENTLY DROPPED
+/// by `read_request` (no IR `IrBlock` counterpart), so a same-protocol Bedrock->Bedrock
+/// passthrough re-emitted a body with prompt caching disabled — a real cost regression (a cache
+/// HIT becomes a full re-bill of the cached prefix every turn).
 #[test]
 fn test_cache_point_round_trip() {
     let reader = BedrockReader;
@@ -3126,6 +3232,9 @@ fn a_cache_point_before_a_document_does_not_double_the_document() {
 }
 
 /// A message whose ONLY content block is a `cachePoint` (no
+/// representable text/tool block) must re-emit the marker rather than the empty-content `""`
+/// placeholder — the splice runs BEFORE the placeholder substitution, so the cachePoint keeps
+/// the turn non-empty and the prompt-cache boundary intact.
 #[test]
 fn test_cache_point_only_message_round_trip() {
     let reader = BedrockReader;
@@ -3165,6 +3274,8 @@ fn test_cache_point_only_message_round_trip() {
 }
 
 /// A request that NEVER used prompt caching must not gain a stray sentinel key, and its body must
+/// round-trip byte-identically (the cachePoint capture is opt-in: zero markers → no `extra`
+/// entry, no behavioural change).
 #[test]
 fn test_no_cache_point_no_sentinel() {
     let reader = BedrockReader;
@@ -3188,6 +3299,8 @@ fn test_no_cache_point_no_sentinel() {
 }
 
 /// `splice_cache_points` must NOT panic on a stale/foreign index (e.g. an `extra` that survived
+/// an unexpected hop): an out-of-range `i` is bounds-clamped to the array end, never indexing
+/// past it.
 #[test]
 fn test_splice_cache_points_out_of_range_does_not_panic() {
     let mut arr = vec![serde_json::json!({"text": "only block"})];
@@ -3207,6 +3320,7 @@ fn test_splice_cache_points_out_of_range_does_not_panic() {
 }
 
 /// `extract_error` must synthesize the canonical
+/// `context_length_exceeded` provider_code for a real Bedrock oversized-context error body.
 #[test]
 fn test_extract_error_synthesizes_context_length_exceeded() {
     let reader = BedrockReader;
@@ -3239,6 +3353,8 @@ fn test_extract_error_synthesizes_context_length_exceeded() {
 }
 
 /// The `contentBlockStart` toolUse arm must honor the
+/// same `state.started` guard the text branch enforces — a tool BlockStart must NEVER precede the
+/// MessageStart it belongs to.
 #[test]
 fn test_stream_tool_block_start_before_message_start_is_dropped() {
     use crate::codec::ir::IrStreamEvent;
@@ -3295,6 +3411,7 @@ fn test_stream_tool_block_start_before_message_start_is_dropped() {
 }
 
 /// `read_response_events`'s `ET_CONTENT_BLOCK_STOP` arm must NEVER emit a `BlockStop` unless a
+/// matching block was actually observed open for that index.
 #[test]
 fn test_stream_block_stop_before_message_start_is_dropped() {
     use crate::codec::ir::IrStreamEvent;
@@ -3315,6 +3432,8 @@ fn test_stream_block_stop_before_message_start_is_dropped() {
 }
 
 /// A `contentBlockStop` for a tool-use index that never had a matching `contentBlockStart` (e.g. a
+/// duplicate/reordered STOP, or a STOP for an index this side never opened) must be silently
+/// dropped, not unconditionally forwarded as a `BlockStop` with no matching prior BlockStart.
 #[test]
 fn test_stream_block_stop_for_unopened_tool_index_is_dropped() {
     use crate::codec::ir::IrStreamEvent;
@@ -3343,6 +3462,8 @@ fn test_stream_block_stop_for_unopened_tool_index_is_dropped() {
 }
 
 /// Regression guard on the happy path: a well-formed toolUse `contentBlockStart` followed by its
+/// matching `contentBlockStop` at the SAME index must still emit exactly one `BlockStop` for that
+/// index — the unmatched-STOP fix above must not also suppress a legitimately matched STOP.
 #[test]
 fn test_stream_block_stop_for_opened_tool_index_still_emits() {
     use crate::codec::ir::IrStreamEvent;
@@ -3380,6 +3501,7 @@ fn test_stream_block_stop_for_opened_tool_index_still_emits() {
 }
 
 /// Two concurrently open tool-use blocks (indices 0 and 1) must each close independently: a STOP
+/// for index 1 must not consume/clear index 0's open state, and vice versa.
 #[test]
 fn test_stream_block_stop_closes_concurrent_tool_blocks_independently() {
     use crate::codec::ir::IrStreamEvent;
@@ -3440,6 +3562,10 @@ fn test_stream_block_stop_closes_concurrent_tool_blocks_independently() {
 }
 
 /// Adversarial-input guard: on a MALFORMED stream that opens a
+/// tool-use block WHILE a text block is still (spuriously) open — something a well-formed sequential
+/// Converse wire never does, but a reordered/malformed upstream might — the `contentBlockStop` arm must
+/// match the STOP to its OWN tool index (via `open_tools`) rather than misattributing it to the
+/// index-blind `text_block_open` flag.
 #[test]
 fn test_stream_block_stop_prefers_indexed_tool_over_stale_text_flag() {
     use crate::codec::ir::IrStreamEvent;
@@ -3497,6 +3623,9 @@ fn test_stream_block_stop_prefers_indexed_tool_over_stale_text_flag() {
 }
 
 /// A native Converse `{"json": <value>}` block
+/// inside a `toolResult.content` array must survive a same-protocol reader→writer round-trip as a
+/// `json` block — NOT be collapsed to a `text` block (the old behaviour, which lost the json/text
+/// distinction).
 #[test]
 fn test_tool_result_json_block_round_trip() {
     let reader = BedrockReader;
@@ -3534,6 +3663,8 @@ fn test_tool_result_json_block_round_trip() {
 }
 
 /// The upstream-controlled `contentBlockIndex` is
+/// attacker-controllable and was forwarded UNCLAMPED into IR block indices at all three stream
+/// read sites (`contentBlockStart` / `contentBlockDelta` / `contentBlockStop`).
 #[test]
 fn test_stream_huge_content_block_index_is_clamped() {
     use crate::codec::ir::IrStreamEvent;
@@ -3648,6 +3779,8 @@ fn test_classify_third_context_length_pattern_matches_extract_error() {
 }
 
 /// The `extract_error` context-length
+/// override must be GATED on a `400` — Bedrock only emits an oversized-context error as a `400
+/// ValidationException`.
 #[test]
 fn test_extract_error_5xx_context_phrasing_not_reclassified() {
     let reader = BedrockReader;
@@ -3682,6 +3815,9 @@ fn test_extract_error_5xx_context_phrasing_not_reclassified() {
 }
 
 /// The `read_response` content loop must
+/// carry an `image` block from a Converse response into the IR — the request-side readers
+/// already decode `image` via `read_bedrock_image_block`, but the response loop silently DROPPED
+/// it.
 #[test]
 fn test_read_response_carries_image_block() {
     let reader = BedrockReader;
@@ -3752,6 +3888,9 @@ fn test_read_response_carries_image_block() {
 }
 
 /// A native Converse `reasoningContent` (extended-thinking) block in a
+/// REQUEST message's `content[]` was SILENTLY DROPPED by `read_request` (no arm matched it), so a
+/// same-protocol Bedrock->Bedrock passthrough lost the signed reasoning Bedrock requires echoed
+/// back on a follow-up turn.
 #[test]
 fn test_request_reasoning_content_round_trips() {
     let reader = BedrockReader;
@@ -3802,6 +3941,7 @@ fn test_request_reasoning_content_round_trips() {
 }
 
 /// A `reasoningContent` block in a RESPONSE message's `content[]` was
+/// silently dropped by `read_response`.
 #[test]
 fn test_response_reasoning_content_round_trips() {
     let reader = BedrockReader;
@@ -3878,6 +4018,9 @@ fn test_response_reasoning_content_round_trips() {
 }
 
 /// STREAMING extended-thinking (`reasoningContent` deltas on the
+/// ConverseStream wire) was SILENTLY DROPPED — `read_response_events` had no reasoning arm and
+/// `write_response_event` returned `None` for ThinkingDelta/SignatureDelta — even though the
+/// BUFFERED path preserved it.
 #[test]
 fn test_stream_reasoning_content_round_trips() {
     use crate::codec::ir::{IrBlockMeta, IrDelta, IrStreamEvent};
@@ -4119,6 +4262,10 @@ fn test_stream_reasoning_redacted_round_trips() {
 }
 
 /// Native Converse `guardContent` (inline Guardrails) blocks that appear
+/// inside the `system` array and inside a message's `content` array were SILENTLY DROPPED by
+/// `read_request` (no IR `IrBlock` counterpart), so a same-protocol Bedrock->Bedrock passthrough
+/// re-emitted a body with the guardrail spans the caller marked stripped — disabling the inline
+/// content-classification the operator relies on.
 #[test]
 fn test_guard_content_round_trips() {
     let reader = BedrockReader;
@@ -4156,6 +4303,8 @@ fn test_guard_content_round_trips() {
 }
 
 /// When BOTH `cachePoint` and `guardContent` markers occupy DISTINCT
+/// positions in the SAME content array, they must be re-spliced together so neither shifts the
+/// other off its recorded index.
 #[test]
 fn test_guard_content_and_cache_point_interleave_preserved() {
     let reader = BedrockReader;
@@ -4183,6 +4332,8 @@ fn test_guard_content_and_cache_point_interleave_preserved() {
 }
 
 /// A `reasoningContent` block carrying neither known member (a hypothetical future union member)
+/// must degrade gracefully — `read_bedrock_reasoning_block` returns `None` and the block is left
+/// undecoded rather than panicking or being mis-mapped to a Thinking with empty text.
 #[test]
 fn test_unknown_reasoning_member_does_not_panic() {
     let reader = BedrockReader;
@@ -4327,6 +4478,7 @@ fn tool_choice_without_tools_emits_no_tool_config() {
 }
 
 /// F5 conformance: the common `image/jpg` media_type (and casing variants) must normalize to
+/// Bedrock's `jpeg` ImageFormat, not pass through as the off-enum `jpg` that 400s.
 #[test]
 fn image_format_jpg_normalizes_to_jpeg() {
     for mt in ["image/jpg", "image/JPG", "image/Jpeg", "image/jpeg"] {
@@ -4357,6 +4509,7 @@ fn image_format_jpg_normalizes_to_jpeg() {
 }
 
 /// Bedrock `toolChoice:{any:{}}` (must call SOME tool) round-trips through the IR's
+/// `Required` variant — read promotes it, write re-emits the native `{any:{}}`.
 #[test]
 fn test_bedrock_tool_choice_any_required_roundtrips() {
     let reader = BedrockReader;
@@ -4383,6 +4536,7 @@ fn test_bedrock_tool_choice_any_required_roundtrips() {
 }
 
 /// Bedrock `toolChoice:{tool:{name}}` (forced specific tool) round-trips through the IR's
+/// `Tool{name}` variant.
 #[test]
 fn test_bedrock_tool_choice_specific_tool() {
     let reader = BedrockReader;
@@ -4411,6 +4565,8 @@ fn test_bedrock_tool_choice_specific_tool() {
 }
 
 /// `toolChoice.tool` (force a SPECIFIC tool) is documented Anthropic-Claude-only on
+/// Converse, but `write_request` receives no model (Bedrock carries it in the URL, not the IR) so
+/// it cannot gate the emission.
 #[test]
 fn bedrock_specific_tool_choice_warns_it_is_claude_only() {
     let req = tool_choice_req(Some(crate::codec::ir::IrToolChoice::Tool {
@@ -4440,6 +4596,7 @@ fn bedrock_specific_tool_choice_warns_it_is_claude_only() {
 }
 
 /// `IrToolChoice::None` has no native Bedrock representation, so the writer must omit
+/// `toolChoice` entirely (rather than emit an invalid shape) while still emitting the tools.
 #[test]
 fn test_bedrock_tool_choice_none_omitted_on_write() {
     let req = tool_choice_req(Some(crate::codec::ir::IrToolChoice::None));
@@ -4459,6 +4616,7 @@ fn test_bedrock_tool_choice_none_omitted_on_write() {
 }
 
 /// A request with no native `toolChoice` reads back as `tool_choice == None` (no spurious
+/// directive minted on translation).
 #[test]
 fn test_bedrock_tool_choice_absent_is_none() {
     let reader = BedrockReader;
@@ -4571,6 +4729,7 @@ fn test_cache_control_on_message_block_emits_cache_point() {
 }
 
 /// Write: a system Text block carrying `cache_control` emits a trailing cachePoint in the
+/// `system` array (the system prefix is the canonical prompt-cache target).
 #[test]
 fn test_cache_control_on_system_block_emits_cache_point() {
     let req = cache_ctrl_req(
@@ -4597,6 +4756,7 @@ fn test_cache_control_on_system_block_emits_cache_point() {
 }
 
 /// Write: a tool definition carrying `cache_control` emits a `cachePoint` element in the
+/// `toolConfig.tools` array right after the tool (caching the tool-schema prefix).
 #[test]
 fn test_cache_control_on_tool_emits_cache_point() {
     let req = cache_ctrl_req(
@@ -4628,6 +4788,8 @@ fn test_cache_control_on_tool_emits_cache_point() {
 }
 
 /// Read: a Bedrock `cachePoint` following a content block must map onto the preceding IR
+/// block's first-class `cache_control` (so a Bedrock->Anthropic hop, where the positional stash is
+/// dropped, still preserves the boundary).
 #[test]
 fn test_cache_point_maps_onto_preceding_block_cache_control() {
     let reader = BedrockReader;
@@ -4698,6 +4860,9 @@ fn test_cache_point_maps_onto_preceding_block_cache_control() {
 }
 
 /// Round-trip, cross-protocol shape: reading a cachePoint-bearing body into the IR and then
+/// writing it back with `extra` CLEARED (the cross-protocol seam) re-derives the cachePoint purely
+/// from the first-class `cache_control` field — the boundary survives even when the positional
+/// stash is gone.
 #[test]
 fn test_cache_control_round_trip_via_field_only() {
     let reader = BedrockReader;
@@ -4727,6 +4892,8 @@ fn test_cache_control_round_trip_via_field_only() {
 }
 
 /// No double-emit: on the SAME-protocol path the positional stash AND the first-class
+/// `cache_control` field are both populated by the reader, but the writer must emit EXACTLY ONE
+/// cachePoint (the stash drives placement; the inline field emission is suppressed).
 #[test]
 fn test_same_protocol_cache_point_no_double_emit() {
     let reader = BedrockReader;
@@ -4758,6 +4925,8 @@ fn test_same_protocol_cache_point_no_double_emit() {
 }
 
 /// Warn path: a malformed image media_type (an empty subtype, an unprefixed word) or one outside
+/// Bedrock's `ImageFormat` union (`image/bmp`) is DROPPED with the writer's warn, never coerced to
+/// `format: "png"` (design F3: never a substitution).
 #[test]
 fn test_malformed_media_type_warns_and_drops() {
     for mt in ["image/", "garbage", "image/bmp", "image/svg+xml"] {
@@ -4792,6 +4961,9 @@ fn test_malformed_media_type_warns_and_drops() {
 }
 
 /// A cross-protocol IR carrying a JSON-schema `response_format` reaching a Bedrock lane that declares
+/// native structured outputs projects onto Converse's native `outputConfig.textFormat` (BED-08) — the
+/// schema as a JSON STRING, per the service model — and the wire carries NO foreign
+/// `response_format` key (it would 400 upstream).
 #[test]
 fn test_write_request_response_format_projects_output_config() {
     let writer = BedrockWriter;
@@ -4920,6 +5092,7 @@ fn cache_only_usage_emits_metadata_inline() {
 }
 
 /// F4 coalescing (headline Bedrock behavior): Converse requires STRICTLY ALTERNATING
+/// user/assistant turns — two consecutive same-role messages are a 400 ValidationException.
 #[test]
 fn consecutive_tool_result_turns_coalesce_into_single_user_message() {
     let req = crate::codec::ir::IrRequest {
@@ -5019,6 +5192,8 @@ fn unknown_stop_reason_maps_to_other_and_degrades_to_end_turn() {
 }
 
 /// Bedrock cache tokens are ALREADY ADDITIVE (ir.rs:457): unlike OpenAI/Gemini (which subtract the
+/// cached prefix out of the input total), the Bedrock reader stores `cacheReadInputTokens` /
+/// `cacheWriteInputTokens` AS-IS and does NOT reduce `inputTokens` by them.
 #[test]
 fn cache_usage_is_additive_input_not_reduced() {
     let body = serde_json::json!({
@@ -5063,6 +5238,9 @@ fn cache_usage_is_additive_input_not_reduced() {
 }
 
 /// BEDROCK ADDITIVE-CACHE billing guard: the neutral projection the MONEY PATH actually bills from
+/// (`IrUsage::to_token_usage()` → `engine::usage::tier_tokens` → the four ledger tiers) must keep
+/// Bedrock's `inputTokens` in the INPUT tier ALONE — cache read/write land in their OWN tiers and
+/// are NOT folded back into input.
 #[test]
 fn bedrock_input_tier_excludes_cache_at_billing_boundary() {
     let body = serde_json::json!({
@@ -5109,6 +5287,7 @@ fn bedrock_input_tier_excludes_cache_at_billing_boundary() {
 }
 
 /// AWS Converse's `usage.totalTokens` is the TOTAL of every token the call consumed, cache tokens
+/// INCLUDED.
 #[test]
 fn total_tokens_includes_cache_tokens_on_both_write_paths() {
     let wire_total = 10u64 + 5 + 1000 + 200;
@@ -5235,6 +5414,7 @@ fn test_stream_text_delta_lazily_opens_block_start() {
 }
 
 /// REGRESSION: The AWS Bedrock Converse `ContentBlock` union includes top-level
+/// `document` and `video` members (a PDF/CSV the model reasons over, and a video reference).
 #[test]
 fn test_roundtrip_preserves_document_and_video_blocks() {
     let reader = BedrockReader;
@@ -5321,6 +5501,8 @@ fn bedrock_orphan_content_block_delta_before_start_is_dropped() {
 }
 
 /// A same-dialect buffered answer is relayed verbatim in every dialect, Bedrock included: no
+/// translator stands in for the relay, so no member (a busbar-measured `metrics.latencyMs`) is
+/// added to what the upstream sent (DIALECT FIDELITY, owner 2026-10-02; 1.5.5's bytes).
 #[test]
 fn a_same_dialect_buffered_answer_gets_no_translator_in_any_dialect() {
     for d in [
@@ -5402,6 +5584,9 @@ fn buffered_to_eventstream_metadata_carries_metrics_even_without_timing() {
 }
 
 /// A two-citation delta driven straight at `write_response_events` must emit BOTH citations. The
+/// writer used to keep only the first, leaning on the framing seam's citation fan-out to have split
+/// the batch — but the plane codec calls this seam directly, and a caller that does loses every
+/// citation after the first with no signal.
 #[test]
 fn bedrock_writer_emits_every_citation_in_a_multi_citation_delta() {
     let cit = |title: &str| crate::codec::ir::IrCitation {
@@ -5539,6 +5724,7 @@ fn the_tails_sigv4_parameters_restate_the_signing_scheme() {
 }
 
 /// The production request translate steps (reader → egress seam → writer → shim strip), with the
+/// prepared IR beside the written body.
 fn rehome_xreq(
     ingress: &'static str,
     egress: &str,

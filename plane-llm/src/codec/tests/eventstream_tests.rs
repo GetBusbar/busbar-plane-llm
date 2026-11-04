@@ -2,11 +2,13 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The framing codec's unit suite: decode, encode, the header guards and their coded drops, the
+//! checked drain's malformed-prelude signal and its linear scaling.
 
 use super::*;
 use crate::codec_diagnostics::{debug_diagnostics, diagnostic_texts, warnings};
 
 /// AWS event-stream header name for the human-readable error text an error frame carries alongside
+/// its code.
 const HDR_ERROR_MESSAGE: &str = ":error-message";
 
 #[test]
@@ -58,6 +60,7 @@ fn test_oversized_total_len_is_abandoned_not_buffered() {
 }
 
 /// `drain_frames(encode_frame(x)) == [x]` for a spread of event types + payload sizes, including
+/// empty and large payloads.
 #[test]
 fn test_encode_decode_round_trip() {
     let cases: &[(&str, Vec<u8>)] = &[
@@ -130,6 +133,8 @@ fn string_header(name: &str, value: &str) -> Vec<u8> {
 }
 
 /// `event_type_for_frame` returns `""` (rather than panic or misread) when it meets a header
+/// whose value-type byte is genuinely unknown / has no defined width before any recognized
+/// header.
 #[test]
 fn test_event_type_unknown_value_type_yields_empty() {
     let mut h = Vec::new();
@@ -140,6 +145,8 @@ fn test_event_type_unknown_value_type_yields_empty() {
 }
 
 /// A fixed-width header (e.g. a `timestamp`, type 8) appearing BEFORE `:event-type` must be
+/// skipped by advancing the correct number of bytes, not abort the scan — so the event type is
+/// still recovered.
 #[test]
 fn test_event_type_skips_fixed_width_header() {
     let mut h = Vec::new();
@@ -154,6 +161,8 @@ fn test_event_type_skips_fixed_width_header() {
 }
 
 /// A zero-length `:event-type` string value yields `""` — a present-but-empty event type is
+/// indistinguishable from absent at the `drain_frames` boundary, which is fine (the reader
+/// treats both as a no-op frame).
 #[test]
 fn test_event_type_empty_value() {
     let h = string_header(HDR_EVENT_TYPE, "");
@@ -161,6 +170,7 @@ fn test_event_type_empty_value() {
 }
 
 /// An AWS modeled-exception frame carries
+/// `:message-type: exception` + `:exception-type: <Name>` and NO `:event-type`.
 #[test]
 fn test_event_type_exception_frame_returns_normalized_exception_name() {
     let mut h = string_header(HDR_EXCEPTION_TYPE, "InternalServerException");
@@ -177,6 +187,7 @@ fn test_event_type_exception_frame_returns_normalized_exception_name() {
 }
 
 /// The UNMODELED sibling of an exception frame: `:message-type: error` carrying `:error-code` /
+/// `:error-message` and NO `:event-type`.
 #[test]
 fn test_event_type_error_frame_returns_normalized_error_code() {
     let mut h = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_ERROR);
@@ -228,6 +239,10 @@ fn test_event_type_exception_strips_namespace_prefix() {
 }
 
 /// An `:exception-type` value
+/// that ENDS with a Smithy/ARN delimiter (`ThrottlingException#`, `aws.bedrock/`) made
+/// `rsplit(['#', '/']).next()` return the empty LEADING token, dropping the classification to
+/// `""` — re-sinking the mid-stream error into the no-op arm the namespace fix was meant to
+/// prevent.
 #[test]
 fn test_event_type_exception_trailing_delimiter_recovers_name() {
     let mut h = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_EXCEPTION);
@@ -263,6 +278,8 @@ fn test_event_type_exception_trailing_delimiter_recovers_name() {
 }
 
 /// An exception-typed frame
+/// (`:message-type: exception`) that carries NO `:exception-type` header must fall through to the
+/// empty string — never panic and never misreport.
 #[test]
 fn test_event_type_exception_without_exception_type_yields_empty() {
     let h = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_EXCEPTION);
@@ -285,6 +302,7 @@ fn test_event_type_exception_without_exception_type_yields_empty() {
 }
 
 /// A frame with `:message-type: event` (the normal case) must still report its `:event-type`,
+/// never an exception name, even if a stray `:exception-type` somehow rode along.
 #[test]
 fn test_event_type_event_message_type_prefers_event_type() {
     let mut h = string_header(HDR_MESSAGE_TYPE, MSG_TYPE_EVENT);
@@ -293,6 +311,9 @@ fn test_event_type_event_message_type_prefers_event_type() {
 }
 
 /// End-to-end through `drain_frames`: a real binary exception frame (built by the production
+/// `encode_exception_frame`) decodes to the normalized exception event-type, so the egress
+/// decode path (`StreamTranslate::feed`) folds a matchable `type` into the JSON and the reader
+/// surfaces an error instead of dropping a typeless frame.
 #[test]
 fn test_drain_frames_surfaces_exception_event_type() {
     let mut buf =
@@ -309,6 +330,7 @@ fn test_drain_frames_surfaces_exception_event_type() {
 }
 
 /// A modeled-exception frame is a valid event-stream message: real CRC32s, and a header block
+/// carrying `:message-type: exception` + `:exception-type` + the JSON `{"message":...}` payload.
 #[test]
 fn test_encode_exception_frame_is_valid() {
     let frame = encode_exception_frame("InternalServerException", "upstream stream error");
@@ -343,6 +365,8 @@ fn test_encode_exception_frame_is_valid() {
 }
 
 /// THE CAP, FROM BOTH SIDES. A frame whose total length is EXACTLY `MAX_FRAME_BYTES` is encoded
+/// whole; one byte more is DROPPED (empty frame), never emitted as a CRC-valid frame carrying
+/// byte-truncated, unparseable JSON.
 #[test]
 fn test_encode_frame_cap_admits_the_boundary_and_drops_one_past_it() {
     const EVENT: &str = "contentBlockDelta";
@@ -371,6 +395,8 @@ fn test_encode_frame_cap_admits_the_boundary_and_drops_one_past_it() {
 }
 
 /// `drain_frames` must abandon (clear) the buffer on a frame whose `total_len` is in range but
+/// whose `headers_len` exceeds the space remaining after the 16-byte overhead — the second half
+/// of the prelude-validation guard, previously untested.
 #[test]
 fn test_headers_len_overflow_abandoned() {
     let mut buf = Vec::new();
@@ -391,6 +417,8 @@ fn test_headers_len_overflow_abandoned() {
 }
 
 /// An oversized header NAME or VALUE must DROP the whole frame (empty `Vec`) rather than silently
+/// byte-truncate the string — a truncation could split a multi-byte UTF-8 sequence and emit a
+/// CRC-valid frame carrying an invalid-UTF-8 type-7 header a strict AWS SDK rejects.
 #[test]
 fn test_oversized_header_value_drops_frame() {
     let huge_value = "x".repeat(u16::MAX as usize + 1);
@@ -419,6 +447,7 @@ fn test_encode_frame_oversized_event_type_drops_frame() {
 }
 
 /// The encoder carries the three Bedrock framing headers (`:event-type`, `:content-type`,
+/// `:message-type`); `parse_event_type` must skip past the others and still find the event name.
 #[test]
 fn test_encode_carries_three_headers() {
     let frame = encode_frame("messageStart", br#"{"role":"assistant"}"#);
@@ -434,6 +463,8 @@ fn test_encode_carries_three_headers() {
 }
 
 /// The SMALLEST valid frame —
+/// `total_len == 16` (12-byte prelude + 0-byte headers + 0-byte payload + 4-byte message CRC) —
+/// must decode cleanly.
 #[test]
 fn test_drain_frames_minimum_valid_frame() {
     let mut frame = Vec::with_capacity(16);
@@ -463,6 +494,7 @@ fn test_drain_frames_minimum_valid_frame() {
 }
 
 /// The single-buffer
+/// encoder must be BYTE-FOR-BYTE identical to the prior two-Vec (`headers` + `frame`) encoding.
 #[test]
 fn test_encode_frame_byte_for_byte_matches_reference() {
     let event_type = "contentBlockDelta";
@@ -529,6 +561,8 @@ fn test_encode_frame_oversized_event_type_is_a_coded_debug_drop() {
 }
 
 /// The same guarantee for `encode_exception_frame` — an oversized `:exception-type` drops the frame,
+/// and the drop carries `EVENTSTREAM_EXCEPTIONTYPE_HEADER_OVERSIZE`'s code at `debug!` (a swallowed
+/// mid-stream error signal, near-unreachable per request) rather than spamming per frame.
 #[test]
 fn test_encode_exception_frame_oversized_type_is_a_coded_debug_drop() {
     use crate::codec::diagnostics::EVENTSTREAM_EXCEPTIONTYPE_HEADER_OVERSIZE as DIAG;
@@ -564,6 +598,8 @@ fn test_encode_exception_frame_oversized_type_is_a_coded_debug_drop() {
 }
 
 /// A malformed prelude must abandon
+/// the stream via a DISTINCT propagated status (`DrainStatus::MalformedPrelude`), not be inferred
+/// from the buffer being emptied.
 #[test]
 fn test_drain_frames_checked_signals_malformed_prelude_distinctly() {
     let mut bad = Vec::new();
@@ -634,6 +670,8 @@ fn test_drain_frames_checked_signals_malformed_prelude_distinctly() {
 }
 
 /// The smallest frame with a NON-empty
+/// payload that carries no headers — `total_len == 18` (12 prelude + 0 headers + 2 payload + 4
+/// CRC).
 #[test]
 fn test_drain_frames_two_byte_payload_no_headers() {
     let payload = b"hi";
@@ -658,6 +696,8 @@ fn test_drain_frames_two_byte_payload_no_headers() {
 }
 
 /// Regression proof (byte-identical behavior before and after the O(frames²)→O(bytes) rewrite
+/// of `drain_frames_checked`'s per-frame buffer advance): many frames, a trailing partial, a
+/// `consumed_sink` populated in order, exact `valid_consumed`.
 #[test]
 fn drain_frames_checked_is_byte_identical_after_the_index_rewrite() {
     let mut buf = Vec::new();
@@ -696,6 +736,9 @@ fn drain_frames_checked_is_byte_identical_after_the_index_rewrite() {
 }
 
 /// Extends `test_drain_frames_checked_signals_malformed_prelude_distinctly` with valid frames
+/// BEFORE the malformed one — the case the index-tracking rewrite is most likely to break,
+/// since it is the first test to exercise `pos` advancing across multiple frames before hitting
+/// the `buf.clear()` / status-abort arm.
 #[test]
 fn a_malformed_prelude_after_valid_frames_still_clears_and_reports_the_prefix() {
     let mut buf = Vec::new();
@@ -737,11 +780,14 @@ fn frames_buffer(n: usize) -> Vec<u8> {
 }
 
 /// The drain's work grew linearly from `n` to `4n` frames: under 8× — the log-scale midpoint of
+/// linear's ~4× and quadratic's ~16× — in COUNTED work units, so no scheduler, cache or neighbour
+/// load can move the verdict (Law 8).
 fn scales_linearly(small: DrainWork, big: DrainWork) -> bool {
     big.total() < small.total() * 8
 }
 
 /// The drain as it was before the index-tracking rewrite: one front `drain` PER FRAME, each
+/// memmoving the whole remaining tail.
 fn per_frame_drain(buf: &mut Vec<u8>) -> DrainWork {
     let mut work = DrainWork::default();
     while buf.len() >= PRELUDE_LEN {
@@ -757,6 +803,8 @@ fn per_frame_drain(buf: &mut Vec<u8>) -> DrainWork {
 }
 
 /// Complexity regression: `drain_frames_checked` used `Vec::drain(..total_len)` PER FRAME, which
+/// memmoves the entire remaining tail on every call — O(frames × bytes) for a buffer of many small
+/// frames.
 #[test]
 fn drain_frames_checked_scales_linearly_in_frame_count() {
     let run = |n: usize| {

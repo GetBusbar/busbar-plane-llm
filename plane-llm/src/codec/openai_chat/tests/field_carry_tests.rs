@@ -7,6 +7,8 @@ use super::*;
 use serde_json::json;
 
 /// Backs: `frequency_penalty`, `presence_penalty`, `seed`, `n`, `top_p`, `logprobs`, `top_logprobs`,
+/// `response_format`, `stop`, `tool_choice`, `parallel_tool_calls`, `user`, `reasoning_effort`,
+/// `max_completion_tokens`.
 #[test]
 fn openai_carry_request_sampling_and_output_controls() {
     let body = json!({
@@ -75,6 +77,7 @@ fn openai_carry_request_sampling_and_output_controls() {
 }
 
 /// Backs: `logit_bias`, `modalities`, `prediction`, `audio`, `service_tier`, `store`, `metadata`,
+/// `stream_options`, `web_search_options`, `prompt_cache_key`, `safety_identifier`, `verbosity`.
 #[test]
 fn openai_carry_request_provider_specific_extra_fields() {
     let body = json!({
@@ -131,6 +134,8 @@ fn openai_carry_request_provider_specific_extra_fields() {
 }
 
 /// Backs: `messages[].name`, `messages[].tool_calls`, `messages[].tool_call_id`,
+/// `messages[].refusal`, `messages[].audio`, `messages[].function_call`,
+/// `content[].type=image_url.image_url.url`, `content[].type=refusal.refusal`.
 #[test]
 fn openai_carry_request_message_and_content_fields() {
     let body = json!({
@@ -222,6 +227,10 @@ fn openai_carry_request_message_and_content_fields() {
 }
 
 /// Backs: `response/id`, `response/object`, `response/created`, `response/model`,
+/// `response/system_fingerprint`, `choices[].index`, `choices[].finish_reason`,
+/// `choices[].logprobs`, `choices[].message.role`, `choices[].message.content`,
+/// `choices[].message.tool_calls`, `choices[].message.annotations`,
+/// `choices[].message.reasoning_content`.
 #[test]
 fn openai_carry_response_identity_and_choice_fields() {
     let body = json!({
@@ -301,6 +310,9 @@ fn openai_carry_response_identity_and_choice_fields() {
 }
 
 /// Backs: `choices[].message.refusal`. A structured-outputs / safety refusal arrives as
+/// `content: null` + a `refusal` string; the reader carries the text as assistant text with the
+/// `Refusal` stop reason (so the turn is not an empty 200 on a foreign client), and the writer puts
+/// a refused turn's text back in `message.refusal` with `content: null` (OAI-12).
 #[test]
 fn openai_carry_response_message_refusal() {
     let body = json!({
@@ -325,6 +337,9 @@ fn openai_carry_response_message_refusal() {
 }
 
 /// Backs: `usage.prompt_tokens_details.cached_tokens`, `usage.prompt_tokens_details.audio_tokens`,
+/// `usage.completion_tokens_details.audio_tokens`,
+/// `usage.completion_tokens_details.accepted_prediction_tokens`,
+/// `usage.completion_tokens_details.rejected_prediction_tokens`.
 #[test]
 fn openai_carry_response_usage_sub_buckets() {
     let body = json!({
@@ -398,6 +413,8 @@ fn openai_carry_response_usage_sub_buckets() {
 }
 
 /// Backs: `stream:choices[].delta.role`, `stream:choices[].delta.content`,
+/// `stream:choices[].delta.refusal`, `stream:choices[].delta.tool_calls`,
+/// `stream:choices[].delta.reasoning_content`.
 #[test]
 fn openai_carry_stream_delta_fields() {
     let mut state = crate::codec::ir::StreamDecodeState::default();

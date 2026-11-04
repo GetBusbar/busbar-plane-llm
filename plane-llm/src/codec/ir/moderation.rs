@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Moderation IR. The degenerate operation: OpenAI-only (K=1), no
+//! cross-provider superset needed — no other provider ships a moderations endpoint — so this models
+//! OpenAI's shape exactly.
 
 use busbar_contract::ir::SourceScopedExtra;
 use std::collections::BTreeMap;
@@ -24,6 +26,10 @@ pub struct ModerationReq {
 }
 
 /// THE MODERATION FAMILY'S WALK — this IR's answer to [`busbar_contract::ir::facts::IrFacts`]. Moderation
+/// input is EXACTLY the content to classify, so it is exactly what a screening gate must see: a
+/// `ModerationInput::Text` is caller free-text → [`busbar_contract::ir::facts::ContentItem::Text`]; a
+/// `ModerationInput::ImageUrl` is an image reference busbar does not fetch or render →
+/// [`busbar_contract::ir::facts::ContentItem::Opaque`] (chat-parity, present-but-unscreenable).
 impl busbar_contract::ir::facts::IrFacts for ModerationReq {
     fn verb(&self) -> busbar_contract::operation::OpVerb {
         busbar_contract::operation::OpVerb::MODERATION

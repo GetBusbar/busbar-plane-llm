@@ -1,9 +1,11 @@
 //! The OpenAI Responses webhook receiver, sans I/O: the plane's inbound leg for a background
+//! Responses turn's completion webhook.
 
 use serde::Deserialize;
 use serde_json::Value;
 
 /// The top-level section this plane owns for its webhook receivers (a Statement section that is
+/// neither declaring nor consumed: the plane opens with it as written).
 pub const SECTION: &str = "webhooks";
 
 /// The path the OpenAI Responses receiver answers on: exact, POST only.
@@ -20,6 +22,7 @@ pub struct Webhooks {
 }
 
 /// The receivers the plane's owned sections switch on (`PlaneOpenIn::owned`: one JSON object keyed by
+/// section name, empty when the document writes none of them).
 pub fn from_owned(owned: &[u8]) -> Result<Webhooks, String> {
     if owned.is_empty() {
         return Ok(Webhooks::default());
@@ -47,6 +50,7 @@ pub struct Event {
 }
 
 /// Why a delivery's body was refused (400): it is not a JSON object, or a field the receiver reads
+/// is absent or wrong-typed.
 pub const MALFORMED: &str =
     "malformed OpenAI Responses webhook event: expected a JSON object with a \
      non-empty string `type` and a `data` object carrying a non-empty string `id`";
@@ -83,6 +87,7 @@ pub fn read_event(body: &[u8]) -> Result<Event, &'static str> {
 }
 
 /// THE ACKNOWLEDGEMENT a read delivery is answered with (200, `application/json`): receipt, and
+/// the correlation id and kind echoed back, as the receiver this ports answered.
 #[must_use]
 pub fn ack(event: &Event) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR MAPPING tests for the OpenAI Chat Completions dialect (a field the source
+//! dialect carries that the IR and the target can carry must map).
 
 use serde_json::{json, Value};
 
@@ -95,6 +96,8 @@ fn anthropic_req(extra: Value) -> Value {
 }
 
 /// OAI-01. The codec writer does NOT pick the spelling blind: a
+/// cross-protocol cap is written as `max_tokens` (the key every OpenAI-compatible host accepts), and
+/// the lane's provider entry decides at the egress seam whether it becomes `max_completion_tokens`.
 #[test]
 fn oai01_codec_writes_source_spelling_or_max_tokens() {
     use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
@@ -124,6 +127,7 @@ fn oai01_codec_writes_source_spelling_or_max_tokens() {
 }
 
 /// OAI-04. A Bedrock `toolResult` whose content is `{"json":…}` is written as the serialized JSON
+/// string in the OpenAI `tool` message, after any text in the same result.
 #[test]
 fn oai04_json_tool_result_is_serialized_into_tool_content() {
     let bedrock = json!({
@@ -145,6 +149,7 @@ fn oai04_json_tool_result_is_serialized_into_tool_content() {
 }
 
 /// OAI-10. `xhigh` reaches the IR as the highest effort the IR has (`High`) instead of no ask, and
+/// an OpenAI-origin re-serialize still writes `xhigh` verbatim.
 #[test]
 fn oai10_xhigh_effort_maps_to_high() {
     use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
@@ -173,6 +178,7 @@ fn oai10_xhigh_effort_maps_to_high() {
 }
 
 /// OAI-11. An Anthropic assistant turn carrying only `thinking` is written with `content: ""`,
+/// never `content: null` without `tool_calls` (an OpenAI 400).
 #[test]
 fn oai11_thinking_only_assistant_turn_is_not_null_content() {
     let body = anthropic_req(json!({
@@ -199,6 +205,7 @@ fn oai11_thinking_only_assistant_turn_is_not_null_content() {
 }
 
 /// Assert the IR stream is strictly balanced: every index opens at most once, every delta lands on
+/// an OPEN index, every open index closes exactly once.
 fn assert_balanced(events: &[crate::codec::ir::IrStreamEvent]) {
     use crate::codec::ir::IrStreamEvent as E;
     let mut opened = std::collections::BTreeSet::new();
@@ -257,6 +264,7 @@ fn thinking_deltas(events: &[crate::codec::ir::IrStreamEvent]) -> String {
 }
 
 /// OAI-02. A streamed `delta.annotations` url_citation reaches the IR as a CitationsDelta on the
+/// text block and a foreign client with a URL-only carrier (Responses) receives it.
 #[test]
 fn oai02_stream_annotations_become_citations() {
     let chunks = [
@@ -315,6 +323,7 @@ fn a_chat_url_without_an_anthropic_opaque_index_is_an_audited_loss() {
 }
 
 /// OAI-14 (text). Preamble text → tool call → MORE text: the resumed text is carried in a NEW text
+/// block at a fresh index (not dropped, not reopened at the closed index).
 #[test]
 fn oai14_text_after_tool_calls_is_carried() {
     let chunks = [
@@ -334,6 +343,7 @@ fn oai14_text_after_tool_calls_is_carried() {
 }
 
 /// OAI-14 (reasoning). Text → reasoning → text: the late reasoning is carried as a Thinking block at
+/// a fresh index, and no already-opened index shifts.
 #[test]
 fn oai14_reasoning_after_text_is_carried() {
     let chunks = [
@@ -378,6 +388,7 @@ fn oai_resp(extra: Value) -> Value {
 }
 
 /// OAI-03. OpenAI `service_tier` is read into the IR tier (`default` ↔ `standard`, `priority` ↔
+/// `priority`) and written back as OpenAI's top-level member, buffered and streamed.
 #[test]
 fn oai03_service_tier_maps_both_ways() {
     let out = xresp(
@@ -440,6 +451,8 @@ fn oai03_service_tier_maps_both_ways() {
 }
 
 /// OAI-12. An Anthropic `stop_reason: "refusal"` response reaches an OpenAI client as a native
+/// refusal — the text in `message.refusal`, `content: null` — and an OpenAI refusal survives the
+/// IR round trip in the same slot.
 #[test]
 fn oai12_refusal_text_is_written_to_message_refusal() {
     let anthropic = json!({
@@ -490,6 +503,7 @@ fn oai12_refusal_text_is_written_to_message_refusal() {
 }
 
 /// OAI-08. A legacy `message.function_call` response becomes a tool call for a foreign client
+/// (buffered and streamed), not a `tool_use` stop with no block.
 #[test]
 fn oai08_legacy_function_call_response_is_a_tool_use() {
     let body = json!({
@@ -537,6 +551,8 @@ fn oai08_legacy_function_call_response_is_a_tool_use() {
 }
 
 /// OAI-09. A Chat `custom` tool is not turned into an empty-name function tool: cross-protocol it is
+/// dropped (no foreign dialect has a free-text tool), the function tools beside it survive, and an
+/// OpenAI-origin IR re-emits it verbatim.
 #[test]
 fn oai09_custom_tool_is_not_an_empty_name_function() {
     use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};
@@ -565,6 +581,7 @@ fn oai09_custom_tool_is_not_an_empty_name_function() {
 }
 
 /// OAI-06. A `file.file_data` sent as BARE base64 (no `data:` prefix) is the file's content, typed
+/// by its filename — it reaches a foreign lane as a base64 document, not as a URL every writer drops.
 #[test]
 fn oai06_bare_base64_file_data_is_base64() {
     let body = json!({
@@ -611,6 +628,8 @@ fn legacy_request() -> Value {
 }
 
 /// OAI-07. Legacy `functions` / `function_call` / `role:"function"` map onto the modern IR (tools,
+/// tool choice, a paired ToolUse / ToolResult) and reach a foreign lane; an OpenAI-origin
+/// re-serialize writes the legacy shape back unchanged.
 #[test]
 fn oai07_legacy_function_calling_request_maps() {
     use crate::codec::proto_codec::{ProtocolReader, ProtocolWriter};

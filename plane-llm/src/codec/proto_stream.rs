@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Response-stream translation: the concrete `StreamTranslate` and its factory, driven by the
+//! relay (`exchange::reply::relay`).
 
 use crate::codec::dialect::{parse_sse_frame, write_sse_frame, SSE_DONE_FRAME, SSE_DONE_SENTINEL};
 use crate::codec::framework::STREAM_ABORT_DETAIL;
@@ -11,44 +12,62 @@ use super::proto_codec::{protocol_for, Protocol, SameProtoEdit, StreamFraming, T
 use std::borrow::Cow;
 
 /// Pure cross-protocol response-stream translator. Feed egress-protocol SSE bytes, get ingress
+/// SSE bytes: `egress.reader().read_response_events` (wire to IR, stateful fan-out) composed with
+/// `ingress.writer().write_response_event` (IR to wire).
 pub struct StreamTranslate {
     ingress: Protocol,
     egress: Protocol,
     pub decode: crate::codec::ir::StreamDecodeState,
     pub buf: Vec<u8>,
     /// How far into `buf` we have scanned for a frame terminator; scanning only the tail keeps
+    /// `feed()` linear when one large frame arrives in many small chunks.
     pub scanned: usize,
     /// Set once the reassembly buffer exceeds `MAX_BUF` with no complete frame: the stream is
+    /// abandoned so an upstream that never emits a terminator cannot exhaust memory.
     pub aborted: bool,
     /// ingress == "openai": the stream must end with `data: [DONE]\n\n`.
     emit_done: bool,
     /// egress == "bedrock": frames are binary `application/vnd.amazon.eventstream`, not SSE.
     pub egress_eventstream: bool,
     /// ingress == "bedrock": the client is an AWS SDK, so each event is packed into a binary
+    /// eventstream frame (valid CRC32), not SSE.
     pub ingress_eventstream: bool,
     /// The host's monotonic reading (ns) when the first byte was fed, for a real `metrics.latencyMs`
     started_at: Option<u64>,
     /// Per-stream ingress-keyed framing state. The protocol-specific stream-shape decisions (OpenAI
+    /// per-chunk identity replay and `include_usage` un-fold, Bedrock messageStop/metadata deferral
+    /// and finish flush) live behind this vtable in the owning protocol's module
+    /// ([`StreamFraming`]), so the translator names no wire quirk.
     framing: Box<dyn StreamFraming>,
     /// Cross-protocol tool-id native remap: reshapes each egress `tool_use` id (OpenAI `call_…`) to
+    /// the ingress client's native shape (Anthropic `toolu_…`) so a foreign id never reaches the
+    /// client.
     tool_id_remap: ToolIdRemap,
     /// The events fed to `translate_ir_event` come from an answer that already went through the
+    /// ingress preparation pass, so their tool ids are in the client's shape and must not be
+    /// reshaped again.
     ir_already_prepared: bool,
     /// Input-token usage captured at `MessageStart.usage`, carried to the terminal `MessageDelta`.
     start_usage: Option<crate::codec::ir::IrUsage>,
     /// Set once a terminal `MessageStop` was emitted. Guards against a trailing `MessageDelta`
     message_stopped: bool,
     /// Same-protocol universal-translate mode (Change B step 2): ingress == egress, built via
+    /// [`StreamTranslate::new_same_proto`].
     same_proto: bool,
     /// The terminal IR-derived usage (Change A "A-tap"), accumulated from the
+    /// `MessageStart`/`MessageDelta`/`MessageStop` events after the Anthropic start-usage backfill,
+    /// so it has the real prompt and completion counts for every protocol.
     last_usage: Option<crate::codec::ir::IrUsage>,
     /// A genuine terminal error seen mid-stream, set when a reader emits an
+    /// [`crate::codec::ir::IrStreamEvent::Error`] (Anthropic `error`, OpenAI in-band `{"error":...}`,
+    /// Responses `response.failed`, Bedrock `*Exception`).
     terminal_error: Option<String>,
     /// Stop writing after a local encoding failure while continuing to read upstream usage.
     encoding_failed: bool,
     /// An upstream terminal error retains its refund semantics even if encoding also fails.
     upstream_error: bool,
     /// Terminal-usage fold (SSE ingress: anthropic/gemini/cohere/responses; see
+    /// `StreamFraming::folds_terminal_usage`).
     pending_terminal: Option<(
         crate::codec::ir::IrStopReason,
         Option<String>,
@@ -57,14 +76,19 @@ pub struct StreamTranslate {
     )>,
     pending_stop: bool,
     /// IR block indices whose BlockStart was translated and BlockStop has not. Anything left at the
+    /// terminal frame was never closed by the egress reader (truncated upstream, or a terminal branch
+    /// that does not drain every block, e.g. cohere `message-end` closes only text).
     open_blocks: std::collections::BTreeMap<usize, bool>,
     /// Test-only: counts frames that reached the `crate::codec::json::parse_str` DOM parse in the
+    /// SSE loop, proving the same-proto read probe elides the parse for frames with no usage or
+    /// failure.
     #[cfg(test)]
     pub decode_calls: std::cell::Cell<usize>,
 }
 
 impl StreamTranslate {
     /// Build a translator for an ingress to egress pair. `None` if either protocol is unknown or
+    /// ingress == egress (the caller does native passthrough).
     pub fn new(ingress: &str, egress: &str) -> Option<Self> {
         if ingress == egress {
             return None;
@@ -124,6 +148,7 @@ impl StreamTranslate {
     }
 
     /// The translator whose ingress writer bounds each per-item accumulator at `cap`: the
+    /// translation cap the plane enforces (`limits.request_body_max_bytes`).
     #[must_use]
     pub fn with_translate_cap(self, cap: usize) -> Self {
         self.ingress.writer().set_translate_cap(cap);
@@ -131,6 +156,7 @@ impl StreamTranslate {
     }
 
     /// Record whether the client opted into streaming usage (`stream_options.include_usage ==
+    /// true`) and forward it to the ingress framing.
     pub fn set_client_include_usage(&mut self, include: bool) {
         self.framing.set_client_include_usage(include);
     }
@@ -141,6 +167,7 @@ impl StreamTranslate {
     }
 
     /// Translate one egress event `(event_type, payload)` into ingress wire bytes, advancing the
+    /// decode state.
     fn translate_event(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -180,11 +207,14 @@ impl StreamTranslate {
     }
 
     /// Far-end wire paths this stream dropped on its way to the caller, each warned once; the host
+    /// records one audit row per path at stream end.
     pub fn dropped(&self) -> &[String] {
         &self.decode.dropped
     }
 
     /// Run one decoded IR event through the cross-protocol pipeline (tool-id remap, identity strip,
+    /// usage backfill and A-tap, framing seams, ingress writer) and append the framed bytes to
+    /// `out`.
     fn translate_ir_event(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -389,6 +419,7 @@ impl StreamTranslate {
     }
 
     /// Re-emit a buffered (non-stream) 2xx as the ingress dialect's native stream, for a client that
+    /// asked to stream when the upstream answered with one JSON body its stream decoder cannot parse.
     pub fn synthesize_from_response(
         host: &dyn busbar_contract::codec::CodecHost,
         ingress: &str,
@@ -423,6 +454,8 @@ impl StreamTranslate {
     }
 
     /// Fold a far-end-reported usage into `last_usage`, the billing source: the one per-field
+    /// non-zero/`Some`-wins merge (shared with the terminal-usage fold), so the cross- and
+    /// same-protocol A-taps cannot drift and the detail buckets ride along.
     fn fold_reported_usage(&mut self, reported: &crate::codec::ir::IrUsage) {
         let acc = self
             .last_usage
@@ -431,6 +464,7 @@ impl StreamTranslate {
     }
 
     /// Recover accounting only when the content reader could not carry a report. A normal
+    /// usage-bearing IR event keeps its existing read, warning, backfill and writer path.
     fn recover_unread_stream_usage(
         &mut self,
         event_type: &str,
@@ -462,6 +496,8 @@ impl StreamTranslate {
     }
 
     /// Same-protocol usage side-channel (Change B step 2): runs only the egress reader and the
+    /// start-usage/backfill/`last_usage` accumulation of `translate_event`, with no remap, identity
+    /// strip, writer or reframe, since the original bytes re-emit verbatim.
     fn extract_usage_only(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -498,6 +534,8 @@ impl StreamTranslate {
     }
 
     /// Write one IR event through the ingress writer and append its framed bytes to `out`. Branches
+    /// only on transport (binary frame vs SSE); every protocol-specific per-frame decision (a native
+    /// usage frame's real latency, per-chunk SSE identity) goes through the [`StreamFraming`] vtable.
     fn emit_ir_event(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -596,6 +634,7 @@ impl StreamTranslate {
     }
 
     /// Close every block the egress reader left open. `mem::take` first so re-entrant
+    /// `emit_ir_event` calls cannot re-insert (idempotent).
     fn close_open_blocks(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -611,6 +650,7 @@ impl StreamTranslate {
     }
 
     /// Close already-visible non-tool blocks on an upstream failure. Stopping a deferred tool
+    /// can emit a runnable call, so discard those entries instead of completing them.
     fn close_failed_blocks(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -628,14 +668,18 @@ impl StreamTranslate {
     }
 
     /// Hard cap on the reassembly buffer, so an upstream that never emits a frame terminator cannot
+    /// exhaust memory.
     pub const MAX_BUF: usize = crate::codec::eventstream::MAX_FRAME_BYTES;
 
     /// Feed a chunk of egress SSE bytes; return translated ingress bytes for the complete frames now
+    /// available (empty for a partial frame).
     pub fn feed(&mut self, host: &dyn busbar_contract::codec::CodecHost, chunk: &[u8]) -> Vec<u8> {
         self.feed_borrowed(host, chunk).into_owned()
     }
 
     /// [`Self::feed`], borrowing where it can: a same-protocol SSE piece on a frame boundary
+    /// (nothing buffered) needing no edit is answered as `chunk[..consumed]` with no copy; only an
+    /// unterminated tail is copied into the reassembly buffer.
     pub fn feed_borrowed<'a>(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -666,6 +710,9 @@ impl StreamTranslate {
             None => Cow::Owned(buf[..consumed].to_vec()),
         };
 
+        if self.aborted {
+            return out;
+        }
         if fresh {
             buf.extend_from_slice(&chunk[consumed..]);
         } else {
@@ -680,6 +727,8 @@ impl StreamTranslate {
     }
 
     /// Egress is binary AWS event-stream framing (Bedrock ConverseStream). The event name is in the
+    /// `:event-type` header, not the payload; the Bedrock reader keys off a `type` field, so the
+    /// header is folded into the payload.
     fn feed_eventstream(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -729,6 +778,10 @@ impl StreamTranslate {
                 continue;
             }
             let Ok(mut data) = serde_json::from_slice::<serde_json::Value>(&payload) else {
+                if !self.same_proto {
+                    self.abort();
+                    break;
+                }
                 continue;
             };
             if let Some(obj) = data.as_object_mut() {
@@ -753,6 +806,7 @@ impl StreamTranslate {
     }
 
     /// Drain every complete blank-line-delimited SSE frame of `src` (the buffer, or a piece on a
+    /// frame boundary).
     fn drain_sse(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -783,7 +837,8 @@ impl StreamTranslate {
                 #[cfg(test)]
                 self.decode_calls.set(self.decode_calls.get() + 1);
                 let Ok(value) = crate::codec::json::parse_str::<serde_json::Value>(&data) else {
-                    continue;
+                    self.abort();
+                    break;
                 };
                 self.translate_event(host, event_type, &value, &mut out);
                 continue;
@@ -822,26 +877,33 @@ impl StreamTranslate {
     }
 
     /// True once this translator abandoned its stream (reassembly buffer past [`Self::MAX_BUF`] with
+    /// no terminator, a malformed egress event-stream prelude, or invalid translated JSON), so the happy-path terminal events
+    /// were never produced and further `feed`s are no-ops.
     pub fn aborted(&self) -> bool {
         self.aborted
     }
 
     /// The terminal IR-derived usage (Change A "A-tap"), or `None` if no usage-bearing terminal event
+    /// was seen.
     pub fn usage(&self) -> Option<&crate::codec::ir::IrUsage> {
         self.last_usage.as_ref()
     }
 
     /// The terminal stream error message, or `None` for a clean stream (Change A). The
+    /// `FirstByteBody` stream-end arm reads it for breaker disposition (non-`None` records a breaker
+    /// transient and suppresses token billing).
     pub fn terminal_error(&self) -> Option<&str> {
         self.terminal_error.as_deref()
     }
 
     /// A local encoding failure is a translation abort that retains reported work. An upstream
+    /// terminal error keeps the reply's existing refund semantics instead.
     pub fn local_encoding_failure(&self) -> bool {
         self.encoding_failed && !self.upstream_error
     }
 
     /// Frame a terminal mid-stream error through the live ingress writer this translator has driven
+    /// since the first frame, the one that latched the stream's identity.
     pub fn terminal_error_frame(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -851,6 +913,7 @@ impl StreamTranslate {
     }
 
     /// Abandon the stream as unrecoverable: release the reassembly buffer, set `aborted` so further
+    /// `feed()` is a no-op, and let `finish()` emit the ingress-native terminal error frame.
     fn abort(&mut self) {
         self.aborted = true;
         self.buf.clear();
@@ -859,6 +922,7 @@ impl StreamTranslate {
     }
 
     /// Call once at end-of-stream. Returns the ingress terminator (OpenAI: `data: [DONE]\n\n`;
+    /// Anthropic: empty, `message_stop` already terminates).
     pub fn finish(&mut self, host: &dyn busbar_contract::codec::CodecHost) -> Vec<u8> {
         let mut out: Vec<u8> = Vec::new();
 
@@ -930,6 +994,8 @@ impl StreamTranslate {
 }
 
 /// Fan a whole (buffered) response out into the IR events a live stream of the same completion
+/// carries: `MessageStart`, per block a `BlockStart`, delta(s) and `BlockStop`, then the terminal
+/// `MessageDelta` and `MessageStop`, so the ingress writer sees the live-path shape.
 pub fn response_to_ir_events(
     ir: &crate::codec::ir::IrResponse,
 ) -> Vec<crate::codec::ir::IrStreamEvent> {
@@ -949,7 +1015,8 @@ fn response_to_ir_events_with_origins(
         crate::codec::drops::writer_drop!(
             crate::codec::drops::wire("choices[].message.audio"),
             &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-            [], "dropping native Chat audio during stream synthesis: no streamed IR audio-output carrier"
+            [],
+            "dropping native Chat audio during stream synthesis: no streamed IR audio-output carrier"
         );
     }
     events.push(IrStreamEvent::MessageStart {
@@ -1118,6 +1185,7 @@ fn response_to_ir_events_with_origins(
 }
 
 /// Registry-resolved streaming-translator factory, the single seam both the hot (`engine/mod.rs`)
+/// and degraded (`engine/walk.rs`) forward paths call so their wiring cannot drift.
 pub fn new_stream_translator_on(
     ingress: &str,
     egress: &str,
@@ -1136,6 +1204,7 @@ pub fn new_stream_translator_on(
 }
 
 /// Write a same-protocol OpenAI SSE frame to `out` with its top-level `usage` member removed,
+/// preserving every other byte.
 fn rewrite_frame_strip_usage(out: &mut Vec<u8>, frame: &[u8], data_str: &str) {
     let Some((cut_start, cut_end)) = crate::codec::dialect::top_level_usage_cut(data_str) else {
         out.extend_from_slice(frame);
@@ -1174,6 +1243,8 @@ fn rewrite_frame_strip_usage(out: &mut Vec<u8>, frame: &[u8], data_str: &str) {
 mod rewrite_frame_strip_usage_tests;
 
 /// Merge a trailing usage-only chunk's counts into the deferred terminal usage (SSE terminal-usage
+/// fold), by the `last_usage` rule: a non-zero/`Some` trailing field overrides the terminal value,
+/// a zero/`None` one leaves it intact.
 fn backfill_from_start_usage(
     usage: &mut crate::codec::ir::IrUsage,
     start: &crate::codec::ir::IrUsage,
@@ -1221,6 +1292,7 @@ fn merge_trailing_usage(acc: &mut crate::codec::ir::IrUsage, trailing: &crate::c
 }
 
 /// The detail half of the fold: every [`crate::codec::ir::IrUsageDetail`] bucket rides the same
+/// Some-wins rule.
 fn merge_trailing_usage_detail(
     acc: &mut crate::codec::ir::IrUsageDetail,
     trailing: &crate::codec::ir::IrUsageDetail,
@@ -1330,47 +1402,9 @@ fn merge_trailing_usage_detail(
 mod merge_trailing_usage_tests;
 
 #[cfg(test)]
-mod block_origin_synthesis_tests {
-    use super::*;
-    use crate::codec::proto_codec::ProtocolReader;
-    use serde_json::json;
+#[path = "tests/block_origin_synthesis_tests.rs"]
+mod block_origin_synthesis_tests;
 
-    #[test]
-    fn actual_buffered_origins_follow_compacted_and_reordered_stream_indices() {
-        let response = crate::codec::bedrock::BedrockReader
-            .read_response(
-                crate::codec::test_host::HOST,
-                &json!({"output": {"message": {"role": "assistant", "content": [
-                    {"image": {"format": "png", "source": {"bytes": "YQ=="}}},
-                    {"text": "fixture answer"},
-                    {"reasoningContent": {"reasoningText": {"text": "fixture thought"}}}
-                ]}}}),
-            )
-            .expect("native buffered response");
-        let (events, origins) = response_to_ir_events_with_origins(&response);
-        let opened: Vec<_> = events
-            .iter()
-            .filter_map(|event| match event {
-                crate::codec::ir::IrStreamEvent::BlockStart { index, .. } => Some(*index),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(opened, origins.keys().copied().collect::<Vec<_>>());
-        let sources: Vec<_> = opened
-            .iter()
-            .map(|index| {
-                let source = origins.get(index).unwrap().source.unwrap();
-                assert_eq!(source.dialect, "bedrock");
-                source.path
-            })
-            .collect();
-        assert_eq!(
-            sources,
-            [
-                "output.message.content[].text",
-                "output.message.content[].reasoningContent",
-                "output.message.content[].image"
-            ]
-        );
-    }
-}
+#[cfg(test)]
+#[path = "tests/audit_malformed_stream_tests.rs"]
+mod audit_malformed_stream_tests;

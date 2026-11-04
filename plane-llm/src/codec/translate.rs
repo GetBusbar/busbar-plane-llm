@@ -2,6 +2,10 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The cross-dialect translate pipeline (#83a SD-3: dialect machinery). Translating one dialect's
+//! request or response into another's (read through the ingress cell, prepare, write through the
+//! egress dialect) is this plane's own rule (Law 5), so it lives with the dialects: the
+//! [`TranslateCodec`](crate::codec::translate::TranslateCodec) entrypoint, blanket-implemented for
+//! every codec cell, and the values its two directions read from and answer with.
 
 use crate::codec::egress_prep::EgressPrep;
 use busbar_contract::billing::Billing;
@@ -13,6 +17,8 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 
 /// What a request-translation hop reads from: a parsed JSON object `Value` (the value-codec fast
+/// path chat overrides to avoid a re-serialize), or opaque bytes plus content-type (a
+/// multipart/binary wire the byte codec owns). [`TranslateCodec`] branches on this.
 pub enum TranslateReqInput<'a> {
     /// A JSON-object body, routed through the value codecs.
     Json(&'a Value),
@@ -24,28 +30,38 @@ pub enum TranslateReqInput<'a> {
 }
 
 /// The result of a cross-protocol request translation: the egress wire plus what did not cross (the
+/// controls the egress dialect dropped, then every other dropped member by wire path in
+/// `codec::drops`) for the seam's audit-and-allow event.
 pub struct TranslatedRequest {
     pub wire: EgressWire,
     pub dropped_controls: Vec<String>,
 }
 
 /// Why a cross-protocol request translation could not proceed: three terminal outcomes. The seam
+/// owns the projection into an ingress-native error, so the entrypoint names no HTTP shape.
 pub enum TranslateReqReject {
     /// The ingress reader refused the body; the caller renders `ingress_reject_response`.
     Ingress(IngressReject),
     /// The egress protocol does not serve this operation; the caller renders the 404
+    /// (`DETAIL_MODEL_UNSUPPORTED_OPERATION`).
     EgressUnsupported,
     /// The egress dialect cannot represent the request without silent loss; the caller renders a 400
+    /// carrying `reason`.
     Unrepresentable(String),
 }
 
 /// What a non-stream response-translation hop reads from: the upstream 2xx body, a parsed JSON
+/// `Value` (value-codec path) or opaque bytes (a non-JSON wire such as speech audio).
 pub enum TranslateRespInput<'a> {
     Json(&'a Value),
     Opaque(&'a [u8]),
 }
 
 /// The single neutral translate entrypoint on the codec cell (G6 step 4). Every request/response hop
+/// flows through it so core never orchestrates the concrete read, prepare, write pipeline:
+/// `wire.rs`'s request seam calls [`Self::translate_request`], the engine's non-stream response arm
+/// calls [`Self::translate_response`], and the hook / lazy-body side calls [`Self::read_facts`] /
+/// [`Self::read_facts_value`].
 pub trait TranslateCodec: OperationHandler {
     /// Cross-protocol request translation: `self` is the ingress codec (it reads), `egress` the
     /// lane's codec (it writes).
@@ -147,11 +163,13 @@ pub trait TranslateCodec: OperationHandler {
     }
 
     /// Read the request facts the hook seam / lazy-body projects from: the one read through this
+    /// codec's reader, projected to [`IrFacts`].
     fn read_facts_value(&self, v: &Value) -> Result<Box<dyn IrFacts + Send + Sync>, IngressReject> {
         Ok(self.read_request_value(v)?.facts())
     }
 
     /// Byte-codec sibling of [`Self::read_facts_value`], for an opaque/multipart body whose caller
+    /// text is reachable only through the byte reader.
     fn read_facts(
         &self,
         wire: &[u8],
@@ -213,32 +231,57 @@ pub trait TranslateCodec: OperationHandler {
             }
             TranslateRespInput::Json(v) => {
                 let mut ir = self.read_response_value(host, v)?;
-                let usage = ir.billing();
-                ir.fill_response_model_if_absent(lane_model);
-                if let Some(body) = ingress_request_body {
-                    ir.apply_request_echo(body);
-                }
-                ir.apply_translate_cap(translate_cap);
-                ir.prepare_for_ingress(ingress_protocol, now);
-
-                if wants_stream {
-                    if let Some(frames) =
-                        ir.wrap_buffered_as_stream(host, ingress_protocol, elapsed_ms)
-                    {
-                        return Ok((usage, TranslatedResponse::StreamFrames(frames)));
-                    }
-                }
-
-                Ok((
-                    usage,
-                    ir.write_ingress_response(host, ingress_protocol, ingress_serves_op),
+                Ok(write_response_ir(
+                    host,
+                    ir.as_mut(),
+                    ingress_serves_op,
+                    ingress_protocol,
+                    lane_model,
+                    now,
+                    wants_stream,
+                    elapsed_ms,
+                    ingress_request_body,
+                    translate_cap,
                 ))
             }
         }
     }
 }
 
+/// Render a response already decoded by the whole-answer seam, retaining its original billing.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_response_ir(
+    host: &dyn busbar_contract::codec::CodecHost,
+    ir: &mut dyn busbar_contract::ir::handle::IrHandle,
+    ingress_serves_op: bool,
+    ingress_protocol: &str,
+    lane_model: &str,
+    now: u64,
+    wants_stream: bool,
+    elapsed_ms: Option<u64>,
+    ingress_request_body: Option<&Value>,
+    translate_cap: usize,
+) -> (Option<Billing>, TranslatedResponse) {
+    let usage = ir.billing();
+    ir.fill_response_model_if_absent(lane_model);
+    if let Some(body) = ingress_request_body {
+        ir.apply_request_echo(body);
+    }
+    ir.apply_translate_cap(translate_cap);
+    ir.prepare_for_ingress(ingress_protocol, now);
+    if wants_stream {
+        if let Some(frames) = ir.wrap_buffered_as_stream(host, ingress_protocol, elapsed_ms) {
+            return (usage, TranslatedResponse::StreamFrames(frames));
+        }
+    }
+    (
+        usage,
+        ir.write_ingress_response(host, ingress_protocol, ingress_serves_op),
+    )
+}
+
 /// Keep controls first and ordinary drops in encounter order. A value-qualified earlier path
+/// (`tool_choice=none`) also names its unqualified drop (`tool_choice`), in that direction only.
 fn merge_dropped_paths(
     controls: impl IntoIterator<Item = String>,
     dropped: Vec<String>,

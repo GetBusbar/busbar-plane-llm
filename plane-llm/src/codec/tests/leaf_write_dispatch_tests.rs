@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Leaf-op write dispatchers fail LOUDLY on an unknown egress protocol, rather than emitting a
+//! malformed empty body — the guard for a future leaf-op protocol added without extending the match.
 
 use crate::codec::ir::embeddings::EmbeddingsReq;
 use crate::codec::leaf_codec::embeddings_write_request;

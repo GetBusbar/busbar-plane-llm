@@ -24,6 +24,7 @@ fn slab(body: Bytes) -> SlabBytes {
 }
 
 /// The refusal a transcription writer's empty write becomes: a request always carries its model, so
+/// a writer that wrote nothing refused it (invalid audio or a form delimiter in its bytes).
 fn unwritable(egress_proto: &str) -> String {
     format!(
         "this request cannot be written onto {egress_proto}: its audio cannot be represented in \
@@ -62,10 +63,12 @@ macro_rules! leaf_handles {
                 model: &str,
             ) -> EgressWire {
                 leaf_handles!(@format $req, self.0, egress_proto);
+                leaf_handles!(@prepare_model $req, self.0, egress_proto, model);
                 let bytes = super::leaf_codec::$write_req(egress_proto, &self.0);
                 leaf_handles!(@refuse $refuse bytes egress_proto);
                 match serde_json::from_slice::<Value>(&bytes) {
                     Ok(v) => EgressWire::Json(v),
+                    Err(_) if self.0.model == model => EgressWire::Bytes(slab(bytes)),
                     Err(_) => {
                         self.0.model = model.to_string();
                         EgressWire::Bytes(slab(super::leaf_codec::$write_req(egress_proto, &self.0)))
@@ -138,6 +141,13 @@ macro_rules! leaf_handles {
         }
     };
     (@representable $other:ident) => {};
+    (@prepare_model TranscriptionReqHandle, $ir:expr, $proto:ident, $model:ident) => {
+        // OpenAI transcription writes multipart, whose model cannot be stamped as JSON later.
+        if $proto == super::proto_codec::PROTO_OPENAI {
+            $ir.model = $model.to_string();
+        }
+    };
+    (@prepare_model $other:ident, $ir:expr, $proto:ident, $model:ident) => {};
     (@format TranscriptionReqHandle, $ir:expr, $proto:ident) => {
         if let Some(reason) = transcription_format_refusal(&$ir, $proto) {
             return EgressWire::Unrepresentable { reason };
@@ -183,6 +193,7 @@ macro_rules! leaf_handles {
 }
 
 /// A plain foreign transcript has no timing information from which an SRT/VTT document can be
+/// reconstructed.
 fn transcription_format_refusal(request: &TranscriptionReq, target: &str) -> Option<String> {
     let format = request.response_format.as_deref()?;
     (target != crate::codec::proto_codec::PROTO_OPENAI && matches!(format, "srt" | "vtt"))
@@ -208,3 +219,7 @@ leaf_handles!(TranscriptionReqHandle(TranscriptionReq), TranscriptionRespHandle(
 leaf_handles!(SpeechReqHandle(SpeechReq), SpeechRespHandle(SpeechResp), SPEECH,
     speech_write_request, speech_write_response,
     stream: field, req_billing: own, resp_billing: own, refuse_empty: no, refuse_empty_response: yes);
+
+#[cfg(test)]
+#[path = "tests/allocation_wire_tests.rs"]
+mod allocation_wire_tests;

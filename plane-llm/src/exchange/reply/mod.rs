@@ -1,4 +1,5 @@
 //! The far end's answer, sans I/O: the status, head fields and body the far end answered an attempt
+//! with, the units it reported, and what the answer means for the walk.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -108,6 +109,7 @@ pub struct Units {
 
 impl Units {
     /// The units of a token usage: its four token tiers, and every open class it counted (a turn's
+    /// billed searches) beside the open classes the answer's billing named.
     #[must_use]
     pub fn of(usage: Option<&TokenUsage>, mut open: BTreeMap<String, u64>) -> Self {
         let u = usage.cloned().unwrap_or_default();
@@ -177,8 +179,11 @@ enum State {
 pub struct Reply {
     state: State,
     /// The relayed answer ended a usable success the caller was reading (first byte reached it, stream
+    /// ended clean): a caller leaving while its last window is still being written bills the units
+    /// stated, as one leaving mid-relay does (L1#5).
     ended_partial: bool,
     /// A streamed answer over the invoke envelope, re-framed into its carried dialect's events
+    /// before it is read ([`invoke::Transcoder`]).
     invoke: Option<invoke::Transcoder>,
 }
 
@@ -202,6 +207,7 @@ fn json_array(ctx: &ReplyCtx<'_>) -> bool {
 }
 
 /// A WHOLE answer, rendered here in full (a translated answer, a judged failure, a refusal): its head
+/// states its length, so the caller is sent it under that length; a relayed answer states none and is sent as it is relayed.
 fn answered<'a>(r: Rendered, units: Units, verdict: Verdict, fault: Option<Fault>) -> Piece<'a> {
     let mut fields = r.fields;
     if !fields
@@ -325,17 +331,20 @@ impl Reply {
         if ingress == egress {
             wire::relay_far_head(ingress, &mut fields, head);
         }
-        let relay = relay::Relay::new(relay::RelayCtx {
-            ingress,
-            egress,
-            far_is_stream,
-            json_array: json_array(ctx),
-            client_include_usage: ctx.intent.client_include_usage,
-            request: ctx.arrived.parsed.as_ref(),
-            handler: op,
-            meter: true,
-            translate_cap: ctx.translate_cap,
-        });
+        let relay = relay::Relay::new_for_operation(
+            relay::RelayCtx {
+                ingress,
+                egress,
+                far_is_stream,
+                json_array: json_array(ctx),
+                client_include_usage: ctx.intent.client_include_usage,
+                request: ctx.arrived.parsed.as_ref(),
+                handler: op,
+                meter: true,
+                translate_cap: ctx.translate_cap,
+            },
+            ctx.arrived.operation,
+        );
         Reply {
             ended_partial: false,
             state: State::Relay {
@@ -386,7 +395,12 @@ impl Reply {
         match &mut self.state {
             State::Done => pending(),
             State::Error { body, .. } => {
-                body.extend_from_slice(bytes);
+                // Keep the upstream status and normal error judgment, even when its diagnostic
+                // body exceeds the buffer budget. Continue draining without retaining the tail.
+                let keep = bytes
+                    .len()
+                    .min(ctx.translate_cap.saturating_sub(body.len()));
+                body.extend_from_slice(&bytes[..keep]);
                 if last {
                     self.judge(host, ctx)
                 } else {
@@ -489,12 +503,14 @@ impl Reply {
     }
 
     /// The piece fed next reads its [`At`]: only the last piece of an answer taken whole (its
+    /// creation stamp and elapsed milliseconds).
     #[must_use]
     pub fn takes_time(&self, last: bool) -> bool {
         last && matches!(self.state, State::Whole { .. })
     }
 
     /// The answer retains its reported work on cancellation: a usable relay, or a whole answer
+    /// retaining usage through delivery failure.
     #[must_use]
     pub fn partial(&self) -> bool {
         match &self.state {
@@ -505,6 +521,7 @@ impl Reply {
     }
 
     /// CUT the answer: the far end's transfer failed (`transport`) or the kernel's ceiling for it
+    /// expired, before its last piece.
     pub fn cut(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,

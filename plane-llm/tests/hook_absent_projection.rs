@@ -2,6 +2,10 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! ABSENT SEMANTICS for the hook projection, on the plane that projects it (ported from the
+//! predev-only `busbar-llm` test `hook_non_chat_projection_tests::
+//! absent_semantics_hold_for_opless_and_bodyless`, whose `read_hook_facts` is the plane's `project`
+//! on the driver): an arrival the plane has no operation reader for, or one with no body, projects
+//! the EMPTY view (no turn, no system text, no size signal).
 
 use busbar_plane_llm::exchange::arrive::Arrived;
 use busbar_plane_llm::exchange::project::{project, HookView};

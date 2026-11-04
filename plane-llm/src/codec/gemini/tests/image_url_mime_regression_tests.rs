@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Regression net: the Gemini egress Image-URL arm must emit `fileData` WITH a `mimeType`. Gemini's
+//! `fileData` requires a `mimeType` to decode the referenced file (writer.rs invariant); the arm
+//! previously emitted `fileData{fileUri}` alone, diverging from the Media-URL arm and producing a
+//! part the backend rejects.
 
 use super::*;
 

@@ -38,6 +38,7 @@ pub fn protocol() -> Protocol {
 }
 
 /// OpenAI's `GET /v1/models` envelope: `model` objects (`owned_by: "busbar"`, `created: 0`) in
+/// `{ "object": "list", "data": [...] }`.
 fn models_list_envelope(names: &[&str]) -> serde_json::Value {
     let data: Vec<serde_json::Value> = names
         .iter()
@@ -47,6 +48,8 @@ fn models_list_envelope(names: &[&str]) -> serde_json::Value {
 }
 
 /// Router detection: `/v1/chat/completions` (7), then the OpenAI-family JSON/audio/image ops
+/// (`/v1/embeddings`, `/v1/moderations`, `/v1/images/…`, `/v1/audio/…`; 14, the loosest path
+/// claims).
 fn claims(
     _h: busbar_contract::protocol::HeadFields<'_>,
     path: &str,
@@ -66,6 +69,8 @@ fn claims(
 }
 
 /// Headerless detection. A `/v1/models/{id}` no sibling claimed more tightly (25, looser than
+/// Gemini's `/v1/models/{id}:{action}` at 20, so a genuine Gemini action wins and a colon-bearing
+/// OpenAI fine-tune id stays OpenAI) and an exact `/v1/chat/completions` (55).
 fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrength> {
     use busbar_contract::protocol::ClaimStrength;
     if path.starts_with("/v1/models/") {
@@ -148,12 +153,16 @@ pub(crate) const ENTRY: super::proto_codec::DialectEntry = super::proto_codec::D
 };
 
 /// Largest upstream `tool_calls[].index` accepted in a streaming chunk (OpenAI documents at most 128
+/// parallel calls, so 127 is the highest valid 0-based index).
 const MAX_TOOL_INDEX: u64 = 127;
 
 /// Cap on distinct tool-call indices tracked per stream (`open_tools`), bounding memory and
+/// synthesized BlockStart events against a backend emitting unbounded unique indices.
 const MAX_OPEN_TOOLS: usize = crate::codec::dialect::MAX_OPEN_TOOL_CALLS;
 
 /// OpenAI Chat's usage counts, as data. `prompt_tokens` already includes the cached prefix
+/// (`prompt_tokens_details.cached_tokens`), which is subtracted (saturating) and carried as the
+/// IR's additive cache read.
 const USAGE: &[UsageCount] = &[
     (CountSlot::Input, CountRead::Zero(&[PROMPT_TOKENS])),
     (
@@ -188,9 +197,11 @@ const USAGE: &[UsageCount] = &[
 ];
 
 /// Stable identifier of the identity [`read_openai_usage`] checks `usage.total_tokens` against,
+/// carried on [`crate::codec::ir::UsageIdentityNote::identity`].
 const OPENAI_USAGE_IDENTITY: &str = "openai.usage";
 
 /// An OpenAI Chat `usage` object (`None` when absent) to the IR usage through [`USAGE`]; the
+/// serving tier (`service_tier`, a top-level member beside `usage`) is a word, set from `tier`.
 fn read_openai_usage(
     usage: Option<&serde_json::Value>,
     tier: Option<&serde_json::Value>,
@@ -213,6 +224,7 @@ fn read_openai_usage(
 }
 
 /// `{prompt,completion}_tokens_details.{text,image,audio}_tokens` to the IR's by-modality split
+/// (presentation only, never billed).
 fn read_by_modality(usage: &serde_json::Value) -> Option<crate::codec::ir::IrUsageByModality> {
     let side = |details: &str| {
         let d = usage.get(details);
@@ -244,9 +256,14 @@ const IMAGE_TOKENS: &str = "image_tokens";
 const DEFAULT_MODEL: &str = crate::codec::dialect::FALLBACK_MODEL;
 
 /// Sentinel key tracking the `max_completion_tokens` spelling. The reader folds `max_tokens` and
+/// `max_completion_tokens` into the one IR `max_tokens`, but o1/o3 reasoning models reject
+/// `max_tokens`, so the source spelling is recorded in `extra` for the writer to re-emit on a
+/// same-protocol passthrough.
 const MAX_COMPLETION_TOKENS_SENTINEL: &str = "__busbar_max_completion_tokens";
 
 /// Sentinel key parking per-message provider-specific fields no typed IR models (an assistant
+/// turn's `audio` reference, legacy `function_call`, future keys), as an object keyed by IR-message
+/// index.
 const MESSAGE_EXTRAS_SENTINEL: &str = "__busbar_openai_message_extras";
 
 /// Key inside one message's `MESSAGE_EXTRAS_SENTINEL` entry marking a legacy `role:"function"`
@@ -278,9 +295,11 @@ const COMPLETION_ID_PREFIX: &str = "chatcmpl-";
 const PATH_UPSTREAM: &str = "/v1/chat/completions";
 
 /// The bad-key 401 message, the official phrasing so SDK `is_auth_error` helpers that key on the
+/// message string still fire.
 const AUTH_FAILURE_MSG: &str = "Incorrect API key provided.";
 
 /// The dialect name, also the `vendor` tag on an [`crate::codec::ir::IrImageSource::Vendor`] this
+/// protocol produces (an OpenAI `file.file_id`, which has no neutral form).
 const VENDOR_NAME: &str = "openai";
 
 const LANGUAGE: &str = "language";
@@ -326,6 +345,7 @@ const REASONING_CONTENT: &str = "reasoning_content";
 const SYSTEM_FINGERPRINT: &str = "system_fingerprint";
 
 /// The `model` to emit: the upstream value, else [`DEFAULT_MODEL`], so the required `model` field
+/// is never omitted.
 fn model_or_default(model: Option<&str>) -> &str {
     model.unwrap_or(DEFAULT_MODEL)
 }
@@ -343,6 +363,8 @@ fn read_openai_stop_reason(token: &str) -> crate::codec::ir::IrStopReason {
 }
 
 /// [`crate::codec::ir::IrStopReason`] to `finish_reason` ({stop,length,tool_calls,content_filter});
+/// a reason with no analog (`refusal`, `error`, `pause_turn`, `other`) degrades to `stop` rather
+/// than leak an off-enum value a strict SDK rejects.
 fn write_openai_stop_reason(reason: crate::codec::ir::IrStopReason) -> &'static str {
     use crate::codec::ir::IrStopReason as S;
     match reason {
@@ -355,6 +377,8 @@ fn write_openai_stop_reason(reason: crate::codec::ir::IrStopReason) -> &'static 
 }
 
 /// Read a `response_format` object (`{type:"json_schema", json_schema:{name,schema,strict,
+/// description}}`, `{type:"json_object"}` or `{type:"text"}`) into
+/// [`crate::codec::ir::IrResponseFormat`].
 fn read_openai_response_format(
     v: &serde_json::Value,
 ) -> Option<crate::codec::ir::IrResponseFormat> {
@@ -386,12 +410,15 @@ fn write_openai_response_format(rf: &crate::codec::ir::IrResponseFormat) -> serd
 }
 
 /// Width of a native completion id's suffix: `chatcmpl-` plus exactly 24 base62 characters (33
+/// in all).
 const COMPLETION_ID_TOKEN_LEN: usize = 24;
 
 /// The shared base62 alphabet (`crate::codec::dialect::BASE62_ALPHABET`), used by
+/// [`synth_completion_id`].
 const BASE62: &[u8; 62] = crate::codec::dialect::BASE62_ALPHABET;
 
 /// Synthesize a native-shaped completion id (`chatcmpl-<24 base62 chars>`) for cross-protocol
+/// responses where the backend supplied none.
 fn synth_completion_id(host: &dyn busbar_contract::codec::CodecHost) -> Result<String, IrError> {
     let mut token = [b'0'; COMPLETION_ID_TOKEN_LEN];
     if !crate::codec::dialect::fill_base62(host, &mut token, BASE62) {
@@ -402,6 +429,7 @@ fn synth_completion_id(host: &dyn busbar_contract::codec::CodecHost) -> Result<S
 }
 
 /// The `error.code` token OpenAI-compatible upstreams use for a rate limit. The specific token
+/// rides on `code`; `type` carries the coarser `rate_limit_error` bucket.
 const STREAM_ERR_CODE_RATE_LIMIT: &str = "rate_limit_exceeded";
 
 /// Breaker class for an inline mid-stream `{"error":{...}}` chunk, from `error.code` / `error.type`.
@@ -426,6 +454,7 @@ fn stream_inline_error_class(error_type: Option<&str>, code: Option<&str>) -> St
 pub struct OpenAiReader;
 
 /// Project an [`crate::codec::ir::IrBlock::Media`] into the Chat content part that can express it,
+/// or `None` when there is no slot (the caller emits nothing).
 fn media_part_from_ir(
     kind: crate::codec::ir::IrMediaKind,
     source: &crate::codec::ir::IrImageSource,
@@ -475,17 +504,19 @@ fn media_part_from_ir(
             crate::codec::drops::writer_drop!(
                 crate::codec::drops::block(kind.as_str()),
                 &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                [media_kind = kind.as_str(), ],
+                [media_kind = kind.as_str(),],
                 "dropping attachment on OpenAI Chat egress: this dialect has content parts for \
                  inline audio (`input_audio`) and files (`file`) only — a video block, or an \
                  attachment carried as a bare URL or a foreign vendor handle, has no part to go in. \
-                 The block is NOT emitted (it is deliberately absent, not replaced by empty text)");
+                 The block is NOT emitted (it is deliberately absent, not replaced by empty text)"
+            );
             None
         }
     }
 }
 
 /// Map an audio mime onto `input_audio.format`, or `None` when it has no form in the closed
+/// `{wav, mp3}` enum.
 fn openai_audio_input_format(media_type: &str) -> Option<&'static str> {
     match media_type.to_ascii_lowercase().as_str() {
         keys::AUDIO_MPEG | "audio/mp3" | "audio/mpeg3" | "audio/x-mpeg-3" => Some(FORMAT_MP3),
@@ -506,6 +537,7 @@ const PART_KINDS: &[&str] = &[
 ];
 
 /// The Chat request content-part grammar (`codec::drops`). A part of any other kind does not cross
+/// a translate attempt, which names it.
 const REQUEST_BLOCKS: &[crate::codec::drops::Blocks] = &[crate::codec::drops::Blocks {
     at: &["messages[]", "content[]"],
     tag: Some(keys::TYPE),
@@ -524,6 +556,7 @@ const IR_BLOCK_KINDS: &[(&str, &str)] = &[
 ];
 
 /// The IR request members the reader carries by code from a path no map-file row names (how a drop
+/// of one is named by the caller's wire path).
 const REQUEST_CODE_NAMES: &[(&str, &str)] =
     &[(crate::codec::drops::name::TOP_LOGPROBS, keys::TOP_LOGPROBS)];
 
@@ -564,6 +597,8 @@ const PARKED: &[crate::codec::drops::Parked] = &[
 ];
 
 /// What this dialect's answers carry beyond its map file's rows. A chunk's identity, model, clock,
+/// index, finish reason, logprobs, usage and served tier are read by the stream reader (the stream
+/// rows name only the delta).
 const RESPONSE_CODE: &[&str] = &[];
 const STREAM_CODE: &[&str] = &[
     "id",
@@ -578,6 +613,7 @@ const STREAM_CODE: &[&str] = &[
 ];
 
 /// Answer paths inside a subtree this dialect carries that its code does not, named by the drop
+/// walk (paths a coarse map row covers).
 const RESPONSE_DROPS: &[&str] = &["choices[].message.audio.expires_at"];
 const STREAM_DROPS: &[&str] = &[
     "usage.completion_tokens_details.text_tokens",
@@ -732,6 +768,7 @@ fn read_openai_block(block_val: &serde_json::Value) -> Result<crate::codec::ir::
 }
 
 /// The media type of a bare-base64 `file.file_data` payload, from its `filename` extension;
+/// `application/octet-stream` when there is none or it is unlisted (no type is invented).
 fn file_media_type_from_name(name: Option<&str>) -> &'static str {
     let ext = name
         .and_then(|n| n.rsplit_once('.'))
@@ -886,6 +923,7 @@ impl StreamFraming for OpenAiStreamFraming {
     }
 
     /// Same-protocol edit. OpenAI to OpenAI re-emits upstream frames byte-for-byte and never calls
+    /// `on_egress_chunk`, so the opted-out strip above cannot fire.
     fn same_proto_edit(&self, payload: &[u8]) -> SameProtoEdit {
         if self.client_include_usage {
             return SameProtoEdit::Keep;
@@ -916,6 +954,8 @@ impl StreamFraming for OpenAiStreamFraming {
 
 impl OpenAiStreamFraming {
     /// Remap every `choices[].delta.tool_calls[].index` from the writer's raw IR block index to a
+    /// 0-based ordinal: the first distinct raw index becomes 0, the next 1, and a repeat (argument
+    /// fragments) replays its ordinal.
     fn remap_tool_call_index(&mut self, chunk: &mut serde_json::Value) {
         let Some(obj) = chunk.as_object_mut() else {
             return;
@@ -954,6 +994,7 @@ impl OpenAiStreamFraming {
     }
 
     /// Latch `id`/`created`/`model` from the first chunk that carries an `id`, and inject them
+    /// into every later chunk (the writer omits them there).
     fn apply_chunk_identity(&mut self, chunk: &mut serde_json::Value) {
         let Some(obj) = chunk.as_object_mut() else {
             return;
@@ -990,6 +1031,10 @@ impl OpenAiStreamFraming {
 }
 
 /// Split a folded-usage chunk into (chunk without usage, trailing usage-only chunk). Returns
+/// `Some(trailing)` when `chunk` is a `chat.completion.chunk` carrying a folded top-level `usage`
+/// object: the usage is removed from `chunk` in place and re-homed onto a trailing chunk shaped like
+/// a native include_usage trailer (same `id`/`created`/`model`/`object`, empty `choices`, the
+/// `usage`).
 fn split_openai_trailing_usage(chunk: &mut serde_json::Value) -> Option<serde_json::Value> {
     let obj = chunk.as_object_mut()?;
     if obj.get(keys::OBJECT).and_then(|v| v.as_str()) != Some(OBJ_CHUNK) {
@@ -1021,6 +1066,7 @@ fn split_openai_trailing_usage(chunk: &mut serde_json::Value) -> Option<serde_js
 }
 
 /// Remove a folded top-level `usage` object from a `chat.completion.chunk` in place, emitting no
+/// trailing chunk.
 fn strip_folded_usage(chunk: &mut serde_json::Value) {
     let Some(obj) = chunk.as_object_mut() else {
         return;
@@ -1064,14 +1110,12 @@ pub const OpenAiWriter: OpenAiWriter = OpenAiWriter {
     }),
 };
 
-/// A fresh writer as a value, for one-shot `write_request` / `write_response` calls in tests.
 #[cfg(test)]
-pub(crate) fn openai_writer() -> OpenAiWriter {
-    OpenAiWriter
-}
+include!("tests/mod_openai_writer_helper.rs");
 
 impl OpenAiWriter {
     /// The stream's chunk `id`, first wins: the id already captured, else `mint()` captured and
+    /// returned, so a duplicate opening chunk re-states what the client latched.
     fn carried_chunk_id(
         &self,
         mint: impl FnOnce() -> Result<String, IrError>,
@@ -1137,6 +1181,7 @@ mod usage_census_tests;
 mod df_map_audit_tests;
 
 /// A Chat completion's `moderation.{input,output}` results -> the IR's safety verdicts: one verdict per category a result flags (`categories.<name> = true`), `blocked` = false (a
+/// moderation result reports, it does not block).
 fn read_moderation(
     moderation: Option<&serde_json::Value>,
 ) -> Vec<crate::codec::ir::IrSafetyVerdict> {
@@ -1160,6 +1205,7 @@ const MODERATION_OUTPUT: &str = "output";
 const MODERATION_RESULTS: &str = "results";
 
 /// A Chat `message.audio` -> the IR's audio output: its base64 `data` and its
+/// `transcript`.
 fn read_message_audio(
     audio: Option<&serde_json::Value>,
 ) -> Option<crate::codec::ir::IrAudioOutput> {
@@ -1175,3 +1221,7 @@ fn read_message_audio(
 
 /// The spoken text of a Chat `message.audio`.
 const TRANSCRIPT: &str = "transcript";
+
+#[cfg(test)]
+#[path = "tests/audit_tool_controls_tests.rs"]
+mod audit_tool_controls_tests;

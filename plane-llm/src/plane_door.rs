@@ -2,6 +2,10 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The LLM plane's door: the plane kind's memory-ABI table (`busbar_contract::abi::plane`) built
+//! with the SDK's `plugin_door!` over the exchange's sans-I/O answers ([`crate::exchange`]). [`door`]
+//! is the linked door; the same function is the dropped-in door once a `cdylib` exports it
+//! (`busbar-plane-llm-plugin`, via `busbar_contract::export_door!`), so the two cannot answer
+//! differently.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -59,6 +63,7 @@ use crate::exchange::{handler_of, probe, project, refuse};
 use crate::meta::PROVIDER_KEYS;
 
 /// The protocol axis of the door's linked row: the plane's six dialect declarations in operator
+/// order, as contract data (`busbar_contract::protocol::ProtocolDecl`).
 pub use crate::codec::DECLS as PROTOCOLS;
 
 /// The version the Statement names: the crate's (a test pins the two equal).
@@ -84,6 +89,7 @@ const fn section(name: &'static str, flags: u32) -> Section {
 }
 
 /// `pools:` declared; `providers:`, `models:` and `limits:` read beside it; `webhooks:` its own,
+/// opened with as written (the receivers it switches on, [`webhook`]).
 const SECTIONS: &[Section] = &[
     section(sections::POOLS, SECTION_DECLARING),
     section(sections::PROVIDERS, SECTION_CONSUMED | SECTION_REQUIRED),
@@ -120,6 +126,7 @@ const fn op(i: usize) -> OpClass {
 }
 
 /// The token classes, the one source of this plane's token class names: the first four of the tail's
+/// billable classes.
 pub const TOKEN_CLASSES: [&str; 4] = [
     busbar_contract::records::UNIT_INPUT,
     busbar_contract::records::UNIT_OUTPUT,
@@ -137,6 +144,8 @@ const fn billable(i: usize) -> BillableClass {
 const DIALECT_NAMES: &[AbiStr] = &rows!(AbiStr; DIALECTS.len(), dialect);
 const OP_CLASSES: &[OpClass] = &rows!(OpClass; OPS.len(), op);
 /// The open classes a far end counts beside its tokens, each `(class, family)`: every name the reply
+/// can report in its open counts, from `codec/ir/open_class.rs` (each priced under
+/// `rate_card.<model>.units`), so no count is dropped.
 pub use crate::codec::ir::open_class::OPEN_CLASSES;
 
 const fn open_class(k: usize) -> BillableClass {
@@ -147,6 +156,8 @@ const fn open_class(k: usize) -> BillableClass {
 }
 
 /// The fee unit the plane counts: one per billable request (`busbar_contract::plane::PER_REQUEST`),
+/// reported as 1 exactly where the flat request fee is billed (a reply with a success caller status)
+/// and never where it is refunded (the plane's report is the one fee decider).
 pub const FEE_CLASS: &str = busbar_contract::plane::PER_REQUEST;
 /// [`FEE_CLASS`]'s index in the tail's billable classes.
 pub const FEE_CLASS_INDEX: u32 = (TOKEN_CLASSES.len() + OPEN_CLASSES.len()) as u32;
@@ -189,6 +200,8 @@ const ROUTE_COST: &[RouteCost] = &[
 ];
 
 /// The outbound auth styles the members are bound under: each dialect's default (`egress_style`),
+/// then the provider `auth:` overrides the grammar accepts (`api-key` is also a default), each named
+/// once.
 pub const EGRESS_STYLES: &[&str] = &[
     DIALECTS[1].egress_style,
     DIALECTS[0].egress_style,
@@ -243,6 +256,8 @@ pub(crate) const fn const_eq(a: &str, b: &str) -> bool {
 }
 
 /// Response head fields the plane never reads beyond the kernel's strip list: what a far end derives
+/// from busbar's own credential and tenant, every dialect's governed response fields (`governed_response_headers`),
+/// and the cookies a far end sets for busbar's own connection ([`crate::dialect::ACCOUNT_RESPONSE_HEADERS`]).
 pub const DENY_RESPONSE_HEADERS: &[&str] = &[
     DIALECTS[0].governed_response_headers[0],
     DIALECTS[1].governed_response_headers[0],
@@ -269,6 +284,7 @@ const fn need(auth: &'static str) -> Need {
 }
 
 /// The plane's needs: outbound to a configured provider over the claim's transport, one per
+/// outbound style a member may be bound under ([`EGRESS_STYLES`]).
 pub const NEEDS: &[Need] = &[
     need(EGRESS_STYLES[0]),
     need(EGRESS_STYLES[1]),
@@ -317,6 +333,7 @@ const TAIL_ROW: PlaneTail = {
 pub const TAIL: &PlaneTail = &TAIL_ROW;
 
 /// The Statement's extensions: the plane's provider keys ([`crate::meta::PROVIDER_KEYS`]) under the
+/// contract's one key for them, built at compile time.
 pub(crate) const EXTENSIONS: &[u8] = &extensions::entry::<
     { extensions::entry_len(EXT_PROVIDER_KEYS, PROVIDER_KEYS.as_bytes()) },
 >(EXT_PROVIDER_KEYS, PROVIDER_KEYS.as_bytes());
@@ -332,6 +349,7 @@ pub const STATEMENT: Statement = {
 };
 
 /// The settings blob read as the plane's tables: `{section: value}` for the sections it reads; an
+/// empty blob is no section at all.
 pub fn read_settings(settings: &[u8]) -> Result<Shaping, String> {
     let value = if settings.is_empty() {
         Value::Object(serde_json::Map::new())
@@ -377,6 +395,8 @@ struct Answer {
 const DROPPED_CONTROL: &[u8] = b"egress.control_unrepresentable";
 
 /// The action of the audit row a stream synthesised from a whole answer writes (busbar answers in
+/// the caller's dialect and mode, and marks the conversion): its outcome is
+/// `applied`, its resource names the far end's dialect.
 pub const STREAM_SYNTHESIZED: &[u8] = b"egress.stream_synthesized";
 
 impl Answer {
@@ -406,8 +426,8 @@ struct UnitState {
     shaping: Arc<Shaping>,
     /// The arrival, read once at `arrive`.
     arrived: Option<Arrived>,
-    /// The caller's head fields, kept for every attempt's request.
-    caller: Vec<(Vec<u8>, Vec<u8>)>,
+    /// The caller's head fields, kept for every attempt's request; values wipe on every drop path.
+    caller: Vec<(Vec<u8>, zeroize::Zeroizing<Vec<u8>>)>,
     /// The arrival's refusal, rendered from at `refusal`.
     declined: Option<Declined>,
     /// A probe unit: no caller, one member.
@@ -431,6 +451,7 @@ struct UnitState {
     /// The caller was answered under a success status: the request's fee unit was incurred.
     fee: bool,
     /// The kernel stated the current attempt's answer will not be failed over (`PIECE_FINAL`): a
+    /// retry verdict on it ends the unit like any other done answer.
     final_answer: bool,
     /// A unit the plane answers itself (a webhook delivery, `ROUTE_LOCAL`): no far end, no fee.
     local: bool,
@@ -501,6 +522,7 @@ impl<S> UnitBook<S> {
     }
 
     /// The unit's pieces come on `ticket`: a `cancel` on it finds the unit. A ticket the unit came
+    /// on before is unbound.
     pub fn bind(&mut self, ticket: Ticket, unit: u64) {
         if let Some(old) = self.ticket_of.insert(unit, ticket) {
             if old != ticket {
@@ -519,6 +541,8 @@ impl<S> UnitBook<S> {
     }
 
     /// A `cancel` of `unit` (the kernel's key the cancel names; `0` names none) else of the unit
+    /// bound to `ticket`: that unit leaves the book, its ticket binding with it, and its state is
+    /// handed back.
     pub fn cancel(&mut self, UnitCancel { ticket, unit }: UnitCancel) -> Option<S> {
         let unit = if unit == 0 {
             *self.tickets.get(&ticket)?
@@ -539,6 +563,7 @@ impl<S> UnitBook<S> {
 }
 
 /// One instance: every live generation's snapshot and tables, the units in flight, and the host's
+/// clock.
 pub struct LlmDoor {
     generations: Generations<PlaneSnapshot>,
     shapings: Mutex<BTreeMap<u64, Arc<Shaping>>>,
@@ -568,6 +593,7 @@ impl LlmDoor {
 }
 
 /// A ticketless handle: the two services a codec reads never pend, so they are called outside any
+/// op's ticket (the host runs a ticketless call fresh every time and stores nothing).
 const UNTICKETED: CompletionHandle = CompletionHandle {
     ticket: Ticket::NONE,
     ..CompletionHandle::ZERO
@@ -612,12 +638,16 @@ impl busbar_contract::codec::CodecHost for DoorHost {
 }
 
 /// One claim: its verb, its target, whether the target is exact (else its whole subtree), and the
+/// dialect a refusal on it wears before `arrive` has read the arrival.
 type ClaimRow = (&'static str, &'static str, bool, &'static str);
 
 /// The verbs the fallback answers on any path (a dialect path hit with another
+/// verb reads the dialect's 405 from `arrive`; any other path its not-found).
 const FALLBACK_VERBS: [&str; 5] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
 /// The dialects' own paths, each with the dialect its path shape names (the rule
+/// [`crate::exchange::arrive::envelope_for`] renders a refusal by): exact where one path is
+/// named, the whole subtree where a family is.
 const DIALECT_CLAIMS: [ClaimRow; 7] = [
     ("POST", "/v1/messages", true, "anthropic"),
     ("POST", "/v1/chat/completions", true, "openai"),
@@ -678,15 +708,19 @@ const ENTRY_FACTS: [(&str, &str); 19] = [
 ];
 
 /// The signed paths: request shapes whose callers sign each request (the bedrock converse surfaces),
+/// claimed as raw affixes flagged `CLAIM_SIGNED_INGRESS`.
 const SIGNED_CLAIMS: [&str; 2] = ["/model/*/converse", "/model/*/converse-stream"];
 
 /// The list-models catalog routes: `GET` on each listing path,
+/// exact, answered with no unit by [`CatalogSlot`] over the names the kernel lists for the caller.
 const CATALOG_PATHS: [&str; 2] = [
     crate::exchange::catalog::PATH,
     crate::exchange::catalog::BETA_PATH,
 ];
 
 /// The plane's claims: [`DIALECT_CLAIMS`], the [`ENTRY_FACTS`], the [`SIGNED_CLAIMS`], the
+/// [`CATALOG_PATHS`], then the fallback, a prefix claim on `/` per verb wearing the residual
+/// default dialect.
 #[must_use]
 pub fn claims() -> Vec<ClaimSpec> {
     let fallback = crate::exchange::arrive::envelope_for("/");
@@ -732,6 +766,7 @@ pub fn claims() -> Vec<ClaimSpec> {
 }
 
 /// The receivers' claims: each webhook receiver its `webhooks:` section switches on, an exact path
+/// that ranks above the fallback's prefix claim.
 #[must_use]
 pub fn webhook_claims(webhooks: Webhooks) -> Vec<ClaimSpec> {
     webhooks
@@ -768,6 +803,7 @@ fn dialect_index(name: &str) -> u32 {
 }
 
 /// The route an arrival names: the model it asked for, as the entry inside the plane's own
+/// sections, and what that entry is.
 #[must_use]
 pub fn route_of<'a>(shaping: &Shaping, model: &'a str) -> (u8, &'a str) {
     let class = if shaping.pools.contains_key(model) {
@@ -799,6 +835,7 @@ fn owned(fields: Vec<(String, Vec<u8>)>) -> Vec<(Vec<u8>, Vec<u8>)> {
 }
 
 /// The far end's cumulative counts, in the tail's billable-class order: tokens in, tokens out,
+/// cache read, cache write, then each open class it counted ([`OPEN_CLASSES`]).
 #[must_use]
 pub fn counts(units: &Units) -> Vec<UnitCount> {
     let tokens = [
@@ -840,6 +877,10 @@ pub fn counts(units: &Units) -> Vec<UnitCount> {
 }
 
 /// The breaker's reading of a judged answer (one neutral vocabulary, stated apart from the walk's
+/// verdict), recorded per disposition: the caller's own bad input records nothing
+/// against the destination; a transient failure (an `error_map` entry naming `rate_limit` among
+/// them) counts toward the pool cell's trip; a refused credential or account trips every cell; a
+/// request too large for the window fails over with nothing recorded.
 #[must_use]
 pub fn breaker_fault(f: Option<&Fault>) -> u8 {
     match f {
@@ -855,6 +896,10 @@ pub fn breaker_fault(f: Option<&Fault>) -> u8 {
 }
 
 /// The reason the breaker's reading states (the far-end fault reading): the plane classifies the
+/// far end's answer and states why in neutral words, which the kernel carries verbatim to the
+/// breaker's record (the member's down reason and its operator diagnostic): an exhausted account is
+/// `billing / insufficient balance`, a refused own credential `auth rejected (HTTP <status>)`, any
+/// other hard-down `request rejected (HTTP <status>)`.
 #[must_use]
 pub fn fault_reason(f: Option<&Fault>, status: u16) -> Option<String> {
     let Some(Fault::Judged {
@@ -881,6 +926,8 @@ fn verdict(v: Verdict) -> u32 {
 }
 
 /// The request's fee unit on `answer` (the plane's report is the one fee decider): incurred when
+/// the caller's reply opens under a success status (the fee is refunded for a non-2xx caller
+/// status, and only then).
 fn fee_unit(unit: &mut UnitState, answer: &mut Answer) {
     if !answer.units.is_empty() {
         unit.reported.clone_from(&answer.units);
@@ -902,6 +949,8 @@ fn fee_unit(unit: &mut UnitState, answer: &mut Answer) {
 }
 
 /// The unit's sticky-routing key: the value of
+/// the pool's affinity header (`header`, matched case-blind) where the caller sent one readable as
+/// text, else the operation's body key (chat's non-empty `system`); `None` = no affinity.
 #[must_use]
 pub fn affinity_key(
     header: &str,
@@ -980,6 +1029,7 @@ fn at(clock: Option<ClockReading>, started: Option<u64>) -> At {
 struct PieceIn<'a> {
     last: bool,
     /// The far end's answer ended without completing (`PIECE_CUT`, on its last piece): its
+    /// connection failed or the send's deadline passed after its head.
     cut: bool,
     status: Option<u32>,
     fields: Vec<(&'a [u8], &'a [u8])>,
@@ -1196,6 +1246,8 @@ fn settle(
 }
 
 /// Write the unit's pending answer's next chunk: its head, fields and units first (FAILED, with
+/// the sizes it needs, when they do not fit), then as many bytes as the reply buffer holds,
+/// `more = 1` while any are left.
 fn deliver(
     unit: &mut UnitState,
     input: Lent<'_, OnPieceIn>,
@@ -1290,6 +1342,8 @@ macro_rules! slot {
 }
 
 /// The plane's lifecycle on the SDK's [`PlaneLife`] (`lifecycle: plane_life(LlmDoor)`): `tick`,
+/// `drive`, `release` and `close` are defaults (no tick, no unsolicited output, no lease); the plane
+/// states its settings, what a generation publishes, its tables beside each generation, and its `cancel`.
 impl PlaneLife for LlmDoor {
     type Held = ();
 
@@ -1305,6 +1359,7 @@ impl PlaneLife for LlmDoor {
     }
 
     /// `open`: the instance, its host clock, and the first generation's tables and snapshot; a
+    /// failed open answers FAILED with the reader's words in the host's reason buffer.
     fn open(input: &Lent<'_, PlaneOpenIn>) -> Result<Opened<Self>, Refusal> {
         let open = input.open();
         let shaping = read_settings(open.settings().bytes()).map_err(Refusal::failed)?;
@@ -1334,11 +1389,13 @@ impl PlaneLife for LlmDoor {
     }
 
     /// `retire`, after the SDK dropped the generation's snapshot: its tables are dropped; a unit
+    /// that arrived on them keeps its own hold until it ends.
     fn retire(&self, generation: u64) {
         guard(&self.shapings).remove(&generation);
     }
 
     /// `cancel`: the cancelled unit (the unit the cancel names, else the one on its ticket) ends;
+    /// nothing it owed is delivered.
     fn cancel(
         instance: Instance<'_, Self>,
         input: Lent<'_, PlaneCancelIn>,
@@ -1376,7 +1433,7 @@ slot!(
             .map(|f| {
                 (
                     f.name().bytes().to_vec(),
-                    f.value().bytes().to_vec(),
+                    zeroize::Zeroizing::new(f.value().bytes().to_vec()),
                 )
             })
             .collect();
@@ -1671,6 +1728,9 @@ slot!(
             return Outcome::Refused;
         };
         let rewrite = input.rewrite().bytes();
+        // Buffer sizing retries must start from the request before this hook. Tools are
+        // append operations, so replaying a rewrite against its own result is not idempotent.
+        let original = (!rewrite.is_empty()).then(|| (arrived.body.clone(), arrived.parsed.clone()));
         let rewritten = if rewrite.is_empty() {
             None
         } else {
@@ -1682,7 +1742,6 @@ slot!(
         let view = project::project(arrived);
         let dialect = arrived.dialect;
         let pool = arrived.model.clone();
-        guard(&door.units).hold(key, unit);
         let (signals, mut arena, mut turns) =
             (input.signals_buf(), input.arena_buf(), input.messages_buf());
         let pool = arena.span(pool.as_bytes());
@@ -1705,10 +1764,16 @@ slot!(
         out.set(|o| &o.messages_needed, tnd as u32);
         out.set(|o| &o.body, Span { offset: SPAN_ABSENT, ..Span::ZERO });
         if short {
-            // The driver re-calls once with the buffers this named, the same rewrite with it:
-            // applying it again to the request it already rewrote writes the same body.
+            if let Some((body, parsed)) = original {
+                arrived.body = body;
+                arrived.parsed = parsed;
+            }
+            guard(&door.units).hold(key, unit);
             return Outcome::Failed;
         }
+        // Commit only a delivered projection. A later hook may intentionally apply the
+        // same rewrite again; successful calls therefore are not deduplicated.
+        guard(&door.units).hold(key, unit);
         let mut flags = 0;
         if view.max_tokens.is_some() {
             flags |= REQUEST_HAS_MAX_TOKENS;
@@ -1751,16 +1816,11 @@ slot!(
     CatalogSlot, CatalogIn, CatalogOut, |_instance, input, mut out| {
         let target = String::from_utf8_lossy(input.target().bytes()).into_owned();
         let path = target.split_once('?').map_or(target.as_str(), |(p, _)| p);
-        let head: Vec<(Vec<u8>, Vec<u8>)> = input
+        let head: zeroize::Zeroizing<Vec<(Vec<u8>, Vec<u8>)>> = zeroize::Zeroizing::new(input
             .fields()
             .iter()
-            .map(|f| {
-                (
-                    f.name().bytes().to_vec(),
-                    f.value().bytes().to_vec(),
-                )
-            })
-            .collect();
+            .map(|f| (f.name().bytes().to_vec(), f.value().bytes().to_vec()))
+            .collect());
         let names: Vec<String> = input
             .names()
             .iter()
@@ -1806,3 +1866,11 @@ busbar_contract::plugin_door! {
         catalog: Safe<CatalogSlot>,
     },
 }
+
+#[cfg(test)]
+#[path = "../tests/support/caller_secrets.rs"]
+mod caller_secrets;
+
+#[cfg(test)]
+#[path = "../tests/support/project_retry.rs"]
+mod project_retry_tests;

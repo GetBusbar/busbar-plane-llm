@@ -1,4 +1,5 @@
 //! A far end's success answer relayed as it arrives: a stream (SSE or binary event stream), or a
+//! same-dialect whole body relayed verbatim.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -7,6 +8,9 @@ use busbar_contract::billing::{Billing, TokenUsage};
 use busbar_contract::codec::{OperationHandler, UsageTapFault};
 use busbar_contract::protocol::ArrayStreamFramer;
 use serde_json::Value;
+
+#[path = "root_usage.rs"]
+mod root_usage;
 
 use super::wire;
 use crate::codec::proto_stream::StreamTranslate;
@@ -26,6 +30,9 @@ pub enum ContentType {
 }
 
 /// Whether the far end's success answer is taken whole rather than relayed: a non-stream answer
+/// that crosses dialects, or one that answers a caller who asked for an event stream (OWNER
+/// 2026-10-27: busbar answers in the caller's dialect AND mode, so that caller reads its stream
+/// synthesised from the body, within one dialect too).
 #[must_use]
 pub fn takes_whole(
     ingress: &str,
@@ -109,12 +116,15 @@ pub struct Relay {
     ingress_eventstream: bool,
     far_is_stream: bool,
     handler: &'static dyn OperationHandler,
+    chat_usage: bool,
+    image_usage: bool,
     meter: bool,
     translate_cap: usize,
     translate: Option<StreamTranslate>,
     json_array: Option<Box<dyn ArrayStreamFramer>>,
     nonstream_buf: Vec<u8>,
     nonstream_buf_truncated: bool,
+    root_usage: Option<root_usage::RootUsage>,
     stop_scan: Option<StopKeyScanner>,
     upstream_bytes: usize,
     upstream_failed: bool,
@@ -150,11 +160,12 @@ pub struct RelayCtx<'a> {
     pub request: Option<&'a Value>,
     /// The caller's operation, as the caller's dialect serves it.
     pub handler: &'static dyn OperationHandler,
-    /// Read the usage: keep the bounded copy of a same-dialect whole body and read the usage at
-    /// the end. Off, the bytes relay and nothing is read for usage.
+    /// Read usage from a bounded prefix and incremental root-member projection, including when
+    /// a same-dialect body exceeds the prefix cap. Off, bytes relay without reading usage.
     pub meter: bool,
     /// The TRANSLATION CAP the plane enforces, the one its settings carry: the bound on the
-    /// same-dialect copy kept for usage, and on what the translator's writer accumulates.
+    /// same-dialect prefix and each independently retained billing member, and on what the
+    /// translator's writer accumulates. The root projection retains at most seven such members.
     pub translate_cap: usize,
 }
 
@@ -162,6 +173,8 @@ pub struct RelayCtx<'a> {
 pub type Parts = (Option<StreamTranslate>, Option<Box<dyn ArrayStreamFramer>>);
 
 /// The translator for the dialect pair of a far end's answer (a stream reframed across dialects, or
+/// re-emitted byte-exact within one), told the caller's usage opt-in and request; and the JSON-array
+/// framer for a caller that asked for its stream as an array.
 #[must_use]
 pub fn parts(ctx: &RelayCtx<'_>) -> Parts {
     let translate = crate::codec::proto_stream::new_stream_translator_on(
@@ -203,7 +216,20 @@ impl Relay {
         )
     }
 
+    /// Open with the known operation so chat classification and billing share one decode.
+    #[must_use]
+    pub fn new_for_operation(
+        ctx: RelayCtx<'_>,
+        operation: busbar_contract::operation::OpVerb,
+    ) -> Self {
+        let mut relay = Self::new(ctx);
+        relay.chat_usage = operation == busbar_contract::operation::OpVerb::CHAT;
+        relay.image_usage = operation == busbar_contract::operation::OpVerb::IMAGE;
+        relay
+    }
+
     /// OPEN the relay over a translator and a framer already made (see [`parts`]), its same-dialect
+    /// usage copy bounded at the plane's `translate_cap`.
     #[must_use]
     pub fn from_parts(
         ingress: &str,
@@ -230,12 +256,16 @@ impl Relay {
             ingress_eventstream: ingress_decl.is_some_and(|d| d.ingress_is_eventstream),
             far_is_stream,
             handler,
+            chat_usage: false,
+            image_usage: false,
             meter,
             translate_cap,
             translate,
             json_array,
             nonstream_buf: Vec::new(),
             nonstream_buf_truncated: false,
+            root_usage: (!far_is_stream && handler.taps_usage() && meter)
+                .then(|| root_usage::RootUsage::new(translate_cap)),
             stop_scan,
             upstream_bytes: 0,
             upstream_failed: false,
@@ -250,6 +280,8 @@ impl Relay {
     }
 
     /// FEED one far-end piece. The second value is `true` on the one piece that first pushed the
+    /// retained prefix of a same-dialect whole body over the cap. Billing members continue to be
+    /// captured independently with bounded memory and original-root custody.
     pub fn feed<'a>(
         &mut self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -270,11 +302,14 @@ impl Relay {
         }
         let mut truncated_now = false;
         if !self.far_is_stream && self.handler.taps_usage() && self.meter {
+            if let Some(scan) = &mut self.root_usage {
+                scan.feed(chunk);
+            }
             let cap = self.translate_cap;
-            self.nonstream_buf.extend_from_slice(chunk);
-            if self.nonstream_buf.len() > cap {
-                let excess = self.nonstream_buf.len() - cap;
-                self.nonstream_buf.drain(..excess);
+            let available = cap.saturating_sub(self.nonstream_buf.len());
+            self.nonstream_buf
+                .extend_from_slice(&chunk[..chunk.len().min(available)]);
+            if chunk.len() > available {
                 if !self.nonstream_buf_truncated {
                     self.nonstream_buf_truncated = true;
                     truncated_now = true;
@@ -352,9 +387,73 @@ impl Relay {
             } else {
                 t.usage().map(|u| u.to_token_usage())
             }
+        } else if !self.far_is_stream && self.nonstream_buf_truncated {
+            self.nonstream_buf.clear();
+            self.root_usage
+                .as_ref()
+                .and_then(root_usage::RootUsage::finish)
+                .and_then(|buf| {
+                    if self.chat_usage {
+                        let (failed, tapped) = crate::codec::chat_handle::inspect_response_usage(
+                            host,
+                            self.ingress,
+                            &buf,
+                        );
+                        return if failed {
+                            None
+                        } else {
+                            tapped
+                                .ok()
+                                .flatten()
+                                .or_else(|| wire::reported_usage(self.ingress, &buf))
+                        };
+                    }
+                    if far_reported_failure(host, self.ingress, &buf) {
+                        return None;
+                    }
+                    let tapped = self.handler.extract_usage(host, self.ingress, &buf);
+                    tapped.ok().flatten().or_else(|| {
+                        match self.handler.recover_response_billing(host, &buf) {
+                            Some(Billing::Tokens(tokens)) => Some(tokens),
+                            billing @ Some(_) => {
+                                open_billing = billing;
+                                None
+                            }
+                            None if self.image_usage => {
+                                open_billing = self
+                                    .root_usage
+                                    .as_ref()
+                                    .and_then(|scan| scan.image_count(self.ingress))
+                                    .map(|count| Billing::Images {
+                                        count,
+                                        size: None,
+                                        quality: None,
+                                    });
+                                None
+                            }
+                            None => wire::reported_usage(self.ingress, &buf),
+                        }
+                    })
+                })
         } else if !self.far_is_stream && !self.nonstream_buf.is_empty() {
             let buf = std::mem::take(&mut self.nonstream_buf);
-            if self.nonstream_buf_truncated || far_reported_failure(host, self.ingress, &buf) {
+            if self.chat_usage {
+                let (failed, tapped) =
+                    crate::codec::chat_handle::inspect_response_usage(host, self.ingress, &buf);
+                if failed {
+                    None
+                } else {
+                    tap_fault = tapped.as_ref().err().copied();
+                    tapped.ok().flatten().or_else(|| {
+                        if cut_short(&buf) {
+                            wire::reported_usage(self.ingress, &buf)
+                        } else {
+                            fault_unreadable(self.ingress, buf.len());
+                            Some(wire::unrecovered_usage(self.ingress, &buf))
+                        }
+                    })
+                }
+            } else if far_reported_failure(host, self.ingress, &buf) {
                 None
             } else {
                 let tapped = self.handler.extract_usage(host, self.ingress, &buf);
@@ -368,6 +467,15 @@ impl Relay {
                             None
                         }
 
+                        Err(_) if self.image_usage => {
+                            match self.handler.recover_response_billing(host, &buf) {
+                                Some(Billing::Tokens(tokens)) => Some(tokens),
+                                billing => {
+                                    open_billing = billing;
+                                    None
+                                }
+                            }
+                        }
                         Err(_) if cut_short(&buf) => wire::reported_usage(self.ingress, &buf),
                         Err(_) => {
                             fault_unreadable(self.ingress, buf.len());
@@ -402,6 +510,7 @@ impl Relay {
     }
 
     /// CUT the relay: the far end's transport failed (`transport`), or the stream's ceiling
+    /// expired.
     pub fn cut(&mut self, host: &dyn busbar_contract::codec::CodecHost, transport: bool) -> Cut {
         let had_first = self.first_byte;
         if had_first && self.far_is_stream {
@@ -437,6 +546,8 @@ impl Relay {
     }
 
     /// The caller had a usable part: a byte of the answer was relayed and nothing failed it (no
+    /// reader's terminal error, no translate abort), so a caller that leaves now leaves a partial
+    /// answer whose incurred units bill.
     #[must_use]
     pub fn partial(&self) -> bool {
         self.first_byte
@@ -447,6 +558,8 @@ impl Relay {
     }
 
     /// Whether the stream's terminal error is its far end's failed generation: the far dialect's own
+    /// stop token that reads as one (a Gemini `MALFORMED_FUNCTION_CALL`, a Cohere `ERROR`), which its
+    /// reader surfaces as an error beside the reported usage, which is billed.
     #[must_use]
     pub fn failed_generation(&self, far: &str) -> bool {
         self.translate
@@ -460,6 +573,7 @@ impl Relay {
     }
 
     /// The usage a stream's readers have read so far (cheap: nothing is scanned); `None` for a
+    /// relay that reads its usage only at the end.
     #[must_use]
     pub fn streamed_usage(&self) -> Option<TokenUsage> {
         self.translate
@@ -468,6 +582,8 @@ impl Relay {
     }
 
     /// The usage an answer that ended early had incurred: what a stream's readers accumulated; for a
+    /// same-dialect whole body the far end cut, only the usage the bytes in hand report (never a
+    /// floor).
     #[must_use]
     pub fn incurred_usage(&self) -> Option<TokenUsage> {
         match self.translate.as_ref() {
@@ -485,6 +601,8 @@ impl Relay {
 }
 
 /// The far end reported the failure itself: the whole body reads, in its dialect's own reader, as a
+/// failure the far end stated (a Responses `status: "failed"`), not as a body the reader could not
+/// read (`ir_parse`: bad JSON, a shape it does not know, or a usage count it refuses).
 fn far_reported_failure(
     host: &dyn busbar_contract::codec::CodecHost,
     protocol: &str,

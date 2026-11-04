@@ -11,7 +11,7 @@ fn cohere_stop_reason_codec_round_trips_and_never_leaks() {
         S::Safety
     );
 
-    assert_eq!(write_cohere_stop_reason(S::Safety), "COMPLETE");
+    assert_eq!(write_cohere_stop_reason(S::Safety), "ERROR");
 
     assert_eq!(read_cohere_stop_reason("TIMEOUT"), S::Other);
 
@@ -307,6 +307,7 @@ fn test_cross_protocol_system_prompt_preserved_to_cohere() {
 }
 
 /// Regression: a response carrying several parallel `ToolUse` blocks must surface ALL of them
+/// in `tool_calls`.
 #[test]
 fn test_write_response_preserves_parallel_tool_calls() {
     let resp = crate::codec::ir::IrResponse {
@@ -371,6 +372,7 @@ fn test_write_response_preserves_parallel_tool_calls() {
 }
 
 /// Regression: an assistant message whose only block is a `ToolUse` (surfaced via `tool_calls`)
+/// must NOT emit `content: []`.
 #[test]
 fn test_write_request_sole_tooluse_omits_empty_content() {
     let ir = crate::codec::ir::IrRequest {
@@ -403,6 +405,7 @@ fn test_write_request_sole_tooluse_omits_empty_content() {
 }
 
 /// Multiple text blocks in one message must serialize as a text-part array (not be collapsed),
+/// while a single text block stays a bare string.
 #[test]
 fn test_write_request_text_block_shapes() {
     let single = crate::codec::ir::IrRequest {
@@ -443,6 +446,7 @@ fn test_write_request_text_block_shapes() {
 }
 
 /// `read_request` must not allocate a temporary empty Vec when `tools` is absent, and must
+/// produce no tools either way.
 #[test]
 fn test_read_request_missing_tools() {
     let json = serde_json::json!({
@@ -456,6 +460,9 @@ fn test_read_request_missing_tools() {
 }
 
 /// A native Cohere request with a `role: "system"` message must parse successfully (the "system"
+/// match arm is real, not dead code) and its content must be canonicalized into `IrRequest.system`
+/// — NOT carried as a System-role `IrMessage` (matching the other protocols' convention, per this
+/// function's own doc comment).
 #[test]
 fn test_read_request_role_system_maps_to_ir_system_not_a_message() {
     let json = serde_json::json!({
@@ -482,6 +489,7 @@ fn test_read_request_role_system_maps_to_ir_system_not_a_message() {
 }
 
 /// System content given as an ARRAY of blocks only picks up blocks whose `"type"` is exactly
+/// `"text"` — a block with a different declared type must be skipped, not included.
 #[test]
 fn test_read_request_system_content_array_only_collects_text_typed_blocks() {
     let json = serde_json::json!({
@@ -510,6 +518,9 @@ fn test_read_request_system_content_array_only_collects_text_typed_blocks() {
 }
 
 /// `tool_calls` on a message is only processed when that message's role is Assistant — a
+/// non-assistant message (e.g. `user`) carrying a stray `tool_calls` field must NOT have it
+/// decoded into IR tool-use blocks. Guards `if role == IrRole::Assistant` before the tool_calls
+/// branch.
 #[test]
 fn test_read_request_tool_calls_only_processed_for_assistant_role() {
     let stray_tool_calls = serde_json::json!([{
@@ -555,6 +566,8 @@ fn test_read_request_tool_calls_only_processed_for_assistant_role() {
 }
 
 /// Once a text block is closed (`ET_CONTENT_END`), `state.text_block_closed` latches — a LATER
+/// `ET_CONTENT_START` for a text block must be dropped (falls through to the no-op `other` arm),
+/// never reopening the already-stopped index with a second `BlockStart`.
 #[test]
 fn test_stream_content_start_after_close_does_not_reopen_the_text_block() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -595,6 +608,8 @@ fn test_stream_content_start_after_close_does_not_reopen_the_text_block() {
 }
 
 /// The array-form `read_response_events` content-delta path only emits a `TextDelta` for a block
+/// whose `"type"` is exactly `"text"` — a differently-typed block in the same array must be
+/// skipped, not misread as text.
 #[test]
 fn test_stream_content_delta_array_form_only_emits_text_typed_blocks() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -633,6 +648,7 @@ fn test_stream_content_delta_array_form_only_emits_text_typed_blocks() {
 }
 
 /// The NATIVE Cohere v2 error envelope is a bare `{"message": <detail>}` — NOT the generic
+/// `{"error":{"message","type"}}`, and NOT carrying a synthesized `id`.
 #[test]
 fn test_write_error_native_cohere_envelope() {
     let writer = CohereWriter;
@@ -673,6 +689,7 @@ fn test_write_error_native_cohere_envelope() {
 }
 
 /// Same-protocol (Cohere → Cohere) passthrough must preserve the upstream response `id` exactly
+/// — capturing it on read and re-emitting the identical value on write.
 #[test]
 fn test_same_protocol_roundtrip_preserves_id() {
     let upstream_id = "c14c80c3-18eb-4519-9460-6c92edd8cfb4";
@@ -735,6 +752,7 @@ fn test_same_protocol_stream_roundtrip_preserves_id() {
 }
 
 /// Cross-protocol write (the backend supplied NO id — `IrResponse.id == None`) must SYNTHESIZE a
+/// valid, non-empty Cohere id without panicking, so a native Cohere SDK still reads a string.
 #[test]
 fn test_cross_protocol_write_synthesizes_valid_id() {
     let resp = crate::codec::ir::IrResponse {
@@ -788,6 +806,8 @@ fn is_uuid_v4(s: &str) -> bool {
 }
 
 /// The synthesized id must be a bare UUID (8-4-4-4-12 hex),
+/// indistinguishable from a native Cohere id — NOT a `cohere-<secs>-<counter>` token, which a
+/// client comparing against the documented UUID shape could use as a proxy tell.
 #[test]
 fn test_synthesized_id_is_uuid_shaped() {
     let id =
@@ -803,6 +823,7 @@ fn test_synthesized_id_is_uuid_shaped() {
 }
 
 /// The synthesized id must be a PROPER RFC-4122 UUIDv4 — version
+/// nibble `4` and variant bits `10xx` — because real Cohere ids are v4.
 #[test]
 fn test_synthesized_id_is_valid_uuid_v4() {
     for _ in 0..1000 {
@@ -817,33 +838,30 @@ fn test_synthesized_id_is_valid_uuid_v4() {
 }
 
 /// The synthesized id must NOT embed the server clock. The previous
+/// layout placed `secs << 32` in the high 32 bits, so the first UUID group leaked the unix
+/// second.
 #[test]
 fn test_synthesized_id_does_not_leak_timestamp() {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-
-    let leaked_prefix = format!("{:08x}", secs as u32);
-
-    let mut matched = 0u32;
-    for _ in 0..256 {
-        let id =
-            synthesize_cohere_id(crate::codec::test_host::HOST).expect("host entropy is available");
-        let first_group = id.split('-').next().unwrap_or("");
-        if first_group == leaked_prefix {
-            matched += 1;
+    struct FixedHost(u64);
+    impl busbar_contract::codec::CodecHost for FixedHost {
+        fn fill_entropy(&self, out: &mut [u8]) -> bool {
+            out.fill(0x2a);
+            true
+        }
+        fn wall_clock_now(&self) -> Option<u64> {
+            Some(self.0)
         }
     }
-    assert_eq!(
-        matched, 0,
-        "first UUID group must not deterministically equal the unix-second hex {leaked_prefix} \
-             (server-clock leak)"
-    );
+    for clock in [1, 0x12345678, u64::MAX] {
+        let id = synthesize_cohere_id(&FixedHost(clock)).expect("fixed entropy");
+        assert_eq!(id, "2a2a2a2a-2a2a-4a2a-aa2a-2a2a2a2a2a2a");
+    }
 }
 
 /// Synthesized ids are unique across a burst by virtue of CSPRNG entropy alone — `synthesize_
+/// cohere_id` is a PURE RFC-4122 UUIDv4 (122 random bits, ~5.3e36 values) with NO monotonic
+/// counter overlay (a counter folded into any fixed region would be a low-entropy structural
+/// tell a native random v4 never carries — see the fn doc-comment).
 #[test]
 fn test_synthesized_ids_are_unique() {
     const N: usize = 4096;
@@ -886,8 +904,9 @@ fn test_auth_headers_valid_key_emits_bearer() {
 }
 
 /// `ERROR_TOXIC` is a v1 Generate-API finish token, not a member of Cohere v2's
+/// `/v2/chat` `finish_reason` enum.
 #[test]
-fn test_safety_finish_reason_writes_complete_non_stream() {
+fn test_safety_finish_reason_writes_error_non_stream() {
     let resp = crate::codec::ir::IrResponse {
         content: vec![crate::codec::ir::IrBlock::text("moderated".to_string())],
         stop_reason: Some(crate::codec::ir::IrStopReason::Safety),
@@ -903,9 +922,8 @@ fn test_safety_finish_reason_writes_complete_non_stream() {
     let body = writer.write_response(crate::codec::test_host::HOST, &resp);
     assert_eq!(
         body.get("finish_reason").and_then(|v| v.as_str()),
-        Some("COMPLETE"), // golden wire-contract literal (kept bare on purpose)
-        "IR safety must write back as the v2-legal COMPLETE (a served answer, COH-15), never the \
-         v1-only ERROR_TOXIC and never the ERROR that reads as an infrastructure failure"
+        Some("ERROR"), // golden wire-contract literal (kept bare on purpose)
+        "IR safety must retain v1.5.5 v2-legal ERROR behavior, never v1-only ERROR_TOXIC"
     );
 
     let back = CohereReader
@@ -913,12 +931,12 @@ fn test_safety_finish_reason_writes_complete_non_stream() {
         .expect("read self-written body");
     assert_eq!(
         back.stop_reason,
-        Some(crate::codec::ir::IrStopReason::EndTurn)
+        Some(crate::codec::ir::IrStopReason::Error)
     );
 }
 
 #[test]
-fn test_safety_finish_reason_writes_complete_stream() {
+fn test_safety_finish_reason_writes_error_stream() {
     let ev = IrStreamEvent::MessageDelta {
         stop_reason: Some(crate::codec::ir::IrStopReason::Safety),
         stop_sequence: None,
@@ -934,12 +952,13 @@ fn test_safety_finish_reason_writes_complete_stream() {
             .get("delta")
             .and_then(|d| d.get("finish_reason"))
             .and_then(|v| v.as_str()),
-        Some("COMPLETE"), // golden wire-contract literal (kept bare on purpose)
-        "streamed safety stop must emit the v2-legal COMPLETE (COH-15), never ERROR_TOXIC or ERROR"
+        Some("ERROR"), // golden wire-contract literal (kept bare on purpose)
+        "streamed safety stop must emit v2-legal ERROR, preserving v1.5.5 behavior"
     );
 }
 
 /// The readers must NOT fold the generic `ERROR` finish_reason into the
+/// content-moderation `safety` bucket.
 #[test]
 fn test_generic_error_does_not_fold_into_safety_and_round_trips() {
     let reader = CohereReader;
@@ -1017,77 +1036,28 @@ fn test_generic_error_does_not_fold_into_safety_and_round_trips() {
     );
 }
 
-/// An upstream-controlled stream tool-call frame `index` of `usize::MAX`
 #[test]
-fn test_huge_tool_frame_index_clamped_below_sentinel() {
-    let reader = CohereReader;
+fn test_huge_tool_frame_index_rejected_below_sentinel() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
-
-    let huge = u64::MAX;
-    let start = serde_json::json!({
-        "type": ET_TOOL_CALL_START,
-        "index": huge,
-        "delta": { "message": { "tool_calls": {
-            "id": "call_huge",
-            "type": "function",
-            "function": { "name": "f", "arguments": "{}" }
-        }}}
-    });
-    let evs = reader.read_response_events(crate::codec::test_host::HOST, "", &start, &mut state);
-
-    assert!(
-        !state.open_tools.contains(&TEXT_BLOCK_SEEN_SENTINEL),
-        "a huge wire index must never be recorded as the sentinel value"
-    );
-    assert!(
-        state
-            .open_tools
-            .iter()
-            .filter(|&&e| e != TEXT_BLOCK_SEEN_SENTINEL)
-            .all(|&e| e <= MAX_TOOL_FRAME_INDEX as usize),
-        "every recorded tool frame index must be clamped to MAX_TOOL_FRAME_INDEX, got {:?}",
-        state.open_tools
-    );
-
-    let starts = evs
-        .iter()
-        .filter(|e| matches!(e, IrStreamEvent::BlockStart { .. }))
-        .count();
-    assert_eq!(
-        starts, 1,
-        "a clamped huge-index tool-call-start must open exactly one block, got {evs:?}"
-    );
-
-    let delta = serde_json::json!({
-        "type": ET_TOOL_CALL_DELTA,
-        "index": huge,
-        "delta": { "message": { "tool_calls": {
-            "function": { "arguments": "more" }
-        }}}
-    });
-    let delta_evs =
-        reader.read_response_events(crate::codec::test_host::HOST, "", &delta, &mut state);
-    assert_eq!(
-        delta_evs
-            .iter()
-            .filter(|e| matches!(e, IrStreamEvent::BlockDelta { .. }))
-            .count(),
-        1,
-        "a clamped tool-call-delta must forward to the open block, got {delta_evs:?}"
-    );
-    let end = serde_json::json!({ "type": ET_TOOL_CALL_END, "index": huge });
-    let end_evs = reader.read_response_events(crate::codec::test_host::HOST, "", &end, &mut state);
-    assert_eq!(
-        end_evs
-            .iter()
-            .filter(|e| matches!(e, IrStreamEvent::BlockStop { .. }))
-            .count(),
-        1,
-        "a clamped tool-call-end must close the open block, got {end_evs:?}"
-    );
+    for kind in [ET_TOOL_CALL_START, ET_TOOL_CALL_DELTA, ET_TOOL_CALL_END] {
+        let frame = serde_json::json!({"type":kind,"index":u64::MAX});
+        let events = CohereReader.read_response_events(
+            crate::codec::test_host::HOST,
+            "",
+            &frame,
+            &mut state,
+        );
+        assert!(matches!(events.as_slice(), [IrStreamEvent::Error(_)]));
+        assert!(state.open_tools.is_empty());
+        assert!(state.tool_ir_index.is_empty());
+    }
 }
 
 /// A mid-stream `IrStreamEvent::Error` on a Cohere-ingress
+/// stream must terminate with the NATIVE Cohere v2 error shape — a `message-end` frame whose
+/// `finish_reason` is `ERROR` — NOT a non-native `type: "error"` out-of-band frame (which a
+/// strict Cohere SDK ignores or rejects, silently dropping the error, and which is a
+/// protocol-indistinguishability tell).
 #[test]
 fn test_stream_error_emits_native_message_end_not_error_event() {
     let writer = CohereWriter;
@@ -1210,6 +1180,7 @@ fn test_stream_error_emits_native_message_end_not_error_event() {
 }
 
 /// `read_response` must tolerate a missing `usage` object,
+/// falling back to zero counts rather than hard-erroring with a `ClientError`.
 #[test]
 fn test_read_response_missing_usage_defaults_to_zero() {
     let json = serde_json::json!({
@@ -1244,6 +1215,7 @@ fn test_read_response_missing_usage_defaults_to_zero() {
 }
 
 /// MONEY BUG regression (buffered path): Cohere's API *specs* usage counts as JSON numbers, but its
+/// actual wire responses carry them as FLOATS (`"input_tokens": 27.0`), not bare integers.
 #[test]
 fn test_read_response_usage_float_token_counts_survive_as_integers() {
     let json = serde_json::json!({
@@ -1281,6 +1253,7 @@ fn test_read_response_usage_float_token_counts_survive_as_integers() {
 }
 
 /// MONEY BUG regression (streaming path): the SAME float-encoded usage counts arrive on the
+/// terminal `message-end` stream frame's `delta.usage` object.
 #[test]
 fn test_stream_message_end_usage_float_token_counts_survive_as_integers() {
     let reader = CohereReader;
@@ -1326,6 +1299,8 @@ fn test_stream_message_end_usage_float_token_counts_survive_as_integers() {
 }
 
 /// MONEY BUG regression (truncated-tail recovery path): a HEAD-truncated non-stream billing buffer
+/// still carries a well-formed, self-contained trailing `usage` object that `recover_truncated_usage`
+/// isolates and parses on its own.
 #[test]
 fn test_recover_truncated_usage_float_token_counts_survive_as_integers() {
     let reader = CohereReader;
@@ -1414,6 +1389,8 @@ fn test_write_response_tool_calls_nested_and_roundtrip() {
 }
 
 /// The streaming `content-delta` frame must carry text at
+/// `delta.message.content.text` (an object), matching `content-start`'s content shape and the
+/// native Cohere v2 stream — not a bare string.
 #[test]
 fn test_write_response_event_content_delta_is_object() {
     let ev = IrStreamEvent::BlockDelta {
@@ -1442,6 +1419,8 @@ fn test_write_response_event_content_delta_is_object() {
 }
 
 /// The content-delta WRITER emits `delta.message.content` as a
+/// `{text:…}` object (the real, type-less native Cohere v2 shape — verified against Cohere's own
+/// API reference), so the READER must decode that exact object back to a TextDelta.
 #[test]
 fn test_content_delta_writer_reader_roundtrip_object_shape() {
     let writer = CohereWriter;
@@ -1504,6 +1483,7 @@ fn test_content_delta_real_cohere_shape_no_type_field() {
 }
 
 /// A streaming tool call (tool-call-start / tool-call-delta /
+/// tool-call-end) must NOT be swallowed by a catch-all — it maps onto the IR block lifecycle.
 #[test]
 fn test_stream_tool_call_events_mapped() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -1576,6 +1556,7 @@ fn test_stream_tool_call_events_mapped() {
 }
 
 /// A `tool-call-start` that arrives BEFORE any text content frame
+/// must NOT collide with the text block on IR index 0.
 #[test]
 fn test_stream_tool_before_text_no_index_collision() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -1722,6 +1703,8 @@ fn test_stream_tool_before_text_no_index_collision() {
 }
 
 /// Once the leading tool-plan text block is CLOSED by the
+/// first `tool-call-start`, an out-of-spec upstream that resumes text (another `tool-plan-delta` or a
+/// `content-delta`) must NOT reopen it.
 #[test]
 fn test_stream_text_not_reopened_after_close() {
     let reader = CohereReader;
@@ -1799,6 +1782,9 @@ fn test_stream_text_not_reopened_after_close() {
 }
 
 /// A stream that ends with the leading tool-plan text block
+/// still OPEN (no content-end, no tool-call-start — a truncated/adversarial upstream) must have that
+/// block force-closed at message-end, so the Anthropic egress never sees a dangling content_block_start
+/// with no matching stop.
 #[test]
 fn test_stream_message_end_closes_dangling_text_block() {
     let reader = CohereReader;
@@ -1846,6 +1832,7 @@ fn test_stream_message_end_closes_dangling_text_block() {
 }
 
 /// An unknown Cohere stream event type is a documented no-op (no events, no panic) — the named
+/// fallthrough arm must not break the stream.
 #[test]
 fn test_stream_unknown_event_is_noop() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -1992,6 +1979,8 @@ fn test_stream_citation_after_content_end_is_dropped() {
 }
 
 /// CF6 (wire-conformance): a streamed citation egressing into the Cohere v2 dialect must serialize
+/// as a `citation-start` event whose `delta.message.citations` is a SINGLE Citation OBJECT — NOT an
+/// array.
 #[test]
 fn test_write_response_event_citation_start_is_single_object() {
     let writer = CohereWriter;
@@ -2065,6 +2054,9 @@ fn test_extract_error_single_parse_both_fields() {
 }
 
 /// Production `extract_error` must synthesize the
+/// canonical `context_length_exceeded` provider code for an oversized-request error so the
+/// breaker (`normalize_raw_error`) classifies it as `StatusClass::ContextLength` and fails over
+/// without penalty.
 #[test]
 fn test_extract_error_synthesizes_context_length_in_production() {
     let reader = CohereReader;
@@ -2079,11 +2071,11 @@ fn test_extract_error_synthesizes_context_length_in_production() {
     for body in bodies {
         let raw = reader.extract_error(StatusCode::BAD_REQUEST, body);
         assert_eq!(
-                raw.provider_code.as_deref(),
-                Some("context_length_exceeded"),
-                "production extract_error must synthesize the canonical context-length code for body {}",
-                String::from_utf8_lossy(body)
-            );
+            raw.provider_code.as_deref(),
+            Some("context_length_exceeded"),
+            "production extract_error must synthesize the canonical context-length code for body {}",
+            String::from_utf8_lossy(body)
+        );
 
         let signal = crate::codec::test_host::classified(&raw);
         assert_eq!(
@@ -2096,6 +2088,8 @@ fn test_extract_error_synthesizes_context_length_in_production() {
 }
 
 /// A non-context-length Cohere error body must NOT be misclassified as context-length: the raw
+/// `message` is preserved as the provider code and the breaker does not route it to
+/// ContextLength (guards against the substring scan over-matching).
 #[test]
 fn test_extract_error_non_context_length_message_preserved() {
     let reader = CohereReader;
@@ -2115,6 +2109,7 @@ fn test_extract_error_non_context_length_message_preserved() {
 }
 
 /// The `too long` arm of `body_signals_context_length` must be
+/// co-constrained to a token/context/input qualifier.
 #[test]
 fn test_too_long_only_classifies_context_length_when_qualified() {
     let reader = CohereReader;
@@ -2165,6 +2160,8 @@ fn test_too_long_only_classifies_context_length_when_qualified() {
 }
 
 /// A non-streaming request must OMIT the `stream` key entirely
+/// (matching a native client relying on the `false` default), and a streaming request must emit
+/// `"stream": true`.
 #[test]
 fn test_write_request_stream_field_conditional() {
     let base = crate::codec::ir::IrRequest {
@@ -2197,6 +2194,7 @@ fn test_write_request_stream_field_conditional() {
 }
 
 /// A non-streaming Cohere -> Cohere passthrough must NOT GAIN a
+/// `stream` field the native client never sent.
 #[test]
 fn test_stream_field_roundtrip_omitted() {
     let native = serde_json::json!({
@@ -2216,6 +2214,8 @@ fn test_stream_field_roundtrip_omitted() {
 }
 
 /// The streaming `message-end` frame must carry token usage at
+/// `delta.usage.tokens.{input_tokens,output_tokens}` (native Cohere v2 shape) so a Cohere SDK
+/// client tracking billing/rate-limit data is not silently zeroed.
 #[test]
 fn test_write_response_event_message_end_carries_usage() {
     let ev = IrStreamEvent::MessageDelta {
@@ -2254,6 +2254,7 @@ fn test_write_response_event_message_end_carries_usage() {
 }
 
 /// When upstream usage is zero (no data), the message-end frame
+/// still emits the `tokens` object with zero values rather than omitting the key.
 #[test]
 fn test_write_response_event_message_end_zero_usage_present() {
     let ev = IrStreamEvent::MessageDelta {
@@ -2279,6 +2280,7 @@ fn test_write_response_event_message_end_zero_usage_present() {
 }
 
 /// The message-end stream frame round-trips usage through this protocol's own reader: the usage
+/// written into `delta.usage.tokens` is read back identically.
 #[test]
 fn test_message_end_usage_stream_roundtrip() {
     let usage = crate::codec::ir::IrUsage {
@@ -2319,6 +2321,7 @@ fn test_message_end_usage_stream_roundtrip() {
 }
 
 /// A Tool-role message carrying plain text ALONGSIDE a ToolResult
+/// must not silently drop the text — it is folded into the emitted tool message content.
 #[test]
 fn test_tool_role_text_alongside_result_not_dropped() {
     let ir = crate::codec::ir::IrRequest {
@@ -2352,6 +2355,9 @@ fn test_tool_role_text_alongside_result_not_dropped() {
 }
 
 /// A ToolResult whose content is SPLIT across multiple text blocks
+/// must be joined into the Cohere `content` string with NO separator (matching read_request's
+/// `.join("")`) — a phantom space would corrupt a base64 / split-JSON tool-result payload on a
+/// round-trip.
 #[test]
 fn test_tool_result_multi_block_content_joins_without_space() {
     let ir = crate::codec::ir::IrRequest {
@@ -2381,6 +2387,7 @@ fn test_tool_result_multi_block_content_joins_without_space() {
 }
 
 /// A degenerate Tool-role message with text but NO ToolResult
+/// block must still emit its text rather than producing nothing at all.
 #[test]
 fn test_tool_role_text_without_result_not_dropped() {
     let ir = crate::codec::ir::IrRequest {
@@ -2408,6 +2415,7 @@ fn test_tool_role_text_without_result_not_dropped() {
 }
 
 /// A degenerate Tool-role message with MULTIPLE text blocks
+/// but NO ToolResult must emit `content` as a joined STRING, not a JSON text-part array.
 #[test]
 fn test_tool_role_multi_text_without_result_is_string() {
     let ir = crate::codec::ir::IrRequest {
@@ -2439,6 +2447,8 @@ fn test_tool_role_multi_text_without_result_is_string() {
 }
 
 /// A Cohere v2 `tool`-role message whose `content` is the
+/// native object-array shape (`[{"type":"text","text":...}]`, plus a typed `document` block)
+/// must NOT be silently dropped.
 #[test]
 fn test_read_request_tool_content_object_array_preserved() {
     let body = serde_json::json!({
@@ -2498,6 +2508,7 @@ fn test_read_request_tool_content_object_array_preserved() {
 }
 
 /// Fidelity: the Cohere reader must concatenate tool-content text blocks with NO
+/// separator.
 #[test]
 fn test_read_request_tool_text_blocks_join_without_space() {
     let body = serde_json::json!({
@@ -2538,6 +2549,7 @@ fn test_read_request_tool_text_blocks_join_without_space() {
 }
 
 /// The bare-string tool-content array shape must keep working
+/// alongside the new object-array handling.
 #[test]
 fn test_read_request_tool_content_string_array_still_works() {
     let body = serde_json::json!({
@@ -2575,6 +2587,7 @@ fn test_read_request_tool_content_string_array_still_works() {
 }
 
 /// Cohere v2 streams each tool call as a complete
+/// start/delta(s)/end sequence, closing the first tool BEFORE starting the second.
 #[test]
 fn test_stream_two_sequential_tool_calls_get_distinct_indices() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -2689,6 +2702,8 @@ fn test_stream_two_sequential_tool_calls_get_distinct_indices() {
 }
 
 /// A tool call's IR block index is ASSIGNED at `tool-call-start` and is
+/// IMMUTABLE for the tool's whole lifetime — it must NOT change because a LATER tool arrives
+/// with a smaller (non-monotonic) wire `frame_idx`.
 #[test]
 fn test_stream_tool_ir_index_stable_under_non_monotonic_frame_indices() {
     let reader = CohereReader;
@@ -2820,6 +2835,7 @@ fn test_stream_tool_indices_offset_by_open_text_block() {
 }
 
 /// A text content block that has CLOSED before the first
+/// tool-call-start must still reserve IR index 0 — the tool block must NOT reuse index 0.
 #[test]
 fn test_stream_tool_after_closed_text_block_does_not_reuse_index_zero() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -2889,6 +2905,7 @@ fn test_stream_tool_after_closed_text_block_does_not_reuse_index_zero() {
 }
 
 /// The modelled keys are the mapping file's top-level rows — so request fields like those stay
+/// out of `extra` while unknown keys are preserved.
 #[test]
 fn test_modeled_keys_are_the_mapping_rows() {
     let a = |k: &str| crate::codec::carry::models(super::map::REQUEST, k);
@@ -2907,6 +2924,7 @@ fn test_modeled_keys_are_the_mapping_rows() {
 }
 
 /// A cross-protocol stream delivering tool calls to a
+/// Cohere-ingress client must emit native `tool-call-start` / `tool-call-delta` frames.
 #[test]
 fn test_write_response_event_emits_tool_call_frames() {
     let writer = CohereWriter;
@@ -2973,6 +2991,7 @@ fn test_write_response_event_emits_tool_call_frames() {
 }
 
 /// The writer's emitted tool-call-start/delta frames round-trip through this protocol's OWN
+/// reader: a BlockStart{ToolUse} + BlockDelta(args) re-read yields the same id/name/arguments.
 #[test]
 fn test_writer_tool_call_frames_roundtrip_through_reader() {
     let writer = CohereWriter;
@@ -3025,6 +3044,7 @@ fn test_writer_tool_call_frames_roundtrip_through_reader() {
 }
 
 /// A redacted-thinking/Image stream BLOCK-START has no native Cohere v2 opening frame, so the writer
+/// suppresses it rather than emitting a fabricated non-native frame.
 #[test]
 fn test_write_response_event_redacted_thinking_and_image_blocks_suppressed() {
     let writer = CohereWriter;
@@ -3076,6 +3096,8 @@ fn test_write_response_event_redacted_thinking_and_image_blocks_suppressed() {
 }
 
 /// A Cohere `tool`-role message's `content` must be decoded
+/// EXACTLY ONCE — into the ToolResult's inner content — and NOT also into a stray top-level
+/// Text block.
 #[test]
 fn test_read_request_tool_content_not_double_decoded() {
     let body = serde_json::json!({
@@ -3123,6 +3145,7 @@ fn test_read_request_tool_content_not_double_decoded() {
 }
 
 /// A Cohere -> Cohere round-trip of a tool message must NOT
+/// duplicate the tool-result text.
 #[test]
 fn test_tool_message_roundtrip_no_duplicate_text() {
     let body = serde_json::json!({
@@ -3161,6 +3184,7 @@ fn test_tool_message_roundtrip_no_duplicate_text() {
 }
 
 /// `max_tokens` must be narrowed with `u32::try_from`, NOT a
+/// bare `as u32`.
 #[test]
 fn test_read_request_unrepresentable_max_tokens_refuses_without_removing_cap() {
     let reader = CohereReader;
@@ -3214,6 +3238,7 @@ fn test_read_request_unrepresentable_max_tokens_refuses_without_removing_cap() {
 }
 
 /// `k` (top_k) must be narrowed with `u32::try_from`, NOT a
+/// bare `as u32`.
 #[test]
 fn test_read_request_top_k_out_of_range_drops_to_none() {
     let reader = CohereReader;
@@ -3262,6 +3287,7 @@ fn test_read_request_top_k_out_of_range_drops_to_none() {
 }
 
 /// `state.open_tools` is never shrunk, so an upstream streaming an
+/// unbounded number of distinct `tool-call-start` frame indices must not grow it without bound.
 #[test]
 fn test_open_tools_growth_is_capped() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -3345,6 +3371,7 @@ fn test_stream_tool_ir_index_o1_lookup_matches_insertion_order_at_scale() {
 }
 
 /// A `BlockStop` that closes a TOOL-CALL block (one opened by a
+/// `tool-call-start` frame) must emit `tool-call-end`, NOT `content-end`.
 #[test]
 fn test_block_stop_closes_tool_block_with_tool_call_end() {
     let writer = CohereWriter;
@@ -3382,6 +3409,7 @@ fn test_block_stop_closes_tool_block_with_tool_call_end() {
 }
 
 /// A `BlockStop` that closes a TEXT block (one opened by a
+/// `content-start`/text `BlockStart`) must still emit `content-end`.
 #[test]
 fn test_block_stop_closes_text_block_with_content_end() {
     let writer = CohereWriter;
@@ -3415,6 +3443,8 @@ fn test_block_stop_closes_text_block_with_content_end() {
 }
 
 /// A mixed stream (text block at index 0, then a tool-call block
+/// at index 1) must close EACH block with its own correct end event — `content-end` for the text
+/// index and `tool-call-end` for the tool index — based on which kind opened that index.
 #[test]
 fn test_block_stop_mixed_text_and_tool_close_events() {
     let writer = CohereWriter;
@@ -3470,6 +3500,8 @@ fn test_block_stop_mixed_text_and_tool_close_events() {
 }
 
 /// The writer's tool open/close pair round-trips through this protocol's OWN reader: a
+/// BlockStart{ToolUse} followed by a BlockStop emits `tool-call-start` then `tool-call-end`,
+/// which the reader maps back to a BlockStart{ToolUse} then a BlockStop.
 #[test]
 fn test_tool_block_open_close_roundtrip_through_reader() {
     let writer = CohereWriter;
@@ -3520,6 +3552,7 @@ fn test_tool_block_open_close_roundtrip_through_reader() {
 }
 
 /// A tool index is consumed on close: a second `BlockStop` at the same index (an over-eager or
+/// duplicate close) must NOT re-report `tool-call-end`.
 #[test]
 fn test_block_stop_tool_index_consumed_on_close() {
     let writer = CohereWriter;
@@ -3552,12 +3585,13 @@ fn test_block_stop_tool_index_consumed_on_close() {
         &IrStreamEvent::BlockStop { index: 3 },
     );
     assert!(
-            second.is_none(),
-            "a tool index consumed on first close must emit no frame on a duplicate close, got {second:?}"
-        );
+        second.is_none(),
+        "a tool index consumed on first close must emit no frame on a duplicate close, got {second:?}"
+    );
 }
 
 /// The non-streaming `write_response` path must write IR
+/// `stop_reason = "stop_sequence"` back as the native `STOP_SEQUENCE`, NOT `COMPLETE`.
 #[test]
 fn test_write_response_stop_sequence_maps_to_stop_sequence() {
     let resp = crate::codec::ir::IrResponse {
@@ -3581,6 +3615,7 @@ fn test_write_response_stop_sequence_maps_to_stop_sequence() {
 }
 
 /// Companion: IR `end_turn` still maps to `COMPLETE` (the split must not regress the normal
+/// end-of-turn case).
 #[test]
 fn test_write_response_end_turn_maps_to_complete() {
     let resp = crate::codec::ir::IrResponse {
@@ -3603,6 +3638,7 @@ fn test_write_response_end_turn_maps_to_complete() {
 }
 
 /// The streaming `MessageDelta` path must likewise write IR
+/// `stop_sequence` back as native `STOP_SEQUENCE` (not `COMPLETE`) in the message-end frame.
 #[test]
 fn test_stream_message_delta_stop_sequence_maps_to_stop_sequence() {
     let writer = CohereWriter;
@@ -3634,6 +3670,8 @@ fn test_stream_message_delta_stop_sequence_maps_to_stop_sequence() {
 }
 
 /// Full round-trip: a native Cohere `STOP_SEQUENCE` read into IR must write back as
+/// `STOP_SEQUENCE` through both response paths — proving the reader/writer mapping is now
+/// symmetric for stop-sequence stops (the asymmetry to guard against).
 #[test]
 fn test_stop_sequence_roundtrips_symmetrically() {
     let reader = CohereReader;
@@ -3668,6 +3706,7 @@ fn count_block_starts_at(evs: &[IrStreamEvent], idx: usize) -> usize {
 }
 
 /// A DUPLICATE `tool-call-start` for a frame index that is already open
+/// must be a no-op.
 #[test]
 fn test_duplicate_tool_call_start_is_noop() {
     let reader = CohereReader;
@@ -3704,6 +3743,7 @@ fn test_duplicate_tool_call_start_is_noop() {
 }
 
 /// A `tool-call-start` for a frame BEYOND `MAX_TRACKED_TOOL_FRAMES` must
+/// emit NO tool block events.
 #[test]
 fn test_over_cap_tool_call_start_emits_no_block() {
     let reader = CohereReader;
@@ -3745,6 +3785,7 @@ fn test_over_cap_tool_call_start_emits_no_block() {
 }
 
 /// Content-start / content-delta / content-end must NORMALIZE the text
+/// block to IR index 0 regardless of the raw upstream wire `index`.
 #[test]
 fn test_text_block_normalized_to_ir_index_zero() {
     let reader = CohereReader;
@@ -3836,6 +3877,7 @@ fn test_text_block_normalized_to_ir_index_zero() {
 }
 
 /// A non-request-size status (e.g. 429) whose free-text body
+/// mentions token counts must NOT be reclassified as the no-penalty `ContextLength` class.
 #[test]
 fn test_rate_limit_body_mentioning_tokens_is_not_context_length() {
     let reader = CohereReader;
@@ -3851,16 +3893,17 @@ fn test_rate_limit_body_mentioning_tokens_is_not_context_length() {
 
     let sig = crate::codec::test_host::classified(&raw);
     assert_eq!(
-            sig.class,
-            StatusClass::RateLimit,
-            "a 429 body mentioning tokens must normalize to RateLimit so the breaker penalizes the lane"
-        );
+        sig.class,
+        StatusClass::RateLimit,
+        "a 429 body mentioning tokens must normalize to RateLimit so the breaker penalizes the lane"
+    );
 
     let signal = reader.classify(StatusCode::TOO_MANY_REQUESTS, body);
     assert_eq!(signal.class, StatusClass::RateLimit);
 }
 
 /// A genuine oversized-request failure (HTTP 400 with context-length phrasing) must still
+/// override to the canonical `context_length_exceeded` code and normalize to `ContextLength`.
 #[test]
 fn test_bad_request_body_mentioning_tokens_is_context_length() {
     let reader = CohereReader;
@@ -3879,6 +3922,8 @@ fn test_bad_request_body_mentioning_tokens_is_context_length() {
 }
 
 /// A cross-protocol REDACTED-thinking block carries NO opening frame on the Cohere stream (its
+/// `BlockStart` maps to `None`), so its `BlockStop` must emit NOTHING — not an orphan `content-end`
+/// with no matching `content-start`.
 #[test]
 fn test_thinking_blockstop_emits_no_orphan_content_end() {
     let writer = CohereWriter;
@@ -3922,6 +3967,7 @@ fn test_thinking_blockstop_emits_no_orphan_content_end() {
 }
 
 /// A normal Text block still emits a balanced `content-start` / `content-end` pair — the
+/// open-text tracking must not suppress legitimate text closes.
 #[test]
 fn test_text_block_emits_balanced_content_start_and_end() {
     let writer = CohereWriter;
@@ -3952,6 +3998,7 @@ fn test_text_block_emits_balanced_content_start_and_end() {
 }
 
 /// Minimal IR request carrying a single tool and an explicit `tool_choice`, for the
+/// tool-choice round-trip tests below.
 fn ir_with_tool_choice(tc: Option<crate::codec::ir::IrToolChoice>) -> crate::codec::ir::IrRequest {
     crate::codec::ir::IrRequest {
         messages: vec![crate::codec::ir::IrMessage {
@@ -4221,6 +4268,8 @@ fn finish_reason_error_and_unknown_codec() {
 }
 
 /// A full non-stream `read_response` carrying `finish_reason: "ERROR"` surfaces
+/// `IrStopReason::Error` (an upstream-error terminated generation, ir.rs:211), and a
+/// `write_response` re-emits the native `ERROR` token — so a Cohere infra stop survives the seam.
 #[test]
 fn read_write_response_error_finish_reason_round_trips() {
     let body = serde_json::json!({
@@ -4245,6 +4294,10 @@ fn read_write_response_error_finish_reason_round_trips() {
 }
 
 /// A `response_format` json_schema round-trips read→IR→write. Cohere's native shape puts the
+/// schema DIRECTLY under `json_schema` (not nested under `.schema` like OpenAI); the reader
+/// canonicalizes it into the typed `IrResponseFormat` and the writer re-emits Cohere's shape — so
+/// a same-protocol structured-output request stays faithful and a cross-protocol one cannot leak a
+/// foreign shape (ir.rs:348).
 #[test]
 fn response_format_json_schema_round_trips_cohere_shape() {
     let schema = serde_json::json!({
@@ -4310,6 +4363,8 @@ fn n_candidate_count_never_emitted_on_cohere() {
 }
 
 /// Streaming symmetry: the STREAMING Cohere reader must carry `tool-plan-delta` the same way the
+/// non-stream `read_response` carries `message.tool_plan` — as a LEADING REASONING block ahead of
+/// the tool call.
 #[test]
 fn test_stream_tool_plan_delta_becomes_leading_reasoning_before_tool_call() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
@@ -4396,6 +4451,8 @@ fn test_stream_tool_plan_delta_becomes_leading_reasoning_before_tool_call() {
 }
 
 /// Known writer limitation: the IR carries a folded `tool_plan` as a plain
+/// leading `IrBlock::Text` with no distinguishing flag, so an X→Cohere hop re-emits it as `content`,
+/// NOT as the native `tool_plan` slot.
 #[test]
 fn test_write_response_reemits_folded_tool_plan_as_content_not_tool_plan() {
     let writer = CohereWriter;
@@ -4433,6 +4490,9 @@ fn test_write_response_reemits_folded_tool_plan_as_content_not_tool_plan() {
 }
 
 /// Follow-up (MAJOR, balanced-stream): drive a REAL Cohere v2 tool-plan stream
+/// (`message-start` → `tool-plan-delta`× → `tool-call-start`/`-delta`/`-end` → `message-end`)
+/// through the ANTHROPIC writer and assert every `content_block_start` has a matching
+/// `content_block_stop`.
 #[test]
 fn test_stream_tool_plan_to_anthropic_writer_is_balanced() {
     let reader = CohereReader;
@@ -4486,6 +4546,8 @@ fn test_stream_tool_plan_to_anthropic_writer_is_balanced() {
 }
 
 /// REGRESSION: Anthropic and Gemini carry `tool_result` blocks on a USER-role
+/// message in the IR (Anthropic's Messages API puts `tool_result` content parts inside a
+/// `role:"user"` message).
 #[test]
 fn test_anthropic_user_tool_result_survives_to_cohere() {
     let anthropic_body = serde_json::json!({
@@ -4541,6 +4603,14 @@ fn test_anthropic_user_tool_result_survives_to_cohere() {
 }
 
 /// REGRESSION: an Anthropic USER-role message can bundle a `tool_result` block TOGETHER
+/// WITH genuine new user text (e.g. `[{tool_result...}, {text:"and now also do X"}]`). An earlier
+/// fix widened tool-result emission to fire on ANY message carrying a ToolResult block, but it then
+/// FOLDED that follow-up user text into the tool-result `content` string AND dropped the user turn:
+/// mislabeling user speech as tool output and losing it. Cohere v2 `/chat` models a tool result as
+/// its own `role:"tool"` message (`tool_call_id` + `content`) and user text as a separate
+/// `role:"user"` message. This asserts the fixed writer emits BOTH: a `tool` message carrying the
+/// result (uncontaminated by the user text) AND a `user` message carrying the follow-up text:
+/// nothing dropped, nothing mislabeled.
 #[test]
 fn test_anthropic_user_tool_result_plus_text_splits_to_tool_and_user() {
     let anthropic_body = serde_json::json!({
@@ -4706,6 +4776,9 @@ fn test_stream_generic_error_finish_pushes_ir_error_event() {
 }
 
 /// A two-citation delta driven straight at `write_response_events` must emit BOTH citations. The
+/// writer used to keep only the first, leaning on the framing seam's citation fan-out to have split
+/// the batch — but the plane codec calls this seam directly, and a caller that does loses every
+/// citation after the first with no signal.
 #[test]
 fn cohere_writer_emits_every_citation_in_a_multi_citation_delta() {
     let cit = |url: &str| crate::codec::ir::IrCitation {
@@ -4765,6 +4838,7 @@ fn cohere_writer_emits_every_citation_in_a_multi_citation_delta() {
 }
 
 /// `raw_stop_reason` reads the top-level `finish_reason` off the RAW bytes and maps it exactly as
+/// `read_response` does (owner ruling Q31 follow-up: the same-protocol relay's breaker fault).
 #[test]
 fn raw_stop_reason_agrees_with_read_response() {
     for token in [
@@ -4814,6 +4888,7 @@ fn raw_stop_reason_agrees_with_read_response() {
 }
 
 /// The key spelled INSIDE delivered text is not the field: there its quotes are escaped. A body
+/// whose text says `"finish_reason":"ERROR"` and which completed reads `COMPLETE`.
 #[test]
 fn raw_stop_reason_ignores_the_key_inside_delivered_text() {
     let body = serde_json::json!({

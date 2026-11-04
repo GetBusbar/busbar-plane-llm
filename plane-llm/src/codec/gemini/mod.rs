@@ -44,6 +44,7 @@ use slots::*;
 use usage::*;
 
 /// The query pair a Gemini request carries to ask for event-framed chunks, written on the far-end
+/// stream path and read at arrival.
 pub const STREAM_QUERY: (&str, &str) = ("alt", "sse");
 
 /// Build this dialect's wire codec. A fresh instance per resolution.
@@ -52,6 +53,8 @@ pub fn protocol() -> Protocol {
 }
 
 /// The [`ProtocolDecl::models_list_envelope`] builder: Gemini's `GET /v1(beta)/models` shape. Each
+/// name becomes a `Model` resource (`models/{id}`, with the two generation methods busbar serves),
+/// wrapped in the `{ "models": [...] }` envelope the SDK expects.
 fn models_list_envelope(names: &[&str]) -> serde_json::Value {
     let models: Vec<serde_json::Value> = names
         .iter()
@@ -102,6 +105,8 @@ const GEMINI_RESIDUAL_ACTIONS: [&str; 7] = [
 ];
 
 /// Headerless residual detection: the whole `/v1beta/models…` surface is Gemini-only (rung 10), and
+/// a `/v1/models/{id}` whose last segment carries a Gemini action suffix is Gemini (rung 20,
+/// tighter than the OpenAI `/v1/models/` catch at rung 25).
 fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrength> {
     use busbar_contract::protocol::ClaimStrength;
     if path.starts_with("/v1beta/models") {
@@ -120,6 +125,7 @@ fn residual_claims(path: &str) -> Option<busbar_contract::protocol::ClaimStrengt
 }
 
 /// Gemini's declaration. The only protocol declaring an array-stream shim key, a declaration rather
+/// than a literal so `proxy` removes every declared shim key without naming one.
 pub const DECL: ProtocolDecl = ProtocolDecl {
     name: COUNT_LABEL,
     codec: dialect_codec!(COUNT_LABEL),
@@ -190,6 +196,7 @@ pub(crate) const ENTRY: super::proto_codec::DialectEntry = super::proto_codec::D
 };
 
 /// Response-side untranslatable metadata: `safetyRatings` under `candidates[].safetyRatings`, present
+/// only when requested.
 fn vendor_response_metadata(body: &serde_json::Value) -> Vec<&'static str> {
     [(FIELD_SAFETY_RATINGS, "candidates[].safetyRatings")]
         .into_iter()
@@ -217,6 +224,7 @@ const REQUEST_PART_KINDS: &[&str] = &[
 const PART_COMPANIONS: &[&str] = &[FIELD_THOUGHT, FIELD_THOUGHT_SIGNATURE];
 
 /// The Gemini request content grammar (`codec::drops`): a union keyed by its kind member. A part of
+/// any other kind (`executableCode` / `codeExecutionResult`) is named as dropped on a translate attempt.
 const REQUEST_BLOCKS: &[crate::codec::drops::Blocks] = &[
     crate::codec::drops::Blocks {
         at: &["contents[]", "parts[]"],
@@ -352,12 +360,17 @@ const RESPONSE_DROPS: &[&str] = &[
 ];
 
 /// Router-internal shim key the ingress route injects when the client sent a streaming
+/// `:streamGenerateContent` request without `?alt=sse` (so the response must be JSON-array, not
+/// SSE).
 pub const GEMINI_JSON_ARRAY_SHIM_KEY: &str = "__busbar_gemini_json_array";
 
 /// The canonical Gemini bad-API-key message (`google.rpc.Status.message` of a real 400/INVALID_ARGUMENT).
 pub const GEMINI_BAD_KEY_MESSAGE: &str = "API key not valid. Please pass a valid API key.";
 
 /// Cap on distinct tool-call block indices in `state.open_tools` for one SSE stream. The set drains
+/// on either terminal path (a `finishReason` chunk, or a prompt-block envelope
+/// `candidates_absent` + `promptFeedback.blockReason`), so an upstream streaming unbounded
+/// `functionCall` parts without reaching one would grow it until OOM.
 const MAX_GEMINI_TOOL_FRAMES: usize = 4096;
 
 /// Gemini `FinishReason.STOP` — normal/tool-call end.
@@ -376,6 +389,8 @@ const GEMINI_FINISH_RECITATION: &str = "RECITATION";
 const GEMINI_FINISH_PROHIBITED_CONTENT: &str = "PROHIBITED_CONTENT";
 
 /// Upstream URL path prefix shared by all Gemini Generative Language API endpoints; the per-request
+/// path appends `/{model}:{method}` (and optionally `?alt=sse`) via `upstream_path_for` /
+/// `upstream_path_for_stream`.
 const GEMINI_PATH_BASE: &str = "/v1beta/models";
 
 /// JSON key for Gemini's top-level usage wrapper (`usageMetadata`).
@@ -387,12 +402,17 @@ const FIELD_CANDIDATES_TOKEN_COUNT: &str = "candidatesTokenCount";
 /// JSON key for the total token count inside `usageMetadata`.
 const FIELD_TOTAL_TOKEN_COUNT: &str = "totalTokenCount";
 /// Key for the thinking token count in `usageMetadata` (2.5-series models). Unlike OpenAI's
+/// `reasoning_tokens` it is not a subset of the visible output count but a separate additive term;
+/// see [`GEMINI_USAGE_ADDITIVE_TERMS`].
 const FIELD_THOUGHTS_TOKEN_COUNT: &str = "thoughtsTokenCount";
 /// JSON key for the context-cache token count inside `usageMetadata`.
 const FIELD_CACHED_CONTENT_TOKEN_COUNT: &str = "cachedContentTokenCount";
 /// Key for the server-side tool-use prompt tokens in `usageMetadata`. Despite the name it is not a
+/// slice of `promptTokenCount` but a fourth additive term beside it, charged at the input rate and
+/// billed since 1.6.0 (see [`GEMINI_USAGE_ADDITIVE_TERMS`]).
 const FIELD_TOOL_USE_PROMPT_TOKEN_COUNT: &str = "toolUsePromptTokenCount";
 /// Key for the billing-lane marker in `usageMetadata` (`ON_DEMAND` / `PROVISIONED`). Informational,
+/// not billed (see [`crate::codec::ir::types::IrUsageDetail::traffic_type`]).
 const FIELD_TRAFFIC_TYPE: &str = "trafficType";
 
 /// The measured Gemini usage identity: the four `usageMetadata` counters that are additive terms of
@@ -433,6 +453,7 @@ const GEMINI_USAGE_ADDITIVE_TERMS: &[&str] = &[
 ];
 
 /// Stable identifier for the identity [`gemini_usage_identity_note`] checks, carried on
+/// [`crate::codec::ir::UsageIdentityNote::identity`] so callers branch on a constant.
 const GEMINI_USAGE_IDENTITY: &str = "gemini.usageMetadata";
 
 /// The sum of [`GEMINI_USAGE_ADDITIVE_TERMS`] on one `usageMetadata` object (absent terms are zero).
@@ -446,6 +467,7 @@ fn additive_sum(u: &serde_json::Value) -> Option<u64> {
 }
 
 /// Cross-check what busbar will bill against the total Google stated, and report a disagreement
+/// instead of hiding one.
 fn gemini_usage_identity_note(
     u: Option<&serde_json::Value>,
 ) -> Option<crate::codec::ir::UsageIdentityNote> {
@@ -492,6 +514,7 @@ const FIELD_MODEL_VERSION: &str = "modelVersion";
 const FIELD_CREATE_TIME: &str = "createTime";
 
 /// Read Gemini/Vertex's top-level `createTime` verbatim (a foreign timestamp parser could reject a
+/// Vertex precision/zone quirk).
 fn read_gemini_create_time(body: &serde_json::Value) -> Option<String> {
     body.get(FIELD_CREATE_TIME)
         .and_then(|v| v.as_str())
@@ -603,12 +626,17 @@ pub struct GeminiReader;
 const RESPONSE_ID_ALPHABET: &[u8; 62] = crate::codec::dialect::BASE62_ALPHABET;
 
 /// Width of a synthesized `responseId`. Native ids are short opaque tokens (~11-16 chars) with no
+/// structure; 16 base62 chars stays in that profile so a length- or regex-checking client cannot
+/// fingerprint it as non-native.
 const RESPONSE_ID_TOKEN_LEN: usize = 16;
 
 /// Rejection threshold for the base62 reduction in `synth_response_id`: the largest multiple of 62
+/// in a `u8` is 248, so a byte `>= 248` is rejected and resampled to avoid a biased `byte % 62`.
 const RESPONSE_ID_REJECT_THRESHOLD: u8 = crate::codec::dialect::BASE62_REJECT_THRESHOLD;
 
 /// Mint a Gemini-shaped `responseId` where the backend supplied none (cross-protocol). A native id
+/// is an opaque mixed-case alphanumeric token with no hyphen, hex-only class or embedded timestamp;
+/// a `{:x}-{:x}` timestamp-and-counter form was distinguishable and leaked the host clock.
 fn synth_response_id(host: &dyn busbar_contract::codec::CodecHost) -> Option<String> {
     let mut token = [b'0'; RESPONSE_ID_TOKEN_LEN];
     let mut filled = 0usize;
@@ -642,6 +670,8 @@ fn synth_response_id(host: &dyn busbar_contract::codec::CodecHost) -> Option<Str
 }
 
 /// Synthesize a stable, non-empty tool-call id for a Gemini `functionCall`. The wire carries none,
+/// and an empty id on Anthropic/OpenAI egress (which require one to correlate the later
+/// `tool_result`) made same-named calls indistinguishable and broke result routing.
 fn synth_tool_call_id(call_index: usize, function_name: &str, turn_salt: &str) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -652,6 +682,7 @@ fn synth_tool_call_id(call_index: usize, function_name: &str, turn_salt: &str) -
 }
 
 /// The native call id on a `functionCall` / `functionResponse` object (IR audit GEM-08). Both `id`s
+/// are optional; when populated, the response is paired with its call by it.
 fn gemini_call_id(obj: &serde_json::Value) -> Option<&str> {
     obj.get(keys::ID)
         .and_then(|v| v.as_str())
@@ -668,40 +699,56 @@ fn gemini_call_id(obj: &serde_json::Value) -> Option<&str> {
 /// the same name in the most recent model turn that has one (positional pairing for parallel
 /// same-name calls; a stale call in an older turn never steals a newer turn's answer); (3) else the
 /// name, as before: a result with no call to pair with stays an orphan and is warned about.
+type GeminiNamedCalls = std::collections::BTreeSet<(usize, std::cmp::Reverse<usize>)>;
+
 #[derive(Default)]
 struct GeminiCallLedger {
-    /// `(id, name, turn, answered)` for every call seen so far, in history order.
-    calls: Vec<(String, String, usize, bool)>,
+    calls: Vec<(String, String, usize)>,
+    by_id: std::collections::BTreeMap<String, std::collections::BTreeSet<usize>>,
+    by_name: std::collections::BTreeMap<String, GeminiNamedCalls>,
 }
 
 impl GeminiCallLedger {
     fn record_call(&mut self, id: &str, name: &str, turn: usize) {
-        self.calls
-            .push((id.to_string(), name.to_string(), turn, false));
+        let index = self.calls.len();
+        self.calls.push((id.to_string(), name.to_string(), turn));
+        self.by_id.entry(id.to_string()).or_default().insert(index);
+        self.by_name
+            .entry(name.to_string())
+            .or_default()
+            .insert((turn, std::cmp::Reverse(index)));
+    }
+
+    fn answer(&mut self, index: usize) -> String {
+        let (id, name, turn) = &self.calls[index];
+        if let Some(indices) = self.by_id.get_mut(id) {
+            indices.remove(&index);
+        }
+        if let Some(indices) = self.by_name.get_mut(name) {
+            indices.remove(&(*turn, std::cmp::Reverse(index)));
+        }
+        id.clone()
     }
 
     fn pair_response(&mut self, explicit_id: Option<&str>, name: &str) -> String {
         if let Some(id) = explicit_id {
-            if let Some(c) = self.calls.iter_mut().find(|c| !c.3 && c.0 == id) {
-                c.3 = true;
+            if let Some(index) = self
+                .by_id
+                .get(id)
+                .and_then(|indices| indices.first())
+                .copied()
+            {
+                self.answer(index);
             }
             return id.to_string();
         }
-        let latest_turn = self
-            .calls
-            .iter()
-            .filter(|c| !c.3 && c.1 == name)
-            .map(|c| c.2)
-            .max();
-        if let Some(turn) = latest_turn {
-            if let Some(c) = self
-                .calls
-                .iter_mut()
-                .find(|c| !c.3 && c.1 == name && c.2 == turn)
-            {
-                c.3 = true;
-                return c.0.clone();
-            }
+        if let Some((_, std::cmp::Reverse(index))) = self
+            .by_name
+            .get(name)
+            .and_then(|indices| indices.last())
+            .copied()
+        {
+            return self.answer(index);
         }
         tracing::warn!(
             tool_name = %name,
@@ -714,6 +761,7 @@ impl GeminiCallLedger {
 }
 
 /// Read one Gemini attachment part (`inlineData{mimeType,data}` or `fileData{fileUri,mimeType}`)
+/// into its IR block.
 fn read_gemini_media_part(part: &serde_json::Value) -> Option<crate::codec::ir::IrBlock> {
     if let Some(inline_data) = part.get(FIELD_INLINE_DATA) {
         let mime_type = inline_data
@@ -761,17 +809,25 @@ fn read_gemini_media_part(part: &serde_json::Value) -> Option<crate::codec::ir::
             .get(FIELD_MIME_TYPE)
             .and_then(|m| m.as_str())
             .unwrap_or("");
+        let source = if mime.is_empty() {
+            crate::codec::ir::IrImageSource::Url(uri)
+        } else {
+            crate::codec::ir::IrImageSource::UrlWithMime {
+                url: uri,
+                media_type: mime.to_string(),
+            }
+        };
         return Some(
             if mime.is_empty() || mime.to_ascii_lowercase().starts_with(keys::IMAGE_) {
                 crate::codec::ir::IrBlock::Image {
-                    source: crate::codec::ir::IrImageSource::Url(uri),
+                    source,
                     cache_control: None,
                     detail: None,
                 }
             } else {
                 crate::codec::ir::IrBlock::Media {
                     kind: crate::codec::ir::IrMediaKind::from_media_type(mime),
-                    source: crate::codec::ir::IrImageSource::Url(uri),
+                    source,
                     name: None,
                     cache_control: None,
                     citations: None,
@@ -784,6 +840,8 @@ fn read_gemini_media_part(part: &serde_json::Value) -> Option<crate::codec::ir::
 }
 
 /// Write one IR attachment block as its Gemini part (`inlineData` / `fileData`); inverse of
+/// [`read_gemini_media_part`], used for a tool result's attachments (`functionResponse.parts`,
+/// GEM-06).
 fn write_gemini_media_part(block: &crate::codec::ir::IrBlock) -> Option<serde_json::Value> {
     let (source, url_mime): (&crate::codec::ir::IrImageSource, &str) = match block {
         crate::codec::ir::IrBlock::Image { source, .. } => (
@@ -799,6 +857,11 @@ fn write_gemini_media_part(block: &crate::codec::ir::IrBlock) -> Option<serde_js
         _ => return None,
     };
     match source {
+        crate::codec::ir::IrImageSource::UrlWithMime { url, media_type } => {
+            Some(serde_json::json!({
+                (FIELD_FILE_DATA): { (FIELD_FILE_URI): url, (FIELD_MIME_TYPE): media_type }
+            }))
+        }
         crate::codec::ir::IrImageSource::Url(uri) => Some(serde_json::json!({
             (FIELD_FILE_DATA): { (FIELD_FILE_URI): uri, (FIELD_MIME_TYPE): url_mime }
         })),
@@ -831,6 +894,7 @@ fn gemini_image_mime_for_url(uri: &str) -> &'static str {
 }
 
 /// `thinkingConfig.thinkingLevel` (Gemini 3) to the IR effort ask (IR audit GEM-09). The same concept
+/// as OpenAI's `reasoning_effort`, so one-for-one onto [`crate::codec::ir::IrReasoningEffort`].
 fn read_gemini_thinking_level(level: &str) -> Option<crate::codec::ir::IrReasoningAsk> {
     let effort = match level.to_ascii_lowercase().as_str() {
         "minimal" => crate::codec::ir::IrReasoningEffort::Minimal,
@@ -843,6 +907,7 @@ fn read_gemini_thinking_level(level: &str) -> Option<crate::codec::ir::IrReasoni
 }
 
 /// Read `thinkingConfig.thinkingBudget` as Gemini's API does (proto3 JSON int32: a whole number or a
+/// decimal string): `-1` ("the model decides"), `0` (off) or a positive count.
 fn read_gemini_thinking_budget(v: &serde_json::Value) -> Option<i32> {
     let n = match v {
         serde_json::Value::Number(n) => match n.as_i64() {
@@ -863,6 +928,7 @@ fn read_gemini_thinking_budget(v: &serde_json::Value) -> Option<i32> {
 }
 
 /// Normalize a Gemini OpenAPI-subset `Schema` (`parameters`, `responseSchema`) into JSON Schema for
+/// the IR (IR audit GEM-11).
 fn gemini_openapi_schema_to_json_schema(schema: &serde_json::Value) -> serde_json::Value {
     fn walk(v: &serde_json::Value, depth: usize) -> serde_json::Value {
         let Some(obj) = v.as_object() else {
@@ -926,6 +992,7 @@ fn gemini_openapi_schema_to_json_schema(schema: &serde_json::Value) -> serde_jso
 }
 
 /// Convert Vertex's RFC 3339 `createTime` (`2025-06-01T12:34:56.123456Z`, or with a `±HH:MM` offset)
+/// into Unix epoch seconds, the IR's `created`.
 fn gemini_rfc3339_to_epoch(s: &str) -> Option<u64> {
     let b = s.as_bytes();
     let num = |r: std::ops::Range<usize>| -> Option<i64> {
@@ -994,6 +1061,7 @@ fn gemini_rfc3339_to_epoch(s: &str) -> Option<u64> {
 }
 
 /// Gemini's `logprobsResult` (parallel arrays `chosenCandidates[i]` and `topCandidates[i].candidates[]`)
+/// zipped into neutral IR entries.
 fn read_gemini_logprobs(v: Option<&serde_json::Value>) -> Vec<crate::codec::ir::IrTokenLogprob> {
     let chosen = match v
         .and_then(|lr| lr.get(FIELD_CHOSEN_CANDIDATES))
@@ -1037,6 +1105,7 @@ fn read_gemini_logprobs(v: Option<&serde_json::Value>) -> Vec<crate::codec::ir::
 }
 
 /// Neutral IR logprobs to `logprobsResult` (chosen + top arrays). `topCandidates` is emitted only
+/// when some position has alternatives, as Gemini omits it when the top-count was not requested.
 fn write_gemini_logprobs_result(lps: &[crate::codec::ir::IrTokenLogprob]) -> serde_json::Value {
     let chosen: Vec<serde_json::Value> = lps
         .iter()
@@ -1101,6 +1170,8 @@ fn write_gemini_tool_choice(tc: &crate::codec::ir::IrToolChoice) -> serde_json::
 }
 
 /// Default an absent `functionCall.args` to `{}`, not `null`. A zero-argument call omits `args` or
+/// sends an empty object; `null` leaked `"input": null` onto Anthropic/OpenAI egress, which strict
+/// SDKs reject.
 fn empty_object_if_absent(args: Option<&serde_json::Value>) -> serde_json::Value {
     match args {
         Some(v) => v.clone(),
@@ -1109,6 +1180,7 @@ fn empty_object_if_absent(args: Option<&serde_json::Value>) -> serde_json::Value
 }
 
 /// Coerce an `IrBlock::ToolUse.input` into a valid `functionCall.args` (a protobuf Struct, so it
+/// must be a JSON object).
 fn coerce_tool_args(input: &serde_json::Value) -> serde_json::Value {
     let candidate: serde_json::Value = match input.as_str() {
         Some(s) => crate::codec::json::parse_str(s).unwrap_or_else(|_| input.clone()),
@@ -1124,6 +1196,7 @@ fn coerce_tool_args(input: &serde_json::Value) -> serde_json::Value {
 }
 
 /// True when a response/stream chunk has no usable `candidates` (absent, non-array or empty),
+/// distinguishing a prompt-block / error-only envelope from a candidate-bearing chunk.
 fn candidates_absent(data: &serde_json::Value) -> bool {
     match data.get(FIELD_CANDIDATES).and_then(|c| c.as_array()) {
         Some(arr) => arr.is_empty(),
@@ -1140,6 +1213,7 @@ fn prompt_block_reason(data: &serde_json::Value) -> Option<&str> {
 }
 
 /// Map a candidate `finishReason` to a canonical IR stop reason. `STOP`/`MAX_TOKENS`/`SAFETY` map
+/// to `end_turn`/`max_tokens`/`safety`.
 fn map_gemini_finish_reason(finish_reason: &str) -> crate::codec::ir::IrStopReason {
     use crate::codec::ir::IrStopReason as S;
     match finish_reason {
@@ -1161,6 +1235,8 @@ fn map_gemini_finish_reason(finish_reason: &str) -> crate::codec::ir::IrStopReas
 }
 
 /// Map a `promptFeedback.blockReason` to a canonical IR stop reason. A prompt block refuses the
+/// input on content policy, so the well-known reasons surface as `safety` (as candidate-level
+/// `SAFETY` does); any other reason is lowercased so a novel one is surfaced, not dropped.
 fn prompt_block_stop_reason(block_reason: &str) -> crate::codec::ir::IrStopReason {
     use crate::codec::ir::IrStopReason as S;
     match block_reason {
@@ -1174,6 +1250,8 @@ fn prompt_block_stop_reason(block_reason: &str) -> crate::codec::ir::IrStopReaso
 }
 
 /// IR stop reason to Gemini's native `finishReason`. Exhaustive. The enum has no TOOL_USE, so
+/// EndTurn/StopSequence/ToolUse give STOP; MaxTokens gives MAX_TOKENS; Safety gives SAFETY; any
+/// other gives the native `OTHER` (valid and honest, never an off-spec token).
 fn write_gemini_stop_reason(reason: crate::codec::ir::IrStopReason) -> &'static str {
     use crate::codec::ir::IrStopReason as S;
     match reason {
@@ -1186,6 +1264,7 @@ fn write_gemini_stop_reason(reason: crate::codec::ir::IrStopReason) -> &'static 
 }
 
 /// Map a canonical `StatusClass` onto the `(HTTP code, google.rpc.Code name)` pair Gemini uses in
+/// its `google.rpc.Status` error envelope.
 fn gemini_stream_error_code_status(class: StatusClass) -> (u16, &'static str) {
     match class {
         StatusClass::RateLimit => (429, GRPC_RESOURCE_EXHAUSTED),
@@ -1201,6 +1280,7 @@ fn gemini_stream_error_code_status(class: StatusClass) -> (u16, &'static str) {
 }
 
 /// Map an inline google.rpc.Status `(status name, code)`, as in a 200-status SSE error chunk's
+/// `error` object, to a `StatusClass`.
 fn gemini_error_status_class(status: Option<&str>, code: Option<u64>) -> StatusClass {
     if let Some(name) = status {
         match name {
@@ -1217,7 +1297,7 @@ fn gemini_error_status_class(status: Option<&str>, code: Option<u64>) -> StatusC
             | GEMINI_ABORTED
             | GEMINI_CANCELLED => return StatusClass::ClientError,
             GRPC_INTERNAL | GEMINI_UNKNOWN | "DATA_LOSS" | GRPC_UNIMPLEMENTED => {
-                return StatusClass::ServerError
+                return StatusClass::ServerError;
             }
 
             other => {
@@ -1306,7 +1386,7 @@ struct GeminiStream {
 struct GeminiStreamText {
     text: String,
     truncated: bool,
-    block_starts: Vec<GeminiStreamBlock>,
+    block_starts: std::collections::BTreeMap<usize, GeminiStreamBlock>,
     /// Bytes emitted, including those beyond the retained prefix, for contiguity detection.
     emitted_bytes: usize,
     chars: usize,
@@ -1315,7 +1395,6 @@ struct GeminiStreamText {
 
 #[derive(Clone, Debug)]
 struct GeminiStreamBlock {
-    index: usize,
     start: usize,
     end: usize,
     contiguous: bool,
@@ -1331,7 +1410,7 @@ pub const GeminiWriter: GeminiWriter = GeminiWriter {
         stream_text: GeminiStreamText {
             text: String::new(),
             truncated: false,
-            block_starts: Vec::new(),
+            block_starts: std::collections::BTreeMap::new(),
             emitted_bytes: 0,
             chars: 0,
             marks: Vec::new(),
@@ -1400,6 +1479,7 @@ mod ir_round3_tests;
 mod df_map_audit_tests;
 
 /// A candidate's and the prompt's `safetyRatings[]` to IR safety verdicts: the category, with
+/// `blocked` as both `flagged` and `blocked`.
 fn read_safety_ratings(
     body: &serde_json::Value,
     candidate: &serde_json::Value,
@@ -1427,6 +1507,7 @@ fn read_safety_ratings(
 }
 
 /// The IR safety verdicts as a candidate's `safetyRatings[]` (`{category, blocked}`, no
+/// probability).
 fn write_safety_ratings(safety: &[crate::codec::ir::IrSafetyVerdict]) -> Option<serde_json::Value> {
     (!safety.is_empty()).then(|| {
         serde_json::Value::Array(
@@ -1442,3 +1523,15 @@ const FIELD_SAFETY_RATINGS: &str = "safetyRatings";
 const FIELD_PROMPT_FEEDBACK: &str = "promptFeedback";
 const FIELD_CATEGORY: &str = "category";
 const FIELD_BLOCKED: &str = "blocked";
+
+#[cfg(test)]
+#[path = "tests/audit_media_tests.rs"]
+mod audit_media_tests;
+
+#[cfg(test)]
+#[path = "tests/media_mime_fidelity_tests.rs"]
+mod media_mime_fidelity_tests;
+
+#[cfg(test)]
+#[path = "tests/audit_stream_cost_tests.rs"]
+mod audit_stream_cost_tests;

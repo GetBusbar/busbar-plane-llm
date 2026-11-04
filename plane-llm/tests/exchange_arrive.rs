@@ -220,6 +220,7 @@ use busbar_plane_llm::refusal::reason;
 use serde_json::json;
 
 /// The host the exchange is handed: a fixed entropy byte, so a dialect that mints a request id
+/// mints one (the same one every time), and no clock.
 struct FixedHost;
 
 impl busbar_contract::codec::CodecHost for FixedHost {
@@ -1093,18 +1094,15 @@ fn a_json_content_type_with_a_charset_still_parses() {
     assert_eq!(a.model, "m");
 }
 
-/// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::the_refusal_set_is_three_and_they_do_not_collide`.
+/// Exercise the two body refusals reachable through the public arrival API.
+/// Reserialize is an internal splice failure guard and is not manufactured here.
 #[test]
-fn the_arrival_refusal_set_is_three_distinct_400s() {
+fn reachable_arrival_body_refusals_are_distinct_400s() {
     let parse = no("/v1beta/models/m:generateContent", &json(), b"{not json");
     let not_object = no("/v1beta/models/m:generateContent", &json(), b"[1]");
     assert_eq!(parse.why, Decline::BodyParse);
     assert_eq!(not_object.why, Decline::NotAnObject);
-    let mut sentences = vec![
-        parse.message.to_string(),
-        not_object.message.to_string(),
-        "The request body could not be processed.".to_string(),
-    ];
+    let mut sentences = vec![parse.message.to_string(), not_object.message.to_string()];
     for d in [&parse, &not_object] {
         assert_eq!((d.status, d.kind), (400, "invalid_request_error"));
     }
@@ -1112,13 +1110,12 @@ fn the_arrival_refusal_set_is_three_distinct_400s() {
         sentences,
         [
             "We could not parse the JSON body of your request.",
-            "Request body must be a JSON object.",
-            "The request body could not be processed."
+            "Request body must be a JSON object."
         ]
     );
     sentences.sort_unstable();
     sentences.dedup();
-    assert_eq!(sentences.len(), 3, "two reasons share one sentence");
+    assert_eq!(sentences.len(), 2, "two reasons share one sentence");
 }
 
 /// Rehomes `crates/busbar-llm/src/unit/tests/audit.rs::audit_refused_matches_the_live_rejected_terminal`.
@@ -1369,6 +1366,7 @@ fn every_recorded_body_model_resolves_the_same_model_both_spellings() {
 }
 
 /// A HOOK'S REWRITE IS SPLICED INTO THE CALLER'S BYTES, never re-serialized ("hook `rw` edits,
+/// spliced per changed block").
 #[test]
 fn a_hook_rewrite_splices_only_the_members_it_changes() {
     use busbar_plane_llm::exchange::project::apply_rewrite;
@@ -1437,6 +1435,9 @@ fn a_rerank_and_an_embedding_state_that_a_rewrite_does_not_apply() {
 }
 
 /// A CHAT NEVER STATES THAT A REWRITE DOES NOT APPLY: a chat's rewrite is spliced into its
+/// conversation, and a chat whose rewrite could not be applied (a body with no messages container
+/// to splice it into, a rewrite that does not read) is the kernel's to REFUSE, never to forward
+/// un-rewritten, so the mark stays clear whatever kept the rewrite from applying.
 #[test]
 fn a_chat_never_states_that_a_rewrite_does_not_apply() {
     use busbar_plane_llm::exchange::project::{apply_rewrite, rewrite_flags};

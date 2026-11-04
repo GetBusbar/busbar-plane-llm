@@ -139,6 +139,8 @@ fn every_usage_count_in_the_wire_lock_is_ledgered_in_its_class() {
 }
 
 /// A turn's web searches reach the ledger as `search_units` on every read path, and a turn that ran
+/// none puts NO `search_units` row on it: a zero is no hit on the class, so a card silent about
+/// `search_units` on that lane is never refused for a turn that searched nothing.
 #[test]
 fn web_searches_ledger_as_search_units_and_none_is_no_row() {
     let usage = base_usage();
@@ -170,6 +172,8 @@ fn web_searches_ledger_as_search_units_and_none_is_no_row() {
 }
 
 /// A turn's web fetches reach the ledger as exactly one `web_fetch_requests` line on every read
+/// path (buffered, truncated, stream), beside its searches and its tokens, and move no other class
+/// (owner LEDGER-100).
 #[test]
 fn web_fetches_ledger_as_web_fetch_requests_on_every_path() {
     let usage = base_usage();

@@ -408,6 +408,8 @@ fn corpus() -> Vec<Fixture> {
 }
 
 /// One fixture's view rendered as a single canonical line. Deliberately a string rather than a
+/// struct table: the assertion is a whole-corpus diff a reviewer reads top to bottom, and a
+/// hand-maintained struct table invites updating one field and calling it a review.
 fn render_view(measured: &Result<View, String>) -> String {
     match measured {
         Err(_) => "REJECTED".to_string(),
@@ -435,6 +437,8 @@ fn render_corpus() -> String {
 }
 
 /// THE PIN. Regenerate deliberately, never reflexively: every line here is what a `prompt: ro` hook
+/// is shown for that request and what the size signal reports for it, so a moved line is an
+/// operator-visible behaviour change and belongs in the CHANGELOG with a reason.
 const CORPUS_GOLDEN: &str = include_str!("golden/hook_ir_projection.txt");
 
 #[test]
@@ -451,6 +455,8 @@ fn the_surviving_projection_matches_its_pinned_golden() {
 }
 
 /// # THE NINE INTENDED DIVERGENCES, CHECKED RATHER THAN CLAIMED
+///
+/// Before the cutover this file measured nine fixtures on which the two implementations disagreed.
 #[test]
 fn the_nine_intended_divergences_are_the_ones_that_landed() {
     let view = |name: &str| -> Result<View, String> {
@@ -519,6 +525,8 @@ fn the_nine_intended_divergences_are_the_ones_that_landed() {
 }
 
 /// The opacity decisions, asserted as a set rather than one fixture at a time: three wire shapes
+/// across three dialects are opaque for the same reason, and a consumer must not be able to tell
+/// which one it is looking at.
 #[test]
 fn every_opaque_shape_projects_the_marker_and_never_the_bytes() {
     for (name, secret) in [
@@ -544,6 +552,9 @@ fn every_opaque_shape_projects_the_marker_and_never_the_bytes() {
 }
 
 /// # THE CORPUS WALK IS PROTOCOL-BLIND
+///
+/// The standard's acceptance test is *"if adding a protocol requires touching anything outside
+/// `proto/`, its handler and its codec, the standard is not held"*.
 #[test]
 fn corpus_covers_every_known_protocol() {
     let covered: std::collections::BTreeSet<&str> = corpus().iter().map(|f| f.proto).collect::<_>();

@@ -20,18 +20,21 @@ use bytes::Bytes;
 use serde_json::{json, Value};
 
 /// Endpoint paths, on both the egress side (`upstream_path`) and the ingress match
+/// (`resolve_operation`), single-sourced so they cannot drift.
 const PATH_CHAT: &str = "/v2/chat";
 const PATH_EMBED: &str = "/v2/embed";
 const PATH_RERANK: &str = "/v2/rerank";
 
 pub struct CohereRequestHandler;
 /// This protocol's own chat instance; remove it and the registry arm and chat 404s via the
+/// standard no-handler path.
 static CHAT: super::super::chat_handle::ChatOperation =
     super::super::chat_handle::ChatOperation(VENDOR_NAME);
 static EMB: CohereEmbeddings = CohereEmbeddings;
 static RERANK: CohereRerank = CohereRerank;
 
 /// Cohere's row of the support matrix, as data. A verb absent from it is the standard no-handler
+/// 404: Cohere has no moderation/image/audio surface, and the protocol-surface verbs are MCP's and A2A's.
 static CELLS: &[busbar_contract::codec::Cell] = &[
     (OpVerb::CHAT, &CHAT),
     (OpVerb::EMBEDDINGS, &EMB),
@@ -66,6 +69,7 @@ impl RequestHandler for CohereRequestHandler {
 }
 
 /// Cohere `embedding_types` name for an IR encoding, 1:1 with Cohere v2's six, so a requested
+/// encoding is served natively, not downgraded to float.
 fn cohere_embedding_type(f: &EncFmt) -> &'static str {
     match f {
         EncFmt::Float => FLOAT,
@@ -88,6 +92,7 @@ const ALL_ENCODINGS: [EncFmt; 6] = [
 ];
 
 /// Inverse of [`cohere_embedding_type`]: the full 1:1 map (not only base64), so an `int8`/`uint8`/
+/// `binary`/`ubinary` ask is not collapsed to float on read.
 fn cohere_encoding_format(s: &str) -> EncFmt {
     match s {
         keys::BASE64 => EncFmt::Base64,
@@ -100,6 +105,7 @@ fn cohere_encoding_format(s: &str) -> EncFmt {
 }
 
 /// Cohere v2 embeddings (`/v2/embed`). `input_type` is required (default: a document role). As
+/// ingress: `texts[]` + required `input_type`.
 struct CohereEmbeddings;
 
 leaf_op! {
@@ -232,6 +238,7 @@ pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
 }
 
 /// Cohere v2 rerank (`/v2/rerank`): `{model, query, documents[], top_n?}` to `{results: [{index,
+/// relevance_score}], meta.billed_units.search_units}`.
 struct CohereRerank;
 
 leaf_op! {
@@ -398,17 +405,25 @@ pub fn read_embeddings_response(
     let v: Value =
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
 
-    let emb = v.get(EMBEDDINGS);
+    let malformed = || CodecError::Malformed("invalid Cohere embedding vector".into());
+    let emb = v
+        .get(EMBEDDINGS)
+        .and_then(Value::as_object)
+        .ok_or_else(malformed)?;
     let arrays: Vec<(EncFmt, &Vec<Value>)> = ALL_ENCODINGS
         .iter()
-        .filter_map(|&e| {
-            emb.and_then(|o| o.get(cohere_embedding_type(&e)))
-                .and_then(Value::as_array)
-                .map(|a| (e, a))
+        .filter_map(|&e| emb.get(cohere_embedding_type(&e)).map(|value| (e, value)))
+        .map(|(encoding, value)| {
+            value
+                .as_array()
+                .map(|array| (encoding, array))
+                .ok_or_else(malformed)
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
+    if arrays.is_empty() {
+        return Err(malformed());
+    }
     let count = arrays.iter().map(|(_, a)| a.len()).max().unwrap_or(0);
-    let malformed = || CodecError::Malformed("invalid Cohere embedding vector".into());
     let embeddings: Vec<EmbeddingItem> = (0..count)
         .map(|idx| {
             let mut item = EmbeddingItem {
@@ -533,3 +548,7 @@ pub(crate) const LEAF: crate::codec::leaf_codec::LeafCodecs =
         }),
         ..crate::codec::leaf_codec::LeafCodecs::NONE
     };
+
+#[cfg(test)]
+#[path = "tests/embedding_shape_billing_tests.rs"]
+mod embedding_shape_billing_tests;

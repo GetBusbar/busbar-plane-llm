@@ -48,6 +48,7 @@ fn moderation_response_round_trips() {
 }
 
 /// Real OpenAI transcription usage (captured from the live API 2026-07-10): whisper-1 reports
+/// DURATION (`{type:"duration",seconds}` → `Billing::Duration`); gpt-4o-transcribe reports TOKENS.
 #[test]
 fn transcription_usage_duration_round_trips() {
     let wire = br#"{"text":"Hello there?","usage":{"type":"duration","seconds":1}}"#;
@@ -436,6 +437,7 @@ fn transcription_egress_field_strips_crlf_injection() {
 }
 
 /// Q128 arch u56: THE REFUSED WRITE IS A REFUSAL AT THE SEAM, never an empty body forwarded
+/// upstream in the caller's name.
 #[test]
 fn a_transcription_whose_audio_carries_the_delimiter_is_refused_at_the_seam() {
     use busbar_contract::codec::EgressWire;
@@ -483,6 +485,8 @@ fn transcription_boundary_is_1_5_5_s_literal_and_matches_the_declared_content_ty
 }
 
 /// The delimiter check is the guarantee: a payload that DOES carry the live delimiter must be
+/// refused outright rather than emitted with the parts it
+/// smuggled.
 #[test]
 fn transcription_egress_refuses_audio_carrying_the_live_boundary() {
     let b = TRANSCRIPTION_BOUNDARY;

@@ -245,6 +245,7 @@ impl tracing::Subscriber for CountWarnings {
 }
 
 /// Run the exact test binary under `sudo perf stat -e instructions` at 2048 and 8192 keys,
+/// three repetitions each.
 #[test]
 #[ignore = "manual hardware-instruction scaling witness; see the drop-index design report"]
 fn drop_index_full_request_instruction_probe() {
@@ -287,8 +288,12 @@ fn drop_index_full_request_instruction_probe() {
     let EgressWire::Json(wire) = output.wire else {
         panic!("JSON output")
     };
-    assert_eq!(output.dropped_controls.len(), n);
+    assert_eq!(output.dropped_controls.len(), n.min(MAX_DROP_PATHS));
     for (index, path) in output.dropped_controls.iter().enumerate() {
+        if index == MAX_DROP_PATHS - 1 {
+            assert_eq!(path, OMITTED_PATH);
+            continue;
+        }
         let expected = match mode.as_str() {
             "keys" => format!("fixture_unknown_{index:06}"),
             "blocks" => format!("messages[].content[].type=fixture_{index:06}"),
@@ -296,7 +301,7 @@ fn drop_index_full_request_instruction_probe() {
         };
         assert_eq!(*path, expected);
     }
-    assert_eq!(warnings.load(Ordering::Relaxed), n);
+    assert_eq!(warnings.load(Ordering::Relaxed), n.min(MAX_DROP_PATHS - 1));
     assert_eq!(wire["messages"][0]["content"][0]["text"], "hello");
     println!(
         "probe_kind={mode} entries={n} body_bytes={} warnings={n} audited={n}",

@@ -1,4 +1,5 @@
 //! The six dialects' egress facts: the outbound auth style and its parameters, and the request
+//! and response head fields and query parameters busbar governs for each.
 
 /// One dialect's egress facts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,12 +29,16 @@ pub struct Dialect {
 }
 
 /// The upstream answer head fields describing the operator's own account or connection, in every
+/// dialect: the cookies a far end (or its CDN) sets for busbar's connection.
 pub const ACCOUNT_RESPONSE_HEADERS: &[&str] = &["set-cookie", "set-cookie2"];
 
 /// The upstream answer head field families reporting the operator's account-wide rate-limit state
+/// (`x-ratelimit-remaining-tokens`, `anthropic-ratelimit-requests-limit`, ...), in every dialect: one
+/// tenant must not read the operator's (or another's) quota.
 pub const ACCOUNT_RESPONSE_PREFIXES: &[&str] = &["x-ratelimit-", "anthropic-ratelimit-"];
 
 /// Whether the answer head field `name` (compared without case) is the operator's account state
+/// ([`ACCOUNT_RESPONSE_HEADERS`], [`ACCOUNT_RESPONSE_PREFIXES`]), never relayed to a caller.
 #[must_use]
 pub fn account_scoped_response(name: &str) -> bool {
     ACCOUNT_RESPONSE_HEADERS
@@ -48,6 +53,8 @@ pub fn account_scoped_response(name: &str) -> bool {
 const OPENAI_GOVERNED_RESPONSE: &[&str] = &["openai-organization", "openai-project"];
 
 /// What the two dialects of one vendor govern: its credential headers (a bearer, and the key header a
+/// re-hosted deployment reads) and two tenant selectors, which only the provider's forced options
+/// (`crate::options::OPENAI`) set.
 const OPENAI_GOVERNED: &[&str] = &[
     "authorization",
     "api-key",
@@ -56,6 +63,8 @@ const OPENAI_GOVERNED: &[&str] = &[
 ];
 
 /// The `api-key` style's parameters for the dialect whose credentials come in families (its codec's
+/// `EgressScheme::Static`): an api key in `x-api-key` with leading whitespace trimmed, an oauth token
+/// as a bearer, the operator's own key in `x-api-key`, a passthrough caller's as a bearer.
 pub(crate) const KEY_FAMILY_PARAMS: &str = concat!(
     r#"{"header":"x-api-key","#,
     r#""families":[{"prefix":"sk-ant-api","header":"x-api-key","trim_start":true},"#,
@@ -64,6 +73,8 @@ pub(crate) const KEY_FAMILY_PARAMS: &str = concat!(
 );
 
 /// The bearer-presented dialects' parameters (their codecs' `EgressScheme::Static` with no credential
+/// families; the operator's and a passthrough caller's credential both as a bearer), naming the
+/// dialect as the `protocol` a credential no header may carry is logged under (1.5.5's `protocol=`).
 pub(crate) const OPENAI_PARAMS: &str =
     r#"{"families":[],"own":{},"passthrough":{},"protocol":"openai"}"#;
 /// [`OPENAI_PARAMS`] for the responses dialect.
@@ -73,12 +84,15 @@ pub(crate) const RESPONSES_PARAMS: &str =
 pub(crate) const COHERE_PARAMS: &str =
     r#"{"families":[],"own":{},"passthrough":{},"protocol":"cohere"}"#;
 /// The `x-goog-api-key` dialect's parameters (its codec's `EgressScheme::Static`): the operator's and
+/// a passthrough caller's credential verbatim in `x-goog-api-key`, under its `protocol`.
 pub(crate) const GEMINI_PARAMS: &str = concat!(
     r#"{"families":[],"own":{"header":"x-goog-api-key"},"#,
     r#""passthrough":{"header":"x-goog-api-key"},"protocol":"gemini"}"#,
 );
 
 /// The `sigv4` style's parameters for the signed dialect (its codec's `EgressScheme::SigV4`): the
+/// service, the content type the signature covers, and the region read from the provider's host by
+/// the codec's rule (`derive_sigv4_region`), else its default with the codec's warning.
 pub(crate) const SIGNED_PARAMS: &str = concat!(
     r#"{"service":"bedrock","content_type":"application/json","#,
     r#""region":{"host_label_after":["bedrock-runtime","bedrock-runtime-fips","bedrock","bedrock-fips"],"#,

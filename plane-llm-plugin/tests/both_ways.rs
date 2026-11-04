@@ -92,6 +92,7 @@ const CALLER: &[Field] = &[
     field(b"anthropic-version", b"2023-06-01"),
 ];
 /// An openai caller's head: no `anthropic-version`, whose header claim outranks the
+/// `/v1/chat/completions` path claim in 1.5.5's detection order (`codec/anthropic/mod.rs`).
 const OPENAI_CALLER: &[Field] = &[field(b"content-type", b"application/json")];
 /// What the far end answers: 7 tokens in, 3 out.
 const ANSWER: &[u8] = br#"{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":7,"output_tokens":3}}"#;
@@ -510,6 +511,7 @@ fn linked(d: &Dispatcher) -> Plugin<Plane> {
 }
 
 /// This crate's dropped-in image, the `busbar-plane-llm-plugin` cdylib `cargo test` builds beside
+/// the test.
 fn dropped(d: &Dispatcher) -> Plugin<Plane> {
     let path = plugin_cdylib();
     let stated = rendering_of(plane_door::door).expect("the door renders its Statement");
@@ -569,6 +571,7 @@ fn a_usage_tap_fault_rides_one_window_of_the_doors_answer() {
 }
 
 /// The same far end, model and pool, with a translation cap below [`ANSWER`]'s length: the
+/// `limits.request_body_max_bytes` the kernel hands a plane in its settings.
 const SETTINGS_CAPPED: &[u8] = br#"{
     "providers": { "ant": { "protocol": "anthropic", "base_url": "https://anthropic.example" } },
     "models": { "claude": { "provider": "ant" } },
@@ -577,6 +580,7 @@ const SETTINGS_CAPPED: &[u8] = br#"{
 }"#;
 
 /// One openai caller's unit against the anthropic far end, its whole answer [`ANSWER`]: the far
+/// end's answer line.
 fn translated(p: &Plugin<Plane>, unit: u64) -> String {
     assert!(
         arrive_with(p, unit, b"/v1/chat/completions", OPENAI_CALLER, CHAT)
@@ -727,6 +731,7 @@ mod provider_keys_through_the_loader {
     use busbar_plugin_loader::dispatch::rendering_of;
 
     /// The door's signed Statement rendering carries the descriptor under the one extensions key, as
+    /// octets, byte for byte the declared text.
     #[test]
     fn the_door_states_its_provider_keys_in_its_statement_extensions() {
         let stated = rendering_of(plane_door::door).expect("the door renders its Statement");
@@ -742,6 +747,7 @@ mod provider_keys_through_the_loader {
     }
 
     /// The one loader reads the descriptor off the bound door into the plane's registration, decoded
+    /// and equal to the declared one.
     #[test]
     fn the_loader_hands_the_provider_keys_on_in_the_registration() {
         let reg = registration(linked_probe(plane_door::door, "provider-keys-probe"))
@@ -757,6 +763,8 @@ mod provider_keys_through_the_loader {
 }
 
 /// THE DOOR'S UNITS ACROSS ATTEMPTS, driven through the one loader like the witness above. They live
+/// in this file because it is the one file a plugin's tests may drive its door through the loader
+/// from (kind isolation's both-ways witness rule).
 mod door_units {
     use std::mem::zeroed;
     use std::sync::Arc;
@@ -827,6 +835,7 @@ mod door_units {
     const STREAM_CHAT: &[u8] =
         br#"{"model":"p","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}"#;
     /// The far end's stream before its connection dropped: its start (7 tokens in, 1 out so far) and
+    /// one content delta.
     const STREAM_START: &[u8] = b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"large\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":7,\"output_tokens\":1}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n";
 
     fn door() -> (Dispatcher, Plugin<Plane>) {
@@ -990,6 +999,7 @@ mod door_units {
     }
 
     /// RED: the door forgot the unit on its retry verdict, so the second ATTEMPT was a FAULT and the
+    /// failover never reached `large`.
     #[test]
     fn a_retry_verdict_keeps_the_unit_and_the_failover_reaches_the_next_member() {
         let (_d, p) = door();
@@ -1037,6 +1047,7 @@ mod door_units {
     }
 
     /// RED: a door that keeps every retried unit leaves one behind when the kernel will not fail the
+    /// answer over (a relayed answer): the unit's later piece is answered instead of faulted.
     #[test]
     fn a_final_answer_ends_the_unit_whatever_its_verdict() {
         let (_d, p) = door();
@@ -1083,6 +1094,10 @@ mod door_units {
     }
 
     /// A STREAM CUT AFTER ITS FIRST BYTE (`PIECE_CUT`; row-159 plane-llm L1#2), `$`: the caller's answer
+    /// ends in its in-band error, never its clean terminator, and the unit reports the units its
+    /// stream stated up to the cut (7 in, 1 out): the owner's #62, a cut bills what streamed (1.5.5
+    /// billed no tokens; register entry "#62 an upstream cut after the first byte bills what
+    /// streamed").
     #[test]
     fn a_cut_stream_ends_in_the_callers_error_and_bills_what_streamed() {
         let (_d, p) = door();
@@ -1137,6 +1152,7 @@ mod door_units {
     }
 
     /// THE SAME STREAM, COMPLETE (the control): its last piece unmarked ends on the caller's clean
+    /// terminator.
     #[test]
     fn a_stream_that_completes_ends_cleanly() {
         let (_d, p) = door();
@@ -1167,6 +1183,11 @@ mod door_units {
     }
 
     /// A SAME-DIALECT WHOLE ANSWER CUT MID-BODY streams what arrived and bills no tokens. Under
+    /// ARCHITECT ruling (a) (the base cut path supersedes #891's) and as v1.5.5 relayed it (a
+    /// same-protocol non-stream body passes through verbatim as it arrives, v1.5.5
+    /// `proxy/response_body.rs:216-262`), the far end's bytes reach the caller under its 200 as
+    /// they come; the cut ends the body with nothing appended, and the far end reported no usage
+    /// in the bytes in hand, so nothing bills (OWNER RULING Q31).
     #[test]
     fn a_same_dialect_answer_cut_mid_body_streams_what_arrived_and_bills_no_tokens() {
         let (_d, p) = door();
@@ -1225,6 +1246,9 @@ mod door_units {
     }
 
     /// A CALLER THAT LEAVES WHILE THE LAST WINDOW OF A COMPLETED STREAM IS BEING WRITTEN (row-159
+    /// plane-llm L1#5), `$`: the answer was a usable success, fully reported, so its cancel is PARTIAL and
+    /// the units the stream stated bill, as a caller that left mid-relay does and as 1.5.5's drop arm
+    /// billed the reader's usage (v1.5.5 `proxy/response_body.rs` `FirstByteBody::drop`).
     #[test]
     fn a_caller_that_leaves_during_the_last_window_bills_what_the_stream_stated() {
         let (_d, p) = door();
@@ -1377,6 +1401,7 @@ mod door_units {
 }
 
 /// The door brought up on [`SETTINGS`]: settings checked, opened, hydrated and started, as the
+/// script brings it up.
 fn opened(dispatcher: &Dispatcher) -> Plugin<Plane> {
     let door = linked(dispatcher);
     let mut validate = Frame::new(
@@ -1438,6 +1463,7 @@ fn fee_line() -> String {
 }
 
 /// One whole caller unit on a fresh door: arrive, attempt, the caller's body, then the far end's
+/// whole answer under `status`.
 fn one_unit(status: u32, answer: &'static [u8]) -> (String, String, String) {
     let dispatcher = Dispatcher::new(DispatchConfig::default());
     let door = opened(&dispatcher);
@@ -1523,6 +1549,7 @@ const REDIRECT_BODY: &[u8] =
     b"<html><body>Moved: https://elsewhere.invalid/v1/messages</body></html>";
 
 /// A 3XX FROM THE PROVIDER IS A FAILURE, NOT FOLLOWED (security.md: redirects are refused on the
+/// provider surface).
 #[test]
 fn a_3xx_from_the_provider_is_a_failure_not_followed() {
     let fee = fee_line();

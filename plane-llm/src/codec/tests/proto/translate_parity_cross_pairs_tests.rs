@@ -7,6 +7,7 @@ use super::translate_parity_golden_tests::check_golden;
 use serde_json::{json, Value};
 
 /// The lane wire model stamped on the egress request (mirrors `rewrite_model_if_needed`); shared with
+/// the sibling file's convention.
 const LANE_MODEL: &str = "gpt-4o-mini";
 /// Fixed epoch handed to `prepare_for_ingress` for the synthesized `created` boundary signal.
 const FIXED_NOW: u64 = 1_752_000_000;
@@ -43,6 +44,7 @@ fn translate_request(ingress: &'static str, egress: &str, body: &str) -> Vec<u8>
 }
 
 /// Shape-assert an ingress-synthesized id at `obj[key]` (`<prefix><base62 tail>`) and normalize it to
+/// a fixed token, so everything else is compared byte-exact.
 fn normalize_id(obj: &mut serde_json::Map<String, Value>, key: &str, prefix: &str) {
     if let Some(id) = obj.get(key).and_then(Value::as_str).map(str::to_owned) {
         assert!(
@@ -58,6 +60,9 @@ fn normalize_id(obj: &mut serde_json::Map<String, Value>, key: &str, prefix: &st
 }
 
 /// Normalize the Cohere response writer's synthesized `id`. Unlike the other ingress writers'
+/// `<prefix><base62>` tokens, the Cohere writer mints a bare RFC-4122 UUIDv4 (`synthesize_cohere_id`
+/// in `busbar-llm/src/cohere/mod.rs`): an 8-4-4-4-12 lowercase-hex string with the version nibble
+/// forced to `4` and the variant nibble in `{8,9,a,b}`.
 fn normalize_cohere_id(obj: &mut serde_json::Map<String, Value>) {
     if let Some(id) = obj.get("id").and_then(Value::as_str).map(str::to_owned) {
         let b = id.as_bytes();
@@ -83,6 +88,7 @@ fn normalize_cohere_id(obj: &mut serde_json::Map<String, Value>) {
 }
 
 /// Normalize whatever id(s) the given `ingress` response writer synthesizes. The sibling file's
+/// anthropic case is `msg_01<24 base62>`; the others are their own native shapes.
 fn normalize_ingress_ids(ingress: &str, out: &mut Value) {
     let Some(obj) = out.as_object_mut() else {
         return;
@@ -132,6 +138,7 @@ fn normalize_ingress_ids(ingress: &str, out: &mut Value) {
 }
 
 /// The production RESPONSE translate steps for an arbitrary `egress`→`ingress` lane, byte-for-byte,
+/// with the ingress writer's synthesized id(s) normalized.
 fn translate_response(egress: &str, ingress: &'static str, body: &str) -> Vec<u8> {
     let egress_p = crate::codec::proto_codec::protocol_for(egress).expect("egress protocol");
     let ingress_p = crate::codec::proto_codec::protocol_for(ingress).expect("ingress protocol");
@@ -245,6 +252,7 @@ const RESPONSES_RESPONSE_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// Bedrock Converse REQUEST bodies (client=bedrock): plain, system+inferenceConfig+toolConfig,
+/// image/document/video attachments.
 const BEDROCK_REQUEST_CORPUS: &[(&str, &str)] = &[
     (
         "plain",
@@ -261,6 +269,7 @@ const BEDROCK_REQUEST_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// Cohere v2 chat REQUEST bodies (client=cohere): plain, sampling+system+tools+tool_choice,
+/// tool-result document.
 const COHERE_REQUEST_CORPUS: &[(&str, &str)] = &[
     (
         "plain",
@@ -277,6 +286,8 @@ const COHERE_REQUEST_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// Bedrock Converse RESPONSE bodies (backend=bedrock): plain+usage, tool_use, reasoningContent. The
+/// buffered reader decodes `text`/`toolUse`/`reasoningContent`/`image` blocks and a `stopReason`;
+/// adapted from `test_read_response_decode` / `test_read_write_response_roundtrip`.
 const BEDROCK_RESPONSE_CORPUS: &[(&str, &str)] = &[
     (
         "plain",
@@ -293,6 +304,7 @@ const BEDROCK_RESPONSE_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// Cohere v2 chat RESPONSE bodies (backend=cohere): plain+search_units usage, tool_use, tool_plan
+/// (reasoning), citations.
 const COHERE_RESPONSE_CORPUS: &[(&str, &str)] = &[
     (
         "plain",
@@ -313,6 +325,7 @@ const COHERE_RESPONSE_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// OpenAI Chat RESPONSE bodies (backend=openai) for the `resp_o2b`/`resp_o2c` writer lanes: plain,
+/// tool_calls, reasoning_content.
 const OPENAI_RESPONSE_CORPUS: &[(&str, &str)] = &[
     (
         "plain",
@@ -329,6 +342,7 @@ const OPENAI_RESPONSE_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// The anthropic REQUEST corpus is already vetted in the sibling file; reuse it verbatim for the
+/// `a2g` lane rather than duplicate it.
 use super::translate_parity_golden_tests::REQUEST_CORPUS as ANTHROPIC_REQUEST_CORPUS;
 
 #[test]

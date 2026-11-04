@@ -29,6 +29,9 @@ fn every_stated_reason_code_is_the_reason_it_is_named_for() {
 }
 
 /// THE BEDROCK QUOTA REFUSAL WEARS THE STATUS THE PLANE DECLARES (`codec/bedrock/refusals.json`,
+/// OWNER 2026-10-27): the stated row for bedrock `over_budget` is the declared table's status, so the
+/// 400 `ServiceQuotaExceededException` 1.5.5 answered is a 400 again, not the class default 429 under
+/// the restored exception.
 #[test]
 fn the_bedrock_over_budget_status_is_the_declared_refusals() {
     use busbar_plane_llm::dialect::DIALECTS;

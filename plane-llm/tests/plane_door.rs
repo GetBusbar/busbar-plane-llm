@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The llm plane's door, its static half: a Statement and tail the contract accepts, the needs
+//! the dialects' schemes call for, the settings it reads, and the counts it reports.
 
 #![allow(unused_unsafe)]
 
@@ -22,6 +23,7 @@ fn the_statement_names_the_crate_version() {
 }
 
 /// THE DOOR STATES THE PLANE'S `busbar --help` ROWS: its tail's `cli_help`, read in the contract's
+/// grammar, is the tagline row then the `ENDPOINTS` row, each byte for byte the plane's own text.
 #[test]
 fn the_tail_states_the_planes_help_rows() {
     // SAFETY: a non-NULL tail string is `len` bytes of `'static` plugin data.
@@ -38,6 +40,8 @@ fn the_tail_states_the_planes_help_rows() {
 }
 
 /// THE TAIL STATES EACH DIALECT'S PROVIDER FLAG, read off its
+/// `dialect_auth` lines as the kernel reads them: every one of the six is a dialect a provider's
+/// `protocol` may name (1.5.5's `must be one of:` list, in its order).
 #[test]
 fn the_tail_flags_every_dialect_a_provider_dialect() {
     use busbar_contract::abi::plane::{check::check_dialect_auth, DIALECT_PROVIDER};
@@ -213,6 +217,8 @@ fn the_tail_prices_cheapest_with_the_default_input_output_blend() {
 }
 
 /// Every dialect states its default outbound style in the tail, and every
+/// style a member may be bound under (each dialect's default, the provider `auth:` overrides) has
+/// exactly one outbound need naming it.
 #[test]
 fn every_dialects_default_style_is_stated_and_every_style_has_its_one_outbound_need() {
     // SAFETY: NEEDS and every nested string/header list belong to this plane's static
@@ -275,6 +281,7 @@ fn counts_are_the_far_ends_tokens_in_the_tails_class_order_and_nothing_before_on
 }
 
 /// The claim a POST on `path` meets: the exact claim on it, else the prefix claim with the longest
+/// target whose subtree holds it (a claim's target and every path under it, at any depth).
 fn claim_for(path: &str) -> busbar_contract::abi::sdk::publish::ClaimSpec {
     use busbar_contract::abi::plane::CLAIM_EXACT;
     let all = claims();
@@ -297,6 +304,7 @@ fn dialect_of(claim: &busbar_contract::abi::sdk::publish::ClaimSpec) -> &'static
 }
 
 /// THE PLANE STATES ITS PATHS AS CLAIMS: each dialect's own path is a
+/// claim wearing the dialect its path shape names, the same rule a refusal renders by.
 #[test]
 fn every_dialects_path_is_a_claim_wearing_its_dialect() {
     use busbar_plane_llm::exchange::arrive::envelope_for;
@@ -315,6 +323,8 @@ fn every_dialects_path_is_a_claim_wearing_its_dialect() {
 }
 
 /// THE PREVIOUS RELEASE'S FALLBACK IS A PREFIX CLAIM ON `/`, per verb, so a path no dialect names, at
+/// any depth, still reaches the plane (`http.crosscut|unknown-path|bare` and `|openai-suffix`), and
+/// a dialect path hit with another verb reaches `arrive`, which answers the dialect's 405.
 #[test]
 fn the_fallback_is_a_prefix_claim_on_the_root_for_every_verb() {
     use busbar_contract::abi::plane::{CLAIM_EXACT, CLAIM_OPEN};
@@ -349,6 +359,7 @@ fn the_fallback_is_a_prefix_claim_on_the_root_for_every_verb() {
 }
 
 /// RED for the `$` G3 commit: an open count the far end reported reaches the kernel in its
+/// declared class, beside or without token counts; before it, `counts()` dropped it.
 #[test]
 fn an_open_count_is_reported_in_its_declared_class_and_never_dropped() {
     let open = Units {
@@ -377,6 +388,7 @@ fn an_open_count_is_reported_in_its_declared_class_and_never_dropped() {
 }
 
 /// THE PROTOCOL AXIS a composition root links (`busbar_plane_llm::plane_door::PROTOCOLS`, named by
+/// busbar's `build.rs` in every linked roster): the plane's six dialects, each once.
 #[test]
 fn the_door_states_its_six_protocols_for_the_root_to_link() {
     let names: Vec<&str> = busbar_plane_llm::plane_door::PROTOCOLS
@@ -391,6 +403,8 @@ fn the_door_states_its_six_protocols_for_the_root_to_link() {
 }
 
 /// RED for the keep mode: every need relays the far end's whole head but the governed fields, and
+/// the deny list is exactly every dialect's governed response fields and the operator's connection
+/// cookies, each once.
 #[test]
 fn every_need_keeps_all_but_every_dialects_governed_response_fields() {
     use busbar_contract::abi::host::conn::connector::KEEP_ALL_EXCEPT_DENIED;
@@ -416,6 +430,8 @@ fn every_need_keeps_all_but_every_dialects_governed_response_fields() {
 }
 
 /// RED: no dialect's tenant- or credential-derived response
+/// field crosses to the plane through any need, read from the need itself through the contract's one
+/// crossing rule; every other upstream field does (the S-16 register entry's premise).
 #[test]
 fn red_no_dialects_governed_response_field_leaks_through_a_need() {
     use busbar_contract::abi::host::conn::connector::keeps_response_field;
@@ -459,6 +475,8 @@ fn red_no_dialects_governed_response_field_leaks_through_a_need() {
 }
 
 /// THE ROUTE AN ARRIVAL NAMES: its model, verbatim, as a pool
+/// when the plane's `pools` names it, else as a direct entry, the previous release's order (a pool
+/// first, then a configured model).
 #[test]
 fn an_arrival_routes_over_its_model_a_pool_first_then_a_direct_entry() {
     use busbar_contract::abi::plane::{ROUTE_DIRECT, ROUTE_POOL};
@@ -475,6 +493,8 @@ fn an_arrival_routes_over_its_model_a_pool_first_then_a_direct_entry() {
 }
 
 /// THE STICKY-ROUTING KEY, as 1.5.5 derived it: the pool's
+/// `affinity.header_name` (else `x-session-id`), matched case-blind, wins over chat's non-empty body
+/// `system`; a header value that is not text is no key; neither is no affinity.
 #[test]
 fn the_sticky_key_is_the_pools_header_else_the_chat_bodys_system() {
     use busbar_plane_llm::plane_door::affinity_key;
@@ -664,6 +684,10 @@ fn the_plane_declares_its_published_key_and_is_the_fallback() {
 }
 
 /// EVERY WAY A UNIT ENDS LEAVES NOTHING OF IT IN THE DOOR'S BOOK. The `refusal` of a
+/// unit refused after an attempt (an exhausted walk, a veto, a failed attempt the kernel renders)
+/// used to take the unit but keep the ticket its attempt came on, forever (a ticket is never
+/// reused); the `cancel` of a unit and the end of its reply leave nothing either, and a unit whose
+/// pieces move to a new ticket keeps only that one.
 #[test]
 fn every_way_a_unit_ends_leaves_nothing_in_the_doors_book() {
     use busbar_contract::abi::mechanism::ticket::Ticket;
@@ -745,6 +769,11 @@ fn every_way_a_unit_ends_leaves_nothing_in_the_doors_book() {
 }
 
 /// THE SIGNED PATHS ARE THE PREVIOUS RELEASE'S: the raw-affix claims the door flags `CLAIM_SIGNED_INGRESS`, matched against the raw
+/// path, name exactly the paths 1.5.5 put through the signed-request pre-step (the signing dialect's
+/// residual rule, its own codec declaration) — an unencoded inference-profile ARN, which carries a
+/// raw `/`, and an encoded one alike, and the odd paths as 1.5.5 judged them (no identifier, an
+/// empty segment: signed; a trailing `/`, a leading `//`: not) — and no other: the dialect's invoke
+/// surfaces and every other dialect's paths sign nothing.
 #[test]
 fn the_signed_claims_name_the_paths_the_previous_release_signed() {
     use busbar_contract::abi::plane::check::raw_affix_matches;

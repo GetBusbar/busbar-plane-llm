@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR MAPPING: every field the Responses dialect carries that the IR and the
+//! other dialect can also carry must cross the seam.
 
 use super::*;
 
@@ -133,6 +134,8 @@ fn responses_completed(output: serde_json::Value) -> (&'static str, serde_json::
 }
 
 /// RSP-01: a streamed thinking signature reaches the Responses client as the reasoning item's
+/// `encrypted_content` — on its `output_item.done` AND in the terminal `output[]` — exactly as the
+/// buffered body carries it.
 #[test]
 fn rsp01_stream_signature_becomes_reasoning_encrypted_content() {
     let (out, _) = xstream("anthropic", "responses", &anthropic_thinking_stream());
@@ -162,6 +165,7 @@ fn rsp01_stream_signature_becomes_reasoning_encrypted_content() {
 }
 
 /// RSP-02: a Responses reasoning item's `encrypted_content` (on `output_item.done`) reaches an
+/// Anthropic stream client as the thinking block's `signature_delta`, before its block closes.
 #[test]
 fn rsp02_stream_reasoning_encrypted_content_becomes_signature_delta() {
     let raw = sse(&[
@@ -205,6 +209,8 @@ fn rsp02_stream_reasoning_encrypted_content_becomes_signature_delta() {
 }
 
 /// RSP-02: a reasoning item whose `reasoning_text` part closes (`content_part.done`) BEFORE the
+/// item's `output_item.done` still carries the item's `encrypted_content` — the part close must not
+/// end the block before the blob arrives.
 #[test]
 fn rsp02_reasoning_part_done_does_not_close_before_item_done() {
     let raw = sse(&[
@@ -305,6 +311,7 @@ fn rsp06_chat_user_reaches_responses() {
 }
 
 /// RSP-07: a Chat logprobs ask reaches a Responses backend as the `include` entry that makes it
+/// return logprobs (`top_logprobs` alone does not).
 #[test]
 fn rsp07_chat_logprobs_ask_becomes_include() {
     let body = serde_json::json!({"model": "gpt", "messages": [{"role": "user", "content": "hi"}],
@@ -319,6 +326,7 @@ fn rsp07_chat_logprobs_ask_becomes_include() {
 }
 
 /// RSP-08: a Responses client's `include: ["message.output_text.logprobs"]` reaches a Chat backend
+/// as `logprobs: true`.
 #[test]
 fn rsp08_responses_include_logprobs_reaches_chat() {
     let body = serde_json::json!({"model": "gpt", "input": "hi",
@@ -328,6 +336,7 @@ fn rsp08_responses_include_logprobs_reaches_chat() {
 }
 
 /// RSP-09: an assistant-history `refusal` part keeps its text, and a user `input_audio` part
+/// reaches a Chat backend as `input_audio` — neither becomes an empty text block.
 #[test]
 fn rsp09_refusal_and_input_audio_survive() {
     let body = serde_json::json!({"model": "gpt", "input": [
@@ -363,6 +372,7 @@ fn rsp09_refusal_and_input_audio_survive() {
 }
 
 /// RSP-10: a tool result carrying an image reaches a Responses backend as a
+/// `function_call_output.output` part array (text + image), not as an image-less string.
 #[test]
 fn rsp10_tool_result_image_reaches_function_call_output() {
     let body = serde_json::json!({"model": "claude", "max_tokens": 100, "messages": [
@@ -392,6 +402,7 @@ fn rsp10_tool_result_image_reaches_function_call_output() {
 }
 
 /// RSP-10: a structured-JSON tool result (Bedrock `{"json": …}`) reaches a Responses backend as the
+/// JSON text of `function_call_output.output`, not as `""`.
 #[test]
 fn rsp10_tool_result_json_reaches_function_call_output() {
     let body = serde_json::json!({"modelId": "m", "messages": [
@@ -411,6 +422,8 @@ fn rsp10_tool_result_json_reaches_function_call_output() {
 }
 
 /// RSP-11: a FAILED generation streamed from Gemini (`MALFORMED_FUNCTION_CALL`) reaches a
+/// Responses client as a `response.failed` terminal — and ONLY that: no `response.completed`
+/// claiming the failed turn completed.
 #[test]
 fn rsp11_stream_failed_generation_is_response_failed_only() {
     let raw = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hi\"}],\"role\":\"model\"},\"finishReason\":\"MALFORMED_FUNCTION_CALL\"}],\"usageMetadata\":{\"promptTokenCount\":3,\"candidatesTokenCount\":1,\"totalTokenCount\":4}}\n\n";
@@ -438,6 +451,7 @@ fn rsp11_stream_failed_generation_is_response_failed_only() {
 }
 
 /// RSP-11: an `Error` stop reason on the terminal `MessageDelta` with no preceding `Error` event
+/// is written as `response.failed` with a `server_error`, never `completed`.
 #[test]
 fn rsp11_error_stop_reason_message_delta_writes_response_failed() {
     let w = ResponsesWriter;
@@ -474,6 +488,7 @@ fn rsp11_error_stop_reason_message_delta_writes_response_failed() {
 }
 
 /// RSP-12: a top-level upstream error preserves partial text, closes its block, and fails
+/// the translated stream without emitting a successful terminal delta.
 #[test]
 fn rsp12_top_level_error_event_fails_and_closes_the_stream() {
     let raw = sse(&[
@@ -564,6 +579,7 @@ fn rsp14_xhigh_effort_is_carried_as_high() {
 }
 
 /// RSP-16: a streamed function call with a BLANK `call_id` gets the same synthesized id the
+/// buffered read of the same answer gets — never an empty tool_use id.
 #[test]
 fn rsp16_stream_blank_call_id_is_synthesized_like_buffered() {
     let item = serde_json::json!({"type":"function_call","id":"fc_1","call_id":"","name":"lookup","arguments":""});
@@ -631,6 +647,7 @@ fn rsp16_stream_blank_call_id_is_synthesized_like_buffered() {
 }
 
 /// A Responses answer served at `flex` or `scale` keeps its tier in the IR, as a Chat answer does
+/// (audit: the served-tier word table made both write-only, so the tier was lost with no warn).
 #[test]
 fn a_responses_answer_served_at_flex_or_scale_keeps_its_tier() {
     for tier in ["flex", "scale"] {
@@ -704,4 +721,24 @@ fn rsp17_service_tier_crosses_both_directions() {
         },
     );
     assert_eq!(frames[0].1["response"]["service_tier"], "priority");
+}
+
+#[test]
+fn invalid_responses_identity_aborts_before_successful_completion() {
+    let raw = sse(&[
+        responses_created(),
+        (
+            "response.output_text.delta",
+            serde_json::json!({"output_index":128,"delta":"lost"}),
+        ),
+        (
+            "response.completed",
+            serde_json::json!({"response":{"status":"completed"}}),
+        ),
+    ]);
+    let (out, terminal_error) = xstream("responses", "anthropic", &raw);
+    assert_eq!(terminal_error.as_deref(), Some("invalid_response_index"));
+    let payloads = sse_payloads(&out);
+    assert_eq!(payloads.iter().filter(|p| p["type"] == "error").count(), 1);
+    assert!(!payloads.iter().any(|p| p["type"] == "message_delta"));
 }

@@ -1,6 +1,7 @@
 use super::*;
 
 /// Assert a reader result is the canonical structural-parse rejection: a client 400 carrying the
+/// `ir_parse` signal (the shape busbar renders into the ingress dialect's native error envelope).
 fn assert_ir_parse_reject(res: Result<crate::codec::ir::IrRequest, IrError>, ctx: &str) {
     let err = res.expect_err(ctx);
     assert_eq!(

@@ -239,6 +239,10 @@ fn a_same_dialect_unknown_body_member_goes_out() {
 }
 
 /// A body-model caller that smuggles busbar's own array-stream router key into its body is not a
+/// JSON-array caller (only a path-model arrival's URL makes one), and the key never reaches the far
+/// end: 1.5.5 stripped every dialect's router key before every upstream call (v1.5.5
+/// `crates/busbar/src/proxy/wire.rs` `strip_router_shim_keys`; the retired legacy cover
+/// `test_gemini_json_array_shim_ignored_for_body_model_ingress`).
 #[test]
 fn a_body_model_callers_smuggled_router_key_never_reaches_the_far_end() {
     let h = head(&[("content-type", "application/json")]);
@@ -371,6 +375,8 @@ fn the_usage_ask_is_a_splice_after_the_opening_brace_or_in_place() {
 }
 
 /// BUSBAR IS INVISIBLE TO UPSTREAMS, THE URL TOO: a same-dialect attempt carries the caller's own
+/// query, in its order and spelling, but the dialect's governed credential parameters and the ones
+/// the target already sets (busbar's own stream framing); a translated attempt carries none.
 #[test]
 fn the_callers_query_goes_out_on_a_same_dialect_attempt() {
     assert_eq!(
@@ -402,6 +408,7 @@ fn the_callers_query_goes_out_on_a_same_dialect_attempt() {
 }
 
 /// A signed dialect's attempt carries no caller query until its signer signs the canonical query
+/// (never a query the signature omits).
 #[test]
 fn a_signed_dialects_attempt_carries_no_query_yet() {
     assert_eq!(
@@ -411,6 +418,8 @@ fn a_signed_dialects_attempt_carries_no_query_yet() {
 }
 
 /// A path-model same-dialect relay sends the caller's bytes: the `model` and `stream` the arrival
+/// carried for routing come back out by byte splices, so key order, spacing and a member busbar has
+/// never heard of all reach the far end as the caller wrote them (DIALECT FIDELITY).
 #[test]
 fn a_path_model_same_dialect_request_reaches_the_far_end_as_the_caller_wrote_it() {
     let h = head(&[("content-type", "application/json")]);
@@ -428,6 +437,7 @@ fn a_path_model_same_dialect_request_reaches_the_far_end_as_the_caller_wrote_it(
 }
 
 /// A conversation history carrying a `custom` tool call (a type the IR does not model) is relayed
+/// byte-identical within one dialect.
 #[test]
 fn a_history_with_a_custom_tool_call_relays_byte_identical() {
     let h = head(&[("content-type", "application/json")]);
@@ -438,6 +448,7 @@ fn a_history_with_a_custom_tool_call_relays_byte_identical() {
 }
 
 /// TENANT SELECTORS COME FROM BUSBAR'S CONFIG: a provider's `OpenAI-Organization` /
+/// `OpenAI-Project` options (forced) ride every far request, and a caller's own never do.
 #[test]
 fn the_providers_tenant_goes_out_and_the_callers_does_not() {
     let shaping = Shaping::from_settings(&json!({
@@ -468,6 +479,11 @@ fn the_providers_tenant_goes_out_and_the_callers_does_not() {
 }
 
 /// THE DIALECT'S STATIC FIELDS (anthropic declares
+/// `anthropic-version`, written verbatim; byte-identical upstream requests): a caller that sends no
+/// field of its own still reaches an anthropic far end with the pinned version and the native
+/// client's user-agent, same-dialect or translated; under an operator's `auth: api-key` override,
+/// whose scheme declares no static field, none goes out; `auth: bearer` is the dialect's own scheme
+/// and keeps it.
 #[test]
 fn no_client_header_leaves_egress_unchanged() {
     let none = head(&[]);
@@ -530,6 +546,10 @@ fn no_client_header_leaves_egress_unchanged() {
 }
 
 /// THE PREVIOUS RELEASE'S HEADER-MAP ORDER (oracle `egress.auth|cred-identity|*`, `route.529|*`): a
+/// same-dialect caller's own fields lie over busbar's as a header map lays them, one position per
+/// name: a name busbar writes (its static field, `content-type`, `user-agent`, `accept`) keeps
+/// busbar's position and takes the caller's value, a new name is appended in the caller's order,
+/// and a repeated name keeps every value at its position.
 #[test]
 fn a_same_dialect_callers_fields_keep_busbars_positions() {
     let h = head(&[
@@ -589,6 +609,7 @@ const DIALECTS: [&str; 6] = [
 ];
 
 /// One provider of `dialect` serving one model `member` (sent as `wire` when given), in pool `p`;
+/// `provider_extra` are further provider settings (`path`, `path_base`, `OpenAI-Organization`, ...).
 fn one_lane(
     dialect: &str,
     member: &str,
@@ -1285,6 +1306,7 @@ fn released_path(
 }
 
 /// RFC 3986 percent-encoding of a path with `/` kept, as 1.5.5's `sign_and_wire_path_parts` did
+/// it: the wire path, and the signing path (encoded again, no query).
 fn released_wire(url_path: &str) -> (String, String) {
     fn encode(p: &str) -> String {
         p.bytes()
@@ -1801,6 +1823,8 @@ fn the_usage_ask_edits_an_existing_stream_options_in_place_byte_for_byte() {
 }
 
 /// A CROSS-DIALECT REQUEST LIFTS THE SYSTEM TURN: an openai caller's `system` message, sent to an
+/// anthropic member, reaches the far end as the top-level `system` and is gone from `messages`; the
+/// user turn survives.
 #[test]
 fn a_cross_dialect_request_lifts_the_system_turn_out_of_the_messages() {
     let h = head(&[("content-type", "application/json")]);
@@ -1818,6 +1842,9 @@ fn a_cross_dialect_request_lifts_the_system_turn_out_of_the_messages() {
 }
 
 /// AN OMITTED `max_tokens` IS FILLED, AN EXPLICIT ONE KEPT: an openai caller that omits
+/// `max_tokens`, sent to an anthropic member with no default of its own, reaches the far end with
+/// the node's fallback (4096); a caller's explicit value survives even where the member states a
+/// default.
 #[test]
 fn an_omitted_max_tokens_is_filled_and_an_explicit_one_is_kept() {
     let shaping = Shaping::from_settings(&json!({
@@ -1890,4 +1917,65 @@ fn red_a_same_dialect_route_forwards_no_caller_credential() {
             "{target}"
         );
     }
+}
+
+#[test]
+fn multipart_relay_rewrites_only_the_routed_model() {
+    let shaping = one_lane("openai", "pool", Some("whisper-1"), &[]);
+    let lane = shaping.lane("pool").unwrap();
+    let body = b"--B\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\npool\r\n--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\n\r\n\0\xffbinary\r\n--B--\r\n";
+    let output = relay_request(lane.shape(), "Multipart/Form-Data; boundary=B", body);
+    let expected = [
+        b"--B\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-1".as_slice(),
+        &body[body.windows(6).position(|w| w == b"pool\r\n").unwrap() + 4..],
+    ]
+    .concat();
+    assert_eq!(output.bytes.as_ref(), expected);
+    assert!(!output.pristine);
+}
+
+#[test]
+fn multipart_relay_adds_a_missing_model_and_refuses_ambiguity() {
+    let shaping = one_lane("openai", "pool", Some("whisper-1"), &[]);
+    let lane = shaping.lane("pool").unwrap();
+    let body = b"--B\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\naudio\r\n--B--\r\n";
+    let output = relay_request(lane.shape(), "multipart/form-data; boundary=B", body);
+    assert_eq!(
+        busbar_plane_llm::exchange::multipart::multipart_model(
+            "multipart/form-data; boundary=B",
+            &output.bytes
+        )
+        .as_deref(),
+        Some("whisper-1")
+    );
+    let duplicate = b"--B\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nx\r\n--B\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ny\r\n--B--\r\n";
+    assert!(
+        relay_request(lane.shape(), "multipart/form-data; boundary=B", duplicate)
+            .bytes
+            .is_empty()
+    );
+}
+
+#[test]
+fn encoded_query_names_cannot_override_governed_or_target_parameters() {
+    assert_eq!(
+        with_caller_query(
+            "gemini",
+            "/x?alt=sse",
+            "%6bey=secret&k%65y=secret&%61lt=json"
+        ),
+        None
+    );
+    assert_eq!(
+        with_caller_query(
+            "gemini",
+            "/x?%61lt=sse",
+            "alt=json&%61lt=json&trace=a%2Fb&%74ag=x+y"
+        ),
+        Some("/x?%61lt=sse&trace=a%2Fb&%74ag=x+y".into())
+    );
+    assert_eq!(
+        with_caller_query("openai", "/x?a+b=one", "a%20b=two&odd%=ok"),
+        Some("/x?a+b=one&odd%=ok".into())
+    );
 }

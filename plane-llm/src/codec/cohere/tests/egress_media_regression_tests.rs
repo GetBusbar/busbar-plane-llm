@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Regression net: a top-level `IrBlock::Media` (document/audio/video) on Cohere egress must be
+//! dropped WITH the standard drop-with-warn `warn!`, never silently — the IR Media contract.
 
 use super::*;
 use crate::codec_diagnostics::{diagnostic_texts, warnings};

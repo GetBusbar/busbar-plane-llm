@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The invoke envelope: an Anthropic Messages exchange carried over Bedrock's `InvokeModel` and
+//! `InvokeModelWithResponseStream`.
 
 mod common;
 
@@ -20,6 +21,7 @@ use serde_json::{json, Value};
 const HOST: &dyn busbar_contract::codec::CodecHost = &TestHost;
 
 /// A Bedrock provider (its own dialect, SigV4), one model served over it in Converse and one over
+/// the invoke envelope, and an Anthropic provider for the carried dialect's own lane.
 fn shaping() -> Shaping {
     Shaping::from_settings(&json!({
         "providers": {
@@ -260,6 +262,8 @@ fn a_refusal_is_restated_in_the_carried_dialects_error_envelope() {
 }
 
 /// THE MONEY READ: a streamed answer over the envelope reaches the carried dialect's caller as that
+/// dialect's own events, and the units it reports are the carried dialect's usage (11 in, 7 out),
+/// exactly as on that dialect's own lane.
 #[test]
 fn a_streamed_answer_meters_the_carried_dialects_usage() {
     let s = shaping();
@@ -311,6 +315,10 @@ fn a_streamed_answer_meters_the_carried_dialects_usage() {
 }
 
 /// THE KERNEL NEVER SEES THE ENVELOPE: it is no codec
+/// protocol this plane declares, so the protocols the composition root installs, and with them the
+/// previous release's "must be one of" list a provider's unknown protocol is refused with, stay
+/// exactly 1.5.5's six in 1.5.5's order (oracle cell `boot.refusal|BOOT-020|validate`; the binary's
+/// own `validate_unknown_protocol_lists_only_the_configured_planes_dialects` pins the line).
 #[test]
 fn the_envelope_is_no_declared_protocol_and_the_1_5_5_list_is_unchanged() {
     let declared: Vec<&str> = busbar_plane_llm::codec::DECLS
@@ -329,4 +337,20 @@ fn the_envelope_is_no_declared_protocol_and_the_1_5_5_list_is_unchanged() {
         ]
     );
     assert!(!declared.contains(&invoke::PROTOCOL));
+}
+
+#[test]
+fn invoke_event_types_cannot_inject_sse_fields() {
+    for kind in [
+        "message_stop\ndata: {}\n\nevent: message_delta",
+        "message_stop\revent: injected",
+    ] {
+        let mut transcoder = Transcoder::new();
+        let wire = chunk(&json!({"type": kind}));
+        let text = String::from_utf8(transcoder.feed(&wire)).unwrap();
+        assert!(text.starts_with("event: error\ndata: "), "{text}");
+        assert_eq!(text.matches("event: ").count(), 1, "{text}");
+        assert!(!text.contains("message_stop"), "{text}");
+        assert!(transcoder.feed(&chunk(&events()[0])).is_empty());
+    }
 }

@@ -2,11 +2,14 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE SEARCH-RESULT SLOT: a Converse `searchResult` block
+//! (request content and `toolResult` content) is caller-supplied RAG content.
 
 use super::*;
 use serde_json::{json, Value};
 
 /// The production REQUEST translate steps (reader -> egress seam -> writer). The egress seam is the
+/// CROSS-protocol one and runs only when the dialects differ, as in production: it clears `extra`,
+/// where the reader parks a same-dialect hop's verbatim blocks.
 fn xreq(ingress: &'static str, egress: &str, body: &Value) -> Value {
     let ingress_p = crate::codec::proto_codec::protocol_for(ingress).expect("ingress");
     let egress_p = crate::codec::proto_codec::protocol_for(egress).expect("egress");

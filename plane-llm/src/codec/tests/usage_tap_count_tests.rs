@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE USAGE-TAP FAULT PIN: every way a same-protocol
+//! usage tap can fail to read a 2xx body is RETURNED as its fault, under the reason that says which
+//! way, whether the tap is the chat cell's own (unknown protocol / bad JSON / a body its reader
+//! refuses) or a leaf cell's default (a decode failure).
 
 use busbar_contract::codec::{OperationHandler, UsageTapFault};
 use busbar_contract::operation::OpVerb;

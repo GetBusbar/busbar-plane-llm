@@ -3,17 +3,6 @@
 
 //! Refusal status compatibility exercised through the LLM plane driver.
 
-
-
-
-
-
-
-
-
-
-
-
 use std::path::{Path, PathBuf};
 
 use busbar_contract::caps::ReasonCode;
@@ -22,6 +11,9 @@ use busbar_plane_llm::dialect::DIALECTS;
 use busbar_plane_llm::refusal::REFUSAL_STATUSES;
 
 /// The recorded cells, in busbar's tree. This file compiles only into the composition root's
+/// `hook_parity_driver` suite, so `CARGO_MANIFEST_DIR` is the root crate (`crates/busbar`) and
+/// `../..` is busbar's checkout, where that suite runs; `BUSBAR_CHECKOUT` is plugin CI's, not the
+/// root's, and is unset there.
 fn golden() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testing/shadow-oracle/golden/1.5.5/cells")
 }

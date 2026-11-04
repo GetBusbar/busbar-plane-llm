@@ -29,6 +29,7 @@
 /// The lane wire model stamped on the egress request (mirrors `rewrite_model_if_needed`).
 const LANE_MODEL: &str = "gpt-4o-mini";
 /// Fixed epoch for `prepare_for_ingress` so the synthesized `created` boundary signal (unused by
+/// the anthropic writer, but part of the IR contract) is deterministic.
 const FIXED_NOW: u64 = 1_752_000_000;
 /// Fixed 24-char base62 token substituted for the synthesized anthropic message id.
 const FIXED_ID: &str = "msg_01GOLDENGOLDENGOLDENGOLD";
@@ -38,6 +39,9 @@ fn golden_dir() -> std::path::PathBuf {
 }
 
 /// Bless mode requires the EXACT value `1`, not mere presence. Under `var_os(..).is_some()` even
+/// `BUSBAR_BLESS_GOLDEN=0` or `=false` — the spellings a reader uses to turn the flag OFF — put the
+/// whole golden suite into rewrite mode, where every test executes zero assertions AND overwrites
+/// the committed goldens with whatever the current translate path emits.
 fn bless() -> bool {
     std::env::var("BUSBAR_BLESS_GOLDEN").is_ok_and(|v| v == "1")
 }
@@ -97,6 +101,7 @@ fn translate_request_a2o(body: &str) -> Vec<u8> {
 }
 
 /// The production RESPONSE translate steps for the openai→anthropic lane, byte-for-byte, with the
+/// synthesized `id` normalized to `FIXED_ID` after a shape assertion.
 fn translate_response_o2a(body: &str) -> Vec<u8> {
     let anthropic =
         crate::codec::proto_codec::protocol_for("anthropic").expect("anthropic protocol");
@@ -134,6 +139,8 @@ fn translate_response_o2a(body: &str) -> Vec<u8> {
 }
 
 /// Corpus of representative anthropic REQUEST bodies (the ingress dialect): plain chat, multi-turn
+/// with sampling controls, system array + cache breakpoints + images, tool use round-trip, thinking
+/// ask + metadata carry, unmodeled extras (cleared cross-protocol), and degenerate content shapes.
 pub const REQUEST_CORPUS: &[(&str, &str)] = &[
     (
         "req_a2o_plain.json",
@@ -166,6 +173,8 @@ pub const REQUEST_CORPUS: &[(&str, &str)] = &[
 ];
 
 /// Corpus of representative openai RESPONSE bodies (the egress dialect): plain completion,
+/// tool_calls, cached usage details, reasoning content, multi-part array content, and a
+/// usage-less/minimal body.
 const RESPONSE_CORPUS: &[(&str, &str)] = &[
     (
         "resp_o2a_plain.json",
@@ -210,6 +219,7 @@ fn translate_parity_golden_response_openai_to_anthropic() {
 }
 
 /// The original v1.5.5 corpus used malformed string arguments on its second call. An Anthropic
+/// tool input is an object, so that original body is a conversion refusal, not a success golden.
 #[test]
 fn malformed_openai_tool_arguments_refuse_anthropic_conversion_without_inventing_input() {
     let valid = RESPONSE_CORPUS

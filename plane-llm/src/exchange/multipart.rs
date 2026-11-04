@@ -1,4 +1,5 @@
 //! Rung 2 of the model ladder: the `model` form field of a multipart arrival, read as a document. The
+//! arrival reading is the plane's, and there is one of it.
 
 use std::borrow::Cow;
 
@@ -11,6 +12,7 @@ fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// The boundary, off the `Content-Type`: the one thing that says where a part begins. Every
+/// delimiter in the body is spelled from it, so a reader without it reads bytes that resemble parts.
 fn multipart_boundary(content_type: &str) -> Option<String> {
     parameter(content_type, "boundary")
         .filter(|value| !value.is_empty())
@@ -18,6 +20,7 @@ fn multipart_boundary(content_type: &str) -> Option<String> {
 }
 
 /// Split a header value on `;`, ignoring separators inside a quoted string (a naive `split(';')` cuts
+/// `filename="a;b"` in half and invents a parameter).
 fn split_params(value: &str) -> impl Iterator<Item = &str> {
     let (mut quoted, mut escaped) = (false, false);
     value.split(move |c| {
@@ -82,6 +85,7 @@ fn parameter<'a>(value: &'a str, attribute: &str) -> Option<Cow<'a, str>> {
 }
 
 /// Only the whole `name` parameter of Content-Disposition names a field. A filename, quoted
+/// semicolon or another header cannot supply it.
 pub(crate) fn multipart_field_name(headers: &str) -> Option<Cow<'_, str>> {
     for line in headers.split("\r\n") {
         let Some((name, value)) = line.split_once(':') else {
@@ -95,6 +99,7 @@ pub(crate) fn multipart_field_name(headers: &str) -> Option<Cow<'_, str>> {
 }
 
 /// Borrowed multipart segments, excluding delimiter lines but retaining the CRLF before each
+/// delimiter.
 pub(crate) struct MultipartSegments<'a> {
     body: &'a [u8],
     delimiter: String,
@@ -167,6 +172,7 @@ pub fn multipart_model(content_type: &str, body: &[u8]) -> Option<String> {
 }
 
 /// The last form field, as the transcription reader resolves repeated format fields, borrowed
+/// from the same complete framing admission uses.
 pub(crate) fn multipart_field<'a>(
     content_type: &str,
     body: &'a [u8],
@@ -241,4 +247,48 @@ fn multipart_field_value<'a>(
         return None;
     }
     found
+}
+
+/// Replace the unique routed model without reserializing any other multipart bytes.
+pub(crate) fn rewrite_model(content_type: &str, body: &[u8], model: &str) -> Option<Vec<u8>> {
+    let boundary = multipart_boundary(content_type)?;
+    let delimiter = format!("--{boundary}");
+    if model.starts_with(&delimiter) || model.contains(&format!("\n{delimiter}")) {
+        return None;
+    }
+    let mut parts = multipart_segments(content_type, body)?;
+    let insertion = parts.next?;
+    let mut value_range = None;
+    for part in parts.by_ref() {
+        let header_end = find_sub(part, b"\r\n\r\n")?;
+        let headers = std::str::from_utf8(&part[..header_end]).ok()?;
+        if multipart_field_name(headers)?.as_ref() == "model" {
+            if value_range.is_some() {
+                return None;
+            }
+            let value = &part[header_end + 4..];
+            let value = value.strip_suffix(b"\r\n").unwrap_or(value);
+            let start = value.as_ptr() as usize - body.as_ptr() as usize;
+            value_range = Some(start..start + value.len());
+        }
+    }
+    if !parts.closed {
+        return None;
+    }
+    let mut out = Vec::new();
+    if let Some(range) = value_range {
+        out.extend_from_slice(&body[..range.start]);
+        out.extend_from_slice(model.as_bytes());
+        out.extend_from_slice(&body[range.end..]);
+    } else {
+        out.extend_from_slice(&body[..insertion]);
+        out.extend_from_slice(
+            format!(
+                "Content-Disposition: form-data; name=\"model\"\r\n\r\n{model}\r\n{delimiter}\r\n"
+            )
+            .as_bytes(),
+        );
+        out.extend_from_slice(&body[insertion..]);
+    }
+    Some(out)
 }

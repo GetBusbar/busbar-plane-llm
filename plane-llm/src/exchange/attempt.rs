@@ -1,4 +1,5 @@
 //! One attempt's far-end request, sans I/O: the verb, target, head fields and body the plane answers
+//! an ATTEMPT piece with.
 
 use std::borrow::Cow;
 
@@ -141,6 +142,8 @@ pub fn translate_reject(envelope: &'static str, reject: TranslateReqReject) -> A
 }
 
 /// Whether a caller's body is JSON, by the arrival's own rule: a path-model arrival always is (its
+/// model and stream were spliced into it), a body-model one when its content type says so or names
+/// none.
 fn relays_json(ingress: &str, content_type: &str) -> bool {
     decl(ingress).is_some_and(|d| d.has_model_in_url)
         || content_type.starts_with(APPLICATION_JSON)
@@ -148,6 +151,7 @@ fn relays_json(ingress: &str, content_type: &str) -> bool {
 }
 
 /// The members a far end at a `path_base` needs reshaped, read off its own writer: each member the
+/// reshape removes and each it sets (Claude-on-Vertex: no `model`, an `anthropic_version`).
 fn path_base_members(far: &ProtocolDecl) -> Vec<(String, Option<Vec<u8>>)> {
     let mut probe = serde_json::json!({ "model": "" });
     let reshaped = far
@@ -168,6 +172,8 @@ fn path_base_members(far: &ProtocolDecl) -> Vec<(String, Option<Vec<u8>>)> {
 }
 
 /// The common relay, proved without allocating: a body-model object that carries none of busbar's
+/// router keys and already names the lane's wire model (its last `model`, as a last-wins reader
+/// sees it).
 fn needs_no_splice(lane: FarShape<'_>, hop_bytes: &[u8]) -> bool {
     let wire = lane.wire_model.as_bytes();
     let plain = !wire.iter().any(|c| *c == b'"' || *c == b'\\' || *c < 0x20);
@@ -194,6 +200,7 @@ fn needs_no_splice(lane: FarShape<'_>, hop_bytes: &[u8]) -> bool {
 }
 
 /// The relay of one same-dialect body: the caller's bytes with the governed splices only, each a
+/// byte-level member edit (`busbar_contract::spans`), never a re-serialization (dialect fidelity).
 #[must_use]
 pub fn relay_request<'a>(
     lane: FarShape<'_>,
@@ -208,6 +215,20 @@ pub fn relay_request<'a>(
         return unchanged;
     };
     if !relays_json(lane.dialect, content_type) {
+        if lane.dialect == "openai"
+            && content_type
+                .split(';')
+                .next()
+                .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("multipart/form-data"))
+        {
+            return match super::multipart::rewrite_model(content_type, hop_bytes, lane.wire_model) {
+                Some(bytes) if bytes == hop_bytes => unchanged,
+                bytes => Translated {
+                    bytes: Cow::Owned(bytes.unwrap_or_default()),
+                    pristine: false,
+                },
+            };
+        }
         return unchanged;
     }
     if !far.has_model_in_url && lane.path_base.is_none() && needs_no_splice(lane, hop_bytes) {
@@ -326,7 +347,16 @@ fn translate_into<'a>(
 ) -> Result<Translated<'a>, Answer> {
     let egress = lane.dialect;
     if ingress == egress {
-        return Ok(relay_request(lane, content_type, hop_bytes));
+        let relayed = relay_request(lane, content_type, hop_bytes);
+        if relayed.bytes.is_empty() && !hop_bytes.is_empty() {
+            return Err(answer(
+                envelope,
+                400,
+                KIND_INVALID_REQUEST,
+                "We could not rewrite the routed multipart model.",
+            ));
+        }
+        return Ok(relayed);
     }
     let far = decl(egress);
     let prep = EgressPrep {
@@ -445,6 +475,7 @@ fn translate_into<'a>(
 }
 
 /// The far end's path for `operation` on `lane`: the provider's fixed path, else the far end's
+/// dialect's own path for the wire model and the stream intent.
 #[must_use]
 pub fn upstream_path(lane: &Lane, operation: OpVerb, stream: bool) -> Option<String> {
     let rh = decl(lane.dialect).and_then(|d| d.handler)?;
@@ -483,6 +514,7 @@ pub fn uri_encode_path(path: &str) -> String {
 }
 
 /// The path as it goes on the wire and as a request signature canonicalises it: an unreserved path
+/// is both; any other is percent-encoded on the wire and encoded twice for the signature.
 #[must_use]
 pub fn wire_and_canonical_path(url_path: &str) -> (String, String) {
     let (path, query) = match url_path.split_once('?') {
@@ -506,6 +538,8 @@ pub fn wire_and_canonical_path(url_path: &str) -> (String, String) {
 }
 
 /// Whether busbar governs the request header `name` (case-insensitive) for any dialect. The union,
+/// not the arrival dialect's row: busbar reads its caller's credential from any of these carriers
+/// whatever the dialect, so a name another dialect declares a credential is never handed a far end.
 #[must_use]
 pub fn governed(name: &str) -> bool {
     DIALECTS
@@ -516,21 +550,48 @@ pub fn governed(name: &str) -> bool {
 }
 
 /// Whether busbar governs the request query parameter `name` for a caller of `dialect` (its
+/// credential parameters, declared as data in the dialect table).
 #[must_use]
 pub fn governed_query(dialect: &str, name: &str) -> bool {
     crate::dialect::dialect(dialect).is_some_and(|d| d.governed_query.contains(&name))
+}
+
+/// Decode query names for policy comparisons; the forwarded pair retains its original bytes.
+fn decode_query_name(name: &str) -> String {
+    let mut bytes = name.bytes();
+    let mut decoded = Vec::with_capacity(name.len());
+    while let Some(byte) = bytes.next() {
+        if byte == b'%' {
+            let mut lookahead = bytes.clone();
+            let pair = lookahead.next().zip(lookahead.next());
+            if let Some((hi, lo)) = pair
+                .and_then(|(hi, lo)| char::from(hi).to_digit(16).zip(char::from(lo).to_digit(16)))
+            {
+                decoded.push((hi * 16 + lo) as u8);
+                bytes = lookahead;
+                continue;
+            }
+        }
+        decoded.push(if byte == b'+' { b' ' } else { byte });
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 /// The egress scheme of a dialect whose far end checks a request signature.
 const SIGNED_SCHEME: &str = "request-signature";
 
 /// The far end's target with the caller's own query on a same-dialect attempt (busbar is invisible to
+/// upstreams): each caller parameter in the caller's order and spelling, except those the dialect
+/// governs ([`governed_query`]) and those the target already sets (busbar's stream framing).
 #[must_use]
 pub fn with_caller_query(dialect: &str, target: &str, caller_query: &str) -> Option<String> {
     if crate::dialect::dialect(dialect).is_some_and(|d| d.egress_scheme == SIGNED_SCHEME) {
         return None;
     }
-    let key = |pair: &str| pair.split_once('=').map_or(pair, |(k, _)| k).to_string();
+    let key = |pair: &str| {
+        let name = pair.split_once('=').map_or(pair, |(k, _)| k);
+        decode_query_name(name)
+    };
     let own: Vec<String> = target
         .split_once('?')
         .map(|(_, q)| q.split('&').map(key).collect())
@@ -551,6 +612,8 @@ pub fn with_caller_query(dialect: &str, target: &str, caller_query: &str) -> Opt
 }
 
 /// The provider's static head-field options for `lane` ([`crate::options`]) as `(name, value)`, split
+/// by precedence: the operator's defaults (a same-dialect caller's own value of the name replaces
+/// them) and the forced ones (sent whatever the caller sent; the dialect governs them).
 #[must_use]
 pub fn option_fields(lane: &Lane) -> (Vec<HeadField>, Vec<HeadField>) {
     let (forced, defaults): (Vec<_>, Vec<_>) = lane
@@ -593,6 +656,8 @@ pub(crate) fn default_head_fields(
 }
 
 /// The target with the provider's static query options for `lane` ([`crate::options`]): a default is
+/// added unless the target already has the name (a same-dialect caller's value, or busbar's stream
+/// framing); a forced one replaces any value the target carries.
 #[must_use]
 pub fn with_option_query(lane: &Lane, target: &str) -> String {
     let opts: Vec<&SetOption> = lane
@@ -606,7 +671,10 @@ pub fn with_option_query(lane: &Lane, target: &str) -> String {
         return target.to_string();
     }
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
-    let key = |pair: &str| pair.split_once('=').map_or(pair, |(k, _)| k).to_string();
+    let key = |pair: &str| {
+        let name = pair.split_once('=').map_or(pair, |(k, _)| k);
+        decode_query_name(name)
+    };
     let mut pairs: Vec<String> = query
         .split('&')
         .filter(|p| !p.is_empty())
@@ -647,9 +715,13 @@ fn legal_field_value(v: &[u8]) -> bool {
 }
 
 /// The `accept` field: busbar's own answer framing (the operation's single answer or its dialect's
+/// stream framing), written on every far request and never replaced by a same-dialect caller's value
+/// (the oracle's same-dialect cells carry busbar's `application/json`, not the caller's `*/*`).
 const ACCEPT: &str = "accept";
 
 /// The head fields a native client of `lane`'s dialect sends, then, when the caller speaks that
+/// dialect, every field the caller sent except those busbar governs ([`governed`]): busbar is
+/// invisible to upstreams.
 fn head_fields(
     lane: &Lane,
     handler: &dyn OperationHandler,
@@ -709,6 +781,9 @@ fn head_fields(
 }
 
 /// The caller's forwarded fields laid over busbar's own as an `http::HeaderMap` lays them (one
+/// position per name, where first inserted): a name busbar already writes keeps its position and takes
+/// the caller's values; a new name is appended in the caller's order; all values of a repeated name
+/// stay together at its position.
 fn forward_over(
     own: Vec<(String, Vec<u8>)>,
     forwarded: Vec<(String, Vec<u8>)>,
@@ -825,6 +900,7 @@ pub const DETAIL_STREAM_OPTIONS_NOT_OBJECT: &str =
     "Invalid type for 'stream_options': expected an object.";
 
 /// A streamed request to a far end that reports usage only when asked is asked, unless the caller
+/// asked already: the governed METERING edit (`stream_options.include_usage`), a byte splice.
 fn inject_stream_usage(
     ingress: &'static str,
     lane: &Lane,
@@ -855,6 +931,7 @@ const STREAM_OPTIONS: &str = "stream_options";
 const INCLUDE_USAGE: &str = "include_usage";
 
 /// Ask a streamed request for its usage: `stream_options.include_usage = true`, the object made when
+/// absent or null.
 pub fn try_inject_stream_include_usage(payload: Vec<u8>) -> Result<Vec<u8>, Vec<u8>> {
     let Some(top) = spans::members(&payload, 0) else {
         return Ok(payload);

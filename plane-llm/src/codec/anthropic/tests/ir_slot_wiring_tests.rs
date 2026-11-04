@@ -1,4 +1,6 @@
 //! IR SLOT WIRING: the Anthropic reader FILLS and the Anthropic writer EMITS every
+//! typed IR slot `ir-slots-landed.md` lists Anthropic under — IR-09 (ANT-09), IR-16 (ANT-11), IR-11
+//! (ANT-13), IR-02 refusal category, IR-04, IR-10, IR-12, IR-18 and the "N" slots.
 
 use super::super::proto_codec::protocol_for;
 use super::ir_mapping_q57_tests::newest_lane;
@@ -13,6 +15,7 @@ fn read(body: &Value) -> crate::codec::ir::IrRequest {
 }
 
 /// The egress seam, then the Anthropic writer on a lane with `caps`. `extra` is cleared by the
+/// seam, so only the TYPED slots reach the writer — the path a foreign ingress takes.
 fn egress(
     mut req: crate::codec::ir::IrRequest,
     caps: &crate::codec::egress_prep::LaneCaps,
@@ -65,6 +68,7 @@ fn anthropic_response(stop_reason: &str, stop_details: Value) -> Value {
 }
 
 /// ANT-09: `thinking:{type:"disabled"}` is the explicit OFF ask, and the Anthropic writer emits it
+/// back as `disabled` (never a zero budget that drops the ask, never an enable ask).
 #[test]
 fn ant09_thinking_disabled_reads_as_off_and_writes_disabled() {
     let body = with(base(), "thinking", json!({"type": "disabled"}));
@@ -78,6 +82,7 @@ fn ant09_thinking_disabled_reads_as_off_and_writes_disabled() {
 }
 
 /// ANT-09: `output_config.effort` `xhigh` / `max` read as the IR-09 words above High and are written
+/// back verbatim on an adaptive lane; a budget lane takes the table's top entry.
 #[test]
 fn ant09_effort_xhigh_and_max_are_carried() {
     use crate::codec::ir::{IrReasoningAsk::Effort, IrReasoningEffort as E};
@@ -107,6 +112,7 @@ fn ant09_effort_xhigh_and_max_are_carried() {
 }
 
 /// ANT-11: `model_context_window_exceeded` reads as MaxTokens + ContextWindowExceeded, and an
+/// Anthropic client gets the exact token back (buffered), not the coarser `max_tokens`.
 #[test]
 fn ant11_context_window_stop_round_trips_buffered() {
     let body = anthropic_response("model_context_window_exceeded", Value::Null);
@@ -169,6 +175,7 @@ fn ant11_context_window_stop_round_trips_stream() {
 }
 
 /// IR-02: a refusal's `stop_details` (category, explanation) is read and written back, buffered
+/// and stream; any other stop keeps `stop_details: null`.
 #[test]
 fn ir02_refusal_stop_details_are_carried() {
     let details = json!({"type": "refusal", "category": "cyber", "explanation": "declined"});
@@ -222,6 +229,7 @@ fn ir02_refusal_stop_details_are_carried() {
 }
 
 /// ANT-13: web search / web fetch / code execution read into the typed hosted-tool slot (with
+/// their parameters), never as a function tool; other server tools stay raw and same-protocol-only.
 #[test]
 fn ant13_server_tools_read_into_hosted_slot() {
     use crate::codec::ir::IrHostedTool as H;
@@ -271,6 +279,10 @@ fn ant13_server_tools_read_into_hosted_slot() {
 }
 
 /// A hosted tool that crossed the seam (from Responses, Chat `web_search_options` or Gemini) is
+/// DROPPED on Anthropic egress, as 1.5.5 dropped it (v1.5.5
+/// `crates/busbar/src/proto/anthropic/writer.rs:171-178`: "prepare_for_egress strips hosted
+/// tools"): no Anthropic server search runs, so the turn charges no `search_units` 1.5.5 never
+/// charged.
 #[test]
 fn hosted_tools_that_crossed_the_seam_are_dropped_on_anthropic_egress() {
     let mut ir = read(&base());
@@ -389,6 +401,8 @@ fn ir12_document_citations_and_context_are_carried() {
 }
 
 /// IR-18: an Anthropic-read signature is marked Anthropic; on Anthropic egress a thinking block
+/// signed by another vendor is dropped like an unsigned one (Anthropic 400s on it), while an
+/// Anthropic-origin one is sent.
 #[test]
 fn ir18_only_anthropic_signatures_are_sent() {
     let body = with(
@@ -435,6 +449,7 @@ fn ir18_only_anthropic_signatures_are_sent() {
 }
 
 /// The "N" slots: Anthropic has no member for them, so they are reported as dropped and nothing is
+/// written for them.
 #[test]
 fn n_slots_are_reported_dropped_and_not_written() {
     let mut ir = read(&base());
@@ -475,6 +490,8 @@ fn n_slots_are_reported_dropped_and_not_written() {
 }
 
 /// IR-04 placement: `service_tier` moved from "always raw in `extra`" to a parked mapping row. The
+/// SAME-DIALECT write must still re-emit the caller's exact member — a known word through the
+/// slot, an unknown one raw from `extra` — and an absent member stays absent.
 #[test]
 fn ir04_same_dialect_service_tier_bytes_are_the_callers() {
     let protocol = protocol_for("anthropic").unwrap();

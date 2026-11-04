@@ -130,8 +130,8 @@ fn buffered_response_cache_counts_absent_null_and_readable_still_read() {
         .expect("readable cache counts read");
     assert_eq!(ir.usage.cache_read_input_tokens, Some(30));
 
-    assert_eq!(ir.usage.cache_creation_input_tokens, None);
-    assert_eq!(ir.usage.input_tokens, 70);
+    assert_eq!(ir.usage.cache_creation_input_tokens, Some(20));
+    assert_eq!(ir.usage.input_tokens, 50);
 }
 
 #[test]
@@ -146,10 +146,15 @@ fn streaming_terminal_refuses_an_unreadable_cache_count_on_its_own() {
     assert_eq!(tokens, Some((100, 9)), "{ev:?}");
 }
 
-/// The cache-write slice bills inside the input on every path and in every spelling, as in 1.5.5:
+/// Readable cache-write counts retain their own billing tier; malformed counts refuse only themselves.
 #[test]
-fn cache_write_tokens_bill_inside_the_input_on_every_path() {
+fn cache_write_tokens_keep_their_own_tier_on_every_path() {
     for spelling in [serde_json::json!(40), serde_json::json!("40")] {
+        let expected = if spelling.is_number() {
+            (60, 9, Some(40))
+        } else {
+            (100, 9, None)
+        };
         let usage = serde_json::json!({
             "input_tokens": 100, "output_tokens": 9,
             "input_tokens_details": {"cache_write_tokens": spelling}
@@ -158,7 +163,7 @@ fn cache_write_tokens_bill_inside_the_input_on_every_path() {
             .read_response(crate::codec::test_host::HOST, &response(usage.clone()))
             .expect("the cache-write slice never refuses the answer");
         let t = ir.usage.to_token_usage();
-        assert_eq!((t.input, t.output, t.cache_creation), (100, 9, None));
+        assert_eq!((t.input, t.output, t.cache_creation), expected);
         let mut state = crate::codec::ir::StreamDecodeState::default();
         let completed = serde_json::json!({
             "response": {"status": STATUS_COMPLETED, "usage": usage}
@@ -178,7 +183,7 @@ fn cache_write_tokens_bill_inside_the_input_on_every_path() {
             .unwrap_or_else(|| panic!("the terminal carries its usage: {ev:?}"));
         assert_eq!(
             (streamed.input, streamed.output, streamed.cache_creation),
-            (100, 9, None)
+            expected
         );
         let tail = format!(r#"{{"usage":{usage}}}"#);
         let recovered = ResponsesReader
@@ -186,7 +191,7 @@ fn cache_write_tokens_bill_inside_the_input_on_every_path() {
             .expect("the usage recovers");
         assert_eq!(
             (recovered.input, recovered.output, recovered.cache_creation),
-            (100, 9, None)
+            expected
         );
     }
 }

@@ -6,6 +6,9 @@
 use super::rewrite_frame_strip_usage;
 
 /// Byte-stripper fallback indistinguishability: when the fast byte-splice path declines and
+/// the fallback is taken (here forced by a `data_str` that is NOT a verbatim substring of the raw
+/// frame, mirroring a multi-`data:`-line frame), the reframed frame must NOT introduce a wire-shape
+/// tell: JSON key ORDER is preserved and the ORIGINAL CRLF terminator is preserved.
 #[test]
 fn fallback_preserves_key_order_and_crlf() {
     let payload = r#"{"id":"chatcmpl-x","object":"chat.completion.chunk","choices":[{"delta":{"content":"hi"}}],"usage":null}"#;

@@ -11,6 +11,7 @@ fn unit(usage: &busbar_contract::billing::Usage, k: &str) -> Option<u64> {
 }
 
 /// A tier the dialect reader actually reported (including an honest zero, distinct from a
+/// legitimately-absent tier — see `sparse_zero_and_absent_cache_tiers_are_both_omitted`) is priced.
 #[test]
 fn reported_tiers_are_priced() {
     let tu = TokenUsage {
@@ -40,6 +41,7 @@ fn reported_tiers_are_priced() {
 }
 
 /// A cache tier the provider genuinely never reported (`None`, per `read_count_opt`'s absent/null
+/// contract) is OMITTED from the sparse map — not billed, not present as a zero entry either.
 #[test]
 fn absent_cache_tiers_are_omitted_not_billed() {
     let tu = TokenUsage {
@@ -70,6 +72,9 @@ fn absent_cache_tiers_are_omitted_not_billed() {
 }
 
 /// An explicit reported zero (`Some(0)`) and a legitimately-absent tier (`None`) price IDENTICALLY —
+/// both omitted — which is correct: neither should ever be billable money, and the map's sparse
+/// contract (module doc, `wire_shim.rs`) makes no distinction between "reported zero" and
+/// "not reported" once the value is a readable zero.
 #[test]
 fn sparse_zero_and_absent_cache_tiers_are_both_omitted() {
     let reported_zero = TokenUsage {
@@ -90,6 +95,10 @@ fn sparse_zero_and_absent_cache_tiers_are_both_omitted() {
 }
 
 /// END TO END, through a real dialect reader this crate owns (not cohere/openai_responses): a
+/// present-but-unparseable top-level `cache_read_input_tokens`/`cache_creation_input_tokens` is
+/// REFUSED on its own (the path over `usage_count::billed_count`: each usage
+/// field is judged on its own): it bills nothing, the readable counts beside
+/// it bill as stated, and it never reaches `tier_usage()` as a priced tier.
 #[test]
 fn unreadable_top_level_cache_count_refuses_before_reaching_tier_usage() {
     use crate::codec::anthropic::AnthropicReader;

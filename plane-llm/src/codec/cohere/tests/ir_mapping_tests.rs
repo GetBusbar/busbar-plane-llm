@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR mapping: every field a Cohere v2 body carries that the IR and the other
+//! dialect can carry must map, in both directions, buffered and streamed.
 
 use serde_json::{json, Value};
 
@@ -29,6 +30,7 @@ fn frame(v: Value) -> String {
 }
 
 /// A Cohere reasoning-model stream: a `thinking` content block, then the answer's text block with a
+/// citation, then `message-end` (the audit's t05 probe body).
 fn reasoning_stream() -> String {
     [
         json!({"type":"message-start","id":"c-1","delta":{"message":{"role":"assistant"}}}),
@@ -71,6 +73,7 @@ fn read_events(raw: &str) -> Vec<crate::codec::ir::IrStreamEvent> {
 }
 
 /// COH-01: the thinking block's `content-end` used to latch the ONE text slot closed, so the answer
+/// that followed was dropped frame by frame and a foreign client received no answer text at all.
 #[test]
 fn coh01_reasoning_stream_delivers_the_answer_to_every_foreign_client() {
     for ingress in ["anthropic", "openai", "responses", "gemini", "bedrock"] {
@@ -83,6 +86,7 @@ fn coh01_reasoning_stream_delivers_the_answer_to_every_foreign_client() {
 }
 
 /// COH-01 at the reader: the thinking block and the text block are two blocks with two IR indices,
+/// each opened and closed exactly once, and the citation lands on the TEXT block.
 #[test]
 fn coh01_thinking_and_text_are_separate_balanced_blocks() {
     use crate::codec::ir::{IrBlockMeta, IrDelta, IrStreamEvent as E};
@@ -199,6 +203,8 @@ fn translate_response(egress: &str, ingress: &'static str, body: &Value) -> Valu
 }
 
 /// COH-10, buffered, OpenAI backend: 10 prompt tokens, 4 of them cached. Cohere's
+/// `tokens.input_tokens` is the whole prompt and `cached_tokens` the hit; the writer used to emit
+/// the IR's UNCACHED share (6) and no `cached_tokens` at all.
 #[test]
 fn coh10_openai_cached_prompt_reaches_a_cohere_client_whole() {
     let body = json!({
@@ -215,6 +221,7 @@ fn coh10_openai_cached_prompt_reaches_a_cohere_client_whole() {
 }
 
 /// COH-10, buffered, Anthropic backend: 10 uncached + 4 cache-read + 3 cache-written = a 17-token
+/// prompt.
 #[test]
 fn coh10_anthropic_cache_tiers_sum_into_the_cohere_prompt() {
     let body = json!({
@@ -239,6 +246,8 @@ fn coh10_anthropic_cache_tiers_sum_into_the_cohere_prompt() {
 }
 
 /// A backend that reports a cache read of ZERO (the Responses API always sends
+/// `input_tokens_details.cached_tokens`) had no cache hit: the Cohere client sees no `cached_tokens`,
+/// as 1.5.5's Cohere door wrote none.
 #[test]
 fn a_zero_cache_read_writes_no_cohere_cached_tokens() {
     let body = json!({
@@ -285,8 +294,9 @@ fn a_zero_cache_read_writes_no_cohere_cached_tokens() {
 }
 
 /// COH-10 round trip: what the Cohere writer emits (the whole 10-token prompt, 4 of it cached), the
+/// Cohere reader preserves both uncached and cached input tiers.
 #[test]
-fn coh10_cohere_reader_bills_the_written_prompt_whole() {
+fn coh10_cohere_reader_preserves_written_cache_attribution() {
     let body = json!({
         "id": "chatcmpl-1", "object": "chat.completion", "created": 1, "model": "gpt",
         "choices": [{"index": 0, "message": {"role": "assistant", "content": "hello"},
@@ -301,11 +311,12 @@ fn coh10_cohere_reader_bills_the_written_prompt_whole() {
         .read_response(crate::codec::test_host::HOST, &out)
         .expect("read back");
     assert_eq!(out["usage"]["cached_tokens"], json!(4), "{out}");
-    assert_eq!(back.usage.input_tokens, 10, "{back:?}");
-    assert_eq!(back.usage.cache_read_input_tokens, None, "{back:?}");
+    assert_eq!(back.usage.input_tokens, 6, "{back:?}");
+    assert_eq!(back.usage.cache_read_input_tokens, Some(4), "{back:?}");
 }
 
 /// COH-10, streamed, Anthropic backend: the prompt counts ride `message_start`; the Cohere
+/// `message-end` must carry the whole 17-token prompt and the 4-token cache hit.
 #[test]
 fn coh10_streamed_message_end_carries_the_whole_prompt_and_the_cache_hit() {
     let raw = concat!(
@@ -341,6 +352,7 @@ fn coh10_streamed_message_end_carries_the_whole_prompt_and_the_cache_hit() {
 }
 
 /// A client request (`ingress` dialect) translated for a backend speaking `egress`, through the
+/// production request seam.
 fn translate_request(ingress: &'static str, egress: &str, body: &Value) -> Value {
     let ingress_p = crate::codec::proto_codec::protocol_for(ingress).expect("ingress");
     let egress_p = crate::codec::proto_codec::protocol_for(egress).expect("egress");
@@ -366,6 +378,7 @@ fn translate_request(ingress: &'static str, egress: &str, body: &Value) -> Value
 }
 
 /// COH-03: a buffered Cohere reasoning response's `{"type":"thinking"}` content part reaches a
+/// foreign client as reasoning; it used to vanish.
 #[test]
 fn coh03_buffered_thinking_part_reaches_a_foreign_client() {
     let body = json!({
@@ -391,6 +404,7 @@ fn coh03_buffered_thinking_part_reaches_a_foreign_client() {
 }
 
 /// COH-04 (thinking half): an assistant history turn's `{"type":"thinking"}` part reaches a foreign
+/// backend as reasoning, in place.
 #[test]
 fn coh04_request_assistant_thinking_part_is_carried() {
     let body = json!({
@@ -409,6 +423,7 @@ fn coh04_request_assistant_thinking_part_is_carried() {
 }
 
 /// COH-07: a history turn's reasoning with NO tool call is written as a `thinking` content part, not
+/// as a `tool_plan` for a call that was never made.
 #[test]
 fn coh07_history_thinking_without_tool_calls_is_a_thinking_part() {
     let body = json!({
@@ -446,6 +461,7 @@ fn coh07_history_thinking_without_tool_calls_is_a_thinking_part() {
 }
 
 /// COH-08: a foreign model's buffered reasoning reaches a Cohere client as a `thinking` content part,
+/// not as `message.tool_plan`.
 #[test]
 fn coh08_buffered_thinking_is_a_thinking_part_not_a_tool_plan() {
     let body = json!({
@@ -473,6 +489,8 @@ fn coh08_buffered_thinking_is_a_thinking_part_not_a_tool_plan() {
 }
 
 /// COH-09: a foreign model's streamed reasoning reaches a Cohere client as a thinking content block
+/// (`content-start {type:"thinking"}` / `content-delta {thinking}` / `content-end`), not as
+/// `tool-plan-delta` frames — and the Cohere reader reads those frames back as the same reasoning.
 #[test]
 fn coh09_streamed_thinking_is_a_thinking_content_block() {
     let raw = concat!(
@@ -541,6 +559,7 @@ fn coh09_streamed_thinking_is_a_thinking_content_block() {
 }
 
 /// COH-05: a Cohere `thinking.token_budget` is a numeric reasoning budget; it reaches an Anthropic
+/// backend as `thinking.budget_tokens` and an OpenAI one as the effort word the table maps it to.
 #[test]
 fn coh05_cohere_thinking_budget_reaches_a_foreign_reasoning_backend() {
     let body = json!({
@@ -576,6 +595,7 @@ fn coh05_cohere_thinking_budget_reaches_a_foreign_reasoning_backend() {
 }
 
 /// COH-06: a foreign reasoning ask reaches a Cohere backend as `thinking` — a budget as-is, an
+/// effort word through the table, Gemini's "model decides" as Cohere's own budget-less form.
 #[test]
 fn coh06_foreign_reasoning_ask_reaches_a_cohere_backend() {
     let anthropic = json!({
@@ -608,6 +628,7 @@ fn coh06_foreign_reasoning_ask_reaches_a_cohere_backend() {
 }
 
 /// COH-11: Cohere `strict_tools: true` is the strict-schema guarantee for every tool; it reaches an
+/// OpenAI backend as `strict: true` on each tool (it used to die in `extra`).
 #[test]
 fn coh11_strict_tools_reaches_every_foreign_tool() {
     let body = json!({
@@ -634,6 +655,7 @@ fn coh11_strict_tools_reaches_every_foreign_tool() {
 }
 
 /// COH-12: OpenAI tools that are all `strict` render as Cohere `strict_tools: true`; tools that
+/// disagree have no Cohere form and emit no switch.
 #[test]
 fn coh12_all_strict_foreign_tools_render_as_strict_tools() {
     let body = json!({
@@ -657,6 +679,7 @@ fn coh12_all_strict_foreign_tools_render_as_strict_tools() {
 }
 
 /// COH-13: a buffered Cohere response's `logprobs[]` reach a foreign client (they used to be dropped
+/// with a warn).
 #[test]
 fn coh13_buffered_logprobs_reach_a_foreign_client() {
     let body = json!({
@@ -711,6 +734,7 @@ fn coh14_streamed_logprobs_reach_a_foreign_client() {
 }
 
 /// COH-15: a foreign content-filter stop is a served answer; a Cohere client is told `COMPLETE`, not
+/// the `ERROR` that reads as an infrastructure failure — buffered and streamed.
 #[test]
 fn coh15_safety_stop_is_not_an_error_for_a_cohere_client() {
     let body = json!({
@@ -786,6 +810,9 @@ fn timeout_is_served_and_billed_as_in_1_5_5() {
 }
 
 /// COH-04 (document half): a user `document` part used to be dropped silently. A plain text document
+/// reaches a foreign backend as a text/plain document; any other document's `data` is a JSON map of
+/// fields and reaches it as a text/plain document holding that JSON (it rode this dialect's own
+/// `Vendor` document at first, which every foreign writer drops).
 #[test]
 fn coh04_request_user_document_part_is_carried() {
     let body = json!({
@@ -824,6 +851,7 @@ fn coh04_request_user_document_part_is_carried() {
 }
 
 /// COH-17: grounding citations on a response whose content carried no text part used to be lost;
+/// they now ride an empty text block to the client.
 #[test]
 fn coh17_citations_without_a_text_part_still_reach_the_client() {
     let body = json!({
@@ -890,6 +918,7 @@ fn coh17_citations_without_a_text_part_still_reach_the_client() {
 }
 
 /// COH-18: a foreign text document (OpenAI `file` part, text/plain) is lifted into Cohere's
+/// top-level `documents`; a PDF still has no Cohere form and is dropped.
 #[test]
 fn coh18_text_document_lifts_into_cohere_documents() {
     let data = busbar_contract::media::base64_encode(b"the doc");
@@ -938,6 +967,7 @@ fn coh19_content_parts_keep_their_order() {
 }
 
 /// COH-20: a Bedrock `{"json": …}` tool result is the tool's output; it reaches a Cohere backend as
+/// that JSON's text instead of an empty tool result.
 #[test]
 fn coh20_json_tool_result_reaches_cohere_as_text() {
     let body = json!({
@@ -975,6 +1005,7 @@ fn json_tool_result_document_request() -> Value {
 }
 
 /// ANT-17 follow-up: a Cohere tool-result `document` whose `data` is JSON reads into the IR as the
+/// tool-output `Json` block, so an Anthropic backend receives it as the tool result's text.
 #[test]
 fn ant17_followup_cohere_json_tool_result_document_reaches_anthropic_as_text() {
     let out = translate_request("cohere", "anthropic", &json_tool_result_document_request());
@@ -1001,6 +1032,7 @@ fn ant17_followup_cohere_json_tool_result_document_reaches_anthropic_as_text() {
 }
 
 /// IR-13: the request's top-level `documents` (RAG grounding) reach a foreign backend as documents
+/// ahead of the first user turn.
 #[test]
 fn ir13_grounding_documents_reach_a_foreign_backend() {
     let body = json!({
@@ -1081,6 +1113,7 @@ fn ir08_image_detail_maps_both_ways() {
 }
 
 /// IR-09: `thinking:{type:"disabled"}` is the IR's `Off` (it used to stay in `extra`, dying at the
+/// seam), and `Off` is written as `disabled` — never as an enable ask with a zero budget.
 #[test]
 fn ir09_reasoning_off_maps_both_ways() {
     let body = json!({
@@ -1114,6 +1147,7 @@ fn function_tool(name: &str) -> crate::codec::ir::IrTool {
 }
 
 /// IR-10: an allowed-tools subset is expressed by omission — only the listed tools are sent — and
+/// its mode rides `tool_choice`.
 #[test]
 fn ir10_allowed_tools_send_only_the_listed_tools() {
     let req = crate::codec::ir::IrRequest {
@@ -1141,6 +1175,8 @@ fn ir10_allowed_tools_send_only_the_listed_tools() {
 }
 
 /// The request slots Cohere has no form for (metadata, service_tier, store, safety_identifier,
+/// prompt_cache_key, verbosity, a non-text output modality, hosted tools) are reported by
+/// `dropped_egress_controls` so the seam audits them, and are not written.
 #[test]
 fn ir_slots_with_no_cohere_form_are_reported_dropped() {
     let req = crate::codec::ir::IrRequest {

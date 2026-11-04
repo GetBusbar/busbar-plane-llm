@@ -49,3 +49,33 @@ fn the_cap_is_read_under_the_dialects_own_key() {
         Some(u32::MAX)
     );
 }
+
+#[test]
+fn projected_caps_include_openai_completion_and_gemini_generation_config() {
+    use busbar_plane_llm::exchange::project::max_tokens_for;
+    assert_eq!(
+        max_tokens_for(&serde_json::json!({"max_completion_tokens":1000}), "openai"),
+        Some(1000)
+    );
+    assert_eq!(
+        max_tokens_for(
+            &serde_json::json!({"max_tokens":20,"max_completion_tokens":1000}),
+            "openai"
+        ),
+        Some(20)
+    );
+    assert_eq!(
+        max_tokens_for(
+            &serde_json::json!({"generationConfig":{"maxOutputTokens":1000}}),
+            "gemini"
+        ),
+        Some(1000)
+    );
+    assert_eq!(
+        max_tokens_for(
+            &serde_json::json!({"generationConfig":{"maxOutputTokens":u64::MAX}}),
+            "gemini"
+        ),
+        Some(u32::MAX)
+    );
+}

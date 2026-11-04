@@ -1,4 +1,5 @@
 //! The two OpenAI<->Anthropic analog carries: `user` <-> `metadata.user_id` and
+//! `parallel_tool_calls` <-> `!tool_choice.disable_parallel_tool_use`.
 
 use super::super::openai_chat::{openai_writer, OpenAiReader};
 use super::super::proto_codec::{ProtocolReader, ProtocolWriter};
@@ -56,6 +57,7 @@ fn anthropic_user_and_parallel_carry_to_openai() {
 }
 
 /// A tool-less request carrying `parallel_tool_calls` must NOT emit the flag on OpenAI egress —
+/// OpenAI 400s on `parallel_tool_calls` without `tools`.
 #[test]
 fn parallel_tool_calls_omitted_on_openai_egress_without_tools() {
     let body = serde_json::json!({
@@ -74,6 +76,7 @@ fn parallel_tool_calls_omitted_on_openai_egress_without_tools() {
 }
 
 /// Absence round-trips as absence: a request that never carried either field must not GAIN
+/// `metadata`, `user`, `parallel_tool_calls`, or a synthesized `tool_choice` on translation.
 #[test]
 fn absence_gains_nothing() {
     let body = serde_json::json!({
@@ -148,6 +151,7 @@ fn parallel_without_directive_synthesizes_auto_only_with_tools() {
 }
 
 /// A NATIVE Anthropic `metadata` object (riding `extra`) beats the promoted carry on the
+/// writer's overlay — the verbatim original always wins.
 #[test]
 fn native_metadata_wins_over_promoted_user() {
     let body = serde_json::json!({
@@ -181,6 +185,9 @@ fn enabled_parallelism_survives_both_anthropic_seams() {
 }
 
 /// `/v1/responses` DOES model top-level `parallel_tool_calls`, identically to Chat
+/// Completions — the reader previously hardcoded `None` (total ingress loss for a Responses caller
+/// who explicitly set it), unlike Bedrock/Gemini/Cohere where `None` is the ACCURATE "this dialect
+/// has no such parameter".
 #[test]
 fn responses_parallel_tool_calls_round_trips() {
     use super::super::openai_responses::{ResponsesReader, ResponsesWriter};

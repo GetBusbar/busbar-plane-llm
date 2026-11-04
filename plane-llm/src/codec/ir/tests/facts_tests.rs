@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Unit coverage for [`busbar_contract::ir::facts`] — the properties the projection owes, asserted against IR
+//! values built by hand so that a failure here names the projection and never a reader.
 
 use super::*;
 use crate::codec::ir::{CacheControl, CacheKind, IrImageSource, IrMessage};
@@ -49,6 +50,8 @@ fn flatten(r: &IrRequest) -> (Option<String>, Vec<(&'static str, String)>) {
 }
 
 /// # THE BYPASS THAT MUST NOT REOPEN
+///
+/// All three opaque reasoning shapes project the MARKER, and none of them projects its payload.
 #[test]
 fn every_opaque_reasoning_shape_projects_the_marker_and_never_its_payload() {
     let shapes = [
@@ -119,6 +122,7 @@ fn every_opaque_reasoning_shape_projects_the_marker_and_never_its_payload() {
 }
 
 /// Reasoning busbar CAN read is ordinary content and is shown. A client replaying a multi-turn body
+/// sends this text to the provider, so a gate that cannot see it is a gate with a hole in it.
 #[test]
 fn readable_reasoning_is_projected_as_text() {
     let r = req(
@@ -146,6 +150,8 @@ fn readable_reasoning_is_projected_as_text() {
 }
 
 /// A turn whose every block is structurally text-less still appears. The old contract's LETTER
+/// (index alignment with the wire `messages` array) cannot survive the move onto the IR; its
+/// PURPOSE — a screening hook sees every turn — is asserted here against `IrRequest::messages`.
 #[test]
 fn a_turn_with_no_projectable_content_still_appears() {
     let r = req(
@@ -178,6 +184,7 @@ fn a_turn_with_no_projectable_content_still_appears() {
 }
 
 /// Tool-call ARGUMENTS and tool-result CONTENT are projected, attributed to the turn that carried
+/// them, and distinguishable from ordinary prose by their slot.
 #[test]
 fn tool_arguments_and_results_carry_the_turn_they_belong_to() {
     let r = req(
@@ -230,6 +237,7 @@ fn tool_arguments_and_results_carry_the_turn_they_belong_to() {
 }
 
 /// The system slot is its own slot, never turn 0, on every dialect — because on the IR there is one
+/// place a system prompt lives and the reader already put it there.
 #[test]
 fn the_system_prompt_is_its_own_slot_and_never_a_turn() {
     let r = req(
@@ -247,6 +255,7 @@ fn the_system_prompt_is_its_own_slot_and_never_a_turn() {
 }
 
 /// A request with no system prompt yields no system items at all — "absent" and "present but empty"
+/// stay distinguishable, which is what a hook keys its grant detection off.
 #[test]
 fn an_absent_system_prompt_projects_no_system_items() {
     let r = req(Vec::new(), vec![turn(IrRole::User, vec![text("hi")])]);
@@ -255,6 +264,9 @@ fn an_absent_system_prompt_projects_no_system_items() {
 }
 
 /// # THE TRIPWIRE THAT IS NOW A STRUCTURAL FACT
+///
+/// `Shape::text_chars` is a SUM over the same items a content-granted hook is shown, so the size
+/// signal and the content projection cannot drift apart.
 #[test]
 fn text_chars_is_exactly_what_a_content_granted_hook_is_shown() {
     let r = req(
@@ -296,6 +308,7 @@ fn text_chars_is_exactly_what_a_content_granted_hook_is_shown() {
 }
 
 /// The `max_tokens` signal is the READER's normalized value, whatever field the dialect spelled it
+/// in.
 #[test]
 fn the_shape_signals_come_from_the_normalized_ir() {
     let r = IrRequest {
@@ -354,6 +367,8 @@ fn a_structured_tool_result_member_is_projected_as_data() {
 }
 
 /// A cache breakpoint on a block changes nothing about what is projected. Recorded because
+/// `cache_control` is the field most likely to be added to a block in a future unit, and a walk that
+/// accidentally keyed on it would be a silent content-visibility change.
 #[test]
 fn cache_breakpoints_do_not_change_what_is_projected() {
     let r = req(
@@ -404,6 +419,7 @@ fn screening_digest_distinguishes_authors() {
 }
 
 /// Without length-prefix framing, `("ab","c")` and `("a","bc")` would hash the same concatenated
+/// bytes — and one session's cleared-set could skip-screen the other piece.
 #[test]
 fn screening_digest_framing_prevents_a_concatenation_collision() {
     let a = ContentItem::Text {
@@ -468,4 +484,18 @@ fn screening_digest_is_deterministic() {
         text: "same".into(),
     };
     assert_eq!(a.screening_digest(), b.screening_digest());
+}
+
+#[test]
+fn shape_counts_hosted_tool_declarations() {
+    let mut request = IrRequest::default();
+    request
+        .hosted_tools
+        .push(crate::codec::ir::IrHostedTool::CodeExecution);
+    assert!(request.shape().has_tools);
+    assert_eq!(request.shape().tool_count, 1);
+    request
+        .hosted_tools
+        .push(crate::codec::ir::IrHostedTool::WebSearch(Default::default()));
+    assert_eq!(request.shape().tool_count, 2);
 }

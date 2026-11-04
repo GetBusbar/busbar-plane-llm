@@ -10,16 +10,23 @@ pub struct EgressPrep {
     pub lane_default_max_tokens: Option<u32>,
     pub global_default_max_tokens: u32,
     /// The per-lane reasoning capability gate: the effective `reasoning` flag for THIS attempt's
+    /// lane (pool-member override wins over the model-level flag).
     pub reasoning_allowed: bool,
     /// The resolved effort-word → budget table (limits.reasoning_effort_budgets), stamped onto the
+    /// IR for writers to project words ↔ numbers with the operator's numbers.
     pub reasoning_budgets: [u32; 4],
     /// The prompt-cache gate: `lane.prompt_caching || !writer.cache_markers_model_gated()`,
+    /// resolved by the caller.
     pub prompt_caching_allowed: bool,
     /// The egress writer's `max_cache_control_breakpoints()` (`Some(n)` for a dialect that publishes
+    /// a cap, `None` elsewhere — see that method's doc).
     pub cache_control_cap: Option<usize>,
     /// True only for an egress lane whose dialect documents a thought-signature sentinel AND whose
+    /// host is confirmed to honor it.
     pub thought_signature_fill: bool,
     /// The egress LANE's declared request-shape capabilities (see [`LaneCaps`]), resolved by the
+    /// caller from the lane's provider entry and model patterns exactly as `reasoning_allowed` /
+    /// `prompt_caching_allowed` are.
     pub lane_caps: LaneCaps,
 }
 
@@ -63,6 +70,7 @@ pub struct LaneCaps {
 
 impl LaneCaps {
     /// The capabilities of a lane that declares none — every pre-capability form. The same value as
+    /// `LaneCaps::default()`, usable in a `const` (a static upstream table).
     pub const NONE: LaneCaps = LaneCaps {
         max_output_key: MaxOutputKey::MaxTokens,
         anthropic_adaptive_thinking: false,

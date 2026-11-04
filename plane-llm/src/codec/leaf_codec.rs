@@ -12,6 +12,8 @@ use busbar_contract::codec::{CodecError, IngressReject, WireBody};
 use bytes::Bytes;
 
 /// One leaf operation's four codec fns in one dialect: the egress request writer, the ingress response
+/// writer, and the two concrete reads (which the dialect's `OperationHandler` wraps in a leaf handle;
+/// the `(op, protocol)` read dispatch below reaches them in test builds).
 pub struct LeafCodec<Q: 'static, A: 'static> {
     pub write_request: fn(&Q) -> Bytes,
     pub write_response: fn(&A) -> WireBody,
@@ -20,6 +22,7 @@ pub struct LeafCodec<Q: 'static, A: 'static> {
 }
 
 /// A DIALECT'S ROW OF THE LEAF-OP SUPPORT MATRIX, as data: `Some` for each leaf op the dialect
+/// speaks, `None` for the rest.
 pub struct LeafCodecs {
     pub embeddings: Option<LeafCodec<EmbeddingsReq, EmbeddingsResp>>,
     pub rerank: Option<LeafCodec<RerankReq, RerankResp>>,

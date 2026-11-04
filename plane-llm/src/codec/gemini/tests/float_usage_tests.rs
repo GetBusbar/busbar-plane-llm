@@ -31,6 +31,7 @@ fn recover_truncated_usage_reads_float_encoded_counts() {
 }
 
 /// THE BUFFERED PATH. A native, non-streamed `generateContent` response with every usage field
+/// float-spelled must bill and attribute exactly as the integer-spelled twin would.
 #[test]
 fn buffered_read_response_reads_float_encoded_counts() {
     let body = serde_json::json!({
@@ -110,6 +111,8 @@ fn streaming_terminal_reads_float_encoded_counts() {
 }
 
 /// THE ADDITIVE SUM, WITH EXACTLY ONE TERM FLOAT-SPELLED. `gemini_usage` sums four terms into the
+/// billed total, and `gemini_usage_identity_note` cross-checks that sum against Google's own stated
+/// `totalTokenCount`.
 #[test]
 fn additive_sum_is_correct_when_exactly_one_term_is_float_spelled() {
     let usage_metadata = serde_json::json!({
@@ -196,6 +199,7 @@ fn an_unreadable_image_count_is_recorded_as_unknown_and_the_answer_served() {
 }
 
 /// THE TRANSCRIPTION READER REFUSES AN UNREADABLE BILLED COUNT ON ITS OWN (LLM3#6) — reached on
+/// the CROSS-PROTOCOL seam (the op does not tap same-protocol usage).
 #[test]
 fn an_unreadable_transcription_count_refuses_itself_and_the_transcript_is_served() {
     let wire = br#"{"candidates":[{"content":{"parts":[{"text":"hi"}]}}],"usageMetadata":{"promptTokenCount":[],"candidatesTokenCount":5}}"#;

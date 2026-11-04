@@ -43,22 +43,24 @@ fn path_base_reshapes_the_gemini_url_for_vertex() {
 
     let vbase = "/v1/projects/my-proj/locations/us-central1/publishers/google/models";
     assert_eq!(
-            h.upstream_path(&ctx(Some(vbase))),
-            "/v1/projects/my-proj/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent"
-        );
+        h.upstream_path(&ctx(Some(vbase))),
+        "/v1/projects/my-proj/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent"
+    );
 
     assert_eq!(
-            h.upstream_path(&EgressCtx {
-                operation: OpVerb::EMBEDDINGS,
-                model,
-                stream: false,
-                path_base: Some(vbase),
-            }),
-            "/v1/projects/my-proj/locations/us-central1/publishers/google/models/gemini-2.0-flash:embedContent"
-        );
+        h.upstream_path(&EgressCtx {
+            operation: OpVerb::EMBEDDINGS,
+            model,
+            stream: false,
+            path_base: Some(vbase),
+        }),
+        "/v1/projects/my-proj/locations/us-central1/publishers/google/models/gemini-2.0-flash:embedContent"
+    );
 }
 
 /// Moderation and rerank (no Gemini cell) answer `:generateContent` whether or not the request
+/// streams, as 1.5.5 did (v1.5.5 `crates/busbar/src/handlers/gemini.rs:62-63`); only chat,
+/// transcription and speech are stream-aware (`:52-58`).
 #[test]
 fn moderation_and_rerank_always_use_generate_content() {
     let h = GeminiRequestHandler;

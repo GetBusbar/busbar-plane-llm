@@ -1,4 +1,6 @@
 //! A health probe's far-end request, sans I/O: the smallest request a far end answers with its health
+//! (a probe is a kernel-originated unit pinned to one member; the plane answers its ATTEMPT with
+//! this, the kernel's breaker classifies the answer as organic traffic, and the probe bills nothing).
 
 use busbar_contract::protocol::{APPLICATION_JSON, EGRESS_UA_DEFAULT};
 
@@ -20,6 +22,7 @@ pub fn probe_body(
 }
 
 /// The path a probe of `lane` is sent to, before encoding: the provider's fixed path, else the
+/// dialect's single-answer path for the wire model.
 #[must_use]
 pub fn probe_path(lane: &Lane) -> String {
     lane.path.clone().unwrap_or_else(|| {

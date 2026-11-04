@@ -21,6 +21,7 @@ impl ProtocolWriter for AnthropicWriter {
     }
 
     /// Replace only the minted top-level `request_id`, and only where the writer put one, with the
+    /// id the caller's entropy produces; every other byte is the writer's.
     fn write_error_from_entropy(
         &self,
         host: &dyn busbar_contract::codec::CodecHost,
@@ -216,6 +217,7 @@ impl ProtocolWriter for AnthropicWriter {
             .and_then(|v| v.as_array())
             .map(Vec::as_slice)
             .unwrap_or(&[]);
+        let stash = index_stash(unmodeled_sentinel);
         let messages_array: Vec<_> = req
             .messages
             .iter()
@@ -224,8 +226,7 @@ impl ProtocolWriter for AnthropicWriter {
             .map(|(m, msg)| {
                 write_message(
                     msg,
-                    m,
-                    unmodeled_sentinel,
+                    stash.get(&m),
                     req.block_origins
                         .messages
                         .get(m)
@@ -270,7 +271,8 @@ impl ProtocolWriter for AnthropicWriter {
                     [],
                     "dropping tool_choice on Anthropic egress: Anthropic rejects a tool_choice with \
                      no tools array (likely because the hosted tools that carried it were stripped \
-                     on the cross-protocol seam)");
+                     on the cross-protocol seam)"
+                );
             } else {
                 let mut tc_val = write_anthropic_tool_choice(tc);
                 if let (Some(parallel), Some(map)) =
@@ -316,10 +318,11 @@ impl ProtocolWriter for AnthropicWriter {
                         crate::codec::drops::writer_drop!(
                             crate::codec::drops::RESPONSE_FORMAT,
                             &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                            [parameter = keys::RESPONSE_FORMAT, ],
+                            [parameter = keys::RESPONSE_FORMAT,],
                             "dropping schema-less JSON mode on Anthropic egress: structured outputs \
                              require a JSON schema and the Messages API has no schema-less JSON mode \
-                             (lossy-by-target)");
+                             (lossy-by-target)"
+                        );
                     }
                 }
             }
@@ -917,7 +920,7 @@ fn validate_tool_inputs(blocks: &[crate::codec::ir::IrBlock]) -> Result<(), IrEr
     for block in blocks {
         match block {
             crate::codec::ir::IrBlock::ToolUse { input, .. } if !input.is_object() => {
-                return Err(invalid_tool_input())
+                return Err(invalid_tool_input());
             }
             crate::codec::ir::IrBlock::ToolResult { content, .. } => validate_tool_inputs(content)?,
             _ => {}

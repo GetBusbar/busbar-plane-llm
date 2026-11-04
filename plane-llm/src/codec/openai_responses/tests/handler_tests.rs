@@ -6,6 +6,9 @@
 use super::*;
 
 /// The Responses API serves chat only: `operation_handler` must answer `Some` for `Chat` and
+/// `None` for every other operation (the standard no-handler 404 path) — enumerated so a future
+/// `Operation` variant added here without a matching registry arm is a compile error, not a
+/// silent 404.
 #[test]
 fn operation_handler_serves_chat_only() {
     let h = ResponsesRequestHandler;
@@ -26,6 +29,7 @@ fn operation_handler_serves_chat_only() {
 }
 
 /// `upstream_path` must egress to the REAL `/v1/responses` endpoint — a path-string typo here
+/// would silently send every Responses-API request to a 404 upstream.
 #[test]
 fn upstream_path_is_the_real_responses_endpoint() {
     let h = ResponsesRequestHandler;
@@ -45,6 +49,8 @@ fn upstream_path_is_the_real_responses_endpoint() {
 }
 
 /// A request path ending in `/v1/responses` resolves to `Chat`; anything else resolves to
+/// `None` (no-handler 404) — the body is never consulted (Responses names the operation in the
+/// path only).
 #[test]
 fn resolve_operation_matches_the_responses_path_only() {
     let h = ResponsesRequestHandler;

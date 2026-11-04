@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! IR MAPPING — the Bedrock reasoning ask (dropped both ways, as in 1.5.5)
+//! and structured output (BED-08).
 
 use super::*;
 use serde_json::json;
@@ -58,6 +59,7 @@ fn a_foreign_reasoning_ask_is_dropped_on_bedrock_egress() {
 }
 
 /// BED-08: Converse's `outputConfig.textFormat` and `toolSpec.strict` are read into the IR and
+/// written back, so a JSON-schema directive and per-tool strict cross in both directions.
 #[test]
 fn bed08_output_config_and_tool_strict_map_both_ways() {
     let body = json!({

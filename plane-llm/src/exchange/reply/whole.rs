@@ -1,4 +1,5 @@
 //! A far end's success answer taken whole: a non-stream answer from a far end of another dialect
+//! (written as the caller's own stream when the caller asked for one).
 
 use busbar_contract::billing::Billing;
 use busbar_contract::codec::{OperationHandler, TranslatedResponse};
@@ -204,6 +205,7 @@ pub fn translate(
 }
 
 /// An opaque body bridged at the byte level; `None` falls through to the JSON path, `Err` is the
+/// far end's dialect refusing the body.
 fn opaque(
     host: &dyn busbar_contract::codec::CodecHost,
     ctx: &WholeCtx<'_>,
@@ -254,6 +256,7 @@ fn opaque(
 }
 
 /// A JSON body translated; `None` when no body could be written, `Err` the far end's dialect
+/// refusing the body.
 fn json(
     host: &dyn busbar_contract::codec::CodecHost,
     ctx: &WholeCtx<'_>,
@@ -262,9 +265,87 @@ fn json(
     ingress_serves: bool,
     rv: &Value,
 ) -> Result<Option<Whole>, String> {
+    let read = || json_inner(host, ctx, status, eh, ingress_serves, rv);
+    let (answer, dropped) = if ctx.ingress == ctx.egress {
+        (read(), Vec::new())
+    } else {
+        drops::scope(
+            drops::Seam {
+                direction: drops::Direction::Response,
+                ingress: ctx.ingress,
+                egress: ctx.egress,
+            },
+            read,
+        )
+    };
+    let mut answer = answer?;
+    if let Some(w) = answer.as_mut() {
+        if w.end == WholeEnd::Delivered {
+            w.dropped = dropped;
+        }
+    }
+    Ok(answer)
+}
+
+fn json_inner(
+    host: &dyn busbar_contract::codec::CodecHost,
+    ctx: &WholeCtx<'_>,
+    status: u16,
+    eh: &dyn OperationHandler,
+    ingress_serves: bool,
+    rv: &Value,
+) -> Result<Option<Whole>, String> {
+    use busbar_contract::ir::handle::IrHandle as _;
+
     let checked = crate::codec::proto_codec::CheckedEntropy::new(host);
-    let read = || {
-        let answered = eh.translate_response(
+    let decoded = (ctx.operation == OpVerb::CHAT)
+        .then(|| {
+            crate::codec::proto_codec::with_reader(ctx.egress, |reader| {
+                match reader.read_response(&checked, rv) {
+                    Ok(ir) => Ok(Ok(ir)),
+                    Err(error)
+                        if error.provider_signal.as_deref()
+                            != Some(crate::codec::framework::SIGNAL_IR_PARSE) =>
+                    {
+                        Ok(Err(reader.recover_response_usage(rv).map(Billing::Tokens)))
+                    }
+                    Err(error) => Err(format!("{error:?}")),
+                }
+            })
+        })
+        .flatten();
+    let (usage, answered) = if let Some(decoded) = decoded {
+        let mut ir = match decoded? {
+            Ok(ir) => crate::codec::chat_handle::ChatRespHandle(ir, ctx.translate_cap),
+            Err(usage) => {
+                return Ok(Some(whole(
+                    WholeEnd::FailedGeneration,
+                    usage,
+                    internal(host, ctx.ingress, 502),
+                )))
+            }
+        };
+        if ingress_serves && ir.0.stop_reason == Some(crate::codec::ir::IrStopReason::Error) {
+            return Ok(Some(whole(
+                WholeEnd::FailedGeneration,
+                ir.billing(),
+                internal(host, ctx.ingress, 502),
+            )));
+        }
+        crate::codec::translate::write_response_ir(
+            &checked,
+            &mut ir,
+            ingress_serves,
+            ctx.ingress,
+            ctx.model,
+            ctx.now_s,
+            ctx.wants_stream && !ctx.json_array,
+            ctx.elapsed_ms,
+            ctx.request,
+            ctx.translate_cap,
+        )
+    } else {
+        eh.translate_response(
             &checked,
             TranslateRespInput::Json(rv),
             ingress_serves,
@@ -275,24 +356,10 @@ fn json(
             ctx.elapsed_ms,
             ctx.request,
             ctx.translate_cap,
-        );
-        if answered.is_ok() {
-            crate::codec::chat_handle::drop_untranslatable_response(ctx.egress, rv);
-        }
-        answered
+        )
+        .map_err(|error| format!("{error:?}"))?
     };
-
-    let (answered, dropped) = if ctx.ingress == ctx.egress {
-        (read(), Vec::new())
-    } else {
-        let seam = drops::Seam {
-            direction: drops::Direction::Response,
-            ingress: ctx.ingress,
-            egress: ctx.egress,
-        };
-        drops::scope(seam, read)
-    };
-    let (usage, answered) = answered.map_err(|e| format!("{e:?}"))?;
+    crate::codec::chat_handle::drop_untranslatable_response(ctx.egress, rv);
 
     if checked.failed() {
         return Ok(Some(whole(
@@ -301,20 +368,7 @@ fn json(
             internal(host, ctx.ingress, 500),
         )));
     }
-    let delivers = matches!(
-        answered,
-        TranslatedResponse::StreamFrames(_)
-            | TranslatedResponse::Typed(_)
-            | TranslatedResponse::Json(_)
-    );
-    if delivers && ctx.operation == OpVerb::CHAT && wire::generation_failed(host, ctx.egress, rv) {
-        return Ok(Some(whole(
-            WholeEnd::FailedGeneration,
-            usage,
-            internal(host, ctx.ingress, 502),
-        )));
-    }
-    let mut w = match answered {
+    let w = match answered {
         TranslatedResponse::StreamFrames(frames) => {
             let ct = wire::ingress_stream_content_type(ctx.ingress).unwrap_or(TEXT_EVENT_STREAM);
             Whole {
@@ -377,8 +431,5 @@ fn json(
             internal(host, ctx.ingress, 500),
         ),
     };
-    if w.end == WholeEnd::Delivered {
-        w.dropped = dropped;
-    }
     Ok(Some(w))
 }

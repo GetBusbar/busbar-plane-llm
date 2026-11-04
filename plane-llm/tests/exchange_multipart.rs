@@ -6,6 +6,7 @@
 use busbar_plane_llm::exchange::multipart::multipart_model;
 
 /// The `Content-Type` each body below arrives under. The boundary is not decoration: it is the only
+/// thing that says where a part begins, so every case names the one its bytes were written with.
 const CT_BOUNDARY: &str = "multipart/form-data; boundary=BOUNDARY";
 const CT_B: &str = "multipart/form-data; boundary=B";
 const CT_ZZ: &str = "multipart/form-data; boundary=zz";

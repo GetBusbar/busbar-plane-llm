@@ -7,6 +7,7 @@ use super::super::proto_codec::Protocol;
 use serde_json::json;
 
 /// The `generationConfig` sampling knobs are each promoted into a typed IR field on read and
+/// re-emitted on write.
 #[test]
 fn gemini_request_sampling_knobs_survive() {
     let body = json!({
@@ -75,6 +76,7 @@ fn gemini_request_logprobs_ask_survives() {
 }
 
 /// Structured output: `responseMimeType` + `responseSchema` normalize into the IR response_format
+/// and re-emit.
 #[test]
 fn gemini_request_response_format_survives() {
     let schema = json!({"type": "object", "properties": {"x": {"type": "string"}}});
@@ -110,6 +112,7 @@ fn gemini_request_response_format_survives() {
 }
 
 /// The thinking ask `generationConfig.thinkingConfig.thinkingBudget` reaches the IR reasoning
+/// carrier and re-emits in Gemini's native spelling.
 #[test]
 fn gemini_request_thinking_budget_survives() {
     let body = json!({
@@ -187,6 +190,7 @@ fn gemini_request_tools_survive() {
 }
 
 /// `toolConfig.functionCallingConfig` → IR tool_choice → re-emitted (the raw toolConfig also rides
+/// `extra` for same-protocol byte-identity, overlaid by the typed choice).
 #[test]
 fn gemini_request_tool_config_survives() {
     let body = json!({
@@ -214,6 +218,8 @@ fn gemini_request_tool_config_survives() {
 }
 
 /// `safetySettings`, `labels`, and the unmodeled `generationConfig` sub-fields
+/// (`responseModalities`, `mediaResolution`, `speechConfig`, `thinkingConfig.includeThoughts`) have
+/// no cross-protocol analog.
 #[test]
 fn gemini_request_provider_specific_fields_survive_same_proto() {
     let safety = json!([{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"}]);
@@ -285,6 +291,8 @@ fn gemini_request_provider_specific_fields_survive_same_proto() {
 }
 
 /// Every representable `parts[]` construct survives read → write: text, a `thought` reasoning part
+/// with its `thoughtSignature`, a `functionCall{name,args}`, a `functionResponse{name,response}`,
+/// and a `fileData{fileUri,mimeType}` reference.
 #[test]
 fn gemini_request_content_parts_survive() {
     let body = json!({
@@ -351,7 +359,7 @@ fn gemini_request_content_parts_survive() {
         user_turn.iter().any(|b| matches!(
             b, crate::codec::ir::IrBlock::Media {
                 kind: crate::codec::ir::IrMediaKind::Document,
-                source: crate::codec::ir::IrImageSource::Url(uri), ..
+                source: crate::codec::ir::IrImageSource::UrlWithMime { url: uri, .. }, ..
             } if uri == "gs://bucket/doc.pdf"
         )),
         "parts[].fileData (pdf) must reach the IR as a Document URL Media block: {user_turn:?}"
@@ -396,6 +404,7 @@ fn gemini_request_content_parts_survive() {
 }
 
 /// `parts[].executableCode` and `parts[].codeExecutionResult` are the code-interpreter tool's
+/// model-authored artifacts.
 #[test]
 fn gemini_code_execution_parts_drop_cross_proto_without_corruption() {
     let req = json!({
@@ -654,6 +663,7 @@ fn gemini_response_usage_buckets_survive() {
 }
 
 /// `promptFeedback.blockReason` (a prompt-level content block, no candidates) reaches the IR as a
+/// safety stop reason rather than a spurious parse error.
 #[test]
 fn gemini_response_prompt_feedback_block_reason_survives() {
     let body = json!({
@@ -676,6 +686,9 @@ fn gemini_response_prompt_feedback_block_reason_survives() {
 }
 
 /// The provider-specific response fields have no cross-protocol home, so they are carried as a
+/// DOCUMENTED DROP: same-protocol Gemini→Gemini relay is byte-verbatim (never rebuilt from the IR,
+/// generically pinned by `gemini_sse_round_trip_byte_exact`), and CROSS-protocol the reader does not
+/// model them — so they neither corrupt the IR nor leak onto a foreign egress.
 #[test]
 fn gemini_response_provider_specific_fields_drop_cross_proto_without_corruption() {
     let body = json!({
@@ -733,6 +746,7 @@ fn gemini_response_provider_specific_fields_drop_cross_proto_without_corruption(
 }
 
 /// `usageMetadata.trafficType` (ON_DEMAND vs PROVISIONED) reaches the IR's usage-detail attribution
+/// bucket and is re-emitted on write.
 #[test]
 fn gemini_vertex_traffic_type_survives() {
     let body = json!({
@@ -776,6 +790,8 @@ fn gemini_vertex_traffic_type_survives() {
 }
 
 /// The top-level `createTime` (RFC3339) reaches the IR's usage-detail carrier (see
+/// `IrUsageDetail::create_time`'s doc comment for why it rides there rather than `IrResponse`) and
+/// is re-emitted verbatim — not folded into `created` (Unix epoch), which has no Gemini analogue.
 #[test]
 fn gemini_vertex_create_time_survives() {
     let body = json!({
@@ -807,6 +823,9 @@ fn gemini_vertex_create_time_survives() {
 }
 
 /// `groundingMetadata.groundingChunks[].web.domain` reaches the IR (stashed in `IrCitation::raw` —
+/// there is no dedicated typed field; see `read_gemini_grounding_citations`'s `chunk_source` doc
+/// comment for why) and survives a write back out — a plain `citationSources[]` entry (no grounding
+/// origin) carries no `domain` at all, so an ordinary citation stays untouched.
 #[test]
 fn gemini_vertex_grounding_chunk_domain_survives() {
     let body = json!({

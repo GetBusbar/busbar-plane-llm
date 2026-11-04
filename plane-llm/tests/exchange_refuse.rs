@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Refusals, rendered, against the previous release's recorded answers (the shadow oracle's golden
+//! cells, read here and never written): the status, the JSON body and the head field names.
 
 mod common;
 
@@ -166,6 +167,7 @@ fn a_model_no_rate_prices_reads_the_kernels_no_rate_text() {
 }
 
 /// A model that names no pool and no configured model: 1.5.5 answered the dialect's not-found
+/// envelope, 404, with its model-not-found sentence (1.5.5 `native_ingress`, the destination miss).
 #[test]
 fn a_model_that_resolves_to_no_destination_reads_the_not_found_answer() {
     let message = busbar_plane_llm::exchange::refuse::model_not_found("nope", None);
@@ -272,6 +274,7 @@ fn aws(kind: &str) -> &'static str {
 }
 
 /// 1.5.5's refusal body, spelled out per dialect (the shapes of the recorded `malformed` and
+/// pool-refusal cells); a dialect the plane does not hold reads the agnostic envelope.
 fn native(dialect: &str, status: u16, kind: &str, message: &str) -> Value {
     match dialect {
         "openai" | "responses" => serde_json::json!({
@@ -500,6 +503,7 @@ fn a_bedrock_refusals_errortype_is_its_body_type_for_every_kind() {
 }
 
 /// The kernel answers a model that names no pool and no configured model with its class default
+/// (`NotFound`, 404: a policy refusal, never a server fault), which this plane does not restate.
 fn no_destination_status() -> u16 {
     assert!(
         !busbar_plane_llm::refusal::REFUSAL_STATUSES
@@ -785,6 +789,21 @@ fn the_reserialize_guard_reads_the_released_400_in_every_dialect() {
     }
 }
 
+// Exhaustive production-enum match: a new reason must be assigned a family here,
+// so the rendering fixtures cannot silently claim coverage of an unchanged closed set.
+fn refusal_family(why: Decline) -> &'static str {
+    match why {
+        Decline::BodyParse | Decline::NotAnObject | Decline::Reserialize => "arrival-body",
+        Decline::UnsupportedOperation | Decline::MissingModel => "decode",
+        Decline::NoResource
+        | Decline::PathNotFound
+        | Decline::InvokeBody
+        | Decline::ProviderMismatch
+        | Decline::MethodNotAllowed
+        | Decline::WebhookBody => "other",
+    }
+}
+
 /// Rehomes `crates/busbar-llm/src/unit/tests/arrival.rs::every_arrival_refusal_renders_through_audit_to_the_legacy_bytes`.
 #[test]
 fn every_arrival_refusal_reads_the_released_bytes_in_every_dialect_and_none() {
@@ -799,9 +818,9 @@ fn every_arrival_refusal_reads_the_released_bytes_in_every_dialect_and_none() {
             "The request body could not be processed.",
         ),
     ];
-    assert_eq!(cases.len(), 3, "the closed set grew without a case here");
     for dialect in SIX_AND_NONE {
         for (why, message) in cases {
+            assert_eq!(refusal_family(why), "arrival-body");
             let r = refusal_in(dialect, why, 400, "invalid_request_error", message);
             assert_native(dialect, &r, 400, "invalid_request_error", message);
         }
@@ -873,9 +892,9 @@ fn every_decode_refusal_reads_the_released_bytes_in_every_dialect_and_none() {
             "Missing required parameter: 'model'.",
         ),
     ];
-    assert_eq!(cases.len(), 3, "the closed set grew without a case here");
     for dialect in SIX_AND_NONE {
         for (why, status, kind, message) in cases {
+            assert_eq!(refusal_family(why), "decode");
             let r = refusal_in(dialect, why, status, kind, message);
             assert_native(dialect, &r, status, kind, message);
         }
@@ -883,6 +902,10 @@ fn every_decode_refusal_reads_the_released_bytes_in_every_dialect_and_none() {
 }
 
 /// THE KERNEL-SHAPED REFUSALS, RENDERED BY THE PLANE: the kernel
+/// decides the reason, the status and the words — a method no route at the path takes
+/// (`MethodNotAllowed`, 405), a body over the cap (`BodyTooLarge`, 413) — and the plane renders the
+/// body in the dialect its path rule reads off the target, byte for byte the previous release's
+/// recorded answer.
 #[test]
 fn the_kernels_method_and_size_refusals_read_as_the_previous_release_answered() {
     use busbar_contract::abi::plane::reason_code;
@@ -936,6 +959,10 @@ fn the_kernels_method_and_size_refusals_read_as_the_previous_release_answered() 
 }
 
 /// EVERY DIALECT, AS THE PREVIOUS RELEASE'S KERNEL WROTE IT: the
+/// previous release answered these three refusals with the dialect's own error writer over
+/// `(status, kind, message)` — 405 `invalid_request` "method not allowed for this resource", 413
+/// `request_too_large` "request body exceeds the maximum allowed size", and a handler panic's 500
+/// `api_error` "internal error".
 #[test]
 fn the_kernels_refusals_are_the_previous_releases_writing_in_every_dialect() {
     use busbar_contract::abi::plane::reason_code;

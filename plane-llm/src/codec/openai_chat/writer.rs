@@ -1,6 +1,8 @@
 use super::*;
 
 /// The `created` stamped when the answer carries none: the host's wall clock via the
+/// [`CodecHost`](busbar_contract::codec::CodecHost) (the plane reads no clock of its own), or `0`
+/// (what an unstamped Responses answer carries) when the host holds none.
 fn host_now(host: &dyn busbar_contract::codec::CodecHost) -> u64 {
     host.wall_clock_now().unwrap_or(0)
 }
@@ -26,11 +28,13 @@ impl ProtocolWriter for OpenAiWriter {
     }
 
     /// The candidate count is top-level `n`. `Some(k)` only for `k > 1`; absent, 1 or unparseable
+    /// is `None`.
     fn requested_candidate_count(&self, body: &serde_json::Value) -> Option<u64> {
         body.get(W_N).and_then(|v| v.as_u64()).filter(|&k| k > 1)
     }
 
     /// A hosted tool Chat has no built-in for (code execution, web fetch) is dropped by the writer;
+    /// the seam records each as a dropped control.
     fn dropped_egress_controls(&self, req: &crate::codec::ir::IrRequest) -> Vec<&'static str> {
         crate::codec::carry::dropped(super::map::REQUEST, super::map::CONTROLS, req)
             .map(crate::codec::carry::Slot::name)
@@ -106,8 +110,6 @@ impl ProtocolWriter for OpenAiWriter {
                         crate::codec::drops::block_scope(_message_origins.get(block_index));
 
                     match block {
-
-
                         crate::codec::ir::IrBlock::Text {
                             text,
                             refusal: true,
@@ -122,9 +124,6 @@ impl ProtocolWriter for OpenAiWriter {
                             );
                         }
                         crate::codec::ir::IrBlock::Image { source, detail, .. } => {
-
-
-
                             match super::super::ir_encode::image_url_from_ir(source) {
                                 Some(url) => {
                                     let mut image_url = serde_json::json!({ (keys::URL): url });
@@ -143,7 +142,8 @@ impl ProtocolWriter for OpenAiWriter {
                                     [],
                                     "dropping unresolvable vendor-scoped image reference on OpenAI \
                                      egress: a Responses input_image.file_id or a Bedrock s3Location \
-                                     has no cross-vendor analog; the block is NOT emitted"),
+                                     has no cross-vendor analog; the block is NOT emitted"
+                                ),
                             }
                         }
                         crate::codec::ir::IrBlock::Media {
@@ -155,20 +155,11 @@ impl ProtocolWriter for OpenAiWriter {
                                 content_arr.push(part);
                             }
                         }
-                        crate::codec::ir::IrBlock::ToolUse { .. } => {
-
-                        }
-                        crate::codec::ir::IrBlock::ToolResult { .. } => {
-
-
-                        }
-                        crate::codec::ir::IrBlock::Thinking { .. } => {
-
-                        }
+                        crate::codec::ir::IrBlock::ToolUse { .. } => {}
+                        crate::codec::ir::IrBlock::ToolResult { .. } => {}
+                        crate::codec::ir::IrBlock::Thinking { .. } => {}
                         crate::codec::ir::IrBlock::Json(_)
-                        | crate::codec::ir::IrBlock::HostedToolRecord { .. } => {
-
-                        }
+                        | crate::codec::ir::IrBlock::HostedToolRecord { .. } => {}
                     }
                 }
 
@@ -350,7 +341,12 @@ impl ProtocolWriter for OpenAiWriter {
             out.insert(keys::USER.to_string(), serde_json::json!(user));
         }
 
-        if let (Some(parallel), false) = (req.parallel_tool_calls, req.tools.is_empty()) {
+        let has_callable_tools = !req.tools.is_empty()
+            || req
+                .hosted_tools
+                .iter()
+                .any(|tool| matches!(tool, crate::codec::ir::IrHostedTool::Custom(_)));
+        if let (Some(parallel), true) = (req.parallel_tool_calls, has_callable_tools) {
             out.insert(
                 keys::PARALLEL_TOOL_CALLS.to_string(),
                 serde_json::json!(parallel),
@@ -608,7 +604,8 @@ impl ProtocolWriter for OpenAiWriter {
                     crate::codec::drops::writer_drop!(
                         crate::codec::drops::block(block.kind_name()),
                         &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                        [], "dropping generated media on OpenAI Chat stream egress: no native media delta"
+                        [],
+                        "dropping generated media on OpenAI Chat stream egress: no native media delta"
                     );
                     None
                 }
@@ -854,7 +851,8 @@ impl ProtocolWriter for OpenAiWriter {
                 crate::codec::drops::writer_drop!(
                     crate::codec::drops::block(block.kind_name()),
                     &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                    [], "dropping an answer block on OpenAI Chat response egress: no native message member"
+                    [],
+                    "dropping an answer block on OpenAI Chat response egress: no native message member"
                 );
             }
         }
@@ -862,7 +860,8 @@ impl ProtocolWriter for OpenAiWriter {
             crate::codec::drops::writer_drop!(
                 crate::codec::drops::wire("choices[].message.audio"),
                 &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                [], "dropping native audio output while re-encoding a Chat response: this writer has no audio projection"
+                [],
+                "dropping native audio output while re-encoding a Chat response: this writer has no audio projection"
             );
         }
 
@@ -875,10 +874,11 @@ impl ProtocolWriter for OpenAiWriter {
                     crate::codec::drops::writer_drop!(
                         crate::codec::drops::THINKING,
                         &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
-                        [redacted = *redacted, byte_len = text.len(), ],
+                        [redacted = *redacted, byte_len = text.len(),],
                         "dropping a reasoning/thinking block on OpenAI Chat egress: the completion \
                          response shape has no thinking output field (lossy-by-target); the \
-                         chain-of-thought is NOT forwarded on this cross-protocol response");
+                         chain-of-thought is NOT forwarded on this cross-protocol response"
+                    );
                 }
             }
         }

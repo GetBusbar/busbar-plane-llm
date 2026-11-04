@@ -1,4 +1,5 @@
 //! Gemini citation offsets (UTF-8 bytes on the wire, characters in the IR) and the
+//! `citationMetadata` / `groundingMetadata` read and write.
 
 use super::{
     FIELD_CITATION_METADATA, FIELD_CITATION_SOURCES, FIELD_END_INDEX, FIELD_PARTS,
@@ -7,9 +8,11 @@ use super::{
 use crate::codec::keys;
 
 /// Byte-to-character offset index for one response text, built in one ordered pass over
+/// `char_indices()` and answering each citation offset by binary search.
 pub(super) struct GeminiCharIndex<'a> {
     text: &'a str,
     /// Byte offset of character `k * CHAR_MARK_STRIDE` for every such character, ascending. A lookup
+    /// binary-searches the marks and walks at most one stride, so it holds one `usize` per stride.
     marks: std::borrow::Cow<'a, [usize]>,
 }
 
@@ -17,9 +20,7 @@ pub(super) struct GeminiCharIndex<'a> {
 pub(super) const CHAR_MARK_STRIDE: usize = 64;
 
 #[cfg(test)]
-thread_local! {
-    pub(super) static CHARS_WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
+include!("tests/citations_chars_walked_helper.rs");
 
 #[inline]
 fn walked(n: usize) {
@@ -29,6 +30,7 @@ fn walked(n: usize) {
 }
 
 /// Extend the marks of an append-only text by `appended`, the bytes now following the `base` bytes
+/// already indexed (`chars` characters).
 pub(super) fn extend_char_marks(
     marks: &mut Vec<usize>,
     chars: &mut usize,
@@ -57,6 +59,7 @@ impl<'a> GeminiCharIndex<'a> {
     }
 
     /// The index over a stream's anchor text whose marks were kept as it grew
+    /// ([`extend_char_marks`]); no walk of the text.
     pub(super) fn from_marks(text: &'a str, marks: &'a [usize]) -> Self {
         Self {
             text,
@@ -95,6 +98,7 @@ impl<'a> GeminiCharIndex<'a> {
     }
 
     /// The byte offset of a character offset (inverse; `gemini_char_offset_to_byte`'s answer): a
+    /// negative offset clamps to 0, one at or past the character count to `text.len()`.
     pub(super) fn byte_offset(&self, char_idx: i64) -> i64 {
         let c = char_idx.max(0) as usize;
         let Some(&base) = self.marks.get(c / CHAR_MARK_STRIDE) else {
@@ -118,6 +122,7 @@ pub(super) fn read_gemini_citations(
 }
 
 /// The stream's read: `text` is the answer streamed so far and `marks` the index kept as it grew
+/// ([`extend_char_marks`]), so a citation chunk converts without walking the answer.
 pub(super) fn read_gemini_streamed_citations(
     candidate: &serde_json::Value,
     text: &str,
@@ -130,15 +135,18 @@ pub(super) fn read_gemini_streamed_citations(
         index: std::cell::OnceCell::from(GeminiCharIndex::from_marks(text, marks)),
     };
 
-    let legacy = serde_json::json!({
-        (FIELD_CITATION_METADATA): candidate.get(FIELD_CITATION_METADATA)
+    let sources = candidate
+        .get(FIELD_CITATION_METADATA)
+        .and_then(|metadata| metadata.get(FIELD_CITATION_SOURCES))
+        .and_then(serde_json::Value::as_array);
+    let mut out = sources.map_or_else(Vec::new, |sources| {
+        let fresh = sources.get(*sources_emitted..).unwrap_or_default();
+        *sources_emitted = (*sources_emitted).max(sources.len());
+        let legacy = serde_json::json!({
+            (FIELD_CITATION_METADATA): { (FIELD_CITATION_SOURCES): fresh }
+        });
+        read_citations_at(&legacy, &anchor)
     });
-    let all_sources = read_citations_at(&legacy, &anchor);
-    let mut out = all_sources
-        .get(*sources_emitted..)
-        .unwrap_or_default()
-        .to_vec();
-    *sources_emitted = (*sources_emitted).max(all_sources.len());
     if state.overflowed {
         return state.retention_loss(out);
     }
@@ -327,6 +335,7 @@ fn chunk_size(value: &serde_json::Value) -> usize {
 }
 
 /// The text a candidate's offsets convert against, indexed on first use (once for both citation
+/// slots) or already indexed by the stream.
 struct Anchor<'a> {
     text: Option<&'a str>,
     index: std::cell::OnceCell<GeminiCharIndex<'a>>,
@@ -419,14 +428,8 @@ impl std::io::Write for ByteCount {
     }
 }
 
-/// Map a candidate's `groundingMetadata` to neutral [`crate::codec::ir::IrCitation`]s. It is where a
 #[cfg(test)]
-pub(super) fn read_gemini_grounding_citations(
-    candidate: &serde_json::Value,
-    anchor_text: Option<&str>,
-) -> Vec<crate::codec::ir::IrCitation> {
-    grounding_citations_at(candidate, &Anchor::text(anchor_text), None, None)
-}
+include!("tests/citations_read_gemini_grounding_citations_helper.rs");
 
 fn grounding_citations_at(
     candidate: &serde_json::Value,
@@ -617,6 +620,7 @@ fn grounding_citations_at(
 }
 
 /// Attach a candidate's `citationMetadata.citationSources[]` to the right Text block(s) of `content`,
+/// with indices relative to that block's own text.
 pub(super) fn attach_gemini_citations_to_text_blocks(
     candidate: &serde_json::Value,
     content: &mut [crate::codec::ir::IrBlock],
@@ -731,6 +735,7 @@ pub(super) fn write_gemini_citation(
 }
 
 /// A grounded candidate's `groundingMetadata.groundingChunks[].web` as the IR's hosted web-search
+/// record (DF-MAP item 2): each web chunk's `uri` and `title` as a result.
 pub(super) fn read_grounding_record(
     candidate: &serde_json::Value,
 ) -> Option<crate::codec::ir::IrBlock> {

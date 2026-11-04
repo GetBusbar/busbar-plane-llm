@@ -13,6 +13,7 @@ pub(super) fn synth_message_id(
 }
 
 /// Mint a native-shaped `req_01` id for the top level of a synthesized error envelope, which
+/// carries a `request_id` on the native API.
 pub(super) fn synth_request_id(
     host: &dyn busbar_contract::codec::CodecHost,
 ) -> Result<String, IrError> {
@@ -20,6 +21,7 @@ pub(super) fn synth_request_id(
 }
 
 /// The same `req_01<24 base62>` id built from entropy the caller supplies (a plane may read no
+/// random source; it is handed one).
 #[must_use]
 pub fn request_id_from_entropy(entropy: &[u8]) -> Option<String> {
     const BASE62_REJECT_FLOOR: u8 = crate::codec::dialect::BASE62_REJECT_THRESHOLD;
@@ -56,6 +58,8 @@ pub fn request_id_from_entropy(entropy: &[u8]) -> Option<String> {
 }
 
 /// Shared construction for `msg_` and `req_`: the `01` marker plus a 24-char token drawn entirely
+/// from the OS CSPRNG, with no counter or clock (those leave predictable characters, a structural
+/// tell).
 pub(super) fn synth_id_with_prefix(
     host: &dyn busbar_contract::codec::CodecHost,
     prefix: &str,
@@ -69,6 +73,7 @@ pub(super) fn synth_id_with_prefix(
 }
 
 /// Mint a request id (`req_01` + 24 base62 chars, 30 in all, matching the body `request_id`) for
+/// the `request-id` response header a native response always carries; omitting it is a proxy tell.
 pub fn synth_anthropic_request_id(host: &dyn busbar_contract::codec::CodecHost) -> Option<String> {
     let mut token = [0u8; 24];
     if !crate::codec::dialect::fill_base62(host, &mut token, crate::codec::dialect::BASE62_ALPHABET)

@@ -35,6 +35,7 @@ use serde_json::{json, Value};
 
 pub struct GeminiRequestHandler;
 /// This protocol's own chat instance; remove it and the registry arm and chat 404s via the
+/// standard no-handler path.
 static CHAT: super::super::chat_handle::ChatOperation =
     super::super::chat_handle::ChatOperation(COUNT_LABEL);
 static EMB: GeminiEmbeddings = GeminiEmbeddings;
@@ -43,6 +44,7 @@ static TRANSCRIPTION: GeminiTranscription = GeminiTranscription;
 static SPEECH: GeminiSpeech = GeminiSpeech;
 
 /// Gemini's row of the support matrix, as data. A verb absent from it is the standard no-handler
+/// 404: Gemini has no moderation/rerank surface.
 static CELLS: &[busbar_contract::codec::Cell] = &[
     (OpVerb::CHAT, &CHAT),
     (OpVerb::EMBEDDINGS, &EMB),
@@ -52,6 +54,8 @@ static CELLS: &[busbar_contract::codec::Cell] = &[
 ];
 
 /// The `:verb` suffix of each verb's egress URL, keyed by this protocol's verb constants. The three
+/// that ride `generateContent` are absent (that is the fallback below, which also decides the two
+/// stream-aware ones).
 static ACTIONS: &[(OpVerb, &str)] = &[
     (OpVerb::EMBEDDINGS, "embedContent"),
     (OpVerb::IMAGE, "predict"),
@@ -141,6 +145,8 @@ leaf_op! {
 }
 
 /// The two synthetic directive texts the transcription writer prepends, named so the reader can
+/// skip them when recovering the caller's own `prompt` (`read_transcription_request`); otherwise a
+/// round trip would mistake the directive for the prompt.
 const TRANSCRIBE_INSTRUCTION: &str = "Transcribe the following audio verbatim.";
 const TRANSLATE_INSTRUCTION: &str = "Translate the following audio to text.";
 
@@ -203,6 +209,7 @@ pub fn write_transcription_response(r: &crate::codec::ir::audio::TranscriptionRe
 }
 
 /// Gemini speech (TTS): `models/{id}:generateContent` with `responseModalities: [AUDIO]`. It returns
+/// inline base64 PCM; a raw-binary body (mock/other) is wrapped verbatim.
 struct GeminiSpeech;
 
 leaf_op! {
@@ -226,6 +233,7 @@ fn joined_text(v: &Value, pointer: &str) -> String {
 }
 
 /// One named prebuilt speaker: `{voiceConfig: {prebuiltVoiceConfig: {voiceName}}}` (the single
+/// speaker's config, and each multi-speaker entry's beside its `speaker`).
 fn prebuilt_speaker(name: &str) -> Value {
     json!({ "voiceConfig": { "prebuiltVoiceConfig": { "voiceName": name } } })
 }
@@ -294,6 +302,16 @@ leaf_op! {
     fn taps_usage(&self) -> bool {
         true
     }
+    fn recover_response_billing(
+        &self,
+        _host: &dyn busbar_contract::codec::CodecHost,
+        body: &[u8],
+    ) -> Option<busbar_contract::billing::Billing> {
+        let value: Value = crate::codec::json::parse(body).ok()?;
+        let usage = read_image_usage(&value, &mut Vec::new())?;
+        crate::codec::ir::image::ImageResp { usage: Some(usage), ..Default::default() }.billing()
+    }
+
 }
 
 /// IR to Imagen `:predict` request wire ([`GeminiImage::write_request`]).
@@ -447,7 +465,7 @@ pub fn read_transcription_request(
     let wire: Value =
         serde_json::from_slice(body).map_err(|e| IngressReject::BadRequest(e.to_string()))?;
     let mut audio = None;
-    let mut prompt = None;
+    let mut prompt: Option<String> = None;
     let mut target_language = None;
     if let Some(parts) = wire.pointer("/contents/0/parts").and_then(Value::as_array) {
         for p in parts {
@@ -455,6 +473,15 @@ pub fn read_transcription_request(
                 .get(FIELD_INLINE_DATA_SNAKE)
                 .or_else(|| p.get(FIELD_INLINE_DATA));
             if let Some(d) = inline {
+                let mime = d
+                    .get(FIELD_MIME_TYPE_SNAKE)
+                    .or_else(|| d.get(FIELD_MIME_TYPE))
+                    .and_then(Value::as_str)
+                    .unwrap_or("application/octet-stream");
+                if !mime.to_ascii_lowercase().starts_with("audio/") {
+                    continue;
+                }
+
                 let data = d
                     .get(keys::DATA)
                     .and_then(Value::as_str)
@@ -479,7 +506,12 @@ pub fn read_transcription_request(
                 if t == TRANSLATE_INSTRUCTION {
                     target_language = Some("en".to_string());
                 } else if t != TRANSCRIBE_INSTRUCTION {
-                    prompt = Some(t.to_string());
+                    if let Some(prompt) = prompt.as_mut() {
+                        prompt.push('\n');
+                        prompt.push_str(t);
+                    } else {
+                        prompt = Some(t.to_string());
+                    }
                 }
             }
         }
@@ -503,6 +535,9 @@ pub fn read_transcription_request(
 }
 
 /// `usageMetadata` counts a transcription answer reports beside the two it bills. The chat table
+/// (`gemini::usage::USAGE`) itemizes them into meter classes, but transcription bills only the
+/// prompt and candidates counts, so these are residual units keyed by Google's count name, never
+/// billed (a reported unit is never left unledgered; billed figures do not move).
 const TRANSCRIPTION_RESIDUAL_COUNTS: [&str; 3] = [
     FIELD_THOUGHTS_TOKEN_COUNT,
     FIELD_CACHED_CONTENT_TOKEN_COUNT,
@@ -510,6 +545,8 @@ const TRANSCRIPTION_RESIDUAL_COUNTS: [&str; 3] = [
 ];
 
 /// Residual units of a transcription answer's `usageMetadata` ([`TRANSCRIPTION_RESIDUAL_COUNTS`]),
+/// read through `usage_count::recorded_count`: absent or zero is left off (sparse), and an unreadable
+/// one is unknown, left off and warned in the log, never 0 and never a refusal.
 fn transcription_residual_units(usage: &Value) -> std::collections::BTreeMap<String, u64> {
     let mut warnings = Vec::new();
     TRANSCRIPTION_RESIDUAL_COUNTS
@@ -597,51 +634,39 @@ pub fn read_speech_request(
 pub fn read_speech_response(
     wire: &[u8],
 ) -> Result<crate::codec::ir::audio::SpeechResp, CodecError> {
-    if let Ok(v) = serde_json::from_slice::<Value>(wire) {
-        let Some(data) = v
-            .pointer("/candidates/0/content/parts/0/inlineData/data")
-            .and_then(Value::as_str)
-        else {
-            return Err(CodecError::Malformed(
-                "gemini speech response carries no candidates[0].content.parts[0].inlineData"
-                    .into(),
-            ));
-        };
-        let mime = v
-            .pointer("/candidates/0/content/parts/0/inlineData/mimeType")
-            .and_then(Value::as_str)
-            .unwrap_or("audio/L16;codec=pcm;rate=24000")
-            .to_string();
-        let pcm = mime
-            .contains("pcm")
-            .then_some(crate::codec::framework::PcmParams {
-                sample_rate: 24000,
-                channels: 1,
-                bit_depth: 16,
-            });
-
-        if busbar_contract::media::base64_decode(data).is_none() {
-            return Err(CodecError::Malformed(
-                "gemini speech inlineData.data is not valid base64".into(),
-            ));
-        }
-        return Ok(SpeechResp {
-            audio: Some(MediaBlob {
-                payload: MediaPayload::B64(data.to_string()),
-                mime_type: mime,
-                pcm,
-            }),
-
-            usage: Some(busbar_contract::billing::Billing::Flat),
-            ..Default::default()
+    let v: Value =
+        serde_json::from_slice(wire).map_err(|error| CodecError::Malformed(error.to_string()))?;
+    let Some(data) = v
+        .pointer("/candidates/0/content/parts/0/inlineData/data")
+        .and_then(Value::as_str)
+    else {
+        return Err(CodecError::Malformed(
+            "gemini speech response carries no candidates[0].content.parts[0].inlineData".into(),
+        ));
+    };
+    let mime = v
+        .pointer("/candidates/0/content/parts/0/inlineData/mimeType")
+        .and_then(Value::as_str)
+        .unwrap_or("audio/L16;codec=pcm;rate=24000")
+        .to_string();
+    let pcm = mime
+        .contains("pcm")
+        .then_some(crate::codec::framework::PcmParams {
+            sample_rate: 24000,
+            channels: 1,
+            bit_depth: 16,
         });
-    }
 
+    if busbar_contract::media::base64_decode(data).is_none() {
+        return Err(CodecError::Malformed(
+            "gemini speech inlineData.data is not valid base64".into(),
+        ));
+    }
     Ok(SpeechResp {
         audio: Some(MediaBlob {
-            payload: MediaPayload::Bytes(SlabBytes::from(wire)),
-            mime_type: keys::AUDIO_MPEG.into(),
-            pcm: None,
+            payload: MediaPayload::B64(data.to_string()),
+            mime_type: mime,
+            pcm,
         }),
 
         usage: Some(busbar_contract::billing::Billing::Flat),
@@ -683,7 +708,13 @@ pub fn read_image_request(
         guidance_scale: params
             .get(FIELD_GUIDANCE_SCALE)
             .and_then(Value::as_f64)
-            .map(|f| f as f32),
+            .map(|f| {
+                let value = f as f32;
+                value.is_finite().then_some(value).ok_or_else(|| {
+                    IngressReject::BadRequest("guidance scale exceeds the finite f32 range".into())
+                })
+            })
+            .transpose()?,
         image_size_tier: params
             .get(FIELD_SAMPLE_IMAGE_SIZE)
             .and_then(Value::as_str)
@@ -692,45 +723,62 @@ pub fn read_image_request(
     })
 }
 
+fn read_image_usage(
+    v: &Value,
+    warnings: &mut Vec<String>,
+) -> Option<crate::codec::ir::image::ImageTokens> {
+    v.get(FIELD_USAGE_METADATA)
+        .map(|u| crate::codec::ir::image::ImageTokens {
+            input: crate::codec::usage_count::recorded_count(u, FIELD_PROMPT_TOKEN_COUNT, warnings),
+            output: crate::codec::usage_count::recorded_count(
+                u,
+                FIELD_CANDIDATES_TOKEN_COUNT,
+                warnings,
+            ),
+        })
+}
+
 /// Wire to concrete `ImageResp`, shared by the leaf-op handle and the `leaf_codec` read dispatch.
 pub fn read_image_response(wire: &[u8]) -> Result<crate::codec::ir::image::ImageResp, CodecError> {
     let v: Value =
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
-    let images: Vec<crate::codec::framework::ImageOutput> = v
+    let predictions = v
         .get(FIELD_PREDICTIONS)
         .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .map(|p| crate::codec::framework::ImageOutput {
-                    b64: p
-                        .get(FIELD_BYTES_BASE64_ENCODED)
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    mime_type: p
-                        .get(FIELD_MIME_TYPE)
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    ..Default::default()
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+        .ok_or_else(|| {
+            CodecError::Malformed("image response requires a predictions array".into())
+        })?;
+    let mut images = Vec::new();
+    for prediction in predictions {
+        let b64 = prediction
+            .get(FIELD_BYTES_BASE64_ENCODED)
+            .and_then(Value::as_str);
+        let url = prediction.get("gcsUri").and_then(Value::as_str);
+        if b64.is_none() && url.is_none() {
+            if prediction
+                .get("raiFilteredReason")
+                .and_then(Value::as_str)
+                .is_some()
+            {
+                continue;
+            }
+            return Err(CodecError::Malformed(
+                "image prediction requires bytesBase64Encoded, gcsUri or raiFilteredReason".into(),
+            ));
+        }
+        images.push(crate::codec::framework::ImageOutput {
+            b64: b64.map(str::to_string),
+            url: url.map(str::to_string),
+            mime_type: prediction
+                .get(FIELD_MIME_TYPE)
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            ..Default::default()
+        });
+    }
 
     let mut warnings = Vec::new();
-    let usage = v
-        .get(FIELD_USAGE_METADATA)
-        .map(|u| crate::codec::ir::image::ImageTokens {
-            input: crate::codec::usage_count::recorded_count(
-                u,
-                FIELD_PROMPT_TOKEN_COUNT,
-                &mut warnings,
-            ),
-            output: crate::codec::usage_count::recorded_count(
-                u,
-                FIELD_CANDIDATES_TOKEN_COUNT,
-                &mut warnings,
-            ),
-        });
+    let usage = read_image_usage(&v, &mut warnings);
 
     let cost_basis = if usage.is_none() {
         Some(crate::codec::ir::image::CostBasis {

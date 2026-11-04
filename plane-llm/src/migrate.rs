@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE PLANE'S 1.5.5 UPGRADE (`busbar --migrate-config`): 1.5.5 dialled a private or loopback
+//! provider upstream with no allowlist; 1.6.0 refuses one unless `advanced.allow_destinations`
+//! names it.
 
 use busbar_contract::abi::sdk::migrate::{Migrate, MigrateNeed, Migrated};
 use busbar_contract::net::url_host;

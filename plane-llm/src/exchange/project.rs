@@ -1,4 +1,5 @@
 //! The hook projection, sans I/O: what a hook is shown of an arrival, and a request-stage hook's
+//! rewrite applied to the arrival in its own dialect.
 
 use busbar_contract::abi::plane::PROJECT_REWRITE_NOT_APPLICABLE;
 use busbar_contract::hooks::RewriteReply;
@@ -47,6 +48,7 @@ const BEDROCK: &str = "bedrock";
 const BEDROCK_CAP: &str = "/inferenceConfig/maxTokens";
 
 /// The output-cap signal: the dialect's cap key (`max_output_tokens` for responses, `max_tokens` for
+/// every other) off the caller's body, saturated.
 #[must_use]
 pub fn max_tokens_for(v: &Value, dialect: &str) -> Option<u32> {
     let key = if dialect == RESPONSES {
@@ -55,10 +57,20 @@ pub fn max_tokens_for(v: &Value, dialect: &str) -> Option<u32> {
         "max_tokens"
     };
     v.get(key)
+        .or_else(|| {
+            if dialect == "openai" {
+                v.get("max_completion_tokens")
+            } else {
+                None
+            }
+        })
         .and_then(Value::as_u64)
         .or_else(|| {
             if dialect == BEDROCK {
                 v.pointer(BEDROCK_CAP).and_then(Value::as_u64)
+            } else if dialect == "gemini" {
+                v.pointer("/generationConfig/maxOutputTokens")
+                    .and_then(Value::as_u64)
             } else {
                 None
             }
@@ -67,6 +79,7 @@ pub fn max_tokens_for(v: &Value, dialect: &str) -> Option<u32> {
 }
 
 /// The facts the operation's reader reads off `arrived`; `Ok(None)` when there is no reader or no
+/// body to read.
 fn facts(arrived: &Arrived) -> Result<Option<Box<dyn IrFacts + Send + Sync>>, Unreadable> {
     let Some(handler) = handler_of(arrived) else {
         return Ok(None);
@@ -192,6 +205,7 @@ fn read_rewrite(rewrite: &[u8]) -> Option<RewriteReply> {
 }
 
 /// Apply a request-stage hook's rewrite to `arrived` in its own dialect: the dialect frames the
+/// rewrite's messages (and tools) into its conversation container.
 pub fn apply_rewrite(arrived: &mut Arrived, rewrite: &[u8]) -> Option<Vec<u8>> {
     let reply = read_rewrite(rewrite)?;
     if reply.messages.is_empty() {

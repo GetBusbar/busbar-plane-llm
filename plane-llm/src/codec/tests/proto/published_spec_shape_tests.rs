@@ -2,11 +2,14 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! Wire shapes held against the PUBLISHED provider specifications pinned by
+//! `testing/llm-conformance/spec-digests.tsv` (fetched into `~/.cache/busbar-llm-specs/`), not
+//! against busbar's own goldens.
 
 use super::*;
 use crate::codec::ir::{IrBlock, IrResponse, IrTokenLogprob, IrUsage};
 
 /// A minimal assistant response carrying `text`, the given stop reason and the given logprobs —
+/// the smallest IR a writer will project into a full native response body.
 fn resp(
     stop_reason: Option<crate::codec::ir::IrStopReason>,
     logprobs: Vec<IrTokenLogprob>,
@@ -49,6 +52,8 @@ fn openai_logprobs_object_carries_the_required_refusal_member() {
 }
 
 /// The Responses writer LIFTS the `content` array out of the Chat logprobs object for an
+/// `output_text` part's `logprobs` (Responses carries a bare `LogProb[]`, not the Chat object), so
+/// adding `refusal` to the Chat object must NOT leak a stray member into the Responses part.
 #[test]
 fn responses_part_logprobs_stay_a_bare_array_after_the_refusal_member_lands() {
     let ir = resp(
@@ -68,16 +73,23 @@ fn responses_part_logprobs_stay_a_bare_array_after_the_refusal_member_lands() {
     let part = wire
         .pointer("/output/0/content/0")
         .expect("an output_text content part");
-    if let Some(lp) = part.get("logprobs") {
-        assert!(
-            lp.is_array(),
-            "a Responses output_text part carries LogProb[] (an array), never the Chat \
+    let lp = part
+        .get("logprobs")
+        .expect("supplied token logprobs must survive");
+    assert!(
+        lp.is_array(),
+        "a Responses output_text part carries LogProb[] (an array), never the Chat \
              logprobs object: {lp}"
-        );
-    }
+    );
+    assert_eq!(lp.as_array().unwrap().len(), 1);
+    assert_eq!(lp[0]["token"], "hi");
+    assert_eq!(lp[0]["logprob"], -0.5);
 }
 
 /// PUBLISHED OPENAI SPEC: `CreateChatCompletionResponse.choices[]` declares
+/// `required: ["finish_reason", "index", "message", "logprobs"]` with
+/// `finish_reason: {type: string, enum: [stop, length, tool_calls, content_filter, function_call]}`
+/// — NO `nullable: true`.
 #[test]
 fn buffered_openai_choice_finish_reason_is_never_null() {
     let ir = resp(None, Vec::new(), "oracle-marker");
@@ -94,6 +106,7 @@ fn buffered_openai_choice_finish_reason_is_never_null() {
 }
 
 /// The STREAM chunk schema keeps `nullable: true` on `finish_reason`, so the non-final chunks must
+/// still carry explicit null — the buffered fallback must not leak into the streamed path.
 #[test]
 fn streamed_openai_chunk_finish_reason_stays_nullable() {
     let writer = openai_chat::OpenAiWriter;
@@ -115,6 +128,11 @@ fn streamed_openai_chunk_finish_reason_stays_nullable() {
 }
 
 /// PUBLISHED ANTHROPIC SPEC (the Stainless-published OpenAPI document the official SDK pins in
+/// `.stats.yml`): `ContentBlockStartEvent.content_block` is a `oneOf` DISCRIMINATED on `type`, whose
+/// mapping is exactly `{text, thinking, redacted_thinking, tool_use, server_tool_use,
+/// web_search_tool_result, web_fetch_tool_result, code_execution_tool_result,
+/// bash_code_execution_tool_result, text_editor_code_execution_tool_result,
+/// tool_search_tool_result, container_upload}`.
 #[test]
 fn anthropic_image_block_start_emits_no_frame() {
     let writer = AnthropicWriter;
@@ -144,6 +162,7 @@ fn anthropic_image_block_start_emits_no_frame() {
 }
 
 /// A TEXT block's start/stop pair must stay intact once the open-index guard exists — the guard
+/// closes only what it opened, and text opens.
 #[test]
 fn anthropic_text_block_start_stop_pair_survives_the_guard() {
     let writer = AnthropicWriter;
@@ -176,6 +195,8 @@ fn anthropic_text_block_start_stop_pair_survives_the_guard() {
 }
 
 /// A REDACTED thinking block emits its start LATE — from the delta that carries the opaque bytes,
+/// because the published `ContentBlockStartEvent` carries a redacted block's `data` inline and
+/// declares no delta for it.
 #[test]
 fn anthropic_redacted_thinking_block_stop_follows_the_written_start() {
     let writer = AnthropicWriter;
@@ -240,6 +261,8 @@ fn anthropic_redacted_thinking_block_stop_follows_the_written_start() {
 }
 
 /// PUBLISHED ANTHROPIC SPEC: `ErrorResponse.error` is discriminated on `type` over exactly nine
+/// tokens — `invalid_request_error`, `authentication_error`, `billing_error`, `permission_error`,
+/// `not_found_error`, `rate_limit_error`, `timeout_error`, `api_error`, `overloaded_error`.
 #[test]
 fn anthropic_error_type_stays_inside_the_published_union() {
     let writer = AnthropicWriter;
@@ -279,6 +302,7 @@ fn anthropic_error_type_stays_inside_the_published_union() {
 }
 
 /// PUBLISHED OPENAI SPEC: `FunctionToolCall` (the Responses `function_call` output item) declares
+/// `required: ["type", "call_id", "name", "arguments"]`.
 #[test]
 fn responses_output_item_added_seeds_the_required_arguments_member() {
     let writer = openai_responses::ResponsesWriter;

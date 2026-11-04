@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! CITATION CARRIAGE, STREAM ≡ NON-STREAM, END TO END (upstream citations reach
+//! clients; the IR maps a field wherever the target dialect can carry it). 1.5.5 dropped the
+//! citations a STREAMED Cohere or Responses upstream sent; its buffered answers kept them.
 
 use super::*;
 
@@ -162,12 +164,16 @@ fn cohere_stream() -> Vec<u8> {
 const MARKS: [&str; 4] = [URL_A, "Why the sky is blue", URL_B, "Rayleigh scattering"];
 
 /// Which of `MARKS` a client's wire bytes carry. Read off the WIRE, not re-read through busbar's own
+/// reader, because the client is a native SDK: a Responses client finds the annotations on
+/// `content_part.done`/`output_item.done`/`response.completed`, a Gemini client reads every
+/// chunk's `citationMetadata`, a Bedrock client reads the event-stream payload JSON.
 fn carried(wire: &[u8]) -> Vec<&'static str> {
     let text = String::from_utf8_lossy(wire);
     MARKS.iter().copied().filter(|m| text.contains(m)).collect()
 }
 
 /// The client's streamed wire: the upstream's native stream through `StreamTranslate`, the
+/// production seam; a same-dialect hop is a verbatim passthrough.
 fn streamed_wire(upstream: &str, client: &str, upstream_bytes: &[u8]) -> Vec<u8> {
     match StreamTranslate::new(client, upstream) {
         Some(mut st) => {
@@ -180,6 +186,7 @@ fn streamed_wire(upstream: &str, client: &str, upstream_bytes: &[u8]) -> Vec<u8>
 }
 
 /// The client's buffered body: upstream reader → IR → client writer; a same-dialect hop is a
+/// verbatim passthrough, exactly as on the stream.
 fn buffered_wire(upstream: &str, client: &str, upstream_body: &serde_json::Value) -> Vec<u8> {
     if upstream == client {
         return upstream_body.to_string().into_bytes();

@@ -560,16 +560,21 @@ impl ProtocolReader for BedrockReader {
 
         let tool_choice = read_bedrock_tool_choice(obj.get(keys::TOOL_CONFIG));
 
-        let max_tokens = if let Some(inference_config) =
-            obj.get(super::INFERENCE_CONFIG).and_then(|i| i.as_object())
-        {
-            inference_config
-                .get(super::MAX_TOKENS_CAMEL)
-                .and_then(|v| v.as_u64())
-                .filter(|&v| v > 0)
-                .and_then(|v| u32::try_from(v).ok())
-        } else {
-            None
+        let max_tokens = match obj.get(super::INFERENCE_CONFIG) {
+            Some(config) => {
+                let config = config.as_object().ok_or_else(ir_parse_error)?;
+                config
+                    .get(super::MAX_TOKENS_CAMEL)
+                    .map(|value| {
+                        value
+                            .as_u64()
+                            .filter(|&v| v > 0)
+                            .and_then(|v| u32::try_from(v).ok())
+                            .ok_or_else(ir_parse_error)
+                    })
+                    .transpose()?
+            }
+            None => None,
         };
 
         let amrf = obj
@@ -700,7 +705,13 @@ impl ProtocolReader for BedrockReader {
             }
 
             Some(ET_CONTENT_BLOCK_START) => {
-                let idx = clamp_content_block_index(data);
+                let Some(idx) = read_content_block_index(data) else {
+                    return vec![IrStreamEvent::Error(busbar_contract::protocol::IrError {
+                        class: StatusClass::ServerError,
+                        provider_signal: Some("invalid Bedrock contentBlockIndex".into()),
+                        retry_after: None,
+                    })];
+                };
 
                 if let Some(start_obj) = data.get(keys::START).and_then(|s| s.as_object()) {
                     if let Some(tool_use) = start_obj
@@ -768,7 +779,13 @@ impl ProtocolReader for BedrockReader {
             }
 
             Some(ET_CONTENT_BLOCK_DELTA) => {
-                let idx = clamp_content_block_index(data);
+                let Some(idx) = read_content_block_index(data) else {
+                    return vec![IrStreamEvent::Error(busbar_contract::protocol::IrError {
+                        class: StatusClass::ServerError,
+                        provider_signal: Some("invalid Bedrock contentBlockIndex".into()),
+                        retry_after: None,
+                    })];
+                };
 
                 if let Some(delta_obj) = data.get(keys::DELTA).and_then(|d| d.as_object()) {
                     if delta_obj.contains_key(keys::TEXT) {
@@ -891,7 +908,13 @@ impl ProtocolReader for BedrockReader {
             }
 
             Some(ET_CONTENT_BLOCK_STOP) => {
-                let idx = clamp_content_block_index(data);
+                let Some(idx) = read_content_block_index(data) else {
+                    return vec![IrStreamEvent::Error(busbar_contract::protocol::IrError {
+                        class: StatusClass::ServerError,
+                        provider_signal: Some("invalid Bedrock contentBlockIndex".into()),
+                        retry_after: None,
+                    })];
+                };
 
                 if state.started {
                     if state.open_tools.remove(&idx) {
@@ -1006,7 +1029,11 @@ impl ProtocolReader for BedrockReader {
         let mut content: Vec<crate::codec::ir::IrBlock> = Vec::new();
         let mut block_origins = crate::codec::ir::IrBlockOrigins::default();
 
-        if let Some(content_arr) = message_val.get(keys::CONTENT).and_then(|c| c.as_array()) {
+        {
+            let content_arr = message_val
+                .get(keys::CONTENT)
+                .and_then(|v| v.as_array())
+                .ok_or_else(ir_parse_error)?;
             for block_val in content_arr {
                 if let Some(text_val) = block_val.get(keys::TEXT).and_then(|t| t.as_str()) {
                     content.push(crate::codec::ir::IrBlock::text(text_val.to_string()));
@@ -1131,6 +1158,7 @@ impl ProtocolReader for BedrockReader {
     }
 
     /// `:event-type` is the `type` the reader dispatches on: usage rides only `metadata`, a failure
+    /// only the five modeled stream exceptions.
     fn same_proto_reads(&self, event_type: &str, _payload: &[u8]) -> bool {
         matches!(
             event_type,
@@ -1157,143 +1185,5 @@ impl ProtocolReader for BedrockReader {
 mod unreadable_count_refusal_tests;
 
 #[cfg(test)]
-mod block_origin_tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn request_origins_pair_guarded_and_nested_blocks() {
-        let body = json!({
-            "system": [{"text": "top"}, {"guardContent": {"text": {"text": "guarded"}}}],
-            "messages": [{"role": "user", "content": [
-                {"cachePoint": {"type": "default"}},
-                {"toolResult": {"toolUseId": "call", "content": [
-                    {"text": "answer"}, {"json": {"ok": true}},
-                    {"document": {"name": "doc", "format": "txt", "source": {"bytes": "YQ=="}}}
-                ]}},
-                {"reasoningContent": {"reasoningText": {"text": "thinking"}}}
-            ]}]
-        });
-        let req = BedrockReader.read_request(&body).expect("native request");
-        assert_eq!(req.system.len(), req.block_origins.system.len());
-        assert_eq!(
-            req.messages[0].content.len(),
-            req.block_origins.messages[0].len()
-        );
-        assert_eq!(
-            req.block_origins.system[1].source.unwrap().path,
-            "system[].guardContent"
-        );
-        let result = &req.block_origins.messages[0][0];
-        assert_eq!(
-            result.source.unwrap().path,
-            "messages[].content[].toolResult"
-        );
-        assert_eq!(result.children.len(), 3);
-        assert_eq!(
-            result.children[1].source.unwrap().path,
-            "messages[].content[].toolResult.content[].json"
-        );
-        assert_eq!(
-            req.block_origins.messages[0][1].source.unwrap().path,
-            "messages[].content[].reasoningContent"
-        );
-    }
-
-    #[test]
-    fn response_origins_follow_decodable_branches() {
-        let body = json!({"output": {"message": {"role": "assistant", "content": [
-            {"text": "answer"},
-            {"reasoningContent": {"reasoningText": {"text": "thinking"}}},
-            {"future": {"value": true}}
-        ]}}});
-        let resp = BedrockReader
-            .read_response(crate::codec::test_host::HOST, &body)
-            .expect("native response");
-        assert_eq!(resp.content.len(), resp.block_origins.response.len());
-        assert_eq!(
-            resp.block_origins.response[1].source.unwrap().path,
-            "output.message.content[].reasoningContent"
-        );
-    }
-    #[test]
-    fn absent_guard_projection_pushes_neither_block_nor_origin() {
-        let request = BedrockReader.read_request(&json!({
-            "system": [{"guardContent": {"future_fixture": true}}],
-            "messages": [{"role": "user", "content": [{"guardContent": {"future_fixture": true}}]}]
-        })).expect("native request");
-        assert!(request.system.is_empty());
-        assert!(request.block_origins.system.is_empty());
-        assert!(request.messages.first().unwrap().content.is_empty());
-        assert!(request.block_origins.messages.first().unwrap().is_empty());
-    }
-
-    #[test]
-    fn native_stream_origins_follow_actual_start_and_lazy_delta_sites() {
-        let host = crate::codec::test_host::HOST;
-        for (frame, source) in [
-            (
-                json!({"type": "contentBlockStart", "contentBlockIndex": 0, "start": {"toolUse": {"toolUseId": "fixture-call", "name": "fixture_tool"}}}),
-                &STREAM_TOOL_USE,
-            ),
-            (
-                json!({"type": "contentBlockStart", "contentBlockIndex": 0, "start": {}}),
-                &STREAM_TEXT_START,
-            ),
-            (
-                json!({"type": "contentBlockStart", "contentBlockIndex": 0}),
-                &STREAM_TEXT_EVENT,
-            ),
-            (
-                json!({"type": "contentBlockDelta", "contentBlockIndex": 0, "delta": {"text": "fixture text"}}),
-                &STREAM_TEXT_DELTA,
-            ),
-            (
-                json!({"type": "contentBlockDelta", "contentBlockIndex": 0, "delta": {"citation": {"title": "fixture citation"}}}),
-                &STREAM_CITATION_DELTA,
-            ),
-            (
-                json!({"type": "contentBlockStart", "contentBlockIndex": 0, "start": {"reasoningContent": {}}}),
-                &STREAM_REASONING_START,
-            ),
-            (
-                json!({"type": "contentBlockDelta", "contentBlockIndex": 0, "delta": {"reasoningContent": {"text": "fixture thought"}}}),
-                &STREAM_REASONING_DELTA,
-            ),
-            (
-                json!({"type": "contentBlockDelta", "contentBlockIndex": 0, "delta": {"reasoningContent": {"redactedContent": "fixture-opaque"}}}),
-                &STREAM_REDACTED_DELTA,
-            ),
-        ] {
-            let event_type = frame
-                .get(keys::TYPE)
-                .and_then(|value| value.as_str())
-                .unwrap();
-            let mut state = crate::codec::ir::StreamDecodeState::default();
-            let before_message =
-                BedrockReader.read_response_events(host, event_type, &frame, &mut state);
-            assert!(!before_message
-                .iter()
-                .any(|event| matches!(event, IrStreamEvent::BlockStart { .. })));
-            assert!(state.block_origins.is_empty());
-            BedrockReader.read_response_events(
-                host,
-                ET_MESSAGE_START,
-                &json!({"type": "messageStart"}),
-                &mut state,
-            );
-            let events = BedrockReader.read_response_events(host, event_type, &frame, &mut state);
-            let index = events
-                .iter()
-                .find_map(|event| match event {
-                    IrStreamEvent::BlockStart { index, .. } => Some(index),
-                    _ => None,
-                })
-                .expect("native block start");
-            assert_eq!(
-                state.block_origins.get(index).unwrap().source.unwrap().path,
-                source.path
-            );
-        }
-    }
-}
+#[path = "tests/reader_block_origin_tests.rs"]
+mod block_origin_tests;
