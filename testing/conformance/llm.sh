@@ -30,6 +30,48 @@ TGT="${CARGO_TARGET_DIR:-$repo/target}"
 say() { printf 'llm: %s\n' "$*" >&2; }
 sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1; else shasum -a 256 | cut -d' ' -f1; fi; }
 
+# Null-delimited Git paths and length-delimited hash records preserve arbitrary file names.
+# Keep this query-only entry point usable by the cache-key regression without Cargo or a build.
+cache_key() {
+  python3 -I - "$repo" "$BUSBAR_PIN" <<'PYKEY'
+import hashlib, os, stat, subprocess, sys
+from pathlib import Path
+root, pin = Path(sys.argv[1]), sys.argv[2]
+inputs = ["Cargo.toml", "Cargo.lock", "plane-llm", "testing/llm-conformance",
+          "testing/conformance/requirements-llm.txt", "testing/conformance/llm.sh"]
+paths = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z", "--cached",
+                                 "--others", "--", *inputs]).split(b"\0")
+digest = hashlib.sha256()
+def record(value):
+    digest.update(len(value).to_bytes(8, "big"))
+    digest.update(value)
+record(pin.encode())
+for name in sorted(set(paths) - {b""}):
+    record(name)
+    path = root / os.fsdecode(name)
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        record(b"deleted")
+        continue
+    if stat.S_ISLNK(mode):
+        record(b"symlink")
+        record(os.fsencode(os.readlink(path)))
+    elif stat.S_ISREG(mode):
+        record(b"executable" if mode & 0o111 else b"file")
+    else:
+        raise ValueError(f"unsupported conformance input: {name!r}")
+    # Following a symlink hashes the bytes Cargo reads as well as its target spelling.
+    record(path.read_bytes())
+print(digest.hexdigest()[:16])
+PYKEY
+}
+if [ "${1:-}" = --cache-key ]; then
+  : "${BUSBAR_PIN:?--cache-key needs BUSBAR_PIN}"
+  cache_key
+  exit $?
+fi
+
 # busbar (a checkout at the pin, $1) staged at $2, with no build output.
 stage_busbar() { rm -rf "$2"; mkdir -p "$2" && tar -C "$1" --exclude=./target -cf - . | tar -C "$2" -xf -; }
 
@@ -93,12 +135,9 @@ mode=verdict; [ "${1:-}" = --subject ] && mode=subject
 dialect="${CONFORMANCE_SUITE#llm-}"
 case "$dialect" in anthropic|openai|responses|gemini|bedrock|cohere) ;; *) say "unknown suite $CONFORMANCE_SUITE"; exit 2 ;; esac
 
-# The path crate inherits workspace package/dependency settings from the root manifest; root lock
-# changes also invalidate prior evidence. Keep those inputs in the same key as its own sources.
-key="$( { printf 'pin=%s\n' "$BUSBAR_PIN"
-          git -C "$repo" ls-files -s -- Cargo.toml Cargo.lock plane-llm testing/llm-conformance testing/conformance/requirements-llm.txt testing/conformance/llm.sh
-          git -C "$repo" diff HEAD -- Cargo.toml Cargo.lock plane-llm testing/llm-conformance testing/conformance/requirements-llm.txt testing/conformance/llm.sh
-        } | sha | cut -c1-16)"
+# The path crate inherits workspace settings. Hash its actual working-tree bytes, including
+# untracked modules and binary inputs; index entries and textual diffs cannot identify those.
+key="$(cache_key)" || { say "could not identify conformance inputs"; exit 1; }
 D="$TGT/llm-conformance/$key"
 mkdir -p "$D"
 

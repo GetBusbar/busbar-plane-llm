@@ -27,6 +27,13 @@ cargo build --release -p busbar-plane-llm-plugin
 ## Tests
 
 ```bash
+cargo build --locked -p busbar-plane-llm-plugin
+case "$(uname -s)" in
+  Darwin) plugin_image=libbusbar_plane_llm_plugin.dylib ;;
+  Linux) plugin_image=libbusbar_plane_llm_plugin.so ;;
+  *) echo "Set BUSBAR_PLUGIN_CDYLIB to this platform's fresh plugin image" >&2; exit 1 ;;
+esac
+export BUSBAR_PLUGIN_CDYLIB="$(cd "${CARGO_TARGET_DIR:-target}/debug" && pwd)/$plugin_image"
 cargo test --workspace --locked
 ```
 
