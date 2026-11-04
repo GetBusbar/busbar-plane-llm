@@ -236,7 +236,7 @@ fn missing_encoding_coverage_and_empty_vector_items_refuse_without_placeholders(
 }
 
 #[test]
-fn production_refusal_is_native_and_keeps_upstream_work_billed() {
+fn production_refusal_is_native_and_does_not_bill_a_translation_abort() {
     for indices in [vec![0_u64, 0], vec![0, 2], vec![1], vec![u64::MAX]] {
         let raw = openai(Value::Array(
             indices
@@ -249,7 +249,7 @@ fn production_refusal_is_native_and_keeps_upstream_work_billed() {
         let body: Value = serde_json::from_slice(&piece.bytes).unwrap();
         assert!(body["message"].is_string(), "native Cohere error: {body}");
         assert!(body.get("embeddings").is_none());
-        assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (17, 0));
+        assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (0, 0));
     }
 }
 

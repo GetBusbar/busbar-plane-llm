@@ -1287,7 +1287,7 @@ mod door_units {
     }
 
     #[test]
-    fn a_whole_local_delivery_failure_keeps_reported_work_on_the_actual_doors_late_cancel() {
+    fn a_whole_translation_abort_remains_unbilled_on_the_actual_doors_late_cancel() {
         let (_d, p) = door();
 
         openai_stream_arrives(&p, 41);
@@ -1317,11 +1317,8 @@ mod door_units {
             "the error body remains pending: {last:?}"
         );
         assert_eq!(last.emitted.len(), 1, "one actual output byte crossed");
-        assert_eq!(last.units, [(0, 7), (1, 3), (2, 0), (3, 0)]);
-        assert!(last
-            .sources
-            .iter()
-            .all(|source| *source == busbar_contract::abi::plane::UNITS_REPORTED));
+        assert!(last.units.is_empty(), "M3: a translation abort is unbilled");
+        assert!(last.sources.is_empty(), "no billed unit source is invented");
         assert!(
             last.units
                 .iter()
@@ -1329,14 +1326,14 @@ mod door_units {
             "a 500 carries no request fee"
         );
         let disposition = cancel(&p);
-        assert_eq!(disposition, busbar_contract::abi::plane::CANCEL_OK_PARTIAL);
-        assert!(busbar_contract::abi::plane::cancel_bills_reported_units(
+        assert_eq!(disposition, busbar_contract::abi::plane::CANCEL_FAILED);
+        assert!(!busbar_contract::abi::plane::cancel_bills_reported_units(
             disposition,
             true
         ));
         assert!(
             !busbar_contract::abi::plane::cancel_bills_reported_units(disposition, false),
-            "the host still requires actual delivered bytes"
+            "a failed translation is unbillable without delivered bytes"
         );
     }
 

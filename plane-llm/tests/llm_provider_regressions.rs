@@ -171,7 +171,7 @@ fn malformed_whole_arguments_cannot_become_an_empty_call_in_a_synthesized_stream
 }
 
 #[test]
-fn malformed_openai_tool_arguments_refuse_anthropic_without_losing_reported_work() {
+fn malformed_openai_tool_arguments_refuse_anthropic_without_billing_the_abort() {
     let body = serde_json::to_vec(&json!({"id":"chatcmpl-native", "model":"m",
         "choices":[{"index":0, "message":{"role":"assistant", "content":null,
             "tool_calls":[{"id":"call-native", "type":"function", "function":{
@@ -199,11 +199,11 @@ fn malformed_openai_tool_arguments_refuse_anthropic_without_losing_reported_work
         "An internal error occurred while processing the response."
     );
     assert!(refused.get("content").is_none(), "{refused}");
-    assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (50, 20));
+    assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (0, 0));
 }
 
 #[test]
-fn refused_embedding_vectors_keep_provider_usage_without_compacting_coordinates() {
+fn refused_embedding_vectors_are_unbilled_and_do_not_compact_coordinates() {
     for embedding in [
         json!({}),
         json!({"values":null}),
@@ -230,7 +230,7 @@ fn refused_embedding_vectors_keep_provider_usage_without_compacting_coordinates(
         );
         assert_eq!(
             (piece.units.tokens_in, piece.units.tokens_out),
-            (5, 0),
+            (0, 0),
             "{piece:?}"
         );
         let output: Value = serde_json::from_slice(&piece.bytes).unwrap();
@@ -262,7 +262,7 @@ fn refused_embedding_vectors_keep_provider_usage_without_compacting_coordinates(
 }
 
 #[test]
-fn failed_entropy_reply_refuses_without_inventing_identity_and_keeps_usage() {
+fn failed_entropy_reply_refuses_without_inventing_identity_or_billing_the_abort() {
     let body = serde_json::to_vec(&json!({"id":"chatcmpl-native","model":"m","created":1,
         "choices":[{"index":0,"message":{"role":"assistant","content":"answer"},"finish_reason":"stop"}],
         "usage":{"prompt_tokens":7,"completion_tokens":9}})).unwrap();
@@ -285,7 +285,7 @@ fn failed_entropy_reply_refuses_without_inventing_identity_and_keeps_usage() {
         output.get("responseId").is_none() && output.get("candidates").is_none(),
         "{output}"
     );
-    assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (7, 9));
+    assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (0, 0));
 }
 
 #[test]
