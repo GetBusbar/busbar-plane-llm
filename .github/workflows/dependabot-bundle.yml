@@ -4,8 +4,8 @@
 # the PRs this bundles are the security updates the repo settings keep on. Every open dependabot PR
 # (whatever its base today) is merged into ONE branch (deps/bundle), which carries ONE PR with
 # auto-merge on. It runs when dependabot opens or updates a PR into dev, and weekly (Monday) for the
-# rest. Merged PRs are closed with a link; a PR that conflicts
-# is listed in the bundle PR body and left open. The branch is only ever fast-forwarded (no force).
+# rest. Bundled heads are recorded by immutable SHA; source PRs stay open because GitHub has no
+# atomic close conditioned on head identity. Conflicts stay open. The branch only fast-forwards.
 # Secrets: BUNDLE_TOKEN (or FLEET_TOKEN) lets the bundle PR run CI and lets a github-actions bump
 # (a workflow-file change) be pushed; without one GITHUB_TOKEN is used and those cases fail loudly.
 # pull_request_target runs the BASE branch's copy of this file and never executes PR code: it only
@@ -48,7 +48,7 @@ jobs:
           bundles=$(gh pr list --head "$BUNDLE" --base "$TARGET" --state open --json number,body)
           pr=$(jq -r '.[0].number // empty' <<< "$bundles")
           previous=$(jq -r '.[0].body // ""' <<< "$bundles")
-          merged=(); bad=(); rejected=()
+          merged=(); merged_heads=(); bad=(); rejected=()
           report() {
             local message="$1" body_file
             printf '%s\n' "$message" >&2
@@ -91,6 +91,7 @@ jobs:
             fi
             if git -C . merge -q -m "deps: merge #$n $t" FETCH_HEAD; then
               merged+=("$n")
+              merged_heads+=("$expected")
             else
               bad+=("$n")
               if git -C . rev-parse --verify MERGE_HEAD >/dev/null 2>&1; then
@@ -105,18 +106,24 @@ jobs:
           printf '%s\n' "$previous" > "$body_file"
           if [ ${#merged[@]} -gt 0 ]; then
             printf '\nBundled dependabot updates, merged from: ' >> "$body_file"
-            printf '#%s ' "${merged[@]}" >> "$body_file"
+            for i in "${!merged[@]}"; do
+              printf '#%s@%s ' "${merged[$i]}" "${merged_heads[$i]}" >> "$body_file"
+            done
             printf '\n' >> "$body_file"
           fi
           if [ ${#bad[@]} -gt 0 ]; then
-            printf '\nCONFLICT, left open: ' >> "$body_file"
-            printf '#%s ' "${bad[@]}" >> "$body_file"
-            printf '\n' >> "$body_file"
+            {
+              printf '\nCONFLICT, left open: '
+              printf '#%s ' "${bad[@]}"
+              printf '\n'
+            } >> "$body_file"
           fi
           if [ ${#rejected[@]} -gt 0 ]; then
-            printf '\nREFUSED, signed Dependabot commit/head verification failed: ' >> "$body_file"
-            printf '#%s ' "${rejected[@]}" >> "$body_file"
-            printf '\n' >> "$body_file"
+            {
+              printf '\nREFUSED, signed Dependabot commit/head verification failed: '
+              printf '#%s ' "${rejected[@]}"
+              printf '\n'
+            } >> "$body_file"
           fi
           if [ ${#merged[@]} -eq 0 ]; then
             cat "$body_file" >&2
@@ -130,5 +137,6 @@ jobs:
           else pr=$(gh pr create --head "$BUNDLE" --base "$TARGET" --title "deps: bundled dependabot updates" --body-file "$body_file"); pr=${pr##*/}; fi
           rm -f "$body_file"
           gh pr merge "$pr" --auto --merge || echo "::warning::auto-merge not enabled on #$pr"
-          for n in "${merged[@]}"; do gh pr close "$n" --comment "Merged into the bundle branch; continues in #$pr."; done
+          # A synchronize can race any read-before-close check. Never close a source PR:
+          # the bundle records exactly which immutable head it incorporated above.
           [ ${#bad[@]} -eq 0 ] && [ ${#rejected[@]} -eq 0 ]
