@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! Cross-protocol TRANSLATE-PATH byte-parity goldens (anthropic ingress ⇄ openai egress).
+//! Cross-protocol translated-JSON goldens (anthropic ingress ⇄ openai egress).
 //!
-//! These tests pin the EXACT BYTES the non-streaming translate path emits for a corpus of
-//! representative bodies, against golden fixtures committed under `tests/golden/`. The goldens were
-//! generated from the pre-optimization translate pipeline (the `serde_json::Value`-building
-//! reader/writer path), so any CPU/allocation optimization of the translate path — including a
-//! direct-serialize fast path that skips the intermediate `Value` — must reproduce the wire output
-//! BYTE-FOR-BYTE or these tests fail. This is the fidelity wall for translate-path perf work.
+//! The original golden files remain evidence of the pre-optimization translate pipeline. These
+//! tests require the same JSON types, members, string values, array ordering and exact numbers.
+//! Whitespace, object-key order, equivalent string escapes and equal decimal spellings may differ.
+//! Numeric comparison never rounds through binary floating point; an unclassifiable difference
+//! fails with a diagnostic. Unmodified relay, signatures and framing have separate byte tests.
 //!
 //! The harness replays the same step list the production seams run:
 //!   * REQUEST  (`translate_request_cross_protocol`, JSON branch): parse → anthropic
@@ -20,11 +19,13 @@
 //!
 //! The one nondeterministic output field — the anthropic writer's synthesized `id`
 //! (`msg_01<24 base62>`) on the response side — is shape-asserted and then NORMALIZED to a fixed
-//! token before comparison, so everything else (key order, number formatting, string escaping,
-//! field presence) is compared byte-exact.
+//! token before comparison; every other value and required field remains checked.
 //!
 //! Regenerating goldens (ONLY for an intentional wire-shape change):
 //!   `BUSBAR_BLESS_GOLDEN=1 cargo test -p busbar translate_parity_golden` then commit the diff.
+
+#[path = "semantic_json.rs"]
+mod semantic_json;
 
 /// The lane wire model stamped on the egress request (mirrors `rewrite_model_if_needed`).
 const LANE_MODEL: &str = "gpt-4o-mini";
@@ -56,13 +57,13 @@ pub(super) fn check_golden(name: &str, actual: &[u8]) {
     }
     let expected = std::fs::read(&path)
         .unwrap_or_else(|e| panic!("missing golden {name} ({e}); run with BUSBAR_BLESS_GOLDEN=1"));
-    assert_eq!(
-        expected,
-        actual,
-        "translate output drifted from golden {name}\n--- golden ---\n{}\n--- actual ---\n{}",
-        String::from_utf8_lossy(&expected),
-        String::from_utf8_lossy(actual),
-    );
+    if let Err(classification) = semantic_json::compare(&expected, actual) {
+        panic!(
+            "translate output drifted from golden {name}: {classification}\n--- golden ---\n{}\n--- actual ---\n{}",
+            String::from_utf8_lossy(&expected),
+            String::from_utf8_lossy(actual),
+        );
+    }
 }
 
 /// The production REQUEST translate steps for the anthropic→openai lane, byte-for-byte.

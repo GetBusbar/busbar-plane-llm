@@ -339,13 +339,11 @@ fn ir19_response_modalities_carry() {
 }
 
 #[test]
-fn ir09_thinking_budget_zero_carries_no_ask() {
+fn ir09_thinking_budget_zero_carries_off() {
     let body = json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}],
         "generationConfig": {"thinkingConfig": {"thinkingBudget": 0}}});
     let ir = read_then_seam(&body);
-    assert_eq!(ir.reasoning, None);
-    let mut ir = ir;
-    ir.reasoning = Some(IrReasoningAsk::Off);
+    assert_eq!(ir.reasoning, Some(IrReasoningAsk::Off));
     for model in [
         "gemini-2.5-flash",
         "models/gemini-2.5-flash-lite-preview-06-17",
@@ -374,6 +372,65 @@ fn ir09_thinking_budget_zero_carries_no_ask() {
         .write_request(crate::codec::test_host::HOST, &ir)
         .get("generationConfig")
         .is_none());
+}
+
+/// An explicit Gemini disable reaches capable foreign writers, while an absent ask remains absent.
+#[test]
+fn ir09_gemini_zero_budget_disables_reasoning_across_dialects() {
+    use crate::codec::cells::EgressWire;
+    use crate::codec::egress_prep::{EgressPrep, LaneCaps};
+    use crate::codec::translate::{TranslateCodec as _, TranslateReqInput};
+
+    let handler = crate::codec::chat_handle::ChatOperation("gemini");
+    let prep = EgressPrep {
+        ingress_protocol: "gemini",
+        egress_requires_max_tokens: true,
+        lane_default_max_tokens: None,
+        global_default_max_tokens: 4096,
+        reasoning_allowed: true,
+        reasoning_budgets: crate::codec::ir::REASONING_BUDGET_DEFAULTS,
+        prompt_caching_allowed: true,
+        cache_control_cap: None,
+        thought_signature_fill: false,
+        lane_caps: LaneCaps {
+            reasoning_none: true,
+            ..Default::default()
+        },
+    };
+    for (dialect, pointer, off) in [
+        ("anthropic", "/thinking/type", "disabled"),
+        ("openai", "/reasoning_effort", "none"),
+        ("responses", "/reasoning/effort", "none"),
+    ] {
+        for explicit_off in [false, true] {
+            let mut body = json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}]});
+            if explicit_off {
+                body["generationConfig"] = json!({"thinkingConfig": {"thinkingBudget": 0}});
+            }
+            let Ok(translated) = handler.translate_request(
+                crate::codec::test_host::HOST,
+                TranslateReqInput::Json(&body),
+                Some(dialect),
+                &prep,
+                "model",
+            ) else {
+                panic!("Gemini request must translate to {dialect}");
+            };
+            let EgressWire::Json(wire) = translated.wire else {
+                panic!("{dialect} request must be JSON");
+            };
+            assert_eq!(
+                wire.pointer(pointer).and_then(Value::as_str),
+                explicit_off.then_some(off),
+                "{dialect}, explicit_off={explicit_off}: {wire}"
+            );
+            assert!(
+                translated.dropped_controls.is_empty(),
+                "the supported request must not be dropped: {:?}",
+                translated.dropped_controls
+            );
+        }
+    }
 }
 
 /// IR-09 across the seam: an Anthropic `thinking:{type:"disabled"}` (read as Off) reaches a Gemini

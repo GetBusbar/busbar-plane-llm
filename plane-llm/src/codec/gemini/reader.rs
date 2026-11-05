@@ -440,16 +440,7 @@ impl ProtocolReader for GeminiReader {
             Some(budget) => match read_gemini_thinking_budget(budget).ok_or_else(ir_parse_error)? {
                 -1 => Some(crate::codec::ir::IrReasoningAsk::Dynamic),
 
-                0 => {
-                    crate::codec::drops::writer_drop!(
-                        crate::codec::drops::REASONING,
-                        &crate::codec::diagnostics::IR_DROP_REASONING,
-                        [],
-                        "dropping thinkingBudget 0 (reasoning off) across dialects: it carries no \
-                         ask, as in 1.5.5"
-                    );
-                    None
-                }
+                0 => Some(crate::codec::ir::IrReasoningAsk::Off),
                 n => Some(crate::codec::ir::IrReasoningAsk::Budget(n.unsigned_abs())),
             },
 

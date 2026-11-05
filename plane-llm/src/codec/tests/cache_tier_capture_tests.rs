@@ -31,16 +31,12 @@
 //! WHAT IS BEING PROVEN, PER PROVIDER:
 //! * bedrock — `usage.cacheDetails[]`, the per-TTL (`5m`/`1h`) breakdown of `cacheWriteInputTokens`.
 //!   The two TTLs price differently, so the total alone cannot be reconciled per line.
-//! * cohere — `usage.cached_tokens`, a prompt-cache HIT counted inside `tokens.input_tokens`, which
-//!   bills at the input tier exactly as 1.5.5 billed it (no cache-read split).
-//! * openai_responses — `usage.input_tokens_details.cache_write_tokens`, a slice of `input_tokens`
-//!   that bills at the input tier exactly as 1.5.5 billed it (no cache-write split).
-//! * openai_chat — `usage.prompt_tokens_details.cache_write_tokens`, same rule, same 1.5.5 source.
-//!
-//! The three 1.5.5 readings preserve the billing baseline: v1.5.5
-//! `crates/busbar/src/proto/cohere/reader.rs:964-979`
-//! and `:709-729`, `crates/busbar/src/proto/openai_responses/reader.rs:1022` and `:1341`,
-//! `crates/busbar/src/proto/openai_chat/reader.rs:966` and `:693` each set the split tier `None`.
+//! * cohere — `usage.cached_tokens`, a prompt-cache HIT split from `tokens.input_tokens` into
+//!   cache-read usage, conserving the reported total.
+//! * openai_responses — `usage.input_tokens_details.cache_write_tokens`, a slice split from
+//!   `input_tokens` into cache-write usage, beside the cache-read slice.
+//! * openai_chat — its current usage table does not declare a cache-write slice; these assertions
+//!   retain that separate contract rather than inferring support from Responses.
 //! * cohere (truncated recovery) — the recovery path and the buffered path must bill the SAME
 //!   bucket for the same completion.
 
@@ -249,12 +245,9 @@ fn cohere_recorded_raw_body_reads_without_inventing_a_cache_read() {
     );
 }
 
-/// `usage.cached_tokens` stays inside the input: the whole reported `tokens.input_tokens` bills at
-/// the input tier and nothing reaches the cache-read tier, as 1.5.5 billed it (v1.5.5
-/// `crates/busbar/src/proto/cohere/reader.rs:964-979`: `input_tokens` = `tokens.input_tokens`,
-/// `cache_read_input_tokens: None`).
+/// Cached input reaches its own tier and is removed from ordinary input, conserving the total.
 #[test]
-fn cohere_cached_tokens_bill_inside_the_input() {
+fn cohere_cached_tokens_split_from_the_input() {
     let raw = conformance_raw_body("selftest-recording", "llm__cohere__cohere__request__ok");
     let recorded: Value = serde_json::from_str(&raw).expect("the recorded raw body is JSON");
     let reported_input = recorded
@@ -268,31 +261,36 @@ fn cohere_cached_tokens_bill_inside_the_input() {
         .read_response(crate::codec::test_host::HOST, &body)
         .expect("cohere parses");
     assert_eq!(
-        ir.usage.cache_read_input_tokens, None,
-        "cached_tokens must not split out to the cache-read tier: {ir:?}"
+        ir.usage.cache_read_input_tokens,
+        Some(4),
+        "cached_tokens must reach the cache-read tier: {ir:?}"
     );
     assert_eq!(
-        ir.usage.input_tokens, reported_input,
-        "the whole reported input bills at the input tier: {ir:?}"
+        ir.usage.input_tokens,
+        reported_input - 4,
+        "ordinary input excludes the cache-read slice: {ir:?}"
     );
     let ledgered = ir.usage.to_token_usage();
     assert_eq!(
         (ledgered.input, ledgered.cache_read),
-        (
-            recorded
-                .pointer("/usage/billed_units/input_tokens")
-                .and_then(Value::as_u64)
-                .expect("the recording states a billed input"),
-            None
-        ),
-        "the ledger bills the billed input whole, with no cache read: {ledgered:?}"
+        (reported_input - 4, Some(4)),
+        "the ledger preserves the separate input tiers: {ledgered:?}"
+    );
+    assert_eq!(
+        ledgered.input + ledgered.cache_read.unwrap(),
+        reported_input
+    );
+    let exact = ledgered.exact_counts.as_ref().expect("exact usage");
+    assert_eq!(exact["cache_read"], busbar_contract::Count::from(4u64));
+    assert_eq!(
+        exact["input"],
+        busbar_contract::Count::from(reported_input - 4)
     );
 }
 
-/// The STREAM terminal (`message-end.delta.usage`) bills the cache hit inside the input the same
-/// way (v1.5.5 `crates/busbar/src/proto/cohere/reader.rs:709-729`).
+/// The stream terminal preserves the same cache-read split as a buffered response.
 #[test]
-fn cohere_cached_tokens_ride_the_stream_terminal_inside_the_input() {
+fn cohere_cached_tokens_split_on_the_stream_terminal() {
     let mut state = StreamDecodeState::default();
     let events = CohereReader.read_response_events(
         crate::codec::test_host::HOST,
@@ -312,18 +310,20 @@ fn cohere_cached_tokens_ride_the_stream_terminal_inside_the_input() {
     );
     let usage = terminal_usage(&events);
     assert_eq!(
-        usage.cache_read_input_tokens, None,
-        "the streamed cache hit stays inside the input: {usage:?}"
+        usage.cache_read_input_tokens,
+        Some(4),
+        "the streamed cache hit has its own tier: {usage:?}"
     );
     assert_eq!(
-        usage.input_tokens, 11,
-        "the streamed input is the whole reported input: {usage:?}"
+        usage.input_tokens, 7,
+        "the streamed input excludes the cache hit (11-4): {usage:?}"
     );
     let ledgered = usage.to_token_usage();
     assert_eq!(
         (ledgered.input, ledgered.output, ledgered.cache_read),
-        (11, 7, None)
+        (7, 7, Some(4))
     );
+    assert_eq!(ledgered.input + ledgered.cache_read.unwrap(), 11);
 }
 
 /// ONE COMPLETION, ONE INVOICE — whichever path read it.
@@ -377,10 +377,7 @@ fn cohere_truncated_recovery_bills_the_same_bucket_as_the_buffered_path() {
     );
 }
 
-/// The recorded Responses body carries the member (busbar's own Responses WRITER emits it; the
-/// pinned `ResponseUsage` schema requires it), and the reader leaves it inside the input total: a
-/// recorded `cache_write_tokens: 0` reads as no cache-write tier at all, as in 1.5.5 (v1.5.5
-/// `crates/busbar/src/proto/openai_responses/reader.rs:1341`).
+/// A recorded zero cache-write count remains an explicit zero, distinct from an absent member.
 #[test]
 fn responses_recorded_body_carries_the_cache_write_member() {
     let body = oracle_cell_body("llm__responses__responses__request__ok");
@@ -394,13 +391,14 @@ fn responses_recorded_body_carries_the_cache_write_member() {
         .read_response(crate::codec::test_host::HOST, &body)
         .expect("responses parses");
     assert_eq!(
-        ir.usage.cache_creation_input_tokens, None,
-        "the cache-write slice is never split out to its own tier: {ir:?}"
+        ir.usage.cache_creation_input_tokens,
+        Some(0),
+        "the reported zero cache-write count is retained: {ir:?}"
     );
 }
 
 #[test]
-fn responses_cache_write_tokens_bill_inside_the_input() {
+fn responses_cache_write_tokens_split_from_the_input() {
     let recorded = oracle_cell_body("llm__responses__responses__request__ok");
     let reported_input = recorded
         .pointer("/usage/input_tokens")
@@ -421,8 +419,9 @@ fn responses_cache_write_tokens_bill_inside_the_input() {
         .read_response(crate::codec::test_host::HOST, &body)
         .expect("responses parses");
     assert_eq!(
-        ir.usage.cache_creation_input_tokens, None,
-        "cache_write_tokens must not split out to the cache-write tier: {ir:?}"
+        ir.usage.cache_creation_input_tokens,
+        Some(6),
+        "cache_write_tokens must reach the cache-write tier: {ir:?}"
     );
     assert_eq!(
         ir.usage.cache_read_input_tokens,
@@ -431,15 +430,26 @@ fn responses_cache_write_tokens_bill_inside_the_input() {
     );
     assert_eq!(
         ir.usage.input_tokens,
-        reported_input - 2,
-        "input_tokens is the reported total less the cached prefix only: {ir:?}"
+        reported_input - 8,
+        "ordinary input excludes both cache slices: {ir:?}"
+    );
+    let ledgered = ir.usage.to_token_usage();
+    assert_eq!(
+        ledgered.input + ledgered.cache_read.unwrap() + ledgered.cache_creation.unwrap(),
+        reported_input
+    );
+    let exact = ledgered.exact_counts.as_ref().expect("exact usage");
+    assert_eq!(exact["cache_read"], busbar_contract::Count::from(2u64));
+    assert_eq!(exact["cache_write"], busbar_contract::Count::from(6u64));
+    assert_eq!(
+        exact["input"],
+        busbar_contract::Count::from(reported_input - 8)
     );
 }
 
-/// The STREAM terminal (`response.completed`) bills the cache write inside the input the same way
-/// (v1.5.5 `crates/busbar/src/proto/openai_responses/reader.rs:1022`).
+/// The stream terminal preserves both cache tiers and conserves the reported input total.
 #[test]
-fn responses_cache_write_tokens_ride_the_stream_terminal_inside_the_input() {
+fn responses_cache_write_tokens_split_on_the_stream_terminal() {
     let mut state = StreamDecodeState::default();
     let events = ResponsesReader.read_response_events(
         crate::codec::test_host::HOST,
@@ -461,12 +471,19 @@ fn responses_cache_write_tokens_ride_the_stream_terminal_inside_the_input() {
     );
     let usage = terminal_usage(&events);
     assert_eq!(
-        usage.cache_creation_input_tokens, None,
-        "the streamed cache write stays inside the input: {usage:?}"
+        usage.cache_creation_input_tokens,
+        Some(6),
+        "the streamed cache write has its own tier: {usage:?}"
     );
     assert_eq!(
-        usage.input_tokens, 9,
-        "the streamed input is the total less the cached prefix only (11-2): {usage:?}"
+        usage.input_tokens, 3,
+        "the streamed input excludes both cache tiers (11-2-6): {usage:?}"
+    );
+    assert_eq!(usage.cache_read_input_tokens, Some(2));
+    let ledgered = usage.to_token_usage();
+    assert_eq!(
+        ledgered.input + ledgered.cache_read.unwrap() + ledgered.cache_creation.unwrap(),
+        11
     );
 }
 

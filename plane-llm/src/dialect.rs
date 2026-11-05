@@ -91,10 +91,10 @@ pub(crate) const GEMINI_PARAMS: &str = concat!(
 );
 
 /// The `sigv4` style's parameters for the signed dialect (its codec's `EgressScheme::SigV4`): the
-/// service, the content type the signature covers, and the region read from the provider's host by
+/// service and the region read from the provider's host by
 /// the codec's rule (`derive_sigv4_region`), else its default with the codec's warning.
 pub(crate) const SIGNED_PARAMS: &str = concat!(
-    r#"{"service":"bedrock","content_type":"application/json","#,
+    r#"{"service":"bedrock","#,
     r#""region":{"host_label_after":["bedrock-runtime","bedrock-runtime-fips","bedrock","bedrock-fips"],"#,
     r#""default":"us-east-1","#,
     r#""unread":"could not derive AWS region from Bedrock endpoint host; defaulting SigV4 scope to "#,

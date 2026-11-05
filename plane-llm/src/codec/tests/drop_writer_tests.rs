@@ -103,8 +103,8 @@ fn on_the_drop_path(
     );
 }
 
-/// A Gemini caller's reasoning-off ask (`thinkingBudget: 0`), which carries no ask across dialects
-/// (1.5.5), is named by Gemini's own row for it.
+/// A Gemini caller's reasoning-off ask is dropped only when the destination does not declare
+/// support for it, and the drop names Gemini's source field.
 #[test]
 fn a_request_member_drop_is_named_by_the_callers_row() {
     let (audited, cap) = translate(
@@ -118,7 +118,7 @@ fn a_request_member_drop_is_named_by_the_callers_row() {
         &cap,
         "generationConfig.thinkingConfig.thinkingBudget",
         "BUSBAR-7079",
-        "dropping thinkingBudget 0 (reasoning off) across dialects",
+        "omitting reasoning OFF on OpenAI Chat egress",
     );
 }
 
