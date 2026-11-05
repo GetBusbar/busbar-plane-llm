@@ -217,3 +217,68 @@ fn exact_fractional_stream_usage_survives_every_raw_chunk_boundary() {
         );
     }
 }
+
+fn assert_exact_numeric_stream(raw: &str, refused: bool) {
+    let stream = format!("event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"id\":\"m\",\"role\":\"assistant\",\"usage\":{{\"input_tokens\":{raw},\"output_tokens\":0}}}}}}\n\nevent: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n");
+    for same in [true, false] {
+        for at in 0..=stream.len() {
+            let mut tap = if same {
+                StreamTranslate::new_same_proto("anthropic")
+            } else {
+                StreamTranslate::new("openai", "anthropic")
+            }
+            .unwrap();
+            let mut emitted = tap.feed(crate::codec::test_host::HOST, &stream.as_bytes()[..at]);
+            emitted.extend(tap.feed(crate::codec::test_host::HOST, &stream.as_bytes()[at..]));
+            emitted.extend(tap.finish(crate::codec::test_host::HOST));
+            if same {
+                assert_eq!(
+                    emitted,
+                    stream.as_bytes(),
+                    "same-protocol raw bytes at split {at}"
+                );
+            }
+            let usage = tap.usage().expect("reported usage").to_token_usage();
+            let units = crate::exchange::reply::Units::of(Some(&usage), Default::default());
+            assert_eq!(
+                !units.refused_counts.is_empty(),
+                refused,
+                "{raw}, same={same}, split={at}"
+            );
+            assert!(!units.floor);
+            let reported = crate::plane_door::counts(&units);
+            let input = reported.iter().find(|u| u.class == 0);
+            if refused {
+                assert!(input.is_none());
+            } else {
+                assert_eq!(
+                    input.unwrap().count().unwrap(),
+                    busbar_contract::Count::parse(raw).unwrap()
+                );
+            }
+            assert_eq!(
+                reported
+                    .iter()
+                    .find(|u| u.class == 1)
+                    .unwrap()
+                    .count()
+                    .unwrap(),
+                busbar_contract::Count::ZERO
+            );
+        }
+    }
+}
+
+#[test]
+fn exact_numeric_ingress_stream_preserves_microcounts() {
+    for raw in ["9007199254740.000001", "9223372036854.775807"] {
+        assert_exact_numeric_stream(raw, false);
+    }
+}
+
+#[test]
+fn exact_numeric_ingress_stream_refuses_unrepresentable_decimals() {
+    for raw in ["27.0000000000000001", "9223372036854.775808"] {
+        assert_exact_numeric_stream(raw, true);
+    }
+}

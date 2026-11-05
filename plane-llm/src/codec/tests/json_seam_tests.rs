@@ -27,3 +27,20 @@ fn accepts_realistic_depth_and_counts_correctly() {
     let over = format!("{}{}", "[".repeat(129), "]".repeat(129));
     assert!(exceeds_max_depth(over.as_bytes(), MAX_JSON_DEPTH));
 }
+
+#[test]
+fn exact_numeric_ingress_preserves_original_decimal_spelling() {
+    for raw in [
+        "27.0000000000000001",
+        "9007199254740.000001",
+        "9223372036854.775807",
+    ] {
+        let body = format!(r#"{{"count":{raw}}}"#);
+        for value in [
+            parse::<serde_json::Value>(body.as_bytes()).unwrap(),
+            parse_str::<serde_json::Value>(&body).unwrap(),
+        ] {
+            assert_eq!(value["count"].to_string(), raw);
+        }
+    }
+}

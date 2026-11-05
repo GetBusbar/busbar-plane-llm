@@ -2,30 +2,26 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 //
 //! The LLM plane's own JSON seam (#83a O6): the one place this plane names its JSON library. Every
-//! body parse and serialize on the translate path goes through here, so the implementation (sonic-rs,
-//! SIMD on large string-heavy LLM bodies) lives in one place and the in-memory document type is
-//! `serde_json::Value`.
+//! body parse and serialize on the translate path goes through here. Parsing uses serde_json with
+//! arbitrary precision so provider counts reach validation without a binary64 round trip. The
+//! serializer remains sonic-rs and the in-memory document type is `serde_json::Value`.
 
 use busbar_contract::spans::{exceeds_max_depth, MAX_JSON_DEPTH};
 
-/// Parse body bytes into a document (SIMD). Rejects pathologically nested input (see `MAX_JSON_DEPTH`)
+/// Parse body bytes while retaining exact decimal numbers. Rejects deeply nested input (`MAX_JSON_DEPTH`)
 /// before building a `Value`, returning a parse `Err` so callers take their malformed-body (400) path.
 #[inline]
-pub fn parse<'de, T: serde::Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, sonic_rs::Error> {
+pub fn parse<'de, T: serde::Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, serde_json::Error> {
     if exceeds_max_depth(bytes, MAX_JSON_DEPTH) {
-        return sonic_rs::from_slice::<T>(b"");
+        return serde_json::from_slice::<T>(b"");
     }
-    sonic_rs::from_slice(bytes)
+    serde_json::from_slice(bytes)
 }
 
-/// Parse a body `&str` into a document (e.g. an SSE `data:` payload). SIMD-accelerated. Same depth
-/// guard as [`parse`].
+/// Parse an SSE payload or other string with the same exact-number and depth guarantees as [`parse`].
 #[inline]
-pub fn parse_str<'de, T: serde::Deserialize<'de>>(s: &'de str) -> Result<T, sonic_rs::Error> {
-    if exceeds_max_depth(s.as_bytes(), MAX_JSON_DEPTH) {
-        return sonic_rs::from_slice::<T>(b"");
-    }
-    sonic_rs::from_slice(s.as_bytes())
+pub fn parse_str<'de, T: serde::Deserialize<'de>>(s: &'de str) -> Result<T, serde_json::Error> {
+    parse(s.as_bytes())
 }
 
 /// Serialize a document to body bytes. SIMD-accelerated; the request/response hot-path serializer.

@@ -64,3 +64,66 @@ fn a_readable_body_is_no_fault() {
         .extract_usage(crate::codec::test_host::HOST, "bedrock", body)
         .is_ok());
 }
+
+fn assert_exact_numeric_body(raw: &str, leaf: bool, refused: bool) {
+    let body = if leaf {
+        format!(r#"{{"embedding":[0.1],"inputTextTokenCount":{raw}}}"#)
+    } else {
+        format!(
+            r#"{{"output":{{"message":{{"role":"assistant","content":[{{"text":"hi"}}]}}}},"stopReason":"end_turn","usage":{{"inputTokens":{raw},"outputTokens":0}}}}"#
+        )
+    };
+    let usage = cell(if leaf {
+        OpVerb::EMBEDDINGS
+    } else {
+        OpVerb::CHAT
+    })
+    .extract_usage(crate::codec::test_host::HOST, "bedrock", body.as_bytes())
+    .unwrap()
+    .unwrap();
+    let units = crate::exchange::reply::Units::of(Some(&usage), Default::default());
+    assert_eq!(
+        !units.refused_counts.is_empty(),
+        refused,
+        "{raw}, leaf={leaf}"
+    );
+    assert!(!units.floor);
+    let reported = crate::plane_door::counts(&units);
+    let input = reported.iter().find(|u| u.class == 0);
+    if refused {
+        assert!(input.is_none());
+    } else {
+        assert_eq!(
+            input.unwrap().count().unwrap(),
+            busbar_contract::Count::parse(raw).unwrap()
+        );
+    }
+}
+
+#[test]
+fn exact_numeric_ingress_whole_preserves_microcounts() {
+    for raw in ["9007199254740.000001", "9223372036854.775807"] {
+        assert_exact_numeric_body(raw, false, false);
+    }
+}
+
+#[test]
+fn exact_numeric_ingress_whole_refuses_unrepresentable_decimals() {
+    for raw in ["27.0000000000000001", "9223372036854.775808"] {
+        assert_exact_numeric_body(raw, false, true);
+    }
+}
+
+#[test]
+fn exact_numeric_ingress_leaf_preserves_microcounts() {
+    for raw in ["9007199254740.000001", "9223372036854.775807"] {
+        assert_exact_numeric_body(raw, true, false);
+    }
+}
+
+#[test]
+fn exact_numeric_ingress_leaf_refuses_unrepresentable_decimals() {
+    for raw in ["27.0000000000000001", "9223372036854.775808"] {
+        assert_exact_numeric_body(raw, true, true);
+    }
+}

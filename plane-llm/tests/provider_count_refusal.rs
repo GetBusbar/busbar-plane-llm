@@ -145,3 +145,61 @@ fn oversized_late_invalid_report_refuses_before_the_body_can_complete() {
         });
     }
 }
+
+#[test]
+fn exact_numeric_ingress_whole_reply_preserves_microcounts_and_bytes() {
+    for raw in ["9007199254740.000001", "9223372036854.775807"] {
+        let body = response(raw, 512);
+        for cap in [128, 4096] {
+            with_reply(cap, |reply, ctx| {
+                let mut received = Vec::new();
+                for bytes in body.chunks(7) {
+                    let piece = reply.feed(&Host, ctx, bytes, false, At::default());
+                    assert!(piece.units.refused_counts.is_empty());
+                    received.extend_from_slice(&piece.bytes);
+                }
+                let end = reply.feed(&Host, ctx, &[], true, At::default());
+                received.extend_from_slice(&end.bytes);
+                assert_eq!(received, body);
+                assert!(end.done);
+                assert!(!end.units.floor);
+                assert!(end.units.refused_counts.is_empty());
+                assert_eq!(
+                    end.units.exact_counts.as_ref().unwrap()["input"],
+                    busbar_contract::Count::parse(raw).unwrap()
+                );
+            });
+        }
+    }
+}
+
+#[test]
+fn exact_numeric_ingress_whole_reply_refuses_long_decimal_before_eof() {
+    for raw in ["27.0000000000000001", "9223372036854.775808"] {
+        let body = response(raw, 512);
+        for cap in [128, 4096] {
+            with_reply(cap, |reply, ctx| {
+                let mut refused = false;
+                for bytes in body.chunks(7) {
+                    let piece = reply.feed(&Host, ctx, bytes, false, At::default());
+                    if !piece.units.refused_counts.is_empty() {
+                        assert!(!piece.units.floor);
+                        assert!(!piece
+                            .units
+                            .exact_counts
+                            .as_ref()
+                            .unwrap()
+                            .contains_key("input"));
+                        assert!(!piece.done);
+                        refused = true;
+                        break;
+                    }
+                    if cap == 4096 {
+                        assert!(piece.head.is_none() && piece.bytes.is_empty());
+                    }
+                }
+                assert!(refused, "{raw}, cap={cap}");
+            });
+        }
+    }
+}
