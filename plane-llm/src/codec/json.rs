@@ -4,7 +4,7 @@
 //! The LLM plane's own JSON seam (#83a O6): the one place this plane names its JSON library. Every
 //! body parse and serialize on the translate path goes through here. Parsing uses serde_json with
 //! arbitrary precision so provider counts reach validation without a binary64 round trip. The
-//! serializer remains sonic-rs and the in-memory document type is `serde_json::Value`.
+//! serializer uses serde_json as well, preserving its arbitrary-precision number representation.
 
 use busbar_contract::spans::{exceeds_max_depth, MAX_JSON_DEPTH};
 
@@ -24,17 +24,16 @@ pub fn parse_str<'de, T: serde::Deserialize<'de>>(s: &'de str) -> Result<T, serd
     parse(s.as_bytes())
 }
 
-/// Serialize a document to body bytes. SIMD-accelerated; the request/response hot-path serializer.
+/// Serialize a document to body bytes, preserving arbitrary-precision JSON numbers.
 #[inline]
-pub fn to_vec<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, sonic_rs::Error> {
-    sonic_rs::to_vec(value)
+pub fn to_vec<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, serde_json::Error> {
+    serde_json::to_vec(value)
 }
 
-/// Serialize a document to a `String` (error envelopes, SSE-event data). sonic-rs always emits valid
-/// UTF-8; its string serializer reuses the output buffer without a second full-body copy.
+/// Serialize a document to a `String` (error envelopes, SSE-event data) with exact numbers.
 #[inline]
-pub fn to_string<T: serde::Serialize>(value: &T) -> Result<String, sonic_rs::Error> {
-    sonic_rs::to_string(value)
+pub fn to_string<T: serde::Serialize>(value: &T) -> Result<String, serde_json::Error> {
+    serde_json::to_string(value)
 }
 
 /// Sanitized one-line parse-error description for operator logs, never the raw library `Display`,

@@ -44,3 +44,19 @@ fn exact_numeric_ingress_preserves_original_decimal_spelling() {
         }
     }
 }
+
+#[test]
+fn exact_numbers_serialize_as_json_numbers() {
+    for raw in [
+        "128",
+        "0.5",
+        "27.0000000000000001",
+        "9007199254740993",
+        "1e+400",
+    ] {
+        let body = format!(r#"{{"count":{raw}}}"#);
+        let value = parse::<serde_json::Value>(body.as_bytes()).unwrap();
+        assert_eq!(to_vec(&value).unwrap(), body.as_bytes());
+        assert_eq!(to_string(&value).unwrap(), body);
+    }
+}
