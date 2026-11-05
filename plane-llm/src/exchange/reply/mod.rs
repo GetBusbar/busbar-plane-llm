@@ -91,6 +91,10 @@ pub enum Fault {
 /// The far end's cumulative reported units, by meter class.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Units {
+    /// Explicit usage refusals carried to the live door.
+    pub refused_counts: Vec<String>,
+    /// Authoritative exact billed counts; None preserves legacy whole-unit producers.
+    pub exact_counts: Option<BTreeMap<String, busbar_contract::Count>>,
     /// Uncached input tokens.
     pub tokens_in: u64,
     /// Output tokens.
@@ -112,11 +116,26 @@ impl Units {
     /// billed searches) beside the open classes the answer's billing named.
     #[must_use]
     pub fn of(usage: Option<&TokenUsage>, mut open: BTreeMap<String, u64>) -> Self {
-        let u = usage.cloned().unwrap_or_default();
+        let mut u = usage.cloned().unwrap_or_default();
+        if let Some(exact) = &mut u.exact_counts {
+            // These are separately derived operation counts, not the legacy usage projections.
+            for (class, amount) in &open {
+                let count = busbar_contract::Count::from_integer(i128::from(*amount))
+                    .expect("u64 count fits Count");
+                if count.fits_a_64_bit_column() {
+                    exact.entry(class.clone()).or_insert(count);
+                } else {
+                    u.refused_counts
+                        .push(format!("count {class} exceeds the store range"));
+                }
+            }
+        }
         for (class, n) in u.open_units.into_iter().filter(|(_, n)| *n != 0) {
             open.entry(class).or_insert(n);
         }
         Units {
+            exact_counts: u.exact_counts,
+            refused_counts: u.refused_counts,
             tokens_in: u.input,
             tokens_out: u.output,
             cache_read: u.cache_read.unwrap_or(0),
@@ -329,7 +348,7 @@ impl Reply {
         if ingress == egress {
             wire::relay_far_head(ingress, &mut fields, head);
         }
-        let relay = relay::Relay::new_for_operation(
+        let mut relay = relay::Relay::new_for_operation(
             relay::RelayCtx {
                 ingress,
                 egress,
@@ -343,6 +362,7 @@ impl Reply {
             },
             ctx.arrived.operation,
         );
+        relay.defer_nonstream();
         Reply {
             ended_partial: false,
             state: State::Relay {
@@ -433,7 +453,11 @@ impl Reply {
                     relay::Fed::Bytes(b) => b,
                     relay::Fed::Nothing => Cow::Borrowed(&[]),
                 };
-                let head = head.take();
+                let head = if !relay.defers_head() || last {
+                    head.take()
+                } else {
+                    None
+                };
                 if !last {
                     if let Some(u) = relay.streamed_usage() {
                         *units = Units::of(Some(&u), BTreeMap::new());

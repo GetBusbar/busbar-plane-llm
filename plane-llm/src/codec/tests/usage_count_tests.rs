@@ -40,8 +40,9 @@ fn negatives_and_non_numbers_are_refused() {
 }
 
 #[test]
-fn beyond_2_53_is_refused_because_the_fractional_test_goes_blind() {
-    assert_eq!(read_count_u64(&json!(9_007_199_254_740_992.0_f64)), None);
+fn exact_decimal_integer_parsing_has_no_binary_float_precision_ceiling() {
+    let raw = serde_json::from_str("9007199254740992.0").unwrap();
+    assert_eq!(read_count_u64(&raw), Some(9_007_199_254_740_992));
     assert_eq!(read_count_u64(&json!(1.0e30_f64)), None);
 
     assert_eq!(

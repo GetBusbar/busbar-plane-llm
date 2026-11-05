@@ -1245,6 +1245,19 @@ fn backfill_from_start_usage(
     usage: &mut crate::codec::ir::IrUsage,
     start: &crate::codec::ir::IrUsage,
 ) {
+    if let Some(start_exact) = &start.detail.exact_counts {
+        let exact = usage
+            .detail
+            .exact_counts
+            .get_or_insert_with(Default::default);
+        for (class, count) in start_exact {
+            exact.entry(class.clone()).or_insert(*count);
+        }
+    }
+    usage
+        .detail
+        .refused_counts
+        .extend(start.detail.refused_counts.iter().cloned());
     if usage.input_tokens == 0 {
         usage.input_tokens = start.input_tokens;
     }
@@ -1315,7 +1328,20 @@ fn merge_trailing_usage_detail(
         traffic_type,
         create_time,
         by_modality,
+        exact_counts,
+        refused_counts,
+        exact_tool_use_prompt_tokens,
     } = trailing;
+
+    if exact_tool_use_prompt_tokens.is_some() {
+        acc.exact_tool_use_prompt_tokens = *exact_tool_use_prompt_tokens;
+    }
+    if let Some(exact) = exact_counts {
+        acc.exact_counts
+            .get_or_insert_with(Default::default)
+            .extend(exact.clone());
+    }
+    acc.refused_counts.extend(refused_counts.iter().cloned());
 
     if reasoning_tokens.is_some() {
         acc.reasoning_tokens = *reasoning_tokens;

@@ -178,7 +178,10 @@ impl ProtocolReader for BedrockReader {
         {
             let mut holder = serde_json::Map::new();
             holder.insert(TRACE.to_string(), trace);
-            usage.detail.open_units = guardrail_units(&serde_json::Value::Object(holder)).ok()?;
+            apply_guardrail_usage(
+                &mut usage,
+                guardrail_units(&serde_json::Value::Object(holder)).ok()?,
+            );
         }
         Some(usage.to_token_usage())
     }
@@ -951,8 +954,8 @@ impl ProtocolReader for BedrockReader {
                     }
                 };
 
-                usage.detail.open_units = match guardrail_units(data) {
-                    Ok(units) => units,
+                match guardrail_units(data) {
+                    Ok(units) => apply_guardrail_usage(&mut usage, units),
                     Err(refusal) => {
                         out.push(IrStreamEvent::Error(refusal));
                         return out;
@@ -1129,7 +1132,7 @@ impl ProtocolReader for BedrockReader {
             usage.detail.service_tier = Some(tier);
         }
 
-        usage.detail.open_units = guardrail_units(body)?;
+        apply_guardrail_usage(&mut usage, guardrail_units(body)?);
 
         Ok(crate::codec::ir::IrResponse {
             logprobs: Vec::new(),

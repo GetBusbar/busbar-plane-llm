@@ -969,6 +969,46 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     }
     one.end(&d);
 
+    // Missing cache measurements stay absent (the main far_end case). Explicit
+    // reported zeros are measurements and must survive the same actual door.
+    {
+        let zero = &k["reported_zero"];
+        let zero_unit = num(&zero["unit"], "reported_zero.unit");
+        let zero_body = text(&zero["answer"], "reported_zero.answer");
+        let mut zero_arrival = Arrival::of(&k["claimed"], "claimed");
+        zero_arrival.unit = zero_unit;
+        let before = first();
+        let arrived = arrive(&p, &zero_arrival, &request);
+        assert_eq!(first() - before, 1, "reported zero arrival crossings");
+        assert!(arrived.starts_with("Ready "), "reported zero: {arrived}");
+        answers.push(("reported zero arrive".into(), arrived));
+        let zero_ticket = Unit::mint(&d, 1024);
+        for (label, given) in [
+            ("reported zero attempt", attempt(zero_unit, claim)),
+            (
+                "reported zero body",
+                Given {
+                    from: FROM_CALLER,
+                    flags: PIECE_LAST,
+                    bytes: &request,
+                    attempt_no: 0,
+                    ..attempt(zero_unit, claim)
+                },
+            ),
+            (
+                "reported zero answer",
+                far_end(zero_unit, claim, whole, &zero_body, answer),
+            ),
+        ] {
+            let before = first();
+            let line = on_piece(&p, &d, &zero_ticket, given, room, c).line(Piece::line);
+            assert_eq!(first() - before, 1, "{label}: exact first crossings");
+            assert!(line.starts_with("Ready "), "{label}: {line}");
+            answers.push((label.into(), line));
+        }
+        zero_ticket.end(&d);
+    }
+
     let (narrow_unit, cap, more) = narrow;
     let narrow = Unit::mint(&d, cap);
 
@@ -2559,6 +2599,17 @@ fn contract(fold: &[(String, String)], k: &Value) {
             "the far end's whole answer, relayed with its count ({units}): {whole}"
         );
 
+        let zero = &k["reported_zero"];
+        let zero_body = str_of(&zero["answer"], "reported_zero.answer");
+        let zero_units = reported(&zero["units"], "reported_zero.units");
+        let zero_answer = at("reported zero answer");
+        assert!(
+            zero_answer.contains(&format!(
+                " emitted={zero_body} more=0 to_far_end=false done=true status=200 "
+            )) && zero_answer.ends_with(&zero_units),
+            "explicit reported cache zeros survive exactly ({zero_units}): {zero_answer}"
+        );
+
         let more = num(&k["narrow"]["more"], "narrow.more");
         let mut pieces = vec![at("narrow far_end").to_string()];
         pieces.extend((0..more).map(|i| at(&format!("narrow more #{i}")).to_string()));
@@ -2772,7 +2823,7 @@ fn sessions_contract(fold: &[(String, String)]) {
         );
         assert!(
             line.ends_with(&reported(
-                &serde_json::json!([[0, 10], [1, 4], [2, 0], [3, 0], [7, 6], [19, 1]]),
+                &serde_json::json!([[0, 10], [1, 4], [7, 6], [19, 1]]),
                 "units"
             )),
             "openai stated total answer: {line}"
@@ -2835,7 +2886,7 @@ fn sessions_contract(fold: &[(String, String)]) {
         );
         assert!(
             line.ends_with(&reported(
-                &serde_json::json!([[0, 5], [1, 2], [2, 0], [3, 0], [5, 3], [4, 1], [19, 1]]),
+                &serde_json::json!([[0, 5], [1, 2], [4, 1], [5, 3], [19, 1]]),
                 "units"
             )),
             "cohere billed units answer: {line}"
@@ -2898,16 +2949,7 @@ fn sessions_contract(fold: &[(String, String)]) {
         );
         assert!(
             line.ends_with(&reported(
-                &serde_json::json!([
-                    [0, 7],
-                    [1, 3],
-                    [2, 0],
-                    [3, 0],
-                    [10, 1],
-                    [11, 2],
-                    [12, 3],
-                    [19, 1]
-                ]),
+                &serde_json::json!([[0, 7], [1, 3], [10, 1], [11, 2], [12, 3], [19, 1]]),
                 "units"
             )),
             "bedrock guardrail a answer: {line}"
@@ -2970,16 +3012,7 @@ fn sessions_contract(fold: &[(String, String)]) {
         );
         assert!(
             line.ends_with(&reported(
-                &serde_json::json!([
-                    [0, 7],
-                    [1, 3],
-                    [2, 0],
-                    [3, 0],
-                    [13, 4],
-                    [14, 5],
-                    [15, 6],
-                    [19, 1]
-                ]),
+                &serde_json::json!([[0, 7], [1, 3], [13, 4], [14, 5], [15, 6], [19, 1]]),
                 "units"
             )),
             "bedrock guardrail b answer: {line}"
@@ -3042,16 +3075,7 @@ fn sessions_contract(fold: &[(String, String)]) {
         );
         assert!(
             line.ends_with(&reported(
-                &serde_json::json!([
-                    [0, 7],
-                    [1, 3],
-                    [2, 0],
-                    [3, 0],
-                    [16, 7],
-                    [17, 8],
-                    [18, 9],
-                    [19, 1]
-                ]),
+                &serde_json::json!([[0, 7], [1, 3], [16, 7], [17, 8], [18, 9], [19, 1]]),
                 "units"
             )),
             "bedrock guardrail c answer: {line}"

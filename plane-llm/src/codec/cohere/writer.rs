@@ -713,8 +713,8 @@ impl ProtocolWriter for CohereWriter {
 
                 let mut usage_obj = serde_json::json!({
                     (keys::TOKENS): {
-                        (keys::INPUT_TOKENS): cohere_prompt_tokens(usage),
-                        (keys::OUTPUT_TOKENS): usage.output_tokens
+                        (keys::INPUT_TOKENS): usage.wire_total(&["input", "cache_read", "cache_write"], cohere_prompt_tokens(usage)),
+                        (keys::OUTPUT_TOKENS): usage.wire_count("output", usage.output_tokens)
                     }
                 });
 
@@ -737,6 +737,13 @@ impl ProtocolWriter for CohereWriter {
                 }
                 if let Some(v) = usage.detail.billed_classifications {
                     billed_units.insert(CLASSIFICATIONS.to_string(), serde_json::json!(v));
+                }
+                if let Some(exact) = &usage.detail.exact_counts {
+                    for class in ["search_units", "classifications"] {
+                        if let Some(n) = exact.get(class) {
+                            billed_units.insert(class.to_owned(), serde_json::json!(n));
+                        }
+                    }
                 }
                 if !billed_units.is_empty() {
                     if let Some(uo) = usage_obj.as_object_mut() {
@@ -973,11 +980,14 @@ impl ProtocolWriter for CohereWriter {
 
         tokens_map.insert(
             keys::INPUT_TOKENS.to_string(),
-            serde_json::json!(cohere_prompt_tokens(&resp.usage)),
+            resp.usage.wire_total(
+                &["input", "cache_read", "cache_write"],
+                cohere_prompt_tokens(&resp.usage),
+            ),
         );
         tokens_map.insert(
             keys::OUTPUT_TOKENS.to_string(),
-            serde_json::json!(resp.usage.output_tokens),
+            resp.usage.wire_count("output", resp.usage.output_tokens),
         );
 
         let id = resp
@@ -1043,6 +1053,13 @@ impl ProtocolWriter for CohereWriter {
         }
         if let Some(v) = resp.usage.detail.billed_classifications {
             billed_units.insert(CLASSIFICATIONS.to_string(), serde_json::json!(v));
+        }
+        if let Some(exact) = &resp.usage.detail.exact_counts {
+            for class in ["search_units", "classifications"] {
+                if let Some(n) = exact.get(class) {
+                    billed_units.insert(class.to_owned(), serde_json::json!(n));
+                }
+            }
         }
         if !billed_units.is_empty() {
             usage_map.insert(

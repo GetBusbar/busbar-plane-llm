@@ -310,13 +310,12 @@ pub fn write_transcription_response(r: &TranscriptionResp) -> WireBody {
 
     match &r.usage {
         Some(Billing::Duration { seconds }) => {
-            let seconds = crate::codec::framework::duration_seconds_to_wire(*seconds);
             body[keys::USAGE] =
                 json!({ (keys::TYPE): super::W_DURATION, (super::SECONDS): seconds });
         }
         Some(Billing::Tokens(t)) => {
-            body[keys::USAGE] = json!({ (keys::TYPE): "tokens", (keys::INPUT_TOKENS): t.input,
-                (keys::OUTPUT_TOKENS): t.output, (keys::TOTAL_TOKENS): t.input.saturating_add(t.output) });
+            body[keys::USAGE] = json!({ (keys::TYPE): "tokens", (keys::INPUT_TOKENS): crate::codec::usage_count::wire_token_count(t, "input", t.input),
+                (keys::OUTPUT_TOKENS): crate::codec::usage_count::wire_token_count(t, "output", t.output), (keys::TOTAL_TOKENS): crate::codec::usage_count::wire_token_total(t) });
         }
         _ => {}
     }
@@ -340,27 +339,15 @@ fn parse_transcription_usage(wire: &[u8], u: &Value) -> Result<Option<Billing>, 
             Ok(Some(Billing::Duration { seconds }))
         }
 
-        _ => match crate::codec::usage_count::billed_count_opt(Some(u), keys::INPUT_TOKENS) {
-            Ok(None) => Ok(None),
-            Err(unreadable) => {
-                crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
-                Ok(None)
-            }
-            Ok(Some(input)) => Ok(Some(Billing::Tokens(
-                busbar_contract::billing::TokenUsage {
-                    input,
-                    output: crate::codec::usage_count::billed_count(u, keys::OUTPUT_TOKENS)
-                        .unwrap_or_else(|unreadable| {
-                            crate::codec::usage_count::refused_count(
-                                super::VENDOR_NAME,
-                                &unreadable,
-                            );
-                            0
-                        }),
-                    ..Default::default()
-                },
-            ))),
-        },
+        _ => Ok(crate::codec::usage_count::token_usage(
+            super::VENDOR_NAME,
+            Some(u),
+            &[
+                (keys::INPUT_TOKENS, busbar_contract::records::UNIT_INPUT),
+                (keys::OUTPUT_TOKENS, busbar_contract::records::UNIT_OUTPUT),
+            ],
+        )
+        .map(Billing::Tokens)),
     }
 }
 
@@ -501,7 +488,7 @@ pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
         body[keys::MODEL] = json!(m);
     }
     if let Some(u) = &r.usage {
-        body[keys::USAGE] = json!({ (super::PROMPT_TOKENS): u.input, (keys::TOTAL_TOKENS): u.input.saturating_add(u.output) });
+        body[keys::USAGE] = json!({ (super::PROMPT_TOKENS): crate::codec::usage_count::wire_token_count(u, "input", u.input), (keys::TOTAL_TOKENS): crate::codec::usage_count::wire_token_total(u) });
     }
     WireBody::json(SlabBytes::from(
         serde_json::to_vec(&body).unwrap_or_default(),
@@ -1059,16 +1046,11 @@ pub fn read_embeddings_response(
 }
 
 fn read_embeddings_usage(v: &Value) -> Option<busbar_contract::billing::TokenUsage> {
-    v.get(keys::USAGE)
-        .map(|u| busbar_contract::billing::TokenUsage {
-            input: crate::codec::usage_count::billed_count(u, super::PROMPT_TOKENS).unwrap_or_else(
-                |unreadable| {
-                    crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
-                    0
-                },
-            ),
-            ..Default::default()
-        })
+    crate::codec::usage_count::token_usage(
+        super::VENDOR_NAME,
+        v.get(keys::USAGE),
+        &[(super::PROMPT_TOKENS, busbar_contract::records::UNIT_INPUT)],
+    )
 }
 
 /// Wire -> concrete `ImageReq` parse, extracted from the `OperationHandler::read_request`

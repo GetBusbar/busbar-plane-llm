@@ -1528,7 +1528,7 @@ fn read_bedrock_usage(
                 VENDOR_NAME,
                 BEDROCK_USAGE_IDENTITY,
                 usage_obj.and_then(|u| u.get(TOTAL_TOKENS_CAMEL)),
-                &ir,
+                &mut ir,
             )
         })
         .flatten();
@@ -1554,8 +1554,11 @@ const GUARDRAIL_INVOCATION_METRICS: &str = "invocationMetrics";
 /// Read every guardrail policy-unit count a turn reports, by the open class each is ledgered under.
 fn guardrail_units(
     holder: &serde_json::Value,
-) -> Result<std::collections::BTreeMap<String, u64>, IrError> {
-    let mut units = std::collections::BTreeMap::new();
+) -> Result<busbar_contract::billing::TokenUsage, IrError> {
+    let mut units = busbar_contract::billing::TokenUsage {
+        exact_counts: Some(Default::default()),
+        ..Default::default()
+    };
     let Some(guardrail) = holder.get(TRACE).and_then(|t| t.get(GUARDRAIL)) else {
         return Ok(units);
     };
@@ -1580,19 +1583,53 @@ fn guardrail_units(
         .filter_map(usage_of);
     for usage in input.chain(output) {
         for &(count, class) in crate::codec::ir::open_class::GUARDRAIL_COUNT_CLASSES {
-            match crate::codec::usage_count::billed_count(&usage, count) {
-                Ok(n) => crate::codec::ir::open_class::add(&mut units, class, n),
-                Err(unreadable) => tracing::warn!(
-                    protocol = VENDOR_NAME,
-                    field = unreadable.field,
-                    spelling = %unreadable.spelling,
-                    "guardrail usage count is present but unreadable: REFUSED, it bills nothing \
-                     and is never read as zero (#42, #81)"
-                ),
+            match crate::codec::usage_count::exact_count_opt(Some(&usage), count) {
+                Ok(Some(n)) => {
+                    let exact = units
+                        .exact_counts
+                        .as_mut()
+                        .expect("exact guardrail carrier");
+                    let previous = exact
+                        .get(class)
+                        .copied()
+                        .unwrap_or(busbar_contract::Count::ZERO);
+                    match previous.checked_add(n) {
+                        Ok(sum) if sum.fits_a_64_bit_column() => {
+                            exact.insert(class.to_owned(), sum);
+                        }
+                        _ => units
+                            .refused_counts
+                            .push(format!("guardrail count {class} exceeds the store range")),
+                    }
+                    if let Some(whole) = usage
+                        .get(count)
+                        .and_then(crate::codec::usage_count::read_count_u64)
+                    {
+                        crate::codec::ir::open_class::add(&mut units.open_units, class, whole);
+                    }
+                }
+                Ok(None) => {}
+                Err(unreadable) => {
+                    crate::codec::usage_count::refused_count(VENDOR_NAME, &unreadable);
+                    units.refused_counts.push(unreadable.to_string());
+                }
             }
         }
     }
     Ok(units)
+}
+
+fn apply_guardrail_usage(
+    usage: &mut crate::codec::ir::IrUsage,
+    units: busbar_contract::billing::TokenUsage,
+) {
+    usage.detail.open_units = units.open_units;
+    usage
+        .detail
+        .exact_counts
+        .get_or_insert_with(Default::default)
+        .extend(units.exact_counts.unwrap_or_default());
+    usage.detail.refused_counts.extend(units.refused_counts);
 }
 
 /// The tier that served a Converse answer (`serviceTier.type`), as `IrUsageDetail::service_tier`.
@@ -1643,12 +1680,28 @@ fn write_cache_usage(
     usage: &crate::codec::ir::IrUsage,
 ) {
     if let Some(ccit) = usage.cache_creation_input_tokens {
-        usage_obj.insert(CACHE_WRITE_INPUT_TOKENS.to_string(), ccit.into());
+        usage_obj.insert(
+            CACHE_WRITE_INPUT_TOKENS.to_string(),
+            usage.wire_count("cache_write", ccit),
+        );
     }
     if let Some(crit) = usage.cache_read_input_tokens {
-        usage_obj.insert(CACHE_READ_INPUT_TOKENS.to_string(), crit.into());
+        usage_obj.insert(
+            CACHE_READ_INPUT_TOKENS.to_string(),
+            usage.wire_count("cache_read", crit),
+        );
     }
 
+    if let Some(exact) = &usage.detail.exact_counts {
+        for (class, field) in [
+            ("cache_read", CACHE_READ_INPUT_TOKENS),
+            ("cache_write", CACHE_WRITE_INPUT_TOKENS),
+        ] {
+            if let Some(count) = exact.get(class) {
+                usage_obj.insert(field.to_owned(), serde_json::json!(count));
+            }
+        }
+    }
     write_cache_details(usage_obj, usage);
 }
 
@@ -1720,7 +1773,13 @@ impl super::proto_codec::StreamFraming for BedrockStreamFraming {
             stop_detail: None,
         }];
 
-        let has_usage = usage.input_tokens != 0
+        let has_usage = usage
+            .detail
+            .exact_counts
+            .as_ref()
+            .is_some_and(|exact| !exact.is_empty())
+            || !usage.detail.refused_counts.is_empty()
+            || usage.input_tokens != 0
             || usage.output_tokens != 0
             || usage.cache_read_input_tokens.unwrap_or(0) != 0
             || usage.cache_creation_input_tokens.unwrap_or(0) != 0;

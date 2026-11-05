@@ -387,16 +387,16 @@ fn build_responses_usage(usage: &crate::codec::ir::IrUsage) -> serde_json::Value
         .saturating_add(cache_write);
     let total = input_total.saturating_add(usage.output_tokens);
     serde_json::json!({
-        (keys::INPUT_TOKENS): input_total,
+        (keys::INPUT_TOKENS): usage.wire_total(&["input", "cache_read", "cache_write"], input_total),
         (INPUT_TOKENS_DETAILS): {
-            (keys::CACHED_TOKENS): cache_read,
-            (keys::CACHE_WRITE_TOKENS): cache_write,
+            (keys::CACHED_TOKENS): usage.wire_count("cache_read", cache_read),
+            (keys::CACHE_WRITE_TOKENS): usage.wire_count("cache_write", cache_write),
         },
-        (keys::OUTPUT_TOKENS): usage.output_tokens,
+        (keys::OUTPUT_TOKENS): usage.wire_count("output", usage.output_tokens),
         (keys::OUTPUT_TOKENS_DETAILS): {
             (keys::REASONING_TOKENS): usage.detail.reasoning_tokens.unwrap_or(0),
         },
-        "total_tokens": total,
+        "total_tokens": usage.wire_total(&["input", "output", "cache_read", "cache_write"], total),
     })
 }
 
@@ -1233,7 +1233,7 @@ fn read_responses_usage(
                 COUNT_LABEL,
                 RESPONSES_USAGE_IDENTITY,
                 usage.and_then(|u| u.get(keys::TOTAL_TOKENS)),
-                &ir,
+                &mut ir,
             )
         })
         .flatten();

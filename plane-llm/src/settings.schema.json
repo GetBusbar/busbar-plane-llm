@@ -1,0 +1,722 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "llm plane lifecycle settings",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "providers": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/provider"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "models": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/model"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limits": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "default_max_tokens": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4294967295,
+                      "x-busbar-integer-token": "unsigned"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": 4096
+                },
+                "reasoning_effort_budgets": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "minimal": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 4294967295,
+                              "x-busbar-integer-token": "unsigned"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": 1024
+                        },
+                        "low": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 4294967295,
+                              "x-busbar-integer-token": "unsigned"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": 4096
+                        },
+                        "medium": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 4294967295,
+                              "x-busbar-integer-token": "unsigned"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": 8192
+                        },
+                        "high": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 4294967295,
+                              "x-busbar-integer-token": "unsigned"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": 16384
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "request_body_max_bytes": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 18446744073709551615,
+                      "x-busbar-integer-token": "unsigned"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": 33554432
+                }
+              },
+              "additionalProperties": true
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pools": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "members": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "model": {
+                                      "type": "string"
+                                    },
+                                    "reasoning": {
+                                      "description": "Boolean overrides the model; any other value is ignored."
+                                    },
+                                    "context_max": {
+                                      "description": "Unsigned machine-sized integer overrides context; any other value is ignored."
+                                    }
+                                  },
+                                  "additionalProperties": true,
+                                  "required": [
+                                    "model"
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "type": "array"
+                            }
+                          }
+                        ]
+                      },
+                      "affinity": {
+                        "description": "A string affinity.header_name sets affinity; other shapes are ignored. Credential header names are refused.",
+                        "default": {
+                          "header_name": "x-session-id"
+                        }
+                      }
+                    },
+                    "additionalProperties": true
+                  },
+                  {
+                    "not": {
+                      "type": "object"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "not": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    {
+      "not": {
+        "type": "object"
+      },
+      "description": "The legacy reader treats non-object JSON as absent sections."
+    }
+  ],
+  "$defs": {
+    "provider": {
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "protocol": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "anthropic"
+            },
+            "path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "path_base": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error_map": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
+            },
+            "auth": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "max_output_key": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "max_tokens",
+                    "max_completion_tokens"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "anthropic_adaptive_thinking": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "native_structured_output": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "model_capabilities": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "models": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "default": []
+                  },
+                  "max_output_key": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "max_tokens",
+                          "max_completion_tokens"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "anthropic_adaptive_thinking": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "native_structured_output": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "reasoning_none": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "thinking_always_on": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": true
+              },
+              "default": []
+            },
+            "api_key": {
+              "description": "Host-owned provider setting; this plane passes it through without interpreting its value.",
+              "x-busbar-secret": true,
+              "writeOnly": true
+            },
+            "base_url": {
+              "description": "Host-owned provider setting; this plane passes it through without interpreting its value."
+            },
+            "token_url": {
+              "description": "Host-owned provider setting; this plane passes it through without interpreting its value."
+            },
+            "scope": {
+              "description": "Host-owned provider setting; this plane passes it through without interpreting its value."
+            },
+            "subject": {
+              "description": "Host-owned provider setting; this plane passes it through without interpreting its value."
+            },
+            "allow_metadata_hosts": {
+              "description": "Host-owned provider setting; this plane passes it through without interpreting its value."
+            },
+            "health": {
+              "description": "Host-owned provider setting; this plane passes it through without interpreting its value."
+            }
+          }
+        },
+        {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "protocol": {
+                  "enum": [
+                    "anthropic",
+                    null
+                  ]
+                }
+              },
+              "patternProperties": {
+                "^[aA][nN][tT][hH][rR][oO][pP][iI][cC]\\-[vV][eE][rR][sS][iI][oO][nN]$": {
+                  "enum": [
+                    "2023-06-01",
+                    "2023-01-01"
+                  ]
+                },
+                "^[aA][nN][tT][hH][rR][oO][pP][iI][cC]\\-[bB][eE][tT][aA]$": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^\\s*[A-Za-z0-9_.-]+\\s*(?:,\\s*[A-Za-z0-9_.-]+\\s*)*$"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_.-]+$"
+                      },
+                      "minItems": 1
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "properties": {
+                "protocol": {
+                  "enum": [
+                    "openai"
+                  ]
+                },
+                "api-version": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.-]+$"
+                }
+              },
+              "required": [
+                "protocol"
+              ],
+              "patternProperties": {
+                "^[oO][pP][eE][nN][aA][iI]\\-[oO][rR][gG][aA][nN][iI][zZ][aA][tT][iI][oO][nN]$": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.-]+$"
+                },
+                "^[oO][pP][eE][nN][aA][iI]\\-[pP][rR][oO][jJ][eE][cC][tT]$": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.-]+$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "properties": {
+                "protocol": {
+                  "enum": [
+                    "gemini"
+                  ]
+                }
+              },
+              "required": [
+                "protocol"
+              ],
+              "patternProperties": {
+                "^[xX]\\-[gG][oO][oO][gG]\\-[uU][sS][eE][rR]\\-[pP][rR][oO][jJ][eE][cC][tT]$": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.-]+$"
+                },
+                "^[xX]\\-[gG][oO][oO][gG]\\-[qQ][uU][oO][tT][aA]\\-[uU][sS][eE][rR]$": {
+                  "type": "string",
+                  "pattern": "^[!-~](?:[ -~]*[!-~])?$"
+                },
+                "^[xX]\\-[gG][oO][oO][gG]\\-[rR][eE][qQ][uU][eE][sS][tT]\\-[rR][eE][aA][sS][oO][nN]$": {
+                  "type": "string",
+                  "pattern": "^[!-~](?:[ -~]*[!-~])?$"
+                },
+                "^[xX]\\-[sS][eE][rR][vV][eE][rR]\\-[tT][iI][mM][eE][oO][uU][tT]$": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 18446744073709551615,
+                      "x-busbar-integer-token": "unsigned"
+                    },
+                    {
+                      "type": "integer",
+                      "const": 0,
+                      "x-busbar-integer-token": "signed"
+                    }
+                  ],
+                  "description": "The provider section reconstructs JSON values before option validation, admitting signed integer zero. Decimal and exponent tokens remain refused; the full unsigned 64-bit range is retained."
+                }
+              }
+            },
+            {
+              "type": "object",
+              "properties": {
+                "protocol": {
+                  "enum": [
+                    "bedrock"
+                  ]
+                }
+              },
+              "required": [
+                "protocol"
+              ],
+              "patternProperties": {
+                "^[xX]\\-[aA][mM][zZ][nN]\\-[bB][eE][dD][rR][oO][cC][kK]\\-[tT][rR][aA][cC][eE]$": {
+                  "enum": [
+                    "ENABLED",
+                    "DISABLED",
+                    "ENABLED_FULL"
+                  ]
+                },
+                "^[xX]\\-[aA][mM][zZ][nN]\\-[bB][eE][dD][rR][oO][cC][kK]\\-[gG][uU][aA][rR][dD][rR][aA][iI][lL][iI][dD][eE][nN][tT][iI][fF][iI][eE][rR]$": {
+                  "type": "string",
+                  "pattern": "^[!-~](?:[ -~]*[!-~])?$"
+                },
+                "^[xX]\\-[aA][mM][zZ][nN]\\-[bB][eE][dD][rR][oO][cC][kK]\\-[gG][uU][aA][rR][dD][rR][aA][iI][lL][vV][eE][rR][sS][iI][oO][nN]$": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.-]+$"
+                },
+                "^[xX]\\-[aA][mM][zZ][nN]\\-[bB][eE][dD][rR][oO][cC][kK]\\-[pP][eE][rR][fF][oO][rR][mM][aA][nN][cC][eE][cC][oO][nN][fF][iI][gG]\\-[lL][aA][tT][eE][nN][cC][yY]$": {
+                  "enum": [
+                    "standard",
+                    "optimized"
+                  ]
+                },
+                "^[xX]\\-[aA][mM][zZ][nN]\\-[bB][eE][dD][rR][oO][cC][kK]\\-[sS][eE][rR][vV][iI][cC][eE]\\-[tT][iI][eE][rR]$": {
+                  "enum": [
+                    "priority",
+                    "default",
+                    "flex"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "properties": {
+                "protocol": {
+                  "enum": [
+                    "cohere"
+                  ]
+                }
+              },
+              "required": [
+                "protocol"
+              ],
+              "patternProperties": {
+                "^[xX]\\-[cC][lL][iI][eE][nN][tT]\\-[nN][aA][mM][eE]$": {
+                  "type": "string",
+                  "pattern": "^[!-~](?:[ -~]*[!-~])?$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "properties": {
+                "protocol": {
+                  "enum": [
+                    "responses"
+                  ]
+                },
+                "api-version": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.-]+$"
+                }
+              },
+              "required": [
+                "protocol"
+              ],
+              "patternProperties": {
+                "^[oO][pP][eE][nN][aA][iI]\\-[oO][rR][gG][aA][nN][iI][zZ][aA][tT][iI][oO][nN]$": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.-]+$"
+                },
+                "^[oO][pP][eE][nN][aA][iI]\\-[pP][rR][oO][jJ][eE][cC][tT]$": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.-]+$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "properties": {
+                "protocol": {
+                  "type": "string",
+                  "not": {
+                    "enum": [
+                      "anthropic",
+                      "openai",
+                      "gemini",
+                      "bedrock",
+                      "cohere",
+                      "responses"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "protocol"
+              ]
+            }
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "model": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "upstream_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "default_max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295,
+              "x-busbar-integer-token": "unsigned"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reasoning": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false
+        },
+        "prompt_caching": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false
+        },
+        "protocol": {
+          "enum": [
+            "anthropic",
+            "openai",
+            "responses",
+            "gemini",
+            "bedrock",
+            "cohere",
+            "bedrock-invoke",
+            null
+          ]
+        }
+      },
+      "additionalProperties": true,
+      "required": [
+        "provider"
+      ]
+    },
+    "owned_sections": {
+      "description": "PlaneOpenIn.owned / PlaneRefreshIn.owned, separate from the settings argument described by the schema root.",
+      "properties": {
+        "webhooks": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "openai_responses": {
+                  "type": "boolean",
+                  "default": false
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "description": "Lifecycle shaping settings, not request body fields. The reader additionally resolves model/provider/pool references, rejects conflicting member context windows, duplicate header names ignoring case, and credential affinity headers.",
+  "x-busbar-settings-profile": "integer-token-v1"
+}

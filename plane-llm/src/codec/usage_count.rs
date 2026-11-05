@@ -1,18 +1,112 @@
 //! The one seam every usage/billing count read in this crate goes through.
 
-/// Read a JSON number as an exact, non-negative integer, or `None`. Tries the integer
+use busbar_contract::Count;
+
+/// Read the original decimal spelling retained by serde_json's arbitrary_precision feature.
+pub fn read_count(v: &serde_json::Value) -> Option<Count> {
+    let serde_json::Value::Number(number) = v else {
+        return None;
+    };
+    Count::parse(&number.to_string())
+        .ok()
+        .filter(|n| !n.is_negative())
+}
+
+/// Legacy integer projection: fractional counts are never truncated or rounded.
 pub fn read_count_u64(v: &serde_json::Value) -> Option<u64> {
-    if let Some(u) = v.as_u64() {
-        return Some(u);
+    let count = read_count(v)?;
+    (count.micros() % 1_000_000 == 0)
+        .then(|| u64::try_from(count.micros() / 1_000_000).ok())
+        .flatten()
+}
+
+/// Exact optional usage count; absence is distinct from a present unreadable value.
+pub fn exact_count_opt(
+    usage: Option<&serde_json::Value>,
+    field: &'static str,
+) -> Result<Option<Count>, UnreadableCount> {
+    match usage.and_then(|u| u.get(field)).filter(|v| !v.is_null()) {
+        None => Ok(None),
+        Some(v) => read_count(v)
+            .filter(|n| n.fits_a_64_bit_column())
+            .map(Some)
+            .ok_or_else(|| UnreadableCount {
+                field,
+                spelling: bounded_spelling(v),
+            }),
     }
-    let f = v.as_f64()?;
+}
 
-    const EXACT_INTEGER_LIMIT: f64 = 9_007_199_254_740_992.0;
+/// A leaf operation's exact count carrier, including explicit ingress refusals.
+pub fn token_usage(
+    protocol: &'static str,
+    usage: Option<&serde_json::Value>,
+    fields: &[(&'static str, &'static str)],
+) -> Option<busbar_contract::billing::TokenUsage> {
+    let usage = usage?;
+    let mut out = busbar_contract::billing::TokenUsage::default();
+    let mut exact = std::collections::BTreeMap::new();
+    for &(field, class) in fields {
+        match exact_count_opt(Some(usage), field) {
+            Ok(Some(count)) => {
+                exact.insert(class.to_owned(), count);
+                if let Some(whole) = usage.get(field).and_then(read_count_u64) {
+                    match class {
+                        "input" => out.input = whole,
+                        "output" => out.output = whole,
+                        "cache_read" => out.cache_read = Some(whole),
+                        "cache_write" => out.cache_creation = Some(whole),
+                        _ => {
+                            out.open_units.insert(class.to_owned(), whole);
+                        }
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(refusal) => {
+                refused_count(protocol, &refusal);
+                out.refused_counts.push(refusal.to_string());
+            }
+        }
+    }
+    out.exact_counts = Some(exact);
+    Some(out)
+}
 
-    if (0.0..EXACT_INTEGER_LIMIT).contains(&f) && f.fract() == 0.0 {
-        Some(f as u64)
-    } else {
-        None
+/// Serialize a leaf's authoritative exact class count, preserving legacy whole producers.
+pub fn wire_token_count(
+    usage: &busbar_contract::billing::TokenUsage,
+    class: &str,
+    whole: u64,
+) -> serde_json::Value {
+    match &usage.exact_counts {
+        Some(exact) => exact.get(class).map_or_else(
+            || {
+                if usage.refused_counts.is_empty() {
+                    serde_json::json!(0)
+                } else {
+                    serde_json::Value::Null
+                }
+            },
+            |n| serde_json::json!(n),
+        ),
+        None => serde_json::json!(whole),
+    }
+}
+
+/// Serialize the exact token total of a leaf response.
+pub fn wire_token_total(usage: &busbar_contract::billing::TokenUsage) -> serde_json::Value {
+    if !usage.refused_counts.is_empty() {
+        return serde_json::Value::Null;
+    }
+    match &usage.exact_counts {
+        Some(exact) => Count::total(
+            ["input", "output", "cache_read", "cache_write"]
+                .iter()
+                .filter_map(|class| exact.get(*class).copied()),
+        )
+        .map_or(serde_json::Value::Null, |n| serde_json::json!(n)),
+        None => serde_json::json!(usage.input.saturating_add(usage.output)),
     }
 }
 
@@ -276,9 +370,9 @@ fn parent<'a>(
 fn opt(
     usage: Option<&serde_json::Value>,
     path: &'static [&'static str],
-) -> Result<Option<u64>, UnreadableCount> {
+) -> Result<Option<Count>, UnreadableCount> {
     let (up, field) = parent(usage, path);
-    billed_count_opt(up, field)
+    exact_count_opt(up, field)
 }
 
 /// One billed leaf-operation usage count that is present and unreadable, refused on its own: warned
@@ -289,7 +383,7 @@ pub fn refused_count(protocol: &'static str, unreadable: &UnreadableCount) {
         field = unreadable.field,
         spelling = %unreadable.spelling,
         "usage count is present but unreadable: REFUSED, it bills nothing and is never read as \
-         zero (#42, #81); the answer is served and the readable counts bill as stated"
+         zero (#42, #81); the driver receives an explicit count refusal"
     );
 }
 
@@ -297,8 +391,8 @@ pub fn refused_count(protocol: &'static str, unreadable: &UnreadableCount) {
 /// while its diagnostic must remain visible without refusing or changing that total.
 fn recorded_optional(
     protocol: &'static str,
-    read: Result<Option<u64>, UnreadableCount>,
-) -> Option<u64> {
+    read: Result<Option<Count>, UnreadableCount>,
+) -> Option<Count> {
     match read {
         Ok(count) => count,
         Err(unreadable) => {
@@ -321,38 +415,51 @@ pub fn read_usage(
     usage: Option<&serde_json::Value>,
     table: &[UsageCount],
 ) -> Result<crate::codec::ir::IrUsage, crate::codec::protocol::IrError> {
-    let kept = |read: Result<Option<u64>, UnreadableCount>| match read {
+    let refused_counts = std::cell::RefCell::new(Vec::new());
+    let kept = |read: Result<Option<Count>, UnreadableCount>| match read {
         Ok(n) => n,
         Err(unreadable) => {
+            refused_counts.borrow_mut().push(unreadable.to_string());
             tracing::warn!(
                 protocol,
                 field = unreadable.field,
                 spelling = %unreadable.spelling,
                 "usage count is present but unreadable: REFUSED, it bills nothing and is never \
-                 read as zero (#42, #81); the readable counts bill as stated"
+                 read as zero (#42, #81); the driver receives an explicit count refusal"
             );
             None
         }
     };
-    let mut slots = [None::<u64>; SLOTS];
+    let mut slots = [None::<Count>; SLOTS];
+    let mut invalid = [false; SLOTS];
     for &(slot, read) in table {
+        let before = refused_counts.borrow().len();
         let s = &mut slots[slot as usize];
         match read {
             CountRead::Zero(path) => {
                 let (up, field) = parent(usage, path);
-                *s = kept(up.map_or(Ok(0), |u| billed_count(u, field)).map(Some));
+                *s = kept(exact_count_opt(up, field));
             }
             CountRead::Opt(path) => *s = kept(opt(usage, path)),
             CountRead::Lenient(path) => *s = recorded_optional(protocol, opt(usage, path)),
 
             CountRead::Less(path) => {
                 if let Some(n) = kept(opt(usage, path)) {
-                    *s = Some(s.unwrap_or(0).saturating_sub(n));
+                    *s = Some(
+                        s.unwrap_or(Count::ZERO)
+                            .checked_sub(n)
+                            .expect("difference of non-negative counts")
+                            .max(Count::ZERO),
+                    );
                 }
             }
             CountRead::More(path) => {
                 if let Some(n) = kept(opt(usage, path)) {
-                    *s = Some(s.unwrap_or(0).saturating_add(n));
+                    *s = Some(
+                        s.unwrap_or(Count::ZERO)
+                            .checked_add(n)
+                            .expect("sum of store-bounded usage counts"),
+                    );
                 }
             }
             CountRead::ListSum {
@@ -361,7 +468,7 @@ pub fn read_usage(
                 value,
                 count,
             } => {
-                let mut sum: Option<u64> = None;
+                let mut sum: Option<Count> = None;
                 for entry in at(usage, list)
                     .and_then(|l| l.as_array())
                     .into_iter()
@@ -370,8 +477,12 @@ pub fn read_usage(
                     if entry.get(key).and_then(|k| k.as_str()) != Some(value) {
                         continue;
                     }
-                    if let Some(n) = kept(billed_count_opt(Some(entry), count)) {
-                        sum = Some(sum.unwrap_or(0).saturating_add(n));
+                    if let Some(n) = kept(exact_count_opt(Some(entry), count)) {
+                        sum = Some(
+                            sum.unwrap_or(Count::ZERO)
+                                .checked_add(n)
+                                .expect("sum of store-bounded usage counts"),
+                        );
                     }
                 }
                 *s = sum;
@@ -386,17 +497,80 @@ pub fn read_usage(
                     l.iter()
                         .find(|e| e.get(key).and_then(|k| k.as_str()) == Some(value))
                 });
-                *s = recorded_optional(protocol, billed_count_opt(entry, count));
+                *s = recorded_optional(protocol, exact_count_opt(entry, count));
+            }
+        }
+        invalid[slot as usize] |= refused_counts.borrow().len() != before;
+    }
+    for (slot, count) in slots.iter_mut().enumerate() {
+        if count.is_some_and(|n| !n.fits_a_64_bit_column()) {
+            refused_counts.borrow_mut().push(format!(
+                "normalized usage slot {slot} exceeds the store range"
+            ));
+            invalid[slot] = true;
+        }
+        if invalid[slot] {
+            *count = None;
+        }
+    }
+    let mut exact_counts = std::collections::BTreeMap::new();
+    for (slot, class) in [
+        (CountSlot::Input, busbar_contract::records::UNIT_INPUT),
+        (CountSlot::Output, busbar_contract::records::UNIT_OUTPUT),
+        (
+            CountSlot::CacheRead,
+            busbar_contract::records::UNIT_CACHE_READ,
+        ),
+        (
+            CountSlot::CacheWrite,
+            busbar_contract::records::UNIT_CACHE_WRITE,
+        ),
+        (
+            CountSlot::WebSearchRequests,
+            crate::codec::ir::rerank::SEARCH_UNITS_CLASS,
+        ),
+        (
+            CountSlot::SearchUnits,
+            crate::codec::ir::rerank::SEARCH_UNITS_CLASS,
+        ),
+        (
+            CountSlot::WebFetchRequests,
+            crate::codec::ir::open_class::WEB_FETCH_REQUESTS_CLASS,
+        ),
+        (
+            CountSlot::Classifications,
+            crate::codec::ir::open_class::CLASSIFICATIONS_CLASS,
+        ),
+    ] {
+        if let Some(n) = slots[slot as usize] {
+            let old = exact_counts.get(class).copied().unwrap_or(Count::ZERO);
+            let total = old.checked_add(n).expect("bounded usage sum");
+            if total.fits_a_64_bit_column() {
+                exact_counts.insert(class.to_owned(), total);
+            } else {
+                refused_counts
+                    .borrow_mut()
+                    .push(format!("usage class {class} exceeds the store range"));
+                exact_counts.remove(class);
             }
         }
     }
-    let get = |slot: CountSlot| slots[slot as usize];
+    let get = |slot: CountSlot| {
+        slots[slot as usize].and_then(|n| {
+            (n.micros() % 1_000_000 == 0)
+                .then(|| u64::try_from(n.micros() / 1_000_000).ok())
+                .flatten()
+        })
+    };
     Ok(crate::codec::ir::IrUsage {
         input_tokens: get(CountSlot::Input).unwrap_or(0),
         output_tokens: get(CountSlot::Output).unwrap_or(0),
         cache_creation_input_tokens: get(CountSlot::CacheWrite),
         cache_read_input_tokens: get(CountSlot::CacheRead),
         detail: crate::codec::ir::IrUsageDetail {
+            exact_counts: Some(exact_counts),
+            exact_tool_use_prompt_tokens: slots[CountSlot::ToolUsePrompt as usize],
+            refused_counts: refused_counts.into_inner(),
             reasoning_tokens: get(CountSlot::Reasoning),
             cache_creation_5m_input_tokens: get(CountSlot::CacheWrite5m),
             cache_creation_1h_input_tokens: get(CountSlot::CacheWrite1h),
@@ -435,7 +609,7 @@ pub fn refused_any(usage: Option<&serde_json::Value>, table: &[UsageCount]) -> b
             .into_iter()
             .flatten()
             .filter(|entry| entry.get(key).and_then(|k| k.as_str()) == Some(value))
-            .any(|entry| billed_count_opt(Some(entry), count).is_err()),
+            .any(|entry| exact_count_opt(Some(entry), count).is_err()),
         CountRead::Lenient(_) | CountRead::ListFirst { .. } => false,
     })
 }
@@ -448,8 +622,51 @@ pub fn stated_total_note(
     protocol: &'static str,
     identity: &'static str,
     total: Option<&serde_json::Value>,
-    ledgered: &crate::codec::ir::IrUsage,
+    ledgered: &mut crate::codec::ir::IrUsage,
 ) -> Option<crate::codec::ir::UsageIdentityNote> {
+    if !ledgered.detail.refused_counts.is_empty() {
+        return None;
+    }
+    if let Some(value) = total.filter(|v| !v.is_null()) {
+        if read_count(value).is_none() {
+            ledgered
+                .detail
+                .refused_counts
+                .push(format!("{identity} stated total is not an exact count"));
+            return None;
+        }
+    }
+    if let (Some(reported), Some(exact)) = (
+        total.and_then(read_count),
+        &mut ledgered.detail.exact_counts,
+    ) {
+        let summed = Count::total(
+            ["input", "output", "cache_read", "cache_write"]
+                .iter()
+                .filter_map(|class| exact.get(*class).copied()),
+        )
+        .ok()?;
+        if !reported.fits_a_64_bit_column() {
+            ledgered
+                .detail
+                .refused_counts
+                .push(format!("{identity} stated total exceeds the store range"));
+            return None;
+        }
+        if reported > summed {
+            let gap = reported.checked_sub(summed).ok()?;
+            exact.insert(
+                crate::codec::ir::open_class::UNITEMIZED_TOKENS_CLASS.to_owned(),
+                gap,
+            );
+        }
+        if reported.micros() % 1_000_000 != 0 || summed.micros() % 1_000_000 != 0 {
+            if reported != summed {
+                tracing::warn!(protocol, identity, %reported, %summed, "exact usage total does not reconcile; positive gap remains an exact open count");
+            }
+            return None;
+        }
+    }
     let reported_total = total.and_then(read_count_u64)?;
     let summed_total = ledgered.billable_tokens();
     if summed_total == reported_total {
@@ -487,3 +704,7 @@ mod tests;
 #[cfg(test)]
 #[path = "tests/usage_total_boundary_tests.rs"]
 mod usage_total_boundary_tests;
+
+#[cfg(test)]
+#[path = "tests/exact_count_tests.rs"]
+mod exact_count_tests;

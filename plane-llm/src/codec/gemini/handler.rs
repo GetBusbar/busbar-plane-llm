@@ -198,9 +198,9 @@ pub fn write_transcription_response(r: &crate::codec::ir::audio::TranscriptionRe
 
     if let Some(busbar_contract::billing::Billing::Tokens(t)) = &r.usage {
         body[FIELD_USAGE_METADATA] = json!({
-            (FIELD_PROMPT_TOKEN_COUNT): t.input,
-            (FIELD_CANDIDATES_TOKEN_COUNT): t.output,
-            (FIELD_TOTAL_TOKEN_COUNT): t.input.saturating_add(t.output),
+            (FIELD_PROMPT_TOKEN_COUNT): crate::codec::usage_count::wire_token_count(t, "input", t.input),
+            (FIELD_CANDIDATES_TOKEN_COUNT): crate::codec::usage_count::wire_token_count(t, "output", t.output),
+            (FIELD_TOTAL_TOKEN_COUNT): crate::codec::usage_count::wire_token_total(t),
         });
     }
     WireBody::json(SlabBytes::from(
@@ -566,20 +566,27 @@ pub fn read_transcription_response(
     let v: Value =
         serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
     let text = joined_text(&v, "/candidates/0/content/parts");
-    let usage = v.get(FIELD_USAGE_METADATA).map(|u| {
-        let billed = |field: &'static str| {
-            crate::codec::usage_count::billed_count(u, field).unwrap_or_else(|unreadable| {
-                crate::codec::usage_count::refused_count(COUNT_LABEL, &unreadable);
-                0
-            })
-        };
-        busbar_contract::billing::Billing::Tokens(busbar_contract::billing::TokenUsage {
-            input: billed(FIELD_PROMPT_TOKEN_COUNT),
-            output: billed(FIELD_CANDIDATES_TOKEN_COUNT),
-            residual_units: transcription_residual_units(u),
-            ..Default::default()
-        })
+    let usage = crate::codec::usage_count::token_usage(
+        COUNT_LABEL,
+        v.get(FIELD_USAGE_METADATA),
+        &[
+            (
+                FIELD_PROMPT_TOKEN_COUNT,
+                busbar_contract::records::UNIT_INPUT,
+            ),
+            (
+                FIELD_CANDIDATES_TOKEN_COUNT,
+                busbar_contract::records::UNIT_OUTPUT,
+            ),
+        ],
+    )
+    .map(|mut usage| {
+        if let Some(raw) = v.get(FIELD_USAGE_METADATA) {
+            usage.residual_units = transcription_residual_units(raw);
+        }
+        busbar_contract::billing::Billing::Tokens(usage)
     });
+
     Ok(TranscriptionResp {
         text,
         usage,
@@ -864,18 +871,14 @@ pub fn read_embeddings_response(
 
 /// Count usage independently of vector decoding so a refused vector still reports provider work.
 fn read_embeddings_usage(v: &Value) -> Option<busbar_contract::billing::TokenUsage> {
-    crate::codec::usage_count::billed_count_opt(
+    crate::codec::usage_count::token_usage(
+        COUNT_LABEL,
         v.get(FIELD_USAGE_METADATA),
-        FIELD_PROMPT_TOKEN_COUNT,
+        &[(
+            FIELD_PROMPT_TOKEN_COUNT,
+            busbar_contract::records::UNIT_INPUT,
+        )],
     )
-    .unwrap_or_else(|unreadable| {
-        crate::codec::usage_count::refused_count(COUNT_LABEL, &unreadable);
-        None
-    })
-    .map(|n| busbar_contract::billing::TokenUsage {
-        input: n,
-        ..Default::default()
-    })
 }
 
 /// This dialect's row of the leaf-op `(operation, protocol)` dispatch, carried on `super::ENTRY`.

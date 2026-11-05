@@ -73,16 +73,13 @@ fn assert_billed(usage: &TokenUsage, input: u64, output: u64, gap: u64) {
 
 #[test]
 fn stated_totals_preserve_exact_gaps_through_readers_and_billing() {
-    let signed_max = i64::MAX as u64;
+    let signed_max = (i64::MAX / 1_000_000) as u64;
     for (input, output, total, diagnostic, gap) in [
-        (signed_max + 1, 0, signed_max + 2, Some(1), 1),
-        (signed_max, 0, signed_max + 1, Some(1), 1),
-        (u64::MAX - 1, 0, u64::MAX, Some(1), 1),
-        (0, 0, signed_max + 1, Some(i64::MAX), signed_max + 1),
-        (0, 0, u64::MAX, Some(i64::MAX), u64::MAX),
-        (signed_max + 2, 0, signed_max + 1, Some(-1), 0),
-        (u64::MAX, 0, 0, Some(i64::MIN), 0),
-        (u64::MAX, 0, u64::MAX, None, 0),
+        (signed_max - 1, 0, signed_max, Some(1), 1),
+        (signed_max, 0, signed_max - 1, Some(-1), 0),
+        (0, 0, signed_max, Some(signed_max as i64), signed_max),
+        (signed_max, 0, 0, Some(-(signed_max as i64)), 0),
+        (signed_max, 0, signed_max, None, 0),
         (11, 7, 19, Some(1), 1),
         (11, 7, 17, Some(-1), 0),
         (11, 7, 18, None, 0),
@@ -131,5 +128,26 @@ fn absent_unreadable_or_refused_totals_do_not_invent_a_billed_gap() {
             .expect("read the control");
         assert!(ir.usage.detail.usage_identity_note.is_none());
         assert_billed(&ir.usage.to_token_usage(), input, 7, 0);
+    }
+}
+
+#[test]
+fn out_of_store_range_whole_counts_are_refused_in_every_live_reader() {
+    for input in [(i64::MAX / 1_000_000) as u64 + 1, i64::MAX as u64, u64::MAX] {
+        for protocol in ["openai", "responses"] {
+            let (reads, recovered) = read_paths(protocol, input, 7, input);
+            for usage in reads
+                .into_iter()
+                .map(|ir| ir.to_token_usage())
+                .chain([recovered])
+            {
+                assert!(!usage.refused_counts.is_empty(), "{protocol}: {input}");
+                assert!(!usage.exact_counts.as_ref().unwrap().contains_key("input"));
+                assert_eq!(
+                    usage.exact_counts.as_ref().unwrap()["output"],
+                    busbar_contract::Count::from_integer(7).unwrap()
+                );
+            }
+        }
     }
 }

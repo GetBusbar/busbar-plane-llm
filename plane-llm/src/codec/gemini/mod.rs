@@ -12,7 +12,6 @@ use crate::codec::protocol::{
     ERR_TYPE_AUTHENTICATION, ERR_TYPE_INVALID_REQUEST, ERR_TYPE_NOT_FOUND, ERR_TYPE_PERMISSION,
     ERR_TYPE_RATE_LIMIT,
 };
-use crate::codec::usage_count::read_count_u64;
 use busbar_contract::http::StatusCode;
 #[cfg(test)]
 use busbar_contract::upstream::CanonicalSignal;
@@ -441,10 +440,11 @@ const FIELD_TRAFFIC_TYPE: &str = "trafficType";
 /// response too large to reassemble; otherwise a tool-using turn would be under-counted by exactly
 /// `toolUsePromptTokenCount` (32 of 222 tokens on the recording above).
 ///
-/// The table is also the guard: [`gemini_usage_identity_note`] fires when Google's stated total
+/// The table is also the guard: [`crate::codec::usage_count::stated_total_note`] fires when Google's stated total
 /// cannot be reached from it, i.e. when Google reports a counter this dialect does not model. The
 /// gap is ledgered as the open class `unitemized_tokens` and the WARN names it; a recurring gap is
 /// fixed by a new itemized term backed by the wire lock.
+#[cfg_attr(not(test), allow(dead_code))]
 const GEMINI_USAGE_ADDITIVE_TERMS: &[&str] = &[
     FIELD_PROMPT_TOKEN_COUNT,
     FIELD_CANDIDATES_TOKEN_COUNT,
@@ -452,59 +452,9 @@ const GEMINI_USAGE_ADDITIVE_TERMS: &[&str] = &[
     FIELD_TOOL_USE_PROMPT_TOKEN_COUNT,
 ];
 
-/// Stable identifier for the identity [`gemini_usage_identity_note`] checks, carried on
+/// Stable identifier for the identity [`crate::codec::usage_count::stated_total_note`] checks, carried on
 /// [`crate::codec::ir::UsageIdentityNote::identity`] so callers branch on a constant.
 const GEMINI_USAGE_IDENTITY: &str = "gemini.usageMetadata";
-
-/// The sum of [`GEMINI_USAGE_ADDITIVE_TERMS`] on one `usageMetadata` object (absent terms are zero).
-fn additive_sum(u: &serde_json::Value) -> Option<u64> {
-    GEMINI_USAGE_ADDITIVE_TERMS
-        .iter()
-        .try_fold(0u64, |sum, k| {
-            crate::codec::usage_count::billed_count(u, k).map(|n| sum.saturating_add(n))
-        })
-        .ok()
-}
-
-/// Cross-check what busbar will bill against the total Google stated, and report a disagreement
-/// instead of hiding one.
-fn gemini_usage_identity_note(
-    u: Option<&serde_json::Value>,
-) -> Option<crate::codec::ir::UsageIdentityNote> {
-    let u = u?;
-
-    let reported_total = u.get(FIELD_TOTAL_TOKEN_COUNT).and_then(read_count_u64)?;
-
-    let summed_total = additive_sum(u)?;
-    if summed_total == reported_total {
-        return None;
-    }
-    let unaccounted = i64::try_from(reported_total).unwrap_or(i64::MAX)
-        - i64::try_from(summed_total).unwrap_or(i64::MAX);
-
-    let wire_sum = summed_total;
-    let unmodelled_term = wire_sum != reported_total;
-    tracing::warn!(
-        identity = GEMINI_USAGE_IDENTITY,
-        reported_total,
-        summed_total,
-        unaccounted,
-        wire_sum,
-        unmodelled_term,
-        "gemini usageMetadata does not reconcile: the stated totalTokenCount disagrees with the \
-         sum of the counters it names. unmodelled_term=true means Google reports a counter this \
-         dialect does not model and GEMINI_USAGE_ADDITIVE_TERMS needs a new entry backed by a \
-         recording; false means the wire's own terms close and the gap is in normalization. The \
-         itemized counts are ledgered as reported; a positive gap is ledgered as the open class \
-         unitemized_tokens."
-    );
-    Some(crate::codec::ir::UsageIdentityNote {
-        reported_total,
-        summed_total,
-        unaccounted,
-        identity: GEMINI_USAGE_IDENTITY,
-    })
-}
 
 /// JSON key for the opaque response identifier emitted at the top level.
 const FIELD_RESPONSE_ID: &str = "responseId";

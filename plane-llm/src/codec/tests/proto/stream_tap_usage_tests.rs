@@ -183,3 +183,37 @@ fn anthropic_stream_start_usage_bills_before_the_terminal_delta() {
     assert_eq!(u.input_tokens, 100000);
     assert_eq!(u.output_tokens, 42);
 }
+
+#[test]
+fn exact_fractional_stream_usage_survives_every_raw_chunk_boundary() {
+    let stream = b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"role\":\"assistant\",\"usage\":{\"input_tokens\":27.5,\"output_tokens\":27.1}}}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":0}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+    for at in 0..=stream.len() {
+        let mut tap = StreamTranslate::new_same_proto("anthropic").unwrap();
+        let _ = tap.feed(crate::codec::test_host::HOST, &stream[..at]);
+        let _ = tap.feed(crate::codec::test_host::HOST, &stream[at..]);
+        let _ = tap.finish(crate::codec::test_host::HOST);
+        let usage = tap.usage().unwrap().to_token_usage();
+        let units = crate::exchange::reply::Units::of(Some(&usage), Default::default());
+        let reported = crate::plane_door::counts(&units);
+        assert_eq!(
+            reported
+                .iter()
+                .find(|u| u.class == 0)
+                .unwrap()
+                .count()
+                .unwrap(),
+            busbar_contract::Count::parse("27.5").unwrap(),
+            "split {at}"
+        );
+        assert_eq!(
+            reported
+                .iter()
+                .find(|u| u.class == 1)
+                .unwrap()
+                .count()
+                .unwrap(),
+            busbar_contract::Count::ZERO,
+            "split {at}"
+        );
+    }
+}

@@ -659,18 +659,27 @@ impl ProtocolWriter for OpenAiWriter {
                     .saturating_add(cache_read)
                     .saturating_add(usage.cache_creation_input_tokens.unwrap_or(0));
                 let completion_tokens = usage.output_tokens;
-                if prompt_tokens != 0 || completion_tokens != 0 {
+                if prompt_tokens != 0
+                    || completion_tokens != 0
+                    || usage.detail.exact_counts.is_some()
+                {
                     if let Some(obj) = chunk_obj.as_object_mut() {
                         let mut usage_obj = serde_json::json!({
-                            (PROMPT_TOKENS): prompt_tokens,
-                            (COMPLETION_TOKENS): completion_tokens,
-                            (keys::TOTAL_TOKENS): prompt_tokens.saturating_add(completion_tokens),
+                            (PROMPT_TOKENS): usage.wire_total(&["input", "cache_read", "cache_write"], prompt_tokens),
+                            (COMPLETION_TOKENS): usage.wire_count("output", completion_tokens),
+                            (keys::TOTAL_TOKENS): usage.wire_total(&["input", "output", "cache_read", "cache_write"], prompt_tokens.saturating_add(completion_tokens)),
                         });
-                        if usage.cache_read_input_tokens.is_some() {
+                        if usage.cache_read_input_tokens.is_some()
+                            || usage
+                                .detail
+                                .exact_counts
+                                .as_ref()
+                                .is_some_and(|e| e.contains_key("cache_read"))
+                        {
                             if let Some(uo) = usage_obj.as_object_mut() {
                                 uo.insert(
                                     PROMPT_TOKENS_DETAILS.to_string(),
-                                    serde_json::json!({ (keys::CACHED_TOKENS): cache_read }),
+                                    serde_json::json!({ (keys::CACHED_TOKENS): usage.wire_count("cache_read", cache_read) }),
                                 );
                             }
                         }
@@ -1006,22 +1015,36 @@ impl ProtocolWriter for OpenAiWriter {
             .saturating_add(cache_read)
             .saturating_add(resp.usage.cache_creation_input_tokens.unwrap_or(0));
         let mut usage_map = serde_json::Map::new();
-        usage_map.insert(PROMPT_TOKENS.to_string(), serde_json::json!(prompt_tokens));
+        usage_map.insert(
+            PROMPT_TOKENS.to_string(),
+            resp.usage
+                .wire_total(&["input", "cache_read", "cache_write"], prompt_tokens),
+        );
         usage_map.insert(
             COMPLETION_TOKENS.to_string(),
-            serde_json::json!(resp.usage.output_tokens),
+            resp.usage.wire_count("output", resp.usage.output_tokens),
         );
         usage_map.insert(
             keys::TOTAL_TOKENS.to_string(),
-            serde_json::json!(prompt_tokens.saturating_add(resp.usage.output_tokens)),
+            resp.usage.wire_total(
+                &["input", "output", "cache_read", "cache_write"],
+                prompt_tokens.saturating_add(resp.usage.output_tokens),
+            ),
         );
 
         {
             let mut ptd = serde_json::Map::new();
-            if resp.usage.cache_read_input_tokens.is_some() {
+            if resp.usage.cache_read_input_tokens.is_some()
+                || resp
+                    .usage
+                    .detail
+                    .exact_counts
+                    .as_ref()
+                    .is_some_and(|e| e.contains_key("cache_read"))
+            {
                 ptd.insert(
                     keys::CACHED_TOKENS.to_string(),
-                    serde_json::json!(cache_read),
+                    resp.usage.wire_count("cache_read", cache_read),
                 );
             }
             let modality = resp.usage.detail.by_modality.as_ref();

@@ -1101,7 +1101,8 @@ impl ProtocolWriter for GeminiWriter {
         if resp.created.is_some() || resp.model.is_some() {
             usage_metadata.insert(
                 FIELD_TOTAL_TOKEN_COUNT.to_string(),
-                serde_json::json!(total),
+                resp.usage
+                    .wire_total(&["input", "output", "cache_read", "cache_write"], total),
             );
         }
         let mut candidate = serde_json::json!({
@@ -1220,31 +1221,58 @@ fn gemini_usage_metadata(
     let total = prompt_total
         .saturating_add(usage.output_tokens)
         .saturating_add(tool_use);
+    let exact_prompt = usage.detail.exact_counts.as_ref().and_then(|exact| {
+        let sum = busbar_contract::Count::total(
+            ["input", "cache_read", "cache_write"]
+                .iter()
+                .filter_map(|class| exact.get(*class).copied()),
+        )
+        .ok()?;
+        sum.checked_sub(
+            usage
+                .detail
+                .exact_tool_use_prompt_tokens
+                .unwrap_or(busbar_contract::Count::ZERO),
+        )
+        .ok()
+    });
     let mut usage_metadata = serde_json::Map::new();
     usage_metadata.insert(
         FIELD_PROMPT_TOKEN_COUNT.to_string(),
-        serde_json::json!(prompt_total),
+        exact_prompt.map_or_else(|| serde_json::json!(prompt_total), |n| serde_json::json!(n)),
     );
     usage_metadata.insert(
         FIELD_CANDIDATES_TOKEN_COUNT.to_string(),
-        serde_json::json!(usage.output_tokens),
+        usage.wire_count("output", usage.output_tokens),
     );
     if emit_total {
         usage_metadata.insert(
             FIELD_TOTAL_TOKEN_COUNT.to_string(),
-            serde_json::json!(total),
+            usage.wire_total(&["input", "output", "cache_read", "cache_write"], total),
         );
     }
-    if usage.cache_read_input_tokens.is_some() {
+    if usage.cache_read_input_tokens.is_some()
+        || usage
+            .detail
+            .exact_counts
+            .as_ref()
+            .is_some_and(|e| e.contains_key("cache_read"))
+    {
         usage_metadata.insert(
             FIELD_CACHED_CONTENT_TOKEN_COUNT.to_string(),
-            serde_json::json!(cache_read),
+            usage.wire_count("cache_read", cache_read),
         );
     }
     if let Some(tool_use_prompt) = usage.detail.tool_use_prompt_tokens {
         usage_metadata.insert(
             FIELD_TOOL_USE_PROMPT_TOKEN_COUNT.to_string(),
             serde_json::json!(tool_use_prompt),
+        );
+    }
+    if let Some(tool_use) = usage.detail.exact_tool_use_prompt_tokens {
+        usage_metadata.insert(
+            FIELD_TOOL_USE_PROMPT_TOKEN_COUNT.to_owned(),
+            serde_json::json!(tool_use),
         );
     }
     if let Some(traffic_type) = &usage.detail.traffic_type {

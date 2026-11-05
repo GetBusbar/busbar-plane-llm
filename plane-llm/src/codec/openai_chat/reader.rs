@@ -1049,14 +1049,14 @@ impl ProtocolReader for OpenAiReader {
             });
             out.push(IrStreamEvent::MessageStop);
         } else if let Some(usage) = chunk_usage {
-            if choice0.is_none() {
-                out.push(IrStreamEvent::MessageDelta {
-                    stop_reason: None,
-                    stop_sequence: None,
-                    usage,
-                    stop_detail: None,
-                });
-            }
+            // Providers can report cumulative usage beside content, not only on a
+            // trailing choices-empty chunk. Carry both exact counts and refusals.
+            out.push(IrStreamEvent::MessageDelta {
+                stop_reason: None,
+                stop_sequence: None,
+                usage,
+                stop_detail: None,
+            });
         }
 
         out

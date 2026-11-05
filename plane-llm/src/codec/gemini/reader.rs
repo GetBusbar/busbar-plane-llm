@@ -83,7 +83,12 @@ impl ProtocolReader for GeminiReader {
         let v = super::super::usage_tail::isolate_tail_usage_object(tail, b"\"usageMetadata\"")?;
 
         let mut usage = crate::codec::usage_count::read_usage(COUNT_LABEL, Some(&v), USAGE).ok()?;
-        usage.detail.usage_identity_note = super::gemini_usage_identity_note(Some(&v));
+        usage.detail.usage_identity_note = crate::codec::usage_count::stated_total_note(
+            COUNT_LABEL,
+            GEMINI_USAGE_IDENTITY,
+            v.get(FIELD_TOTAL_TOKEN_COUNT),
+            &mut usage,
+        );
         Some(usage.to_token_usage())
     }
 

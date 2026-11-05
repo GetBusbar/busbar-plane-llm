@@ -68,7 +68,12 @@ pub(super) fn read_gemini_usage(
 ) -> Result<crate::codec::ir::IrUsage, IrError> {
     let u = data.get(FIELD_USAGE_METADATA);
     let mut usage = read_usage(COUNT_LABEL, u, USAGE)?;
-    usage.detail.usage_identity_note = gemini_usage_identity_note(u);
+    usage.detail.usage_identity_note = crate::codec::usage_count::stated_total_note(
+        COUNT_LABEL,
+        GEMINI_USAGE_IDENTITY,
+        u.and_then(|u| u.get(FIELD_TOTAL_TOKEN_COUNT)),
+        &mut usage,
+    );
     usage.detail.traffic_type = u
         .and_then(|u| u.get(FIELD_TRAFFIC_TYPE))
         .and_then(|v| v.as_str())

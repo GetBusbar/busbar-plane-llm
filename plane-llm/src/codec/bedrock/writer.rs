@@ -254,16 +254,19 @@ impl ProtocolWriter for BedrockWriter {
                     let mut usage_obj = serde_json::Map::new();
                     usage_obj.insert(
                         super::INPUT_TOKENS_CAMEL.to_string(),
-                        usage.input_tokens.into(),
+                        usage.wire_count("input", usage.input_tokens),
                     );
                     usage_obj.insert(
                         super::OUTPUT_TOKENS_CAMEL.to_string(),
-                        usage.output_tokens.into(),
+                        usage.wire_count("output", usage.output_tokens),
                     );
 
                     usage_obj.insert(
                         super::TOTAL_TOKENS_CAMEL.to_string(),
-                        converse_total_tokens(usage).into(),
+                        usage.wire_total(
+                            &["input", "output", "cache_read", "cache_write"],
+                            converse_total_tokens(usage),
+                        ),
                     );
                     write_cache_usage(&mut usage_obj, usage);
                     let mut metadata = serde_json::json!({ (keys::USAGE): usage_obj });
@@ -451,16 +454,19 @@ impl ProtocolWriter for BedrockWriter {
         let mut usage_obj = serde_json::Map::new();
         usage_obj.insert(
             super::INPUT_TOKENS_CAMEL.to_string(),
-            resp.usage.input_tokens.into(),
+            resp.usage.wire_count("input", resp.usage.input_tokens),
         );
         usage_obj.insert(
             super::OUTPUT_TOKENS_CAMEL.to_string(),
-            resp.usage.output_tokens.into(),
+            resp.usage.wire_count("output", resp.usage.output_tokens),
         );
 
         usage_obj.insert(
             super::TOTAL_TOKENS_CAMEL.to_string(),
-            converse_total_tokens(&resp.usage).into(),
+            resp.usage.wire_total(
+                &["input", "output", "cache_read", "cache_write"],
+                converse_total_tokens(&resp.usage),
+            ),
         );
         write_cache_usage(&mut usage_obj, &resp.usage);
 

@@ -230,7 +230,7 @@ pub fn write_embeddings_response(r: &EmbeddingsResp) -> WireBody {
         body[TEXTS] = json!(texts);
     }
     if let Some(u) = &r.usage {
-        body[keys::META] = json!({ (keys::BILLED_UNITS): { (keys::INPUT_TOKENS): u.input } });
+        body[keys::META] = json!({ (keys::BILLED_UNITS): { (keys::INPUT_TOKENS): crate::codec::usage_count::wire_token_count(u, "input", u.input) } });
     }
     WireBody::json(SlabBytes::from(
         serde_json::to_vec(&body).unwrap_or_default(),
@@ -268,6 +268,7 @@ leaf_op! {
         let value: Value = crate::codec::json::parse(body).ok()?;
         crate::codec::ir::rerank::RerankResp {
             search_units: crate::codec::rerank_wire::read_search_units(&value, super::VENDOR_NAME),
+            exact_usage: crate::codec::rerank_wire::exact_usage(&value, super::VENDOR_NAME),
             ..Default::default()
         }.billing()
     }
@@ -312,7 +313,14 @@ pub fn write_rerank_response(r: &crate::codec::ir::rerank::RerankResp) -> WireBo
     if let Some(id) = &r.id {
         body[keys::ID] = json!(id);
     }
-    if let Some(su) = r.search_units {
+    if let Some(exact) = r
+        .exact_usage
+        .as_ref()
+        .and_then(|u| u.exact_counts.as_ref())
+        .and_then(|e| e.get(crate::codec::ir::rerank::SEARCH_UNITS_CLASS))
+    {
+        body[keys::META] = serde_json::json!({(keys::BILLED_UNITS): {(keys::SEARCH_UNITS): exact}});
+    } else if let Some(su) = r.search_units {
         body[keys::META] = json!({ (keys::BILLED_UNITS): { (keys::SEARCH_UNITS): su } });
     }
     WireBody::json(SlabBytes::from(
@@ -382,20 +390,13 @@ pub fn read_embeddings_request(
 }
 
 fn read_embeddings_usage(value: &Value) -> Option<busbar_contract::billing::TokenUsage> {
-    crate::codec::usage_count::billed_count_opt(
+    crate::codec::usage_count::token_usage(
+        super::VENDOR_NAME,
         value
             .get(keys::META)
             .and_then(|m| m.get(keys::BILLED_UNITS)),
-        keys::INPUT_TOKENS,
+        &[(keys::INPUT_TOKENS, busbar_contract::records::UNIT_INPUT)],
     )
-    .unwrap_or_else(|unreadable| {
-        crate::codec::usage_count::refused_count(super::VENDOR_NAME, &unreadable);
-        None
-    })
-    .map(|n| busbar_contract::billing::TokenUsage {
-        input: n,
-        ..Default::default()
-    })
 }
 
 /// Wire to concrete `EmbeddingsResp`, shared by the leaf-op handle and the `leaf_codec` read dispatch.
@@ -527,6 +528,7 @@ pub fn read_rerank_response(
             .map_err(|message| CodecError::Malformed(message.into()))?,
 
         search_units: crate::codec::rerank_wire::read_search_units(&v, super::VENDOR_NAME),
+        exact_usage: crate::codec::rerank_wire::exact_usage(&v, super::VENDOR_NAME),
         ..Default::default()
     })
 }

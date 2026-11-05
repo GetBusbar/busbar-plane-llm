@@ -64,16 +64,19 @@ pub fn read_results(v: Option<&Value>) -> Result<Vec<RerankResult>, &'static str
 /// Search units are independent of the ranked payload. Keep them readable even when a malformed
 /// ranking must be refused, without estimating a missing or unreadable count.
 pub fn read_search_units(value: &Value, protocol: &'static str) -> Option<u64> {
-    crate::codec::usage_count::billed_count_opt(
+    match crate::codec::usage_count::exact_count_opt(
         value
             .get(keys::META)
             .and_then(|meta| meta.get(keys::BILLED_UNITS)),
         keys::SEARCH_UNITS,
-    )
-    .unwrap_or_else(|unreadable| {
-        crate::codec::usage_count::refused_count(protocol, &unreadable);
-        None
-    })
+    ) {
+        Ok(Some(n)) if n.micros() % 1_000_000 == 0 => u64::try_from(n.micros() / 1_000_000).ok(),
+        Ok(_) => None,
+        Err(unreadable) => {
+            crate::codec::usage_count::refused_count(protocol, &unreadable);
+            None
+        }
+    }
 }
 
 /// The token-usage tap's existing open-unit carrier, using the same class as `RerankResp::billing`.
@@ -83,13 +86,37 @@ pub fn extract_usage(
 ) -> Result<Option<busbar_contract::billing::TokenUsage>, crate::codec::cells::UsageTapFault> {
     let value: Value =
         crate::codec::json::parse(body).map_err(|_| crate::codec::cells::UsageTapFault::Decode)?;
-    Ok(read_search_units(&value, protocol).map(|count| {
-        let mut usage = busbar_contract::billing::TokenUsage::default();
-        if count != 0 {
-            usage
-                .open_units
-                .insert(crate::codec::ir::rerank::SEARCH_UNITS_CLASS.into(), count);
-        }
-        usage
-    }))
+    Ok(crate::codec::usage_count::token_usage(
+        protocol,
+        value
+            .get(keys::META)
+            .and_then(|meta| meta.get(keys::BILLED_UNITS)),
+        &[(
+            keys::SEARCH_UNITS,
+            crate::codec::ir::rerank::SEARCH_UNITS_CLASS,
+        )],
+    ))
+}
+
+/// Exact carrier for a fractional rerank count or an explicit count refusal.
+pub fn exact_usage(
+    value: &Value,
+    protocol: &'static str,
+) -> Option<busbar_contract::billing::TokenUsage> {
+    crate::codec::usage_count::token_usage(
+        protocol,
+        value
+            .get(keys::META)
+            .and_then(|m| m.get(keys::BILLED_UNITS)),
+        &[(
+            keys::SEARCH_UNITS,
+            crate::codec::ir::rerank::SEARCH_UNITS_CLASS,
+        )],
+    )
+    .filter(|u| {
+        !u.refused_counts.is_empty()
+            || u.exact_counts
+                .as_ref()
+                .is_some_and(|e| e.values().any(|n| n.micros() % 1_000_000 != 0))
+    })
 }

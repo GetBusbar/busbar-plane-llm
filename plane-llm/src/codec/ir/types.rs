@@ -1016,6 +1016,13 @@ pub struct IrUsage {
 /// Cohere writer re-emits, and `billed_classifications` is the open class `classifications`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct IrUsageDetail {
+    /// Reported usage values refused at exact count ingress; never replace these with a floor.
+    pub refused_counts: Vec<String>,
+    /// Exact additive tool prompt term, retained to reverse normalization on Gemini egress.
+    pub exact_tool_use_prompt_tokens: Option<busbar_contract::Count>,
+    /// Authoritative exact billed counts. None is a legacy whole-count producer.
+    /// A missing key in Some is unreported or refused; it must not use the integer fallback.
+    pub exact_counts: Option<std::collections::BTreeMap<String, busbar_contract::Count>>,
     /// Reasoning tokens, a sub-bucket of `output_tokens` (never added to it). OpenAI
     /// `completion_tokens_details.reasoning_tokens`, Responses `output_tokens_details.reasoning_tokens`,
     /// Gemini `usageMetadata.thoughtsTokenCount`.
@@ -1124,6 +1131,40 @@ pub struct UsageIdentityNote {
 }
 
 impl IrUsage {
+    /// Exact JSON rendering of one normalized billed class; compatibility values are used only
+    /// for a legacy producer. Unknown/refused exact counts remain null, never invented zero.
+    pub fn wire_count(&self, class: &str, whole: u64) -> serde_json::Value {
+        match &self.detail.exact_counts {
+            Some(exact) => exact.get(class).map_or_else(
+                || {
+                    if self.detail.refused_counts.is_empty() {
+                        serde_json::json!(0)
+                    } else {
+                        serde_json::Value::Null
+                    }
+                },
+                |n| serde_json::json!(n),
+            ),
+            None => serde_json::json!(whole),
+        }
+    }
+
+    /// Exact aggregate for wire dialects whose input includes caches or whose usage has a total.
+    pub fn wire_total(&self, classes: &[&str], whole: u64) -> serde_json::Value {
+        if !self.detail.refused_counts.is_empty() {
+            return serde_json::Value::Null;
+        }
+        match &self.detail.exact_counts {
+            Some(exact) => {
+                let total = busbar_contract::Count::total(
+                    classes.iter().filter_map(|c| exact.get(*c).copied()),
+                );
+                total.map_or(serde_json::Value::Null, |n| serde_json::json!(n))
+            }
+            None => serde_json::json!(whole),
+        }
+    }
+
     /// Total billable tokens: `input_tokens` (uncached) + cache reads + cache creation +
     /// `output_tokens`.
     pub fn billable_tokens(&self) -> u64 {
@@ -1137,6 +1178,8 @@ impl IrUsage {
     /// so billing and metering need not name this IR type.
     pub fn to_token_usage(&self) -> busbar_contract::billing::TokenUsage {
         busbar_contract::billing::TokenUsage {
+            exact_counts: self.detail.exact_counts.clone(),
+            refused_counts: self.detail.refused_counts.clone(),
             input: self.input_tokens,
             output: self.output_tokens,
             cache_read: self.cache_read_input_tokens,

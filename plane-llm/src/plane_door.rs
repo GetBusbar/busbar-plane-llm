@@ -32,8 +32,8 @@ use busbar_contract::abi::plane::{
     FROM_KERNEL, INGRESS_REQUEST_RESPONSE, INGRESS_RESPONSE_STREAM, PIECE_CUT, PIECE_FIELDS,
     PIECE_FINAL, PIECE_HAS_STATUS, PIECE_LAST, PRINCIPAL_NONE, PRINCIPAL_REQUIRED, REFUSAL_GATE,
     REFUSED_UNSUPPORTED_ACTION, ROUTE_DIRECT, ROUTE_POOL, SHAPE_PIECEWISE, SPAN_ABSENT,
-    TAIL_FALLBACK, TAIL_PROBES, UNITS_FLOOR, UNITS_REPORTED, VERDICT_HARD, VERDICT_NONE,
-    VERDICT_OK, VERDICT_RETRY,
+    TAIL_FALLBACK, TAIL_PROBES, UNITS_FLOOR, UNITS_REPORTED, VERDICT_COUNT_REFUSED, VERDICT_HARD,
+    VERDICT_NONE, VERDICT_OK, VERDICT_RETRY,
 };
 use busbar_contract::abi::plane::{CatalogIn, CatalogOut, CLAIM_CATALOG, DIALECT_PROVIDER};
 use busbar_contract::abi::plane::{PlaneCancelIn, PlaneCancelOut};
@@ -340,12 +340,16 @@ pub(crate) const EXTENSIONS: &[u8] = &extensions::entry::<
     { extensions::entry_len(EXT_PROVIDER_KEYS, PROVIDER_KEYS.as_bytes()) },
 >(EXT_PROVIDER_KEYS, PROVIDER_KEYS.as_bytes());
 
+/// The schema of the lifecycle shaping envelope, separate from dialect requests.
+const SETTINGS_SCHEMA: &[u8] = include_bytes!("settings.schema.json");
+
 /// The Statement: the plane's key and version, its sections, its needs, its tail and its extensions.
 pub const STATEMENT: Statement = {
     let mut s = statement(crate::meta::KEY, VERSION, MAX_INFLIGHT)
         .with_kind_tail(TAIL)
         .with_sections(SECTIONS)
         .with_needs(NEEDS);
+    s.settings_schema = Blob::json(SETTINGS_SCHEMA);
     s.extensions = Blob::of(EXTENSIONS);
     s
 };
@@ -840,6 +844,24 @@ fn owned(fields: Vec<(String, Vec<u8>)>) -> Vec<(Vec<u8>, Vec<u8>)> {
 /// cache read, cache write, then each open class it counted ([`OPEN_CLASSES`]).
 #[must_use]
 pub fn counts(units: &Units) -> Vec<UnitCount> {
+    if let Some(exact) = &units.exact_counts {
+        let source = if units.floor {
+            UNITS_FLOOR
+        } else {
+            UNITS_REPORTED
+        };
+        return TOKEN_CLASSES.iter().copied().chain(OPEN_CLASSES.iter().map(|(name, _)| *name))
+            .enumerate().filter_map(|(class, name)| {
+                let count = exact.get(name)?;
+                match UnitCount::from_count(class as u32, source, *count) {
+                    Ok(unit) => Some(unit),
+                    Err(error) => {
+                        tracing::warn!(class = name, %error, "usage count REFUSED at declared store range");
+                        None
+                    }
+                }
+            }).collect();
+    }
     let tokens = [
         units.tokens_in,
         units.tokens_out,
@@ -980,6 +1002,19 @@ pub fn affinity_key(
 
 /// A reply piece as the caller's answer.
 fn to_caller(piece: Piece<'_>) -> Answer {
+    for refusal in &piece.units.refused_counts {
+        tracing::warn!(%refusal, "exact usage ingress REFUSED; no floor substitutes for the count");
+    }
+    let refusal = piece.units.refused_counts.first().cloned().or_else(|| {
+        piece
+            .units
+            .exact_counts
+            .as_ref()?
+            .iter()
+            .find(|(_, count)| count.is_negative() || !count.fits_a_64_bit_column())
+            .map(|(class, _)| format!("usage count {class} is outside the declared store range"))
+    });
+    let refused = refusal.is_some();
     let fault = breaker_fault(piece.fault.as_ref());
     let (status, fields) = piece
         .head
@@ -989,8 +1024,13 @@ fn to_caller(piece: Piece<'_>) -> Answer {
         fields,
         bytes: piece.bytes.into_owned(),
         units: counts(&piece.units),
-        verdict: verdict(piece.verdict),
+        verdict: if refused {
+            VERDICT_COUNT_REFUSED
+        } else {
+            verdict(piece.verdict)
+        },
         fault,
+        fault_reason: refusal.map(String::into_bytes).unwrap_or_default(),
         tap_fault: piece.tap_fault.map_or(
             busbar_contract::abi::plane::TAP_FAULT_NONE,
             crate::codec::cells::UsageTapFault::code,
@@ -1003,10 +1043,11 @@ fn to_caller(piece: Piece<'_>) -> Answer {
 /// A far-end reply piece as the caller's answer, with the reason its fault reading states (`status`:
 fn far_answer(piece: Piece<'_>, status: u16) -> Answer {
     let reason = fault_reason(piece.fault.as_ref(), status);
-    Answer {
-        fault_reason: reason.map(String::into_bytes).unwrap_or_default(),
-        ..to_caller(piece)
+    let mut answer = to_caller(piece);
+    if answer.verdict != VERDICT_COUNT_REFUSED {
+        answer.fault_reason = reason.map(String::into_bytes).unwrap_or_default();
     }
+    answer
 }
 
 /// A rendered refusal as the caller's whole answer.
@@ -1280,8 +1321,9 @@ fn deliver(
         }
         units.extend(&p.answer.units);
 
-        let reason = (p.answer.fault != FAULT_NONE && !p.answer.fault_reason.is_empty())
-            .then(|| arena.span(&p.answer.fault_reason));
+        let reason = ((p.answer.fault != FAULT_NONE || p.answer.verdict == VERDICT_COUNT_REFUSED)
+            && !p.answer.fault_reason.is_empty())
+        .then(|| arena.span(&p.answer.fault_reason));
         for (outcome, action, resource) in &p.answer.audits {
             records.push(RecordWrite {
                 kind: *outcome,
@@ -1880,3 +1922,38 @@ mod caller_secrets;
 #[allow(unsafe_code)]
 #[path = "../tests/support/project_retry.rs"]
 mod project_retry_tests;
+
+#[cfg(test)]
+mod exact_count_ingress_tests {
+    use super::*;
+
+    #[test]
+    fn exact_count_refusal_reaches_the_live_door_verdict_without_a_floor() {
+        let raw = serde_json::from_str(r#"{"input":0.0000001,"output":27.1}"#).unwrap();
+        let usage = crate::codec::usage_count::token_usage(
+            "test",
+            Some(&raw),
+            &[("input", "input"), ("output", "output")],
+        )
+        .unwrap();
+        let answer = to_caller(Piece {
+            units: Units::of(Some(&usage), Default::default()),
+            verdict: Verdict::Ok,
+            done: true,
+            ..Default::default()
+        });
+        assert_eq!(answer.verdict, VERDICT_COUNT_REFUSED);
+        assert!(String::from_utf8_lossy(&answer.fault_reason).contains("input"));
+        assert_eq!(answer.units.len(), 1);
+        assert_eq!(answer.units[0].class, 1);
+        assert_eq!(
+            answer.units[0].count().unwrap(),
+            busbar_contract::Count::parse("27.1").unwrap()
+        );
+        assert!(answer.units.iter().all(|u| u.source != UNITS_FLOOR));
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/settings_schema.rs"]
+mod settings_schema_tests;

@@ -79,6 +79,8 @@ pub struct RerankResp {
     pub id: Option<String>,
     pub results: Vec<RerankResult>,
     pub search_units: Option<u64>,
+    /// Exact provider count or refusal, authoritative when present.
+    pub exact_usage: Option<busbar_contract::billing::TokenUsage>,
     pub extra: SourceScopedExtra,
 }
 
@@ -88,6 +90,9 @@ impl RerankResp {
     /// and reach it as the open class [`SEARCH_UNITS_CLASS`] (item 134), so a 5,000-document rerank no
     /// longer bills like a 1-document one.
     pub fn billing(&self) -> Option<Billing> {
+        if let Some(exact) = &self.exact_usage {
+            return Some(Billing::Tokens(exact.clone()));
+        }
         Some(match self.search_units {
             Some(count) => Billing::Counted {
                 class: SEARCH_UNITS_CLASS.to_string(),

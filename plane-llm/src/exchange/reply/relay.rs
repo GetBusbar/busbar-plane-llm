@@ -124,6 +124,7 @@ pub struct Relay {
     json_array: Option<Box<dyn ArrayStreamFramer>>,
     nonstream_buf: Vec<u8>,
     nonstream_buf_truncated: bool,
+    defer_nonstream: bool,
     root_usage: Option<root_usage::RootUsage>,
     stop_scan: Option<StopKeyScanner>,
     upstream_bytes: usize,
@@ -264,6 +265,7 @@ impl Relay {
             json_array,
             nonstream_buf: Vec::new(),
             nonstream_buf_truncated: false,
+            defer_nonstream: false,
             root_usage: (!far_is_stream && handler.taps_usage() && meter)
                 .then(|| root_usage::RootUsage::new(translate_cap)),
             stop_scan,
@@ -277,6 +279,16 @@ impl Relay {
     #[must_use]
     pub fn had_first(&self) -> bool {
         self.first_byte
+    }
+
+    /// Hold a metered whole answer in its existing bounded usage copy until its
+    /// report is checked. Larger answers retain the ordinary lossless relay.
+    pub(super) fn defer_nonstream(&mut self) {
+        self.defer_nonstream = !self.far_is_stream && self.handler.taps_usage() && self.meter;
+    }
+
+    pub(super) fn defers_head(&self) -> bool {
+        self.defer_nonstream
     }
 
     /// FEED one far-end piece. The second value is `true` on the one piece that first pushed the
@@ -313,6 +325,15 @@ impl Relay {
                 self.nonstream_buf_truncated = true;
                 truncated_now = true;
             }
+            if self.defer_nonstream {
+                if !self.nonstream_buf_truncated {
+                    return (Fed::Nothing, false);
+                }
+                self.defer_nonstream = false;
+                let mut released = self.nonstream_buf.clone();
+                released.extend_from_slice(&chunk[available..]);
+                return (Fed::Bytes(Cow::Owned(released)), truncated_now);
+            }
         }
         if let Some(framer) = self.json_array.as_mut() {
             let framed = framer.feed(chunk);
@@ -323,11 +344,15 @@ impl Relay {
 
     /// END the relay cleanly: the far end's body is complete.
     pub fn end(&mut self, host: &dyn crate::codec::cells::CodecHost) -> End {
-        let tail = self
+        let mut tail = self
             .translate
             .as_mut()
             .map(|t| t.finish(host))
             .unwrap_or_default();
+        if self.defer_nonstream {
+            tail.extend_from_slice(&self.nonstream_buf);
+            self.defer_nonstream = false;
+        }
         let translate_aborted = self.translate.as_ref().is_some_and(|t| t.aborted());
         let encoding_failed = self
             .translate
@@ -532,7 +557,7 @@ impl Relay {
         }
         self.upstream_failed = had_first && transport;
         Cut {
-            bytes: None,
+            bytes: self.defer_nonstream.then(|| self.nonstream_buf.clone()),
             reason: if had_first {
                 "mid-body-transport"
             } else {
@@ -570,13 +595,19 @@ impl Relay {
             })
     }
 
-    /// The usage a stream's readers have read so far (cheap: nothing is scanned); `None` for a
-    /// relay that reads its usage only at the end.
+    /// The usage a stream's readers have read so far. A whole answer also exposes
+    /// a refused report as soon as its original JSON root completes, before the
+    /// final body bytes can escape while transport EOF is still pending.
     #[must_use]
     pub fn streamed_usage(&self) -> Option<TokenUsage> {
-        self.translate
+        if let Some(t) = &self.translate {
+            return t.usage().map(|u| u.to_token_usage());
+        }
+        self.root_usage
             .as_ref()
-            .and_then(|t| t.usage().map(|u| u.to_token_usage()))
+            .and_then(root_usage::RootUsage::finish)
+            .and_then(|body| wire::reported_usage(self.ingress, &body))
+            .filter(|usage| !usage.refused_counts.is_empty())
     }
 
     /// The usage an answer that ended early had incurred: what a stream's readers accumulated; for a

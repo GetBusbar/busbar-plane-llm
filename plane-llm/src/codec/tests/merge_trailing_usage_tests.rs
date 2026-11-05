@@ -54,6 +54,9 @@ fn trailing_nonzero_overrides_zero_leaves_intact() {
 #[test]
 fn trailing_detail_merge_is_exhaustive_over_every_bucket() {
     let full = crate::codec::ir::IrUsageDetail {
+        exact_counts: None,
+        refused_counts: Vec::new(),
+        exact_tool_use_prompt_tokens: None,
         reasoning_tokens: Some(1),
         cache_creation_5m_input_tokens: Some(2),
         cache_creation_1h_input_tokens: Some(3),
@@ -139,4 +142,21 @@ fn a_following_reconciled_frame_clears_an_earlier_gap() {
         .to_token_usage()
         .open_units
         .contains_key(crate::codec::ir::open_class::UNITEMIZED_TOKENS_CLASS));
+}
+
+#[test]
+fn exact_trailing_usage_replaces_reported_zero_and_preserves_absent_input() {
+    use crate::codec::usage_count::{read_usage, CountRead, CountSlot};
+    const TABLE: &[(CountSlot, CountRead)] = &[
+        (CountSlot::Input, CountRead::Zero(&["input"])),
+        (CountSlot::Output, CountRead::Zero(&["output"])),
+    ];
+    let start = serde_json::from_str(r#"{"input":27.5,"output":27.1}"#).unwrap();
+    let end = serde_json::from_str(r#"{"output":0}"#).unwrap();
+    let mut acc = read_usage("test", Some(&start), TABLE).unwrap();
+    let trailing = read_usage("test", Some(&end), TABLE).unwrap();
+    merge_trailing_usage(&mut acc, &trailing);
+    let exact = acc.to_token_usage().exact_counts.unwrap();
+    assert_eq!(exact["input"].to_decimal_string(), "27.5");
+    assert_eq!(exact["output"], busbar_contract::Count::ZERO);
 }

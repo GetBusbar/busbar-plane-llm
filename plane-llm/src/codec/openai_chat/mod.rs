@@ -214,7 +214,7 @@ fn read_openai_usage(
                 VENDOR_NAME,
                 OPENAI_USAGE_IDENTITY,
                 usage.and_then(|u| u.get(keys::TOTAL_TOKENS)),
-                &ir,
+                &mut ir,
             )
         })
         .flatten();

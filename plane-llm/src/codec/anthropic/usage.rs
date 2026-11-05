@@ -94,12 +94,18 @@ pub(super) fn write_output_tokens_details(usage: &crate::codec::ir::IrUsage) -> 
 /// known, else `null`.
 pub(super) fn write_server_tool_use(usage: &crate::codec::ir::IrUsage) -> serde_json::Value {
     let detail = &usage.detail;
-    if detail.web_search_requests.is_none() && detail.web_fetch_requests.is_none() {
+    if detail.web_search_requests.is_none()
+        && detail.web_fetch_requests.is_none()
+        && !detail
+            .exact_counts
+            .as_ref()
+            .is_some_and(|e| e.contains_key("search_units") || e.contains_key("web_fetch_requests"))
+    {
         return serde_json::Value::Null;
     }
     serde_json::json!({
-        (super::WEB_SEARCH_REQUESTS): detail.web_search_requests.unwrap_or(0),
-        (super::WEB_FETCH_REQUESTS): detail.web_fetch_requests.unwrap_or(0),
+        (super::WEB_SEARCH_REQUESTS): usage.wire_count("search_units", detail.web_search_requests.unwrap_or(0)),
+        (super::WEB_FETCH_REQUESTS): usage.wire_count("web_fetch_requests", detail.web_fetch_requests.unwrap_or(0)),
     })
 }
 
@@ -111,19 +117,22 @@ pub(super) fn write_usage_object(usage: Option<&crate::codec::ir::IrUsage>) -> s
     let mut usage_map = serde_json::Map::new();
     usage_map.insert(
         keys::INPUT_TOKENS.to_string(),
-        serde_json::json!(usage.input_tokens),
+        usage.wire_count("input", usage.input_tokens),
     );
     usage_map.insert(
         keys::OUTPUT_TOKENS.to_string(),
-        serde_json::json!(usage.output_tokens),
+        usage.wire_count("output", usage.output_tokens),
     );
     usage_map.insert(
         super::CACHE_CREATION_INPUT_TOKENS.to_string(),
-        serde_json::json!(usage.cache_creation_input_tokens.unwrap_or(0)),
+        usage.wire_count(
+            "cache_write",
+            usage.cache_creation_input_tokens.unwrap_or(0),
+        ),
     );
     usage_map.insert(
         super::CACHE_READ_INPUT_TOKENS.to_string(),
-        serde_json::json!(usage.cache_read_input_tokens.unwrap_or(0)),
+        usage.wire_count("cache_read", usage.cache_read_input_tokens.unwrap_or(0)),
     );
     usage_map.insert(
         super::CACHE_CREATION.to_string(),
@@ -179,19 +188,22 @@ pub(super) fn write_message_delta_usage(usage: &crate::codec::ir::IrUsage) -> se
     let mut usage_map = serde_json::Map::new();
     usage_map.insert(
         keys::INPUT_TOKENS.to_string(),
-        serde_json::json!(usage.input_tokens),
+        usage.wire_count("input", usage.input_tokens),
     );
     usage_map.insert(
         keys::OUTPUT_TOKENS.to_string(),
-        serde_json::json!(usage.output_tokens),
+        usage.wire_count("output", usage.output_tokens),
     );
     usage_map.insert(
         super::CACHE_CREATION_INPUT_TOKENS.to_string(),
-        serde_json::json!(usage.cache_creation_input_tokens.unwrap_or(0)),
+        usage.wire_count(
+            "cache_write",
+            usage.cache_creation_input_tokens.unwrap_or(0),
+        ),
     );
     usage_map.insert(
         super::CACHE_READ_INPUT_TOKENS.to_string(),
-        serde_json::json!(usage.cache_read_input_tokens.unwrap_or(0)),
+        usage.wire_count("cache_read", usage.cache_read_input_tokens.unwrap_or(0)),
     );
     usage_map.insert(
         keys::OUTPUT_TOKENS_DETAILS.to_string(),
