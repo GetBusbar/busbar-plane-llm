@@ -43,6 +43,32 @@ fn translate_request(ingress: &'static str, egress: &str, body: &str) -> Vec<u8>
     crate::codec::json::to_vec(&out).expect("serializes")
 }
 
+#[test]
+fn req_openai_to_responses_preserves_literal_number_marker_schema_const() {
+    for key in [
+        "$serde_json::private::Number",
+        r"\u0024serde_json::private::Number",
+        r"$serde_json::private::Num\u0062er",
+    ] {
+        // Start with actual caller bytes, then take the production parse -> IR -> writer ->
+        // serialize path. Constructing a Value::Object directly would miss the ingress bug.
+        let body = format!(
+            r#"{{"model":"m","messages":[{{"role":"user","content":"hi"}}],"tools":[{{"type":"function","function":{{"name":"f","parameters":{{"type":"object","properties":{{"x":{{"const":{{"{key}":"27"}}}},"n":{{"const":27.0000000000000001}},"large":{{"const":9007199254740993}}}}}}}}}}]}}"#
+        );
+        let wire = translate_request("openai", "responses", &body);
+        let text = std::str::from_utf8(&wire).unwrap();
+        assert!(text.contains(r#""x":{"const":{"$serde_json::private::Number":"27"}}"#));
+        assert!(text.contains(r#""n":{"const":27.0000000000000001}"#));
+        assert!(text.contains(r#""large":{"const":9007199254740993}"#));
+        let output: Value = crate::codec::json::parse(&wire).unwrap();
+        let constant = output
+            .pointer("/tools/0/parameters/properties/x/const")
+            .unwrap();
+        assert!(constant.is_object());
+        assert_eq!(constant["$serde_json::private::Number"], "27");
+    }
+}
+
 /// Shape-assert an ingress-synthesized id at `obj[key]` (`<prefix><base62 tail>`) and normalize it to
 /// a fixed token, so everything else is compared byte-exact.
 fn normalize_id(obj: &mut serde_json::Map<String, Value>, key: &str, prefix: &str) {

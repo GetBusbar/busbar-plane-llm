@@ -23,7 +23,7 @@ path = "src/lib.rs"
 [dependencies]
 busbar-contract = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true, features = ["arbitrary_precision"] }
+serde_json = { workspace = true, features = ["arbitrary_precision", "raw_value"] }
 # The codecs' serializer: byte identity depends on one serializer for escaping and numbers.
 sonic-rs = { workspace = true }
 bytes = { workspace = true }

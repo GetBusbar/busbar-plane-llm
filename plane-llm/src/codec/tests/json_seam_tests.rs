@@ -60,3 +60,59 @@ fn exact_numbers_serialize_as_json_numbers() {
         assert_eq!(to_string(&value).unwrap(), body);
     }
 }
+
+#[test]
+fn literal_number_marker_objects_keep_their_json_type() {
+    for key in [
+        "$serde_json::private::Number",
+        r"\u0024serde_json::private::Number",
+        r"$serde_json::private::Num\u0062er",
+    ] {
+        for member in [r#""27""#, r#""not a number""#, "27", "null", "[]", "{}"] {
+            let body = format!(r#"{{"{key}":{member}}}"#);
+            for value in [
+                parse::<Value>(body.as_bytes()).unwrap(),
+                parse_str::<Value>(&body).unwrap(),
+            ] {
+                let object = value.as_object().expect("literal object remains an object");
+                assert_eq!(object.len(), 1);
+                assert_eq!(object["$serde_json::private::Number"].to_string(), member);
+                let expected = format!(r#"{{"$serde_json::private::Number":{member}}}"#);
+                assert_eq!(to_string(&value).unwrap(), expected);
+                assert_eq!(to_vec(&value).unwrap(), expected.as_bytes());
+            }
+        }
+    }
+}
+
+#[test]
+fn nested_marker_objects_and_exact_numbers_remain_distinct() {
+    let body = br#"{"items":[{"$serde_json::private::Number":"27","other":true},27.0000000000000001,9007199254740993,1e+400,{"nested":{"\u0024serde_json::private::Number":"27"}}]}"#;
+    let value = parse::<Value>(body).unwrap();
+    assert!(value["items"][0].is_object());
+    assert_eq!(value["items"][0]["other"], true);
+    assert_eq!(value["items"][1].to_string(), "27.0000000000000001");
+    assert_eq!(value["items"][2].to_string(), "9007199254740993");
+    assert_eq!(value["items"][3].to_string(), "1e+400");
+    assert!(value["items"][4]["nested"].is_object());
+    let wire = to_vec(&value).unwrap();
+    assert_eq!(parse::<Value>(&wire).unwrap(), value);
+}
+
+#[test]
+fn exact_parser_rejects_malformed_documents_and_validates_without_dom() {
+    for body in [
+        "",
+        "{",
+        r#"{"$serde_json::private::Number":"27"} false"#,
+        r#"{"$serde_json::private::Number":"27",}"#,
+        "[1,]",
+        "[01]",
+        r#"{"x":"\uD800"}"#,
+    ] {
+        assert!(parse::<Value>(body.as_bytes()).is_err(), "{body}");
+    }
+    let body = br#"{"\u0024serde_json::private::Number":"27","x":1e+400}"#;
+    assert!(parse::<serde::de::IgnoredAny>(body).is_ok());
+    assert!(parse::<serde::de::IgnoredAny>(b"[1,]").is_err());
+}
