@@ -871,6 +871,29 @@ fn the_answer_walk_names_only_true_drops_over_the_golden_corpus() {
     assert!(seen > 20, "the corpus was read: {seen}");
 }
 
+#[test]
+fn anthropic_web_fetch_usage_is_carried_without_hiding_unknown_siblings() {
+    let carried =
+        crate::codec::proto_codec::with_reader("anthropic", |r| r.grammar().response_carried)
+            .flatten()
+            .expect("Anthropic response map");
+    for count in [0, 3] {
+        let mut body = serde_json::json!({
+            "usage": {"server_tool_use": {"web_fetch_requests": count}}
+        });
+        assert!(
+            carried.unmapped("", &body).is_empty(),
+            "the usage reader and writer both carry web fetch count {count}"
+        );
+        body["usage"]["server_tool_use"]["unknown_counter"] = serde_json::json!("private payload");
+        assert_eq!(
+            carried.unmapped("", &body),
+            ["usage.server_tool_use.unknown_counter"],
+            "only the declared count is carried; unknown siblings remain named without values"
+        );
+    }
+}
+
 /// A dialect never lists as dropped a path it carries (a map row or a code-carried path): the walk
 /// would name a member that crosses (red: Responses' stream events and three Gemini answer members
 /// were both carried and listed as drops after DF-MAP mapped them).
