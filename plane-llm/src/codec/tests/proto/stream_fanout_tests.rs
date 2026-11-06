@@ -52,7 +52,22 @@ fn test_openai_read_fanout_text() {
                     output_tokens: 5,
                     cache_creation_input_tokens: None,
                     cache_read_input_tokens: None,
-                    detail: crate::codec::ir::IrUsageDetail::default(),
+                    detail: crate::codec::ir::IrUsageDetail {
+                        exact_counts: Some(
+                            [
+                                (
+                                    "input".to_owned(),
+                                    busbar_contract::Count::parse("10").unwrap()
+                                ),
+                                (
+                                    "output".to_owned(),
+                                    busbar_contract::Count::parse("5").unwrap()
+                                ),
+                            ]
+                            .into()
+                        ),
+                        ..Default::default()
+                    },
                 },
                 stop_detail: None,
             },

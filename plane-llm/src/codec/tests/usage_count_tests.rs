@@ -191,7 +191,19 @@ fn no_dialect_reads_a_count_with_the_bare_defaulting_idiom() {
             })
             .collect::<Vec<_>>()
             .join(" ");
-        let flat: String = code.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut flat: String = code.split_whitespace().collect::<Vec<_>>().join(" ");
+        if f.ends_with("codec/gemini/schema.rs") {
+            // These two reads merge integer JSON-Schema min/max constraints after both
+            // operands pass as_u64().is_some(). They are not usage counts. Exempt only
+            // these exact statements; any other defaulting count read remains covered.
+            for constraint_read in [
+                "let a = previous.as_u64().unwrap_or_default();",
+                "let b = value.as_u64().unwrap_or_default();",
+            ] {
+                assert_eq!(flat.matches(constraint_read).count(), 1);
+                flat = flat.replace(constraint_read, "");
+            }
+        }
         for bad in [
             "as_u64() . unwrap_or(0)",
             "as_u64() . unwrap_or_default()",

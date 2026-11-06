@@ -37,11 +37,10 @@ fn write(resp: &crate::codec::ir::IrResponse) -> serde_json::Value {
 
 #[test]
 fn the_cache_read_count_row_bills_inside_the_input_and_is_written() {
-    let mut resp = read(&answer());
-    assert_eq!(resp.usage.cache_read_input_tokens, None);
-    assert_eq!(resp.usage.input_tokens, 12);
-    resp.usage.input_tokens = 8;
-    resp.usage.cache_read_input_tokens = Some(4);
+    let resp = read(&answer());
+    assert_eq!(resp.usage.cache_read_input_tokens, Some(4));
+    assert_eq!(resp.usage.input_tokens, 8);
+    assert_eq!(resp.usage.billable_tokens(), 14);
     let out = write(&resp);
     assert_eq!(out["usage"]["cached_tokens"], json!(4), "{out}");
 }

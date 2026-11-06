@@ -565,11 +565,9 @@ fn test_read_request_tool_calls_only_processed_for_assistant_role() {
     );
 }
 
-/// Once a text block is closed (`ET_CONTENT_END`), `state.text_block_closed` latches — a LATER
-/// `ET_CONTENT_START` for a text block must be dropped (falls through to the no-op `other` arm),
-/// never reopening the already-stopped index with a second `BlockStart`.
+/// An explicit content start after closure gets a fresh identity; late deltas cannot reopen it.
 #[test]
-fn test_stream_content_start_after_close_does_not_reopen_the_text_block() {
+fn test_stream_content_start_after_close_opens_a_fresh_text_block() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
     let reader = CohereReader;
 
@@ -602,9 +600,28 @@ fn test_stream_content_start_after_close_does_not_reopen_the_text_block() {
         &mut state,
     );
     assert!(
-        evs.is_empty(),
-        "a text block reopened after close must be dropped, not re-emit BlockStart: {evs:?}"
+        matches!(
+            evs.as_slice(),
+            [crate::codec::ir::IrStreamEvent::BlockStart { index: 1, .. }]
+        ),
+        "an explicit start must allocate a fresh block, never reuse the closed index: {evs:?}"
     );
+    let delta = reader.read_response_events(crate::codec::test_host::HOST, "",
+        &serde_json::json!({"type":ET_CONTENT_DELTA, "index":1, "delta":{"message":{"content":{"text":"next"}}}}), &mut state);
+    assert!(matches!(
+        delta.as_slice(),
+        [crate::codec::ir::IrStreamEvent::BlockDelta { index: 1, .. }]
+    ));
+    let stopped = reader.read_response_events(
+        crate::codec::test_host::HOST,
+        "",
+        &serde_json::json!({"type":ET_CONTENT_END, "index":1}),
+        &mut state,
+    );
+    assert!(matches!(
+        stopped.as_slice(),
+        [crate::codec::ir::IrStreamEvent::BlockStop { index: 1 }]
+    ));
 }
 
 /// The array-form `read_response_events` content-delta path only emits a `TextDelta` for a block
@@ -3774,9 +3791,12 @@ fn test_over_cap_tool_call_start_emits_no_block() {
     });
     let evs = reader.read_response_events(crate::codec::test_host::HOST, "", &over, &mut state);
     assert!(
-        evs.is_empty(),
-        "an over-cap tool-call-start must emit no block events, got {evs:?}"
+        matches!(evs.as_slice(), [crate::codec::ir::IrStreamEvent::Error(error)]
+            if error.provider_signal.as_deref() == Some("ir_parse")),
+        "an over-cap tool-call-start must explicitly refuse without block events, got {evs:?}"
     );
+    assert_eq!(state.open_tools.len(), MAX_TRACKED_TOOL_FRAMES);
+    assert_eq!(state.tool_ir_index.len(), MAX_TRACKED_TOOL_FRAMES);
     assert_eq!(
         count_block_starts_at(&evs, MAX_TRACKED_TOOL_FRAMES - 1),
         0,

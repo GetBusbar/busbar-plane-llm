@@ -260,7 +260,9 @@ fn responses_accumulator_refusal_ends_output_before_crossing_fragment() {
     ] {
         for overflow in [false, true] {
             let writer = ResponsesWriter;
-            writer.set_translate_cap(512);
+            // Retained citation structs and finalized wire JSON both count toward the cap.
+            const CAP: usize = 4096;
+            writer.set_translate_cap(CAP);
             writer.write_response_events(
                 host,
                 &IrStreamEvent::MessageStart {
@@ -315,7 +317,7 @@ fn responses_accumulator_refusal_ends_output_before_crossing_fragment() {
                     _ => 0,
                 };
 
-                "x".repeat(512 - carried_overhead)
+                "x".repeat(CAP - carried_overhead)
             } else if case == "tool" {
                 "1".into()
             } else {
@@ -366,7 +368,10 @@ fn responses_accumulator_refusal_ends_output_before_crossing_fragment() {
                 },
             );
             if overflow {
-                assert!(later.is_empty() && closed.is_empty() && terminal.is_empty(), "{case}: a failed stream must not emit later fragments or success: {later:?} {closed:?} {terminal:?}");
+                assert!(
+                    later.is_empty() && closed.is_empty() && terminal.is_empty(),
+                    "{case}: a failed stream must not emit later fragments or success: {later:?} {closed:?} {terminal:?}"
+                );
             } else {
                 assert!(!closed.is_empty(), "{case}: normal item must close");
                 let response = &terminal
@@ -414,13 +419,16 @@ fn responses_accumulator_refusal_ends_output_before_crossing_fragment() {
 fn responses_stream_cap_failure_keeps_reported_usage_and_suppresses_success() {
     let host = crate::codec::test_host::HOST;
     for overflow in [false, true] {
+        // The finalized message envelope also consumes the retained-output budget.
+        const CAP: usize = 1024;
+        let crossing = "LONG".repeat(CAP);
         let mut stream = crate::codec::proto_stream::StreamTranslate::new("responses", "openai")
             .unwrap()
-            .with_translate_cap(5);
+            .with_translate_cap(CAP);
         let mut output = Vec::new();
         for data in [
             serde_json::json!({"id":"chat_cap","model":"test","choices":[{"index":0,"delta":{"role":"assistant","content":"abc"},"finish_reason":null}]}),
-            serde_json::json!({"id":"chat_cap","choices":[{"index":0,"delta":{"content":if overflow { "LONG" } else { "e" }},"finish_reason":null}]}),
+            serde_json::json!({"id":"chat_cap","choices":[{"index":0,"delta":{"content":if overflow { crossing.as_str() } else { "e" }},"finish_reason":null}]}),
             serde_json::json!({"id":"chat_cap","choices":[{"index":0,"delta":{"content":"d"},"finish_reason":null}]}),
             serde_json::json!({"id":"chat_cap","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}),
             serde_json::json!({"id":"chat_cap","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":11,"total_tokens":18}}),
@@ -454,7 +462,7 @@ fn responses_stream_cap_failure_keeps_reported_usage_and_suppresses_success() {
             assert!(output.contains("response.completed"), "{output}");
             assert!(
                 output.contains("\"text\":\"abced\""),
-                "the exact-cap terminal must preserve every fragment: {output}"
+                "the successful terminal must preserve every fragment: {output}"
             );
             assert_eq!(stream.terminal_error(), None);
         }
@@ -3771,13 +3779,24 @@ fn test_output_item_done_carries_matching_item_id_and_item() {
         .expect("added carries item_id")
         .to_string();
 
-    let (etype, done) = writer
-        .write_response_event(
-            crate::codec::test_host::HOST,
-            &IrStreamEvent::BlockStop { index: 3 },
-        )
-        .expect("done emits");
-    assert_eq!(etype, "response.output_item.done");
+    let frames = writer.write_response_events(
+        crate::codec::test_host::HOST,
+        &IrStreamEvent::BlockStop { index: 3 },
+    );
+    assert_eq!(
+        frames
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "response.function_call_arguments.done",
+            "response.output_item.done"
+        ]
+    );
+    let done = &frames[1].1;
+    assert_eq!(frames[0].1["item_id"], done["item_id"]);
+    assert_eq!(frames[0].1["output_index"], added["output_index"]);
+    assert_eq!(done["output_index"], added["output_index"]);
     assert_eq!(
         done.get("item_id").and_then(|i| i.as_str()),
         Some(added_id.as_str()),
@@ -4065,10 +4084,14 @@ fn test_tool_and_text_block_stop_emit_correctly_typed_done() {
     let tool_types: Vec<&str> = tool_frames.iter().map(|(et, _)| et.as_str()).collect();
     assert_eq!(
         tool_types,
-        vec!["response.output_item.done"], // golden wire-contract literal (kept bare on purpose)
-        "tool BlockStop emits only output_item.done"
+        vec![
+            "response.function_call_arguments.done",
+            "response.output_item.done"
+        ],
+        "tool arguments finalize before the completed item"
     );
-    assert_eq!(tool_frames[0].1["item"]["type"], "function_call");
+    assert_eq!(tool_frames[1].1["item"]["type"], "function_call");
+    assert_eq!(tool_frames[0].1["item_id"], tool_frames[1].1["item_id"]);
 
     let text_frames = writer.write_response_events(
         crate::codec::test_host::HOST,
@@ -4476,28 +4499,32 @@ fn test_reader_open_tools_is_capped() {
     );
 }
 
-/// A crafted huge `output_index` must be clamped to
-/// MAX_OUTPUT_INDEX before the usize cast/insert, so the tracked index never exceeds the cap and
-/// downstream index arithmetic stays bounded.
+/// Reject an invalid wire identity instead of aliasing it to a valid boundary block.
 #[test]
-fn test_reader_output_index_clamped() {
+fn test_reader_output_index_rejected() {
     let mut state = crate::codec::ir::StreamDecodeState::default();
-    let out = reader_read_response_events(
+    let valid = reader_read_response_events(
         EVT_OUTPUT_ITEM_ADDED,
-        &serde_json::json!({
-            "output_index": u64::MAX,
-            "item": {"type":ITEM_TYPE_FUNCTION_CALL,"call_id":"fc","name":"f"}
-        }),
+        &serde_json::json!({"output_index":MAX_OUTPUT_INDEX,
+            "item":{"type":ITEM_TYPE_FUNCTION_CALL,"call_id":"valid","name":"f"}}),
         &mut state,
     );
-    match out.first() {
-        Some(crate::codec::ir::IrStreamEvent::BlockStart { index, .. }) => {
-            assert_eq!(*index, MAX_OUTPUT_INDEX, "u64::MAX index must clamp to cap");
-        }
-        other => panic!("expected a clamped BlockStart, got {other:?}"),
-    }
+    assert!(
+        matches!(valid.as_slice(), [IrStreamEvent::BlockStart { index, .. }] if *index == MAX_OUTPUT_INDEX)
+    );
+    let out = reader_read_response_events(
+        EVT_OUTPUT_ITEM_ADDED,
+        &serde_json::json!({"output_index":u64::MAX,
+            "item":{"type":ITEM_TYPE_FUNCTION_CALL,"call_id":"hostile","name":"f"}}),
+        &mut state,
+    );
+    assert!(
+        matches!(out.as_slice(), [IrStreamEvent::Error(error)]
+        if error.provider_signal.as_deref() == Some("invalid_response_index")),
+        "{out:?}"
+    );
+    assert_eq!(state.open_tools.len(), 1);
     assert!(state.open_tools.contains(&MAX_OUTPUT_INDEX));
-    assert!(!state.open_tools.iter().any(|&i| i > MAX_OUTPUT_INDEX));
 }
 
 /// The writer's open-text-index set is also capped so a
@@ -5079,8 +5106,9 @@ fn test_cap_still_bounds_new_indices_after_guard_fix() {
     );
 
     assert!(
-        over.is_empty(),
-        "an over-cap index clamps onto an already-open one and must emit nothing, got {over:?}"
+        matches!(over.as_slice(), [IrStreamEvent::Error(error)]
+            if error.provider_signal.as_deref() == Some("invalid_response_index")),
+        "an over-cap index must explicitly refuse without aliasing an open block, got {over:?}"
     );
     assert!(
         state.open_tools.len() <= MAX_OPEN_TOOLS,
@@ -5291,14 +5319,23 @@ fn test_function_call_done_carries_finalized_item() {
         },
     );
 
-    let (etype, payload) = writer
-        .write_response_event(
-            crate::codec::test_host::HOST,
-            &crate::codec::ir::IrStreamEvent::BlockStop { index: 0 },
-        )
-        .expect("output_item.done should emit");
-    assert_eq!(etype, "response.output_item.done");
-    let item = &payload["item"];
+    let frames = writer.write_response_events(
+        crate::codec::test_host::HOST,
+        &crate::codec::ir::IrStreamEvent::BlockStop { index: 0 },
+    );
+    assert_eq!(
+        frames
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "response.function_call_arguments.done",
+            "response.output_item.done"
+        ]
+    );
+    let item = &frames[1].1["item"];
+    assert_eq!(frames[0].1["arguments"], item["arguments"]);
+    assert_eq!(frames[0].1["item_id"], item["id"]);
     assert_eq!(item["type"].as_str(), Some("function_call"));
     assert_eq!(
         item["call_id"].as_str(),
@@ -8267,11 +8304,12 @@ fn writer_citation_accumulator_keeps_its_held_weight() {
     let one = citation_bytes(&citation);
     assert_eq!(
         one,
-        "web_search_result_location".len()
+        std::mem::size_of::<crate::codec::ir::IrCitation>()
+            + "web_search_result_location".len()
             + 16 * 1024
             + "https://example.invalid/a".len()
             + raw.to_string().len(),
-        "a citation weighs its strings and its compact raw entry"
+        "a citation weighs its retained struct, strings, and compact raw entry"
     );
 
     let cap = crate::codec::cells::TRANSLATE_BODY_MAX_BYTES_DEFAULT;

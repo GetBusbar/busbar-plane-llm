@@ -197,29 +197,35 @@ fn an_unreadable_embeddings_count_refuses_itself_and_the_answer_is_served() {
 
 #[test]
 fn an_unreadable_transcription_count_refuses_itself_and_the_transcript_is_served() {
-    use busbar_contract::billing::{Billing, TokenUsage};
-    let read = |usage: &str| {
-        let wire = format!(r#"{{"text":"hi","usage":{{"type":"tokens",{usage}}}}}"#);
-        crate::codec::openai_chat::handler::read_transcription_response(wire.as_bytes())
-            .expect("an unreadable count refuses itself, never the transcript")
-    };
-    let r = read(r#""input_tokens":"12","output_tokens":5"#);
-    assert_eq!(r.text, "hi");
-    assert_eq!(
-        r.usage, None,
-        "an unreadable input is no token billing, as 1.5.5"
-    );
-    let r = read(r#""input_tokens":12,"output_tokens":"5""#);
-    assert_eq!(r.text, "hi");
-    assert_eq!(
-        r.usage,
-        Some(Billing::Tokens(TokenUsage {
-            input: 12,
-            output: 0,
-            ..Default::default()
-        })),
-        "the readable input bills, the refused output bills nothing"
-    );
+    use busbar_contract::{billing::Billing, Count};
+    for (reported, kept_class, kept, refused) in [
+        (
+            r#""input_tokens":"12","output_tokens":5"#,
+            "output",
+            "5",
+            "input_tokens",
+        ),
+        (
+            r#""input_tokens":12,"output_tokens":"5""#,
+            "input",
+            "12",
+            "output_tokens",
+        ),
+    ] {
+        let wire = format!(r#"{{"text":"hi","usage":{{"type":"tokens",{reported}}}}}"#);
+        let r = crate::codec::openai_chat::handler::read_transcription_response(wire.as_bytes())
+            .expect("an unreadable count refuses itself, never the transcript");
+        assert_eq!(r.text, "hi");
+        let Some(Billing::Tokens(usage)) = r.usage else {
+            panic!("valid sibling counts and the refusal must remain token-metered");
+        };
+        assert_eq!(
+            usage.exact_counts,
+            Some([(kept_class.to_owned(), Count::parse(kept).unwrap())].into())
+        );
+        assert_eq!(usage.refused_counts.len(), 1);
+        assert!(usage.refused_counts[0].contains(refused));
+    }
 }
 
 /// AN ABSENT COUNT IS STILL ZERO, AND A RESPONSE WITH NO USAGE OBJECT STILL READS.

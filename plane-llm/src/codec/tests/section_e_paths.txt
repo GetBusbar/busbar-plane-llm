@@ -153,7 +153,6 @@ bedrock response trace.guardrail.outputAssessments
 bedrock response trace.promptRouter
 bedrock response trace.promptRouter.invokedModelId
 bedrock stream metadata.performanceConfig.latency
-bedrock stream metadata.serviceTier
 bedrock stream metadata.trace.guardrail
 bedrock stream metadata.trace.guardrail.actionReason
 bedrock stream metadata.trace.guardrail.inputAssessment

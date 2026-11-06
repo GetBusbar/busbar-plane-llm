@@ -180,12 +180,13 @@ fn request_with_unknown_keys(n: usize) -> Value {
 fn drop_index_full_request_keeps_each_warning_and_audit_without_payload_values() {
     let body = request_with_unknown_keys(1024);
     let (wire, audited, cap) = super::tests::translate("openai", "anthropic", &body);
-    let expected: Vec<_> = (0..1024)
+    let mut expected: Vec<_> = (0..MAX_DROP_PATHS - 1)
         .map(|n| format!("fixture_unknown_{n:06}"))
         .collect();
+    expected.push(OMITTED_PATH.to_owned());
     assert_eq!(audited, expected);
     let warnings = diagnostic_texts(&cap);
-    assert_eq!(warnings.len(), expected.len());
+    assert_eq!(warnings.len(), MAX_DROP_PATHS - 1);
     assert!(warnings
         .iter()
         .all(|message| !message.contains("private fixture payload")));

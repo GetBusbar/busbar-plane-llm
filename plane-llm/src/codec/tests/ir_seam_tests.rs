@@ -1012,45 +1012,72 @@ fn bedrock_video_names_never_become_unsupported_wire_members() {
 #[test]
 fn leaf_usage_taps_preserve_exact_counts_when_the_payload_is_malformed() {
     use crate::codec::cells::RequestHandler;
-    use busbar_contract::operation::OpVerb;
+    use busbar_contract::{operation::OpVerb, Count};
     let cohere = crate::codec::cohere::handler::CohereRequestHandler;
     let bedrock = crate::codec::bedrock::handler::BedrockRequestHandler;
-    let rerank_handlers: [(&str, &dyn RequestHandler); 2] =
-        [("cohere", &cohere), ("bedrock", &bedrock)];
-    for (protocol, handler) in rerank_handlers {
+    let handlers: [(&str, &dyn RequestHandler); 2] = [("cohere", &cohere), ("bedrock", &bedrock)];
+    for (protocol, handler) in handlers {
         let op = handler.operation_handler(OpVerb::RERANK).unwrap();
-        let body=br#"{"results":[{"index":0}],"meta":{"billed_units":{"search_units":18446744073709551615}}}"#;
-        assert!(op
-            .read_response(crate::codec::test_host::HOST, body)
-            .is_err());
-        let usage = op
-            .extract_usage(crate::codec::test_host::HOST, protocol, body)
-            .unwrap()
-            .unwrap();
-        assert_eq!(usage.open_units.get("search_units"), Some(&u64::MAX));
-        assert_eq!((usage.input, usage.output), (0, 0));
-        for units in [json!(null), json!("bad")] {
-            let body = serde_json::to_vec(
-                &json!({"results":[],"meta":{"billed_units":{"search_units":units}}}),
-            )
-            .unwrap();
+        for raw in [
+            "7",
+            "27.1",
+            "9223372036854.775807",
+            "18446744073709551615",
+            "null",
+            "\"bad\"",
+        ] {
+            let body = format!(
+                r#"{{"results":[{{"index":0}}],"meta":{{"billed_units":{{"search_units":{raw}}}}}}}"#
+            );
             assert!(op
-                .extract_usage(crate::codec::test_host::HOST, protocol, &body)
+                .read_response(crate::codec::test_host::HOST, body.as_bytes())
+                .is_err());
+            let usage = op
+                .extract_usage(crate::codec::test_host::HOST, protocol, body.as_bytes())
                 .unwrap()
-                .is_none());
+                .unwrap();
+            let exact = usage.exact_counts.as_ref().expect("exact carrier");
+            if let Ok(count) = Count::parse(raw) {
+                if count.fits_a_64_bit_column() {
+                    assert_eq!(exact.get("search_units"), Some(&count));
+                    assert!(usage.refused_counts.is_empty());
+                    continue;
+                }
+            }
+            assert!(exact.is_empty(), "no zero or substitute count for {raw}");
+            assert!(usage.open_units.is_empty());
+            assert_eq!(usage.refused_counts.is_empty(), raw == "null");
         }
     }
     let op = cohere.operation_handler(OpVerb::EMBEDDINGS).unwrap();
-    let body=br#"{"embeddings":{"float":[[1,"bad"]]},"meta":{"billed_units":{"input_tokens":18446744073709551615}}}"#;
-    assert!(op
-        .read_response(crate::codec::test_host::HOST, body)
-        .is_err());
-    let usage = op
-        .extract_usage(crate::codec::test_host::HOST, "cohere", body)
-        .unwrap()
-        .unwrap();
-    assert_eq!(usage.input, u64::MAX);
-    assert_eq!(usage.output, 0);
+    for raw in ["27.1", "9223372036854.775807", "18446744073709551615"] {
+        let body = format!(
+            r#"{{"embeddings":{{"float":[[1,"bad"]]}},"meta":{{"billed_units":{{"input_tokens":{raw}}}}}}}"#
+        );
+        assert!(op
+            .read_response(crate::codec::test_host::HOST, body.as_bytes())
+            .is_err());
+        let usage = op
+            .extract_usage(crate::codec::test_host::HOST, "cohere", body.as_bytes())
+            .unwrap()
+            .unwrap();
+        let count = Count::parse(raw).unwrap();
+        if count.fits_a_64_bit_column() {
+            assert_eq!(
+                usage.exact_counts,
+                Some([("input".to_owned(), count)].into())
+            );
+            assert!(usage.refused_counts.is_empty());
+        } else {
+            assert_eq!(usage.exact_counts, Some(Default::default()));
+            assert!(!usage.refused_counts.is_empty());
+        }
+        assert_eq!(
+            (usage.input, usage.output),
+            (0, 0),
+            "no integer rounding or overflow"
+        );
+    }
 }
 
 #[test]
@@ -1617,12 +1644,27 @@ fn stream_block_mapping_survives_reverse_closes_late_citations_and_clone() {
         };
         let frames = emit(&citation);
         assert!(!frames.is_empty());
-        assert!(
-            frames
+        if name == "cohere" {
+            // Cohere citation indices identify citation pairs, independently of content blocks.
+            assert_eq!(frames.len(), 2);
+            assert_eq!(frames[0].1["type"], "citation-start");
+            assert_eq!(frames[1].1["type"], "citation-end");
+            assert!(frames
                 .iter()
-                .all(|frame| mapped_stream_index(frame) == Some(1)),
-            "{name} {frames:?}"
-        );
+                .all(|frame| mapped_stream_index(frame) == Some(0)));
+            let next = emit(&citation);
+            assert_eq!(next.len(), 2);
+            assert!(next
+                .iter()
+                .all(|frame| mapped_stream_index(frame) == Some(1)));
+        } else {
+            assert!(
+                frames
+                    .iter()
+                    .all(|frame| mapped_stream_index(frame) == Some(1)),
+                "{name} {frames:?}"
+            );
+        }
         let frames = cloned.writer().write_response_events(
             crate::codec::test_host::HOST,
             &IrStreamEvent::BlockStop { index: 4 },
@@ -1753,7 +1795,7 @@ fn malformed_leaf_recovery_keeps_full_billing_variants() {
     let handlers: [(&str, &dyn RequestHandler); 2] = [("cohere", &cohere), ("bedrock", &bedrock)];
     for (_, handler) in handlers {
         let op = handler.operation_handler(OpVerb::RERANK).unwrap();
-        for count in [0, 7, u64::MAX] {
+        for count in [0, 7, 9_223_372_036_854_u64] {
             let malformed = serde_json::to_vec(&json!({"results":[{"index":0}],
                 "meta":{"billed_units":{"search_units":count}}}))
             .unwrap();
@@ -1778,14 +1820,20 @@ fn malformed_leaf_recovery_keeps_full_billing_variants() {
                 expected
             );
         }
-        for count in [json!(null), json!("bad")] {
+        for count in [json!(null), json!("bad"), json!(u64::MAX)] {
             let body = serde_json::to_vec(&json!({"results":[{"index":0}],
                 "meta":{"billed_units":{"search_units":count}}}))
             .unwrap();
-            assert_eq!(
-                op.recover_response_billing(crate::codec::test_host::HOST, &body),
-                Some(Billing::Flat)
-            );
+            let recovered = op.recover_response_billing(crate::codec::test_host::HOST, &body);
+            if count.is_null() {
+                assert_eq!(recovered, Some(Billing::Flat));
+            } else {
+                let Some(Billing::Tokens(usage)) = recovered else {
+                    panic!("invalid counts retain a refusal instead of a flat-charge fallback");
+                };
+                assert_eq!(usage.exact_counts, Some(Default::default()));
+                assert!(!usage.refused_counts.is_empty());
+            }
         }
         assert_eq!(
             op.recover_response_billing(
@@ -1806,7 +1854,9 @@ fn malformed_leaf_recovery_keeps_full_billing_variants() {
     else {
         panic!("embedding recovery must stay token-metered")
     };
-    assert_eq!(usage.input, u64::MAX);
+    assert_eq!(usage.exact_counts, Some(Default::default()));
+    assert!(!usage.refused_counts.is_empty());
+    assert_eq!(usage.input, 0);
 }
 
 #[test]

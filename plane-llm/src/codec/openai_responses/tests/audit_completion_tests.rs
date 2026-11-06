@@ -30,7 +30,12 @@ fn tool_arguments_finalize_once_before_the_item_with_matching_identity() {
     assert_eq!(done[0].0, "response.function_call_arguments.done");
     assert_eq!(done[0].1["type"], done[0].0);
     assert_eq!(done[0].1["arguments"], "{\"city\":\"Paris\"}");
-    assert_eq!(done[0].1["output_index"], 3);
+    assert_eq!(
+        added[0].1["output_index"], 0,
+        "the first emitted item is compacted"
+    );
+    assert_eq!(done[0].1["output_index"], added[0].1["output_index"]);
+    assert_eq!(done[1].1["output_index"], added[0].1["output_index"]);
     assert_eq!(done[0].1["item_id"], added[0].1["item"]["id"]);
     assert_eq!(done[1].0, "response.output_item.done");
     assert_eq!(done[1].1["item"]["arguments"], done[0].1["arguments"]);

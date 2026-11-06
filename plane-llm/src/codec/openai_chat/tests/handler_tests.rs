@@ -414,8 +414,8 @@ fn transcription_egress_carries_language_prompt_and_format() {
 }
 
 #[test]
-fn transcription_egress_field_strips_crlf_injection() {
-    let ir = crate::codec::ir::audio::TranscriptionReq {
+fn transcription_egress_field_keeps_crlf_inside_its_multipart_value() {
+    let mut ir = crate::codec::ir::audio::TranscriptionReq {
         model: "whisper-1\r\nContent-Disposition: form-data; name=\"evil\"\r\n\r\npwn".into(),
         audio: Some(MediaBlob {
             payload: MediaPayload::Bytes(SlabBytes::from(&b"x"[..])),
@@ -427,13 +427,25 @@ fn transcription_egress_field_strips_crlf_injection() {
     let out = super::super::super::leaf_codec::transcription_write_request("openai", &ir);
     let text = String::from_utf8_lossy(&out);
 
-    assert!(
-        !text.contains("\r\nContent-Disposition: form-data; name=\"evil\""),
-        "injected part must not begin a header line: {text}"
+    let fields = parse_multipart(&out, TRANSCRIPTION_CONTENT_TYPE);
+    assert_eq!(
+        fields.len(),
+        2,
+        "body text must not inject another part: {text}"
     );
+    assert_eq!(fields[0].name, "model");
+    assert_eq!(fields[0].value, ir.model.as_bytes());
+    assert_eq!(fields[1].name, "file");
+    assert_eq!(fields[1].value, b"x");
+    assert!(fields.iter().all(|field| field.name != "evil"));
 
     let delim = format!("--{TRANSCRIPTION_BOUNDARY}");
     assert_eq!(text.matches(&delim).count(), 3);
+
+    // A real delimiter can end a body part; that input must be refused outright.
+    ir.model =
+        format!("whisper-1\r\n{delim}\r\nContent-Disposition: form-data; name=\"evil\"\r\n\r\npwn");
+    assert!(write_transcription_request(&ir).is_empty());
 }
 
 /// Q128 arch u56: THE REFUSED WRITE IS A REFUSAL AT THE SEAM, never an empty body forwarded

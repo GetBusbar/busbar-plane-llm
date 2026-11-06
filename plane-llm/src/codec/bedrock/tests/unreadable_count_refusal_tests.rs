@@ -171,10 +171,13 @@ fn embeddings_response_refuses_an_unreadable_billed_input_on_its_own() {
     let wire = |n: &str| format!(r#"{{"embedding":[0.1],"inputTextTokenCount":{n}}}"#);
     let served = read_embeddings_response(wire(r#""1500""#).as_bytes())
         .expect("an unreadable count refuses itself, never the answer");
-    assert_eq!(
-        served.usage, None,
-        "inputTextTokenCount:\"1500\" bills nothing: v1.5.5's figure for the body"
-    );
+    let usage = served
+        .usage
+        .as_ref()
+        .expect("the count refusal remains explicit");
+    assert_eq!(usage.exact_counts, Some(Default::default()));
+    assert_eq!(usage.refused_counts.len(), 1);
+    assert!(usage.refused_counts[0].contains("inputTextTokenCount"));
     assert_eq!(served.embeddings.len(), 1, "the vector is served");
     assert_eq!(
         read_embeddings_response(wire("1500").as_bytes())
@@ -183,10 +186,12 @@ fn embeddings_response_refuses_an_unreadable_billed_input_on_its_own() {
             .map(|u| u.input),
         Some(1500)
     );
-    assert!(read_embeddings_response(wire("null").as_bytes())
+    let absent = read_embeddings_response(wire("null").as_bytes())
         .expect("null is absence")
         .usage
-        .is_none());
+        .expect("the present usage object carries an exact map");
+    assert_eq!(absent.exact_counts, Some(Default::default()));
+    assert!(absent.refused_counts.is_empty());
 }
 
 #[test]

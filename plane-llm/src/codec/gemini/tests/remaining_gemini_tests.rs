@@ -720,7 +720,9 @@ fn schema_instance_literals_are_opaque_to_every_schema_walk() {
     assert_schema_egress(
         json!({"default":{"$defs":{"Fake":{"type":"number"}}},
         "properties":{"value":{"$ref":"#/$defs/Fake"}}}),
-        json!({"default":{"$defs":{"Fake":{"type":"number"}}},"properties":{"value":{}}}),
+        // A definition inside instance data is not a schema definition. The unresolved
+        // reference refuses the projection rather than silently becoming unconstrained.
+        json!({"allOf":[false]}),
     );
 }
 

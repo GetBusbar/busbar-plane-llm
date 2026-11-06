@@ -733,10 +733,10 @@ fn coh14_streamed_logprobs_reach_a_foreign_client() {
     assert!(carried, "COH-14: {out}");
 }
 
-/// COH-15: a foreign content-filter stop is a served answer; a Cohere client is told `COMPLETE`, not
-/// the `ERROR` that reads as an infrastructure failure — buffered and streamed.
+/// COH-15: a foreign content-filter stop retains the v2-legal ERROR finish reason, without
+/// turning the served partial answer into a transport error — buffered and streamed.
 #[test]
-fn coh15_safety_stop_is_not_an_error_for_a_cohere_client() {
+fn coh15_safety_stop_preserves_v2_error_finish_reason() {
     let body = json!({
         "id": "chatcmpl-1", "object": "chat.completion", "created": 1, "model": "gpt",
         "choices": [{"index": 0, "message": {"role": "assistant", "content": "partial"},
@@ -744,7 +744,7 @@ fn coh15_safety_stop_is_not_an_error_for_a_cohere_client() {
         "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}
     });
     let out = translate_response("openai", "cohere", &body);
-    assert_eq!(out["finish_reason"], json!("COMPLETE"), "COH-15: {out}");
+    assert_eq!(out["finish_reason"], json!("ERROR"), "COH-15: {out}");
 
     let raw = concat!(
         "data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"partial\"},\"finish_reason\":null}]}\n\n",
@@ -758,7 +758,7 @@ fn coh15_safety_stop_is_not_an_error_for_a_cohere_client() {
         .unwrap_or_else(|| panic!("no message-end: {out}"));
     assert_eq!(
         end["delta"]["finish_reason"],
-        json!("COMPLETE"),
+        json!("ERROR"),
         "COH-15: {out}"
     );
 }

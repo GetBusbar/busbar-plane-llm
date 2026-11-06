@@ -446,9 +446,10 @@ fn assert_the_planes_answers(t: &[String]) {
         "a same-dialect answer is the far end's bytes: {all}"
     );
     assert!(
-        far.contains(r#"units=["0:7:true", "1:3:true", "2:0:true", "3:0:true", "19:1:true"]"#),
-        "the far end's counts, in the tail's class order, then the per-request fee unit a success \
-         reply incurs, last after the 15 open classes (owner #77, money-B1; LEDGER-100): {all}"
+        far.contains(r#"units=["0:7:true", "1:3:true", "19:1:true"]"#),
+        "ANSWER reports input and output only: absent cache counts are unreported, not reported \
+         zeros. The success fee follows the four token and fifteen open classes at index 19 \
+         (owner #77, money-B1; LEDGER-100): {all}"
     );
     let narrow = line(t, "far_end narrow ");
     assert!(
@@ -1182,12 +1183,10 @@ mod door_units {
         assert!(end.done && !end.emitted.contains("event: error"), "{end:?}");
     }
 
-    /// A SAME-DIALECT WHOLE ANSWER CUT MID-BODY streams what arrived and bills no tokens. Under
-    /// ARCHITECT ruling (a) (the base cut path supersedes #891's) and as v1.5.5 relayed it (a
-    /// same-protocol non-stream body passes through verbatim as it arrives, v1.5.5
-    /// `proxy/response_body.rs:216-262`), the far end's bytes reach the caller under its 200 as
-    /// they come; the cut ends the body with nothing appended, and the far end reported no usage
-    /// in the bytes in hand, so nothing bills (OWNER RULING Q31).
+    /// A bounded same-dialect body is held until its exact usage can be checked before the first
+    /// header or byte escapes (provider_count_refusal). A transport cut releases the original
+    /// prefix without inventing usage or appending an error body. The 200 head incurs only the
+    /// request fee; no token counts were reported in this prefix.
     #[test]
     fn a_same_dialect_answer_cut_mid_body_streams_what_arrived_and_bills_no_tokens() {
         let (_d, p) = door();
@@ -1204,10 +1203,9 @@ mod door_units {
             0,
         );
         assert_eq!(head.outcome, Outcome::Ready, "{head:?}");
-        assert_eq!(
-            head.emitted, "{\"id\":",
-            "a same-dialect answer streams as it arrives: {head:?}"
-        );
+        assert!(head.emitted.is_empty(), "held for exact usage: {head:?}");
+        assert_eq!(head.status, 0, "no premature response head: {head:?}");
+        assert!(head.units.is_empty(), "no premature billing: {head:?}");
         let cut = piece(
             &p,
             25,
@@ -1220,11 +1218,15 @@ mod door_units {
         );
         assert_eq!(cut.outcome, Outcome::Ready, "{cut:?}");
         assert!(cut.done, "{cut:?}");
-        assert!(
-            cut.emitted.is_empty(),
-            "the cut appends nothing to what arrived: {cut:?}"
+        assert_eq!(cut.emitted, "{\"id\":", "only the original prefix: {cut:?}");
+        assert_eq!(cut.status, 200, "the original response head: {cut:?}");
+        assert_eq!(cut.verdict, VERDICT_HARD, "the transfer failed: {cut:?}");
+        assert_eq!(
+            cut.units,
+            [(plane_door::FEE_CLASS_INDEX, 1)],
+            "only the delivered 200's request fee, no invented tokens: {cut:?}"
         );
-        assert!(cut.units.iter().all(|(_, n)| *n == 0), "no tokens: {cut:?}");
+        assert_eq!(cut.sources, [busbar_contract::abi::plane::UNITS_REPORTED]);
     }
 
     /// The cancel disposition the door answers for the unit on the (one) ticket these tests cross on.

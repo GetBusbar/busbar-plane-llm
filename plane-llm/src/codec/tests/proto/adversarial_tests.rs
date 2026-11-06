@@ -433,9 +433,9 @@ fn hostile_stream_events_are_total_no_panic_no_bad_index() {
     }
 }
 
-/// Precise clamp proof for Bedrock: a `contentBlockStart` carrying `contentBlockIndex: u64::MAX`
+/// Bedrock rejects an unrepresentable block identity before allocating stream state.
 #[test]
-fn bedrock_huge_content_block_index_is_clamped() {
+fn bedrock_huge_content_block_index_is_rejected() {
     let proto = protocol_for("bedrock").expect("bedrock");
     let mut state = crate::codec::ir::StreamDecodeState::default();
 
@@ -457,17 +457,13 @@ fn bedrock_huge_content_block_index_is_clamped() {
         &hostile,
         &mut state,
     );
-    let block_start_idx = events.iter().find_map(|e| match e {
-        crate::codec::ir::IrStreamEvent::BlockStart { index, .. } => Some(*index),
-        _ => None,
-    });
-
-    let idx = block_start_idx
-        .expect("bedrock must emit a BlockStart for a contentBlockStart carrying a toolUse");
-    assert_eq!(
-        idx, MAX_BLOCK_INDEX,
-        "bedrock must clamp a u64::MAX contentBlockIndex to exactly the bounded cap; got {idx}"
+    assert!(
+        matches!(events.as_slice(), [crate::codec::ir::IrStreamEvent::Error(error)]
+        if error.provider_signal.as_deref() == Some("invalid Bedrock contentBlockIndex")),
+        "{events:?}"
     );
+    assert!(state.open_tools.is_empty());
+    assert!(state.block_origins.is_empty());
 }
 
 /// The MAX_JSON_DEPTH floor rejects a pathologically-nested body at the PARSE boundary
@@ -552,38 +548,44 @@ fn truncated_sse_stream_finish_terminates_no_hang() {
     );
 }
 
-/// Complete-but-garbage SSE frames (non-JSON `data:` payloads, comment/keepalive lines) must be
-/// SKIPPED, not treated as a stream abort: a real upstream interleaves `: keep-alive` comments and
-/// the occasional malformed chunk, and a false abort would corrupt an otherwise healthy stream.
+/// Keepalive comments are harmless; invalid translated JSON explicitly fails the stream.
 #[test]
-fn garbage_non_json_sse_frames_skipped_no_false_abort() {
-    let mut st = StreamTranslate::new("anthropic", "openai").expect("translator");
-    let mut out = st.feed(crate::codec::test_host::HOST, b": keep-alive comment\n\n");
-    out.extend_from_slice(&st.feed(
-        crate::codec::test_host::HOST,
-        b"data: {this is not valid json\n\n",
-    ));
-    out.extend_from_slice(&st.feed(crate::codec::test_host::HOST, b"data: not-json-at-all\n\n"));
-    out.extend_from_slice(&st.feed(
-        crate::codec::test_host::HOST,
-        b"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n",
-    ));
-    out.extend_from_slice(&st.finish(crate::codec::test_host::HOST));
-
-    let wire = String::from_utf8_lossy(&out);
-    assert!(
-        wire.contains(r#""text":"ok""#),
-        "the one healthy frame among the garbage must translate to an Anthropic text_delta; \
-         got {wire}"
-    );
-    assert!(
-        !wire.contains("not valid json") && !wire.contains("not-json-at-all"),
-        "no garbage payload may be forwarded to the client; got {wire}"
-    );
-    assert!(
-        !st.aborted(),
-        "garbage/non-JSON SSE frames must be skipped, never mistaken for a stream abort"
-    );
+fn garbage_non_json_sse_frames_refuse_without_forwarding_later_data() {
+    let host = crate::codec::test_host::HOST;
+    for garbage in [
+        b"data: {this is not valid json\n\n".as_slice(),
+        b"data: not-json-at-all\n\n".as_slice(),
+    ] {
+        let mut st = StreamTranslate::new("anthropic", "openai").expect("translator");
+        assert!(st.feed(host, b": keep-alive comment\n\n").is_empty());
+        assert!(!st.aborted(), "a comment is not malformed data");
+        let mut out = st.feed(
+            host,
+            b"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"before\"}}]}\n\n",
+        );
+        assert!(!st.aborted());
+        out.extend(st.feed(host, garbage));
+        assert!(
+            st.aborted(),
+            "invalid translated JSON must not be silently discarded"
+        );
+        assert!(st
+            .feed(
+                host,
+                b"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"after\"}}]}\n\n"
+            )
+            .is_empty());
+        out.extend(st.finish(host));
+        let wire = String::from_utf8(out).unwrap();
+        assert!(wire.contains(r#""text":"before""#), "{wire}");
+        assert!(!wire.contains(r#""text":"after""#), "{wire}");
+        assert!(!wire.contains("not valid json") && !wire.contains("not-json-at-all"));
+        assert_eq!(wire.matches("event: error\n").count(), 1, "{wire}");
+        assert!(
+            !wire.contains("event: message_stop\n"),
+            "failed stream must not complete: {wire}"
+        );
+    }
 }
 
 /// A large-but-well-formed request body (a multi-megabyte text content string, well under the

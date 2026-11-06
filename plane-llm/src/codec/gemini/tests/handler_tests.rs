@@ -545,7 +545,13 @@ fn speech_write_request_prefixes_instructions_to_prompt_not_language_code() {
 
 #[test]
 fn gemini_speech_response_is_billed() {
-    let resp = super::read_speech_response(b"\x00\x01raw-audio").unwrap();
+    let resp = super::read_speech_response(
+        br#"{"candidates":[{"content":{"parts":[{"inlineData":{"data":"AAE=","mimeType":"audio/L16;codec=pcm;rate=24000"}}]}}]}"#,
+    )
+    .unwrap();
+    let audio = resp.audio.as_ref().expect("inline audio");
+    assert_eq!(audio.mime_type, "audio/L16;codec=pcm;rate=24000");
+    assert!(matches!(&audio.payload, MediaPayload::B64(data) if data == "AAE="));
     assert!(
         resp.billing().is_some(),
         "gemini TTS synthesis must be billed (non-None), got None"
@@ -567,11 +573,18 @@ fn a_json_error_shaped_speech_body_is_not_served_as_audio() {
         );
     }
 
-    let raw = super::read_speech_response(b"\xff\xfbraw-mp3").expect("a raw container still reads");
-    assert_eq!(
-        raw.audio.as_ref().map(|a| a.mime_type.as_str()),
-        Some("audio/mpeg")
-    );
+    for raw in [
+        b"\xff\xfbraw-mp3".as_slice(),
+        b"\x00\x01raw-audio".as_slice(),
+    ] {
+        assert!(
+            matches!(
+                super::read_speech_response(raw),
+                Err(CodecError::Malformed(_))
+            ),
+            "Gemini requires a JSON inlineData envelope, even for recognizable audio bytes"
+        );
+    }
 }
 
 #[test]
@@ -763,7 +776,10 @@ fn transcription_response_reads_no_audio_duration_member() {
     assert_eq!(
         back.usage,
         Some(busbar_contract::billing::Billing::Tokens(
-            busbar_contract::billing::TokenUsage::default()
+            busbar_contract::billing::TokenUsage {
+                exact_counts: Some(Default::default()),
+                ..Default::default()
+            }
         ))
     );
 }
@@ -779,6 +795,19 @@ fn transcription_response_reads_token_usage() {
         back.usage,
         Some(busbar_contract::billing::Billing::Tokens(
             busbar_contract::billing::TokenUsage {
+                exact_counts: Some(
+                    [
+                        (
+                            "input".to_owned(),
+                            busbar_contract::Count::parse("7").unwrap()
+                        ),
+                        (
+                            "output".to_owned(),
+                            busbar_contract::Count::parse("3").unwrap()
+                        ),
+                    ]
+                    .into()
+                ),
                 input: 7,
                 output: 3,
                 ..Default::default()

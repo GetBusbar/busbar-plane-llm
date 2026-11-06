@@ -604,8 +604,9 @@ fn cohere_billed_input_and_cache_read_never_exceed_the_reported_total() {
         ledgered.cache_read
     );
     assert_eq!(
-        ledgered.cache_read, None,
-        "and the cached share bills inside the input, never on a cache-READ line: {ledgered:?}"
+        ledgered.cache_read,
+        Some(4),
+        "the cached share retains its cache-read tier inside the reported total: {ledgered:?}"
     );
 }
 

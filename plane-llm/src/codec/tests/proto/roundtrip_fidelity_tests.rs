@@ -920,7 +920,7 @@ fn streamed_citations_reach_a_bedrock_client() {
 
 /// A page-located citation must not be mislabelled as a character offset on a Bedrock egress.
 #[test]
-fn bedrock_citation_omits_a_location_it_cannot_honestly_fill() {
+fn bedrock_citation_preserves_page_location_without_character_offsets() {
     let ev = crate::codec::ir::IrStreamEvent::BlockDelta {
         index: 0,
         delta: crate::codec::ir::IrDelta::CitationsDelta(vec![crate::codec::ir::IrCitation {
@@ -946,8 +946,12 @@ fn bedrock_citation_omits_a_location_it_cannot_honestly_fill() {
     assert_eq!(c["title"], "Contract");
     assert_eq!(c["sourceContent"][0]["text"], "clause 4");
     assert!(
-        c.get("location").is_none(),
+        c["location"].get("documentChar").is_none(),
         "a PAGE number must not be emitted as a CHARACTER offset: {c}"
+    );
+    assert_eq!(
+        c["location"]["documentPage"],
+        json!({"documentIndex": 0, "start": 7, "end": 8})
     );
 }
 

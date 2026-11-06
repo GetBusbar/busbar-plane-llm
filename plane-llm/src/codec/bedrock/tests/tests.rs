@@ -2676,23 +2676,17 @@ fn test_write_request_tool_result_url_sentinel_image_dropped() {
     );
 }
 
-/// A `maxTokens` value above u32::MAX must be
-/// dropped to None (backend applies its default) rather than silently TRUNCATED (wrapped) into
-/// an arbitrary smaller cap by a bare `as u32`.
+/// An explicit invalid cap must be refused rather than wrapped or silently replaced by a default.
 #[test]
-fn test_read_request_max_tokens_overflow_dropped_not_truncated() {
+fn test_read_request_max_tokens_overflow_is_refused_not_truncated() {
     let reader = BedrockReader;
 
     let body = serde_json::json!({
         "messages": [{"role": "user", "content": [{"text": "hi"}]}],
         "inferenceConfig": {"maxTokens": 5_000_000_000u64}
     });
-    let ir = reader.read_request(&body).unwrap();
-    assert_eq!(
-        ir.max_tokens, None,
-        "maxTokens above u32::MAX must drop to None, not wrap; got {:?}",
-        ir.max_tokens
-    );
+    let error = reader.read_request(&body).unwrap_err();
+    assert_eq!(error.class, StatusClass::ClientError);
 
     let body = serde_json::json!({
         "messages": [{"role": "user", "content": [{"text": "hi"}]}],
@@ -2705,8 +2699,13 @@ fn test_read_request_max_tokens_overflow_dropped_not_truncated() {
         "messages": [{"role": "user", "content": [{"text": "hi"}]}],
         "inferenceConfig": {"maxTokens": 0}
     });
-    let ir = reader.read_request(&body).unwrap();
-    assert_eq!(ir.max_tokens, None);
+    let error = reader.read_request(&body).unwrap_err();
+    assert_eq!(error.class, StatusClass::ClientError);
+
+    let body = serde_json::json!({
+        "messages": [{"role": "user", "content": [{"text": "hi"}]}]
+    });
+    assert_eq!(reader.read_request(&body).unwrap().max_tokens, None);
 }
 
 /// A message-level `image` block whose source is
@@ -3662,83 +3661,59 @@ fn test_tool_result_json_block_round_trip() {
     );
 }
 
-/// The upstream-controlled `contentBlockIndex` is
-/// attacker-controllable and was forwarded UNCLAMPED into IR block indices at all three stream
-/// read sites (`contentBlockStart` / `contentBlockDelta` / `contentBlockStop`).
+/// Invalid upstream identities must fail without aliasing the highest valid block.
 #[test]
-fn test_stream_huge_content_block_index_is_clamped() {
+fn test_stream_huge_content_block_index_is_rejected() {
     use crate::codec::ir::IrStreamEvent;
     let mut state = crate::codec::ir::StreamDecodeState::default();
     let reader = BedrockReader;
-
-    let _ = reader.read_response_events(
-        crate::codec::test_host::HOST,
+    let host = crate::codec::test_host::HOST;
+    reader.read_response_events(
+        host,
         "",
-        &serde_json::json!({"type": "messageStart", "role": "assistant"}),
+        &serde_json::json!({"type":"messageStart", "role":"assistant"}),
         &mut state,
     );
-
-    let huge = u64::MAX;
-    let expected = MAX_CONTENT_BLOCK_INDEX as usize;
-
-    let start = reader.read_response_events(
-        crate::codec::test_host::HOST,
+    let boundary = MAX_CONTENT_BLOCK_INDEX as usize;
+    let valid = reader.read_response_events(
+        host,
         "",
         &serde_json::json!({
-            "type": "contentBlockStart",
-            "contentBlockIndex": huge,
-            "start": {}
+            "type":"contentBlockStart", "contentBlockIndex":boundary,
+            "start":{"toolUse":{"toolUseId":"valid", "name":"f"}}
         }),
         &mut state,
     );
-    let start_idx = start.iter().find_map(|e| match e {
-        IrStreamEvent::BlockStart { index, .. } => Some(*index),
-        _ => None,
-    });
-    assert_eq!(
-        start_idx,
-        Some(expected),
-        "a huge contentBlockIndex on contentBlockStart must be clamped to \
-             MAX_CONTENT_BLOCK_INDEX; got {start:?}"
+    assert!(
+        matches!(valid.as_slice(), [IrStreamEvent::BlockStart { index, .. }] if *index == boundary)
     );
-
-    let delta = reader.read_response_events(
-        crate::codec::test_host::HOST,
+    for frame in [
+        serde_json::json!({"type":"contentBlockStart", "contentBlockIndex":u64::MAX, "start":{}}),
+        serde_json::json!({"type":"contentBlockDelta", "contentBlockIndex":u64::MAX, "delta":{"text":"hostile"}}),
+        serde_json::json!({"type":"contentBlockStop", "contentBlockIndex":u64::MAX}),
+    ] {
+        let events = reader.read_response_events(host, "", &frame, &mut state);
+        assert!(
+            matches!(events.as_slice(), [IrStreamEvent::Error(error)]
+            if error.provider_signal.as_deref() == Some("invalid Bedrock contentBlockIndex")),
+            "{events:?}"
+        );
+        assert_eq!(state.open_tools.len(), 1);
+        assert!(
+            state.open_tools.contains(&boundary),
+            "invalid identity must not close the valid block"
+        );
+    }
+    let stopped = reader.read_response_events(
+        host,
         "",
         &serde_json::json!({
-            "type": "contentBlockDelta",
-            "contentBlockIndex": huge,
-            "delta": {"text": "hi"}
+            "type":"contentBlockStop", "contentBlockIndex":boundary
         }),
         &mut state,
     );
-    let delta_idx = delta.iter().find_map(|e| match e {
-        IrStreamEvent::BlockDelta { index, .. } => Some(*index),
-        _ => None,
-    });
-    assert_eq!(
-        delta_idx,
-        Some(expected),
-        "a huge contentBlockIndex on contentBlockDelta must be clamped; got {delta:?}"
-    );
-
-    let stop = reader.read_response_events(
-        crate::codec::test_host::HOST,
-        "",
-        &serde_json::json!({
-            "type": "contentBlockStop",
-            "contentBlockIndex": huge
-        }),
-        &mut state,
-    );
-    let stop_idx = stop.iter().find_map(|e| match e {
-        IrStreamEvent::BlockStop { index } => Some(*index),
-        _ => None,
-    });
-    assert_eq!(
-        stop_idx,
-        Some(expected),
-        "a huge contentBlockIndex on contentBlockStop must be clamped; got {stop:?}"
+    assert!(
+        matches!(stopped.as_slice(), [IrStreamEvent::BlockStop { index }] if *index == boundary)
     );
 }
 
@@ -5698,7 +5673,9 @@ fn the_tails_sigv4_parameters_restate_the_signing_scheme() {
     let params: serde_json::Value =
         serde_json::from_str(crate::dialect::SIGNED_PARAMS).expect("the parameters are JSON");
     assert_eq!(params["service"], serde_json::json!(service));
-    assert_eq!(params["content_type"], serde_json::json!(content_type));
+    // MIME belongs to the prepared request, not to signing-style parameters.
+    assert!(params.get("content_type").is_none());
+    assert_eq!(content_type, crate::codec::protocol::APPLICATION_JSON);
     assert_eq!(
         params["region"]["default"],
         serde_json::json!(default_region)

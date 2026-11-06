@@ -91,6 +91,23 @@ fn truncated_recovery_refuses_a_stringified_count_and_recovers_the_readable_ones
     assert_eq!((u.input, u.output), (0, 9));
 }
 
+// The normalized input is total minus cache. An unreadable cache operand makes that
+// derived class unknown; it must never turn the full prompt into uncached billing.
+fn assert_refused_cache_preserves_output(usage: &busbar_contract::billing::TokenUsage) {
+    assert_eq!(
+        usage.exact_counts,
+        Some(
+            [(
+                "output".to_owned(),
+                busbar_contract::Count::parse("9").unwrap()
+            )]
+            .into()
+        )
+    );
+    assert!(!usage.refused_counts.is_empty());
+    assert_eq!(usage.output, 9);
+}
+
 #[test]
 fn buffered_response_refuses_an_unreadable_cache_count_on_its_own() {
     let ir = ResponsesReader
@@ -101,9 +118,9 @@ fn buffered_response_refuses_an_unreadable_cache_count_on_its_own() {
                 "input_tokens_details": {"cached_tokens": "40"}
             })),
         )
-        .expect("a refused cache count refuses only itself");
+        .expect("a refused cache count never refuses the answer");
     assert_eq!(ir.usage.cache_read_input_tokens, None);
-    assert_eq!((ir.usage.input_tokens, ir.usage.output_tokens), (100, 9));
+    assert_refused_cache_preserves_output(&ir.usage.to_token_usage());
 }
 
 #[test]
@@ -141,20 +158,29 @@ fn streaming_terminal_refuses_an_unreadable_cache_count_on_its_own() {
     }));
     assert!(
         !ev.iter().any(|e| matches!(e, IrStreamEvent::Error(_))),
-        "a refused cache count refuses only itself; got {ev:?}"
+        "a refused cache count never refuses the stream; got {ev:?}"
     );
-    assert_eq!(tokens, Some((100, 9)), "{ev:?}");
+    assert_eq!(tokens, Some((0, 9)), "{ev:?}");
+    let usage = ev
+        .iter()
+        .find_map(|event| match event {
+            IrStreamEvent::MessageDelta { usage, .. } => Some(usage.to_token_usage()),
+            _ => None,
+        })
+        .expect("terminal carries the refusal and readable output");
+    assert_refused_cache_preserves_output(&usage);
 }
 
-/// Readable cache-write counts retain their own billing tier; malformed counts refuse only themselves.
+/// Cache-write counts retain their tier; an unreadable slice also refuses dependent uncached input.
 #[test]
 fn cache_write_tokens_keep_their_own_tier_on_every_path() {
     for spelling in [serde_json::json!(40), serde_json::json!("40")] {
         let expected = if spelling.is_number() {
             (60, 9, Some(40))
         } else {
-            (100, 9, None)
+            (0, 9, None)
         };
+        let refused = !spelling.is_number();
         let usage = serde_json::json!({
             "input_tokens": 100, "output_tokens": 9,
             "input_tokens_details": {"cache_write_tokens": spelling}
@@ -193,5 +219,32 @@ fn cache_write_tokens_keep_their_own_tier_on_every_path() {
             (recovered.input, recovered.output, recovered.cache_creation),
             expected
         );
+        for observed in [&t, &streamed, &recovered] {
+            if refused {
+                assert_refused_cache_preserves_output(observed);
+            } else {
+                assert!(observed.refused_counts.is_empty());
+                assert_eq!(
+                    observed.exact_counts,
+                    Some(
+                        [
+                            (
+                                "input".to_owned(),
+                                busbar_contract::Count::parse("60").unwrap()
+                            ),
+                            (
+                                "output".to_owned(),
+                                busbar_contract::Count::parse("9").unwrap()
+                            ),
+                            (
+                                "cache_write".to_owned(),
+                                busbar_contract::Count::parse("40").unwrap()
+                            ),
+                        ]
+                        .into()
+                    )
+                );
+            }
+        }
     }
 }
