@@ -45,7 +45,7 @@ use busbar_contract::abi::sdk::plane::UnitCancel;
 use busbar_contract::abi::sdk::plane_life::{Opened, PlaneLife, Published};
 use busbar_contract::abi::sdk::publish::{ClaimSpec, SnapshotSpec};
 use busbar_contract::abi::sdk::{
-    Generations, HostBuf, Instance, Lent, Out, Safe, SafeSlot, Services, StaticServices,
+    Generations, Instance, Lent, Out, Safe, SafeSlot, Services, StaticServices,
 };
 use busbar_contract::abi::transport::{
     FAULT_CALLER, FAULT_HARD, FAULT_NONE, FAULT_RATE_LIMIT, FAULT_TRANSIENT,
@@ -1266,30 +1266,6 @@ fn answer(host: &DoorHost, unit: &mut UnitState, from: u32, piece: &PieceIn<'_>)
     }
 }
 
-/// `(written, needed)` of every buffer an answer fills, short as a whole when one is short.
-fn settle(
-    out: &mut Out<'_, OnPieceOut>,
-    fields: &HostBuf<'_, OutField>,
-    units: &HostBuf<'_, UnitCount>,
-    records: &HostBuf<'_, RecordWrite>,
-    arena: &HostBuf<'_, u8>,
-) -> bool {
-    let short = !(fields.fits() && units.fits() && records.fits() && arena.fits());
-    let (fw, fnd) = fields.settle(short);
-    let (uw, und) = units.settle(short);
-    let (rw, rnd) = records.settle(short);
-    let (aw, and) = arena.settle(short);
-    out.set(|o| &o.records_written, rw as u32);
-    out.set(|o| &o.records_needed, rnd as u32);
-    out.set(|o| &o.fields_written, fw as u32);
-    out.set(|o| &o.fields_needed, fnd as u32);
-    out.set(|o| &o.units_written, uw as u32);
-    out.set(|o| &o.units_needed, und as u32);
-    out.set(|o| &o.arena_written, aw as u64);
-    out.set(|o| &o.arena_needed, and as u64);
-    short
-}
-
 /// Write the unit's pending answer's next chunk: its head, fields and units first (FAILED, with
 /// the sizes it needs, when they do not fit), then as many bytes as the reply buffer holds,
 /// `more = 1` while any are left.
@@ -1332,7 +1308,13 @@ fn deliver(
                 value: arena.span(resource),
             });
         }
-        if settle(out, &fields, &units, &records, &arena) {
+        if busbar_contract::abi::sdk::plane::settle_piece(
+            out,
+            &fields,
+            &units,
+            &arena,
+            Some(&records),
+        ) {
             return (Outcome::Failed, false);
         }
         if let Some((verb, target)) = request {

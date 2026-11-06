@@ -7,8 +7,7 @@
 //! serializer uses serde_json as well, preserving its arbitrary-precision number representation.
 
 use busbar_contract::spans::{exceeds_max_depth, MAX_JSON_DEPTH};
-use serde::{Deserialize, Deserializer};
-use serde_json::{value::RawValue, Value};
+use serde_json::Value;
 
 /// The document forms used by the JSON seam: an exact value or validation without a DOM.
 ///
@@ -20,52 +19,13 @@ pub trait JsonDocument: Sized {
 
 impl JsonDocument for Value {
     fn parse_json(bytes: &[u8]) -> Result<Self, serde_json::Error> {
-        serde_json::from_slice::<ExactValue>(bytes).map(|value| value.0)
+        busbar_contract::spans::parse_value(bytes)
     }
 }
 
 impl JsonDocument for serde::de::IgnoredAny {
     fn parse_json(bytes: &[u8]) -> Result<Self, serde_json::Error> {
         serde_json::from_slice(bytes)
-    }
-}
-
-struct ExactValue(Value);
-
-impl<'de> Deserialize<'de> for ExactValue {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        // RawValue identifies the actual JSON token before any arbitrary-precision transport
-        // maps are synthesized. Container members recurse through this same distinction; only
-        // scalar tokens reach Value's deserializer. Escaped object keys remain ordinary keys.
-        let raw = <&RawValue>::deserialize(deserializer)?.get();
-        let value = match raw.as_bytes().first() {
-            Some(b'{') => {
-                let mut de = serde_json::Deserializer::from_str(raw);
-                de.deserialize_map(ObjectVisitor)
-            }
-            Some(b'[') => serde_json::from_str::<Vec<ExactValue>>(raw)
-                .map(|items| Value::Array(items.into_iter().map(|item| item.0).collect())),
-            _ => serde_json::from_str::<Value>(raw),
-        };
-        value.map(ExactValue).map_err(serde::de::Error::custom)
-    }
-}
-
-struct ObjectVisitor;
-
-impl<'de> serde::de::Visitor<'de> for ObjectVisitor {
-    type Value = Value;
-
-    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("a JSON object")
-    }
-
-    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
-        let mut object = serde_json::Map::new();
-        while let Some((key, value)) = map.next_entry::<String, ExactValue>()? {
-            object.insert(key, value.0);
-        }
-        Ok(Value::Object(object))
     }
 }
 
