@@ -148,11 +148,8 @@ pub(super) fn write_usage_object(usage: Option<&crate::codec::ir::IrUsage>) -> s
         write_server_tool_use(usage),
     );
 
-    let tier = match usage.detail.service_tier.as_deref() {
-        None => serde_json::json!(super::STANDARD),
-        reported => anthropic_served_tier(reported)
-            .map_or(serde_json::Value::Null, |t| serde_json::json!(t)),
-    };
+    let tier = anthropic_served_tier(usage.detail.service_tier.as_deref())
+        .map_or(serde_json::Value::Null, |t| serde_json::json!(t));
     usage_map.insert(keys::SERVICE_TIER.to_string(), tier);
     serde_json::Value::Object(usage_map)
 }

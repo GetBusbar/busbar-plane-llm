@@ -637,7 +637,7 @@ fn streamed_redacted_reasoning_preserves_bytes_on_anthropic_egress() {
 /// Buffered `Message`: `stop_details`, `container` (null), `content[].citations` (null on a text
 /// block with none), `content[].caller` on tool_use, and the full `usage` object with every
 /// required member (`cache_creation` zero tiers, zero cache counters, `inference_geo` null,
-/// `output_tokens_details` null, `server_tool_use` null, `service_tier: "standard"`).
+/// `output_tokens_details` null, `server_tool_use` null, and unknown `service_tier` null).
 #[test]
 fn anthropic_response_carries_every_spec_required_member_with_default_shapes() {
     let resp = crate::codec::ir::IrResponse {
@@ -707,7 +707,7 @@ fn anthropic_response_carries_every_spec_required_member_with_default_shapes() {
             "inference_geo": null,
             "output_tokens_details": null,
             "server_tool_use": null,
-            "service_tier": "standard"
+            "service_tier": null
         })
     );
 }

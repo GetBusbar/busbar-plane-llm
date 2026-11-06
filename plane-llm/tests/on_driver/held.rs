@@ -470,8 +470,13 @@ async fn a_rewrite_keeps_the_in_band_system_turn_upstream() {
         "the hook must be shown the 1.5.5 view"
     );
     assert_eq!(
-        serde_json::to_string(&sent["messages"]).unwrap(),
-        r#"[{"content":"OPERATOR SYSTEM PROMPT","role":"system"},{"content":"COMPRESSED","role":"user"},{"content":"COMPRESSED","role":"assistant"},{"content":"the ask","role":"user"}]"#,
+        sent["messages"],
+        json!([
+            {"content": "OPERATOR SYSTEM PROMPT", "role": "system"},
+            {"content": "COMPRESSED", "role": "user"},
+            {"content": "COMPRESSED", "role": "assistant"},
+            {"content": "the ask", "role": "user"},
+        ]),
         "the operator's system prompt must reach the provider, exactly as 1.5.5 sent it"
     );
 }

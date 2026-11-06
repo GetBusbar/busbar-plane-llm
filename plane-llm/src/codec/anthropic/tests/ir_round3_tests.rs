@@ -92,9 +92,8 @@ fn item10_unknown_served_tier_never_reaches_an_anthropic_client_stream() {
             .flatten()
             {
                 assert!(
-                    tier.is_null()
-                        || ["standard", "priority", "batch"].contains(&tier.as_str().unwrap_or("")),
-                    "{openai_tier}: an Anthropic client got tier {tier}: {out}"
+                    tier.is_null(),
+                    "{openai_tier}: an unknown served tier must remain null, got {tier}: {out}"
                 );
             }
             assert!(
