@@ -771,6 +771,21 @@ impl StreamTranslate {
             }
 
             if !self.egress.reader().reads_eventstream_event(&event_type) {
+                if !self.same_proto {
+                    let seam = crate::codec::drops::Seam {
+                        direction: crate::codec::drops::Direction::Response,
+                        ingress: self.ingress.name_static(),
+                        egress: self.egress.name_static(),
+                    };
+                    // The header alone names this loss; future payloads need not be JSON.
+                    crate::codec::drops::scope_more(seam, &mut self.decode.dropped, || {
+                        crate::codec::drops::note(crate::codec::drops::Dropped::new(
+                            event_type,
+                            &crate::codec::diagnostics::IR_DROP_UNMODELED_KEYS,
+                            crate::codec::drops::UNMAPPED_ANSWER_MEMBER,
+                        ));
+                    });
+                }
                 continue;
             }
             if self.same_proto && !self.egress.reader().same_proto_reads(&event_type, &payload) {

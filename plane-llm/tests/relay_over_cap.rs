@@ -92,10 +92,6 @@ fn capped_usage_is_chunk_independent_and_never_nested_or_fabricated() {
             "x".repeat(200)
         ),
         format!(
-            r#"{{"data":"{}","usage":{{"prompt_tokens":5}},"usage":null}}"#,
-            "x".repeat(200)
-        ),
-        format!(
             r#"{{"data":[1,,2],"padding":"{}","usage":{{"prompt_tokens":5}}}}"#,
             "x".repeat(200)
         ),
@@ -106,6 +102,32 @@ fn capped_usage_is_chunk_independent_and_never_nested_or_fabricated() {
         }
         assert!(r.end(HOST).usage.is_none(), "{body}");
     }
+
+    // The later null replaces the earlier report. The leaf tap retains a present usage
+    // envelope as an authoritative empty count carrier, with no reported billing classes.
+    let body = format!(
+        r#"{{"data":"{}","usage":{{"prompt_tokens":5}},"usage":null}}"#,
+        "x".repeat(200)
+    );
+    let mut r = relay();
+    for chunk in body.as_bytes().chunks(3) {
+        let _ = r.feed(HOST, chunk);
+    }
+    let end = r.end(HOST);
+    let empty = busbar_contract::billing::TokenUsage {
+        exact_counts: Some(Default::default()),
+        ..Default::default()
+    };
+    assert_eq!(end.usage, Some(empty));
+    assert!(end.open_units.is_empty());
+    assert_eq!(
+        busbar_plane_llm::exchange::reply::Units::of(end.usage.as_ref(), end.open_units),
+        busbar_plane_llm::exchange::reply::Units {
+            exact_counts: Some(Default::default()),
+            ..Default::default()
+        },
+        "no billing rows, refused counts, open units, tokens, or floor"
+    );
 }
 
 #[test]

@@ -1055,13 +1055,58 @@ fn a_translated_stream_names_each_unmapped_path_once() {
         vec!["type=response.zz_future".to_string()]
     );
 
-    let mut far =
-        busbar_plane_llm::codec::eventstream::encode_frame("zzNeverHeardOf", br#"{"zz":{"b":1}}"#);
+    let mut far = Vec::new();
+    for payload in [br#"{"zz":{"b":1}}"#.as_slice(), b"future non-JSON payload"] {
+        far.extend(busbar_plane_llm::codec::eventstream::encode_frame(
+            "zzNeverHeardOf",
+            payload,
+        ));
+    }
     far.extend_from_slice(&far_stream("bedrock"));
     assert_eq!(
         stream_drops("anthropic", "bedrock", &far),
         vec!["zzNeverHeardOf".to_string()]
     );
+}
+
+/// Unknown binary-stream payloads are never decoded, while cross-dialect loss reporting stays
+/// bounded and same-dialect forwarding stays byte-identical.
+#[test]
+fn unknown_bedrock_events_keep_bounded_drops_without_parsing_payloads() {
+    let mut far = Vec::new();
+    for i in 0..300 {
+        far.extend(busbar_plane_llm::codec::eventstream::encode_frame(
+            &format!("zz_future_{i}"),
+            b"not JSON",
+        ));
+    }
+    far.extend(far_stream("bedrock"));
+    let mut translated = Relay::new(relay_ctx("anthropic", "bedrock", true));
+    for chunk in far.chunks(7) {
+        let _ = translated.feed(HOST, chunk);
+    }
+    let end = translated.end(HOST);
+    assert!(!end.failed);
+    assert!(end.stream_fault.is_none());
+    assert_eq!(end.dropped.len(), 256);
+    assert_eq!(end.dropped[0], "zz_future_0");
+    assert_eq!(end.dropped[254], "zz_future_254");
+    assert_eq!(end.dropped[255], "[additional dropped paths omitted]");
+
+    let mut same = Relay::new(relay_ctx("bedrock", "bedrock", true));
+    let mut forwarded = Vec::new();
+    for chunk in far.chunks(7) {
+        if let busbar_plane_llm::exchange::reply::relay::Fed::Bytes(bytes) =
+            same.feed(HOST, chunk).0
+        {
+            forwarded.extend_from_slice(&bytes);
+        }
+    }
+    let end = same.end(HOST);
+    forwarded.extend_from_slice(&end.bytes);
+    assert_eq!(forwarded, far);
+    assert!(!end.failed);
+    assert!(end.dropped.is_empty());
 }
 
 /// Responses refusal events are mapped content: the actual relay carries each text delta into
@@ -3714,9 +3759,10 @@ mod rehomed_metering {
             .count()
     }
 
-    /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_same_protocol_nonstream_over_cap_body_bills_no_trailing_usage_as_in_1_5_5`
+    /// The inherited over-cap case now keeps independently validated root usage, as the bounded
+    /// root-member projection requires; prefix truncation still reports exactly once.
     #[test]
-    fn a_same_dialect_body_past_the_cap_bills_no_trailing_usage_as_in_1_5_5() {
+    fn a_same_dialect_body_past_the_cap_bills_validated_trailing_usage() {
         const CAP: usize = 4096;
         let (arrived, lane) = ask("openai", "openai", false);
         let ctx = reply_ctx_capped(&arrived, &lane, CAP);
@@ -3728,8 +3774,12 @@ mod rehomed_metering {
         let pieces: Vec<&[u8]> = body.as_bytes().chunks(512).collect();
         let read = answer(&ctx, 200, JSON_HEAD, &pieces, false);
         assert_eq!(read.body, body.as_bytes(), "the whole body, verbatim");
-        assert_eq!(read.tokens(), (0, 0), "no usage past the cap bills");
-        assert_eq!(read.end().units, Units::default(), "nothing billed");
+        assert_eq!(
+            read.tokens(),
+            (600, 400),
+            "validated root usage survives the prefix cap"
+        );
+        assert!(!read.end().units.floor, "reported counts are never a floor");
         assert_eq!(
             truncations(body.as_bytes(), CAP),
             1,
@@ -3737,9 +3787,10 @@ mod rehomed_metering {
         );
     }
 
-    /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_truncated_beyond_recovery_bills_no_floor_as_in_1_5_5`
+    /// A complete body with leading usage is still billable after its prefix fills; no estimated
+    /// floor replaces its independently validated report.
     #[test]
-    fn a_same_dialect_body_truncated_past_the_cap_bills_no_floor_as_in_1_5_5() {
+    fn a_same_dialect_body_truncated_past_the_cap_keeps_validated_usage_without_a_floor() {
         const CAP: usize = 4096;
         let (arrived, lane) = ask("openai", "openai", false);
         let ctx = reply_ctx_capped(&arrived, &lane, CAP);
@@ -3750,13 +3801,44 @@ mod rehomed_metering {
         let pieces: Vec<&[u8]> = body.as_bytes().chunks(512).collect();
         let read = answer(&ctx, 200, JSON_HEAD, &pieces, false);
         assert_eq!(read.body, body.as_bytes(), "the whole body, verbatim");
-        assert_eq!(read.tokens(), (0, 0), "no floor past the cap");
-        assert_eq!(read.end().units, Units::default(), "nothing billed");
+        assert_eq!(
+            read.tokens(),
+            (600, 400),
+            "validated leading root usage survives the prefix cap"
+        );
+        assert!(!read.end().units.floor, "reported counts are never a floor");
         assert_eq!(
             truncations(body.as_bytes(), CAP),
             1,
             "the overflow, counted once"
         );
+    }
+
+    #[test]
+    fn a_same_dialect_body_past_the_cap_without_validated_root_usage_bills_no_floor() {
+        const CAP: usize = 4096;
+        let (arrived, lane) = ask("openai", "openai", false);
+        let ctx = reply_ctx_capped(&arrived, &lane, CAP);
+        let padding = "x".repeat(CAP * 3);
+        for body in [
+            format!(r#"{{"padding":"{padding}"}}"#),
+            format!(
+                r#"{{"padding":"{padding}","metadata":{{"usage":{{"prompt_tokens":600,"completion_tokens":400}}}}}}"#
+            ),
+            format!(
+                r#"{{"padding":"{padding}","usage":{{"prompt_tokens":600,"completion_tokens":400}},"incomplete":"#
+            ),
+        ] {
+            let pieces: Vec<&[u8]> = body.as_bytes().chunks(512).collect();
+            let read = answer(&ctx, 200, JSON_HEAD, &pieces, false);
+            assert_eq!(read.body, body.as_bytes());
+            assert_eq!(
+                read.end().units,
+                Units::default(),
+                "no invented report or floor"
+            );
+            assert_eq!(truncations(body.as_bytes(), CAP), 1);
+        }
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/ingress_indistinguishability_tests.rs::test_cross_protocol_stream_delivers_trailing_usage_gemini_json_array`
@@ -4863,44 +4945,62 @@ fn empty_speech_output_is_a_failed_delivery_with_original_flat_billing() {
 fn malformed_rerank_retains_full_billing_variants_and_units() {
     use busbar_contract::billing::Billing;
     use busbar_plane_llm::exchange::reply::{wire, Units};
-    for value in [
-        Some(serde_json::json!(7)),
-        Some(serde_json::json!(0)),
-        Some(serde_json::json!(u64::MAX)),
-        None,
-        Some(serde_json::json!("7")),
+    // Count uses six decimal places in a signed 64-bit ledger column. The largest whole
+    // count is 9_223_372_036_854; out-of-range numbers and strings carry explicit refusals.
+    for (value, counted, refused) in [
+        (Some(serde_json::json!(7)), Some(7), false),
+        (Some(serde_json::json!(0)), Some(0), false),
+        (
+            Some(serde_json::json!(9_223_372_036_854_u64)),
+            Some(9_223_372_036_854),
+            false,
+        ),
+        (Some(serde_json::json!(9_223_372_036_855_u64)), None, true),
+        (Some(serde_json::json!(u64::MAX)), None, true),
+        (None, None, false),
+        (Some(serde_json::json!("7")), None, true),
     ] {
         let mut far = serde_json::json!({"results":[{"index":0,"relevance_score":"malformed"}]});
         if let Some(value) = &value {
             far["meta"] = serde_json::json!({"billed_units":{"search_units":value}});
         }
-        let expected = match value.as_ref().and_then(Value::as_u64) {
-            Some(count) => Billing::Counted {
-                class: "search_units".into(),
-                count,
-            },
-            None => Billing::Flat,
-        };
+
         let mut context = ctx("bedrock", "cohere", false, false);
         context.operation = OpVerb::RERANK;
         let failed = whole::translate(HOST, &context, 200, &serde_json::to_vec(&far).unwrap());
         assert_eq!(failed.end, WholeEnd::NotTranslatable);
         assert_eq!(failed.answer.status, 500);
         assert!(failed.refused.is_some());
-        assert_eq!(failed.usage, Some(expected.clone()));
+        if refused {
+            let Some(Billing::Tokens(usage)) = &failed.usage else {
+                panic!("an unreadable count must retain its refusal carrier: {value:?}");
+            };
+            assert_eq!(usage.refused_counts.len(), 1);
+            assert!(usage.refused_counts[0].contains("search_units"));
+            assert_eq!(usage.exact_counts, Some(Default::default()));
+            assert!(usage.open_units.is_empty());
+        } else {
+            let expected = match counted {
+                Some(count) => Billing::Counted {
+                    class: "search_units".into(),
+                    count,
+                },
+                None => Billing::Flat,
+            };
+            assert_eq!(failed.usage, Some(expected));
+        }
         let units = Units::of(
             wire::token_usage_of(&failed.usage).as_ref(),
             wire::open_units_of(&failed.usage),
         );
         assert_eq!((units.tokens_in, units.tokens_out), (0, 0));
-        assert_eq!(
-            units.open.get("search_units").copied(),
-            value.as_ref().and_then(Value::as_u64)
-        );
+        assert_eq!(units.open.get("search_units").copied(), counted);
+        assert!(!units.floor);
+        assert_eq!(units.refused_counts.len(), usize::from(refused));
         far["results"][0]["relevance_score"] = serde_json::json!(0.75);
         let success = whole::translate(HOST, &context, 200, &serde_json::to_vec(&far).unwrap());
         assert_eq!(success.end, WholeEnd::Delivered);
-        assert_eq!(success.usage, Some(expected));
+        assert_eq!(success.usage, failed.usage);
     }
 }
 
@@ -4991,7 +5091,7 @@ fn an_error_map_class_that_names_no_class_is_reported_once() {
 }
 
 #[test]
-fn failed_responses_usage_is_observed_while_same_and_cross_dialect_refunds_stay_zero() {
+fn failed_responses_preserve_same_dialect_refunds_and_cross_dialect_reported_work() {
     let far = br#"{"id":"resp_failed","status":"failed","output":[],"error":{"code":"server_error","message":"failed turn"},"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}"#;
     let observed = chat_handler("responses")
         .extract_usage(HOST, "responses", far)
@@ -5022,10 +5122,16 @@ fn failed_responses_usage_is_observed_while_same_and_cross_dialect_refunds_stay_
         assert!(end.done);
         assert_eq!(
             (end.units.tokens_in, end.units.tokens_out),
-            (0, 0),
-            "{ingress}: observing usage must not change the existing failure refund"
+            if ingress == "responses" {
+                (0, 0)
+            } else {
+                (5, 2)
+            },
+            "{ingress}: same-dialect refund and cross-dialect failed-generation billing"
         );
+        assert!(!end.units.floor);
         if ingress == "responses" {
+            assert_eq!(end.units, Units::default());
             assert_eq!(
                 end.bytes.as_ref(),
                 far,
@@ -5035,9 +5141,11 @@ fn failed_responses_usage_is_observed_while_same_and_cross_dialect_refunds_stay_
     }
 
     let cross = whole::translate(HOST, &ctx("openai", "responses", false, false), 200, far);
-    assert_eq!(cross.end, WholeEnd::NotTranslatable);
-    assert!(cross.refused.is_some());
-    assert_eq!(cross.usage, None);
+    assert_eq!(cross.end, WholeEnd::FailedGeneration);
+    assert_eq!(cross.answer.status, 502);
+    assert!(cross.refused.is_none());
+    let usage = busbar_plane_llm::exchange::reply::wire::token_usage_of(&cross.usage).unwrap();
+    assert_eq!((usage.input, usage.output), (5, 2));
 }
 
 #[test]
