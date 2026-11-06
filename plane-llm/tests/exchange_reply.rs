@@ -3780,6 +3780,10 @@ mod rehomed_metering {
             "validated root usage survives the prefix cap"
         );
         assert!(!read.end().units.floor, "reported counts are never a floor");
+        assert!(read.end().units.refused_counts.is_empty());
+        assert!(read.end().units.open.is_empty());
+        assert_eq!(read.end().verdict, Verdict::Ok);
+        assert_eq!(read.end().fault, None);
         assert_eq!(
             truncations(body.as_bytes(), CAP),
             1,
@@ -3807,6 +3811,10 @@ mod rehomed_metering {
             "validated leading root usage survives the prefix cap"
         );
         assert!(!read.end().units.floor, "reported counts are never a floor");
+        assert!(read.end().units.refused_counts.is_empty());
+        assert!(read.end().units.open.is_empty());
+        assert_eq!(read.end().verdict, Verdict::Ok);
+        assert_eq!(read.end().fault, None);
         assert_eq!(
             truncations(body.as_bytes(), CAP),
             1,
@@ -4971,24 +4979,24 @@ fn malformed_rerank_retains_full_billing_variants_and_units() {
         assert_eq!(failed.end, WholeEnd::NotTranslatable);
         assert_eq!(failed.answer.status, 500);
         assert!(failed.refused.is_some());
-        if refused {
-            let Some(Billing::Tokens(usage)) = &failed.usage else {
-                panic!("an unreadable count must retain its refusal carrier: {value:?}");
-            };
-            assert_eq!(usage.refused_counts.len(), 1);
-            assert!(usage.refused_counts[0].contains("search_units"));
-            assert_eq!(usage.exact_counts, Some(Default::default()));
-            assert!(usage.open_units.is_empty());
+        let expected = if refused {
+            Billing::Tokens(busbar_contract::billing::TokenUsage {
+                exact_counts: Some(Default::default()),
+                refused_counts: vec![format!(
+                    "usage field `search_units` is present but is not a count: {}",
+                    value.as_ref().unwrap()
+                )],
+                ..Default::default()
+            })
+        } else if let Some(count) = counted {
+            Billing::Counted {
+                class: "search_units".into(),
+                count,
+            }
         } else {
-            let expected = match counted {
-                Some(count) => Billing::Counted {
-                    class: "search_units".into(),
-                    count,
-                },
-                None => Billing::Flat,
-            };
-            assert_eq!(failed.usage, Some(expected));
-        }
+            Billing::Flat
+        };
+        assert_eq!(failed.usage, Some(expected.clone()));
         let units = Units::of(
             wire::token_usage_of(&failed.usage).as_ref(),
             wire::open_units_of(&failed.usage),
@@ -5000,7 +5008,7 @@ fn malformed_rerank_retains_full_billing_variants_and_units() {
         far["results"][0]["relevance_score"] = serde_json::json!(0.75);
         let success = whole::translate(HOST, &context, 200, &serde_json::to_vec(&far).unwrap());
         assert_eq!(success.end, WholeEnd::Delivered);
-        assert_eq!(success.usage, failed.usage);
+        assert_eq!(success.usage, Some(expected));
     }
 }
 
@@ -5129,6 +5137,14 @@ fn failed_responses_preserve_same_dialect_refunds_and_cross_dialect_reported_wor
             },
             "{ingress}: same-dialect refund and cross-dialect failed-generation billing"
         );
+        if ingress != "responses" {
+            assert_eq!(end.head.as_ref().unwrap().status, 502);
+            assert_eq!(end.verdict, Verdict::Hard);
+            assert_eq!(
+                end.fault,
+                Some(Fault::Transient("upstream-generation-failed"))
+            );
+        }
         assert!(!end.units.floor);
         if ingress == "responses" {
             assert_eq!(end.units, Units::default());
