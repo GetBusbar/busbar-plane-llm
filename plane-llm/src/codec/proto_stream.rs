@@ -770,6 +770,9 @@ impl StreamTranslate {
                 continue;
             }
 
+            if !self.egress.reader().reads_eventstream_event(&event_type) {
+                continue;
+            }
             if self.same_proto && !self.egress.reader().same_proto_reads(&event_type, &payload) {
                 continue;
             }

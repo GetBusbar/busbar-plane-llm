@@ -180,6 +180,12 @@ pub trait ProtocolReader: Send + Sync {
         state: &mut crate::codec::ir::StreamDecodeState,
     ) -> Vec<IrStreamEvent>;
 
+    /// Whether an event-stream header names a modeled event whose payload must be decoded.
+    /// Unknown normal events may carry a future payload format and are skipped before JSON parsing.
+    fn reads_eventstream_event(&self, _event_type: &str) -> bool {
+        true
+    }
+
     /// The same-dialect read probe. A same-dialect stream relays bytes and reads each frame only for
     /// what the far end reported (the usage it bills) and its terminal error.
     fn same_proto_reads(&self, _event_type: &str, _payload: &[u8]) -> bool {

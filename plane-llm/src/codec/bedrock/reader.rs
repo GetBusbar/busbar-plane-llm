@@ -1160,6 +1160,17 @@ impl ProtocolReader for BedrockReader {
         })
     }
 
+    fn reads_eventstream_event(&self, event_type: &str) -> bool {
+        matches!(
+            event_type,
+            ET_MESSAGE_START
+                | ET_CONTENT_BLOCK_START
+                | ET_CONTENT_BLOCK_DELTA
+                | ET_CONTENT_BLOCK_STOP
+                | ET_MESSAGE_STOP
+        ) || self.same_proto_reads(event_type, &[])
+    }
+
     /// `:event-type` is the `type` the reader dispatches on: usage rides only `metadata`, a failure
     /// only the five modeled stream exceptions.
     fn same_proto_reads(&self, event_type: &str, _payload: &[u8]) -> bool {

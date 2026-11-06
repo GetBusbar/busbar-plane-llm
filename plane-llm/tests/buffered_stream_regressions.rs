@@ -387,6 +387,84 @@ fn an_unknown_normal_aws_event_is_still_skipped_without_failing_the_reply() {
 }
 
 #[test]
+fn unknown_aws_events_do_not_interrupt_a_complete_reply() {
+    use busbar_plane_llm::codec::eventstream::encode_frame;
+    use busbar_plane_llm::exchange::reply::Verdict;
+
+    let unknown = aws_frame(
+        &[
+            (":message-type", "event"),
+            (":event-type", "InternalFailure"),
+        ],
+        b"not JSON",
+    );
+    let mut far = unknown.clone();
+    far.extend(encode_frame("messageStart", br#"{"role":"assistant"}"#));
+    far.extend(encode_frame(
+        "contentBlockDelta",
+        br#"{"contentBlockIndex":0,"delta":{"text":"hello"}}"#,
+    ));
+    far.extend(unknown.clone());
+    far.extend(encode_frame(
+        "contentBlockStop",
+        br#"{"contentBlockIndex":0}"#,
+    ));
+    far.extend(encode_frame("messageStop", br#"{"stopReason":"end_turn"}"#));
+    far.extend(encode_frame(
+        "metadata",
+        br#"{"usage":{"inputTokens":9,"outputTokens":3,"totalTokens":12}}"#,
+    ));
+    far.extend(unknown);
+    let piece = reply_from(
+        "openai",
+        "bedrock",
+        json!({"stream":true}),
+        &[(b"content-type", b"application/vnd.amazon.eventstream")],
+        &far,
+    );
+    assert_eq!(piece.verdict, Verdict::Ok);
+    assert_eq!(piece.fault, None);
+    assert_eq!((piece.units.tokens_in, piece.units.tokens_out), (9, 3));
+    let decoded = frames(&piece.bytes);
+    assert!(decoded
+        .iter()
+        .any(|v| v.pointer("/choices/0/delta/content") == Some(&json!("hello"))));
+    assert!(decoded
+        .iter()
+        .any(|v| v.pointer("/choices/0/finish_reason") == Some(&json!("stop"))));
+}
+
+#[test]
+fn malformed_known_aws_events_still_fail_translation() {
+    use busbar_plane_llm::codec::eventstream::encode_frame;
+    use busbar_plane_llm::exchange::reply::{Fault, Verdict};
+
+    for event in [
+        "messageStart",
+        "contentBlockStart",
+        "contentBlockDelta",
+        "contentBlockStop",
+        "messageStop",
+        "metadata",
+    ] {
+        let far = encode_frame(event, b"not JSON");
+        let piece = reply_from(
+            "openai",
+            "bedrock",
+            json!({"stream":true}),
+            &[(b"content-type", b"application/vnd.amazon.eventstream")],
+            &far,
+        );
+        assert_eq!(piece.verdict, Verdict::Hard, "{event}");
+        assert_eq!(
+            piece.fault,
+            Some(Fault::Transient("stream-translate-abort")),
+            "{event}"
+        );
+    }
+}
+
+#[test]
 fn invoke_header_only_errors_keep_the_native_error_message() {
     let far = aws_frame(
         &[
