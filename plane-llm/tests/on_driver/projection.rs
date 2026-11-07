@@ -52,7 +52,8 @@ async fn shown(dialect: &str, v: Value) -> Option<CapturedReq> {
             policy: Some(policy),
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     let (path, body) = target(dialect, v);
     let answer = rig
         .fire_with(
@@ -733,7 +734,8 @@ async fn apply_rewrite_to_body_echoes_redacted_marker_as_visible_text() {
             rewrites: vec![(std::time::Duration::from_millis(500), echo)],
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     let answer = rig.fire(&body).await;
     let sent: Value = serde_json::from_slice(
         &answer

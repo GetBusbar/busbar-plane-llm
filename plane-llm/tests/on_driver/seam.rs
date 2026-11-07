@@ -69,7 +69,8 @@ async fn run(
             policy: Some(policy),
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     let answer = rig.fire(&v).await;
     let captured = seen.lock().unwrap().clone();
     (answer, captured)
@@ -94,7 +95,7 @@ async fn default_flags_project_nothing() {
 #[tokio::test]
 async fn global_gate_reject_short_circuits_the_request() {
     let (_, gate) = capturing(false, false, Some((451, "blocked by global policy".into())));
-    let rig = Rig::new(one_dead(), None, gates(vec![(0, gate)]));
+    let rig = Rig::new(one_dead(), None, gates(vec![(0, gate)])).await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(
         answer.status, 451,
@@ -106,7 +107,7 @@ async fn global_gate_reject_short_circuits_the_request() {
 #[tokio::test]
 async fn global_gate_abstain_does_not_reject() {
     let (_, gate) = capturing(false, false, None);
-    let rig = Rig::new(one_dead(), None, gates(vec![(0, gate)]));
+    let rig = Rig::new(one_dead(), None, gates(vec![(0, gate)])).await;
     let answer = rig.fire(&chat_body()).await;
     assert_ne!(
         answer.status, 451,
@@ -172,7 +173,8 @@ async fn base_policy_restrict_persists_across_fallback_pool_hop() {
             )),
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(
         answer.status, 503,
@@ -194,7 +196,7 @@ async fn completion_tap_fires_synthetic_rejected_by_auth() {
     let (cap, tap) = webhook_tap();
     let mut hooks = Hooks::default();
     hooks.taps.response = vec![tap];
-    let rig = Rig::new(one_dead(), None, hooks);
+    let rig = Rig::new(one_dead(), None, hooks).await;
     let answer = rig
         .fire_unauthenticated("/v1/messages", &serde_json::to_vec(&chat_body()).unwrap())
         .await;
@@ -210,7 +212,7 @@ async fn completion_tap_status_is_protocol_native_gemini_400() {
     let (cap, tap) = webhook_tap();
     let mut hooks = Hooks::default();
     hooks.taps.response = vec![tap];
-    let rig = Rig::new(one_dead(), None, hooks);
+    let rig = Rig::new(one_dead(), None, hooks).await;
 
     let answer = rig
         .fire_unauthenticated(
@@ -235,7 +237,7 @@ async fn completion_tap_fires_synthetic_rejected_by_gate() {
         canned_gate(Canned::Reject(451, "denied"), "denier"),
     )]);
     hooks.taps.response = vec![tap];
-    let rig = Rig::new(one_dead(), None, hooks);
+    let rig = Rig::new(one_dead(), None, hooks).await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(answer.status, 451);
     let payload = wait_for_tap_body(&cap).await;
@@ -249,7 +251,7 @@ async fn completion_tap_reports_ok_outcome() {
     let (cap, tap) = webhook_tap();
     let mut hooks = Hooks::default();
     hooks.taps.response = vec![tap];
-    let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks);
+    let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks).await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(answer.status, 200);
     let payload = wait_for_tap_body(&cap).await;
@@ -263,7 +265,7 @@ async fn attempt_tap_carries_attempt_story() {
     let (cap, tap) = webhook_tap();
     let mut hooks = Hooks::default();
     hooks.taps.routing = vec![tap];
-    let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks);
+    let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks).await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(answer.status, 200);
     let payload = wait_for_tap_body(&cap).await;
@@ -281,7 +283,7 @@ async fn route_tap_reports_surviving_candidates() {
     let (cap, tap) = webhook_tap();
     let mut hooks = Hooks::default();
     hooks.taps.candidate = vec![tap];
-    let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks);
+    let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks).await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(answer.status, 200);
     let payload = wait_for_tap_body(&cap).await;
@@ -307,7 +309,8 @@ async fn same_protocol_passthrough_carries_global_rewrite() {
             rewrites: vec![rewriting("COMPRESSED")],
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(answer.status, 200);
     assert_eq!(
@@ -326,7 +329,8 @@ async fn pool_scoped_rw_gate_rewrites_the_body() {
             pool_rewrites: vec![rewriting("POOL-COMPRESSED")],
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(answer.status, 200);
     assert_eq!(
@@ -356,7 +360,7 @@ async fn on_error_fallback_hook_fires_and_decides() {
         send_user: false,
         on_empty: PolicyOnError::Reject,
     };
-    let rig = Rig::new(one_dead(), None, gates(vec![(0, gate)]));
+    let rig = Rig::new(one_dead(), None, gates(vec![(0, gate)])).await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(
         answer.status, 451,
@@ -381,7 +385,7 @@ async fn on_error_chain_exhausted_applies_terminal() {
         send_user: false,
         on_empty: PolicyOnError::Reject,
     };
-    let rig = Rig::new(one_dead(), None, gates(vec![(0, gate)]));
+    let rig = Rig::new(one_dead(), None, gates(vec![(0, gate)])).await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(
         answer.status, 503,
@@ -405,7 +409,8 @@ async fn on_error_reject_terminal_short_circuits_before_a_live_lane_ever_dispatc
         pool(vec![member("m0", "live-lane")]),
         None,
         gates(vec![(0, gate)]),
-    );
+    )
+    .await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(
         answer.status, 503,
@@ -420,7 +425,7 @@ async fn global_request_stage_tap_fires_on_a_real_dispatched_request() {
     let (cap, tap) = webhook_tap();
     let mut hooks = Hooks::default();
     hooks.taps.request = vec![tap];
-    let rig = Rig::new(pool(vec![member("m0", "live-lane")]), None, hooks);
+    let rig = Rig::new(pool(vec![member("m0", "live-lane")]), None, hooks).await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(
         answer.status, 200,
@@ -445,7 +450,8 @@ async fn pool_gate_reject_fires_from_pool_runtime_gates() {
             )],
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(
         answer.status, 451,
@@ -468,7 +474,8 @@ async fn reject_priority_tie_break_surfaces_lowest_priority() {
                 canned_gate(Canned::Reject(452, "low priority number"), "early"),
             ),
         ]),
-    );
+    )
+    .await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(
         answer.status, 452,
@@ -491,7 +498,8 @@ async fn multi_restrict_disjoint_intersection_fails_closed() {
                 canned_gate(Canned::Restrict(vec!["baa".into()]), "hipaa"),
             ),
         ]),
-    );
+    )
+    .await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(
         answer.status, 503,
@@ -518,7 +526,8 @@ async fn multi_restrict_intersection_dispatches_only_the_survivor() {
                 canned_gate(Canned::Restrict(vec!["baa".into()]), "hipaa"),
             ),
         ]),
-    );
+    )
+    .await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(answer.status, 200);
     assert_eq!(
@@ -543,7 +552,8 @@ async fn stale_order_filtered_against_post_restrict_set() {
                 canned_gate(Canned::Restrict(vec!["b".into()]), "restrictor"),
             ),
         ]),
-    );
+    )
+    .await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(answer.status, 200);
     assert_eq!(
@@ -562,7 +572,8 @@ async fn order_last_in_chain_wins() {
             (0, canned_gate(Canned::Order(vec![0, 1]), "first")),
             (1, canned_gate(Canned::Order(vec![1, 0]), "second")),
         ]),
-    );
+    )
+    .await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(answer.status, 200);
     assert_eq!(
@@ -589,7 +600,8 @@ async fn last_order_gate_filtered_to_empty_abstains_to_base_not_to_a_lower_gate(
             (10, canned_gate(Canned::Order(vec![1]), "low-orderer")),
             (20, canned_gate(Canned::Order(vec![2]), "high-orderer")),
         ]),
-    );
+    )
+    .await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(answer.status, 200);
     assert_eq!(
@@ -606,7 +618,8 @@ async fn global_gate_order_arm_is_honored() {
         pool(vec![member("lane-a", "alpha"), member("lane-b", "beta")]),
         None,
         gates(vec![(0, canned_gate(Canned::Order(vec![1]), "prefer-b"))]),
-    );
+    )
+    .await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(answer.status, 200);
     assert_eq!(
@@ -682,7 +695,8 @@ async fn identity_seen(key: Option<CallerKey>) -> super::policies::CapturedReq {
             callers,
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     rig.fire(&body()).await;
     let captured = seen.lock().unwrap().clone();
     captured.expect("policy called")
@@ -785,7 +799,8 @@ async fn gate_refusal(
             0,
             canned_gate(Canned::Reject(status, message), "guard"),
         )]),
-    );
+    )
+    .await;
     rig.fire_with(&crate::common::TestUnits::passing(), target, fields, body)
         .await
 }
@@ -808,7 +823,8 @@ async fn reject_rides_the_full_forward_path() {
             policy: Some(policy),
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     let answer = rig
         .fire(&json!({
             "model": "pa",
@@ -908,7 +924,7 @@ async fn same_request_id_joins_gate_decision_and_completion_tap() {
     let (seen, gate) = capturing(false, false, None);
     let mut hooks = gates(vec![(0, gate)]);
     hooks.taps.response = vec![tap];
-    let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks);
+    let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks).await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(answer.status, 200);
     let gate_request_id = seen
@@ -957,7 +973,7 @@ async fn request_id_is_recorded_as_native_u64_tracing_field() {
     let (cap, tap) = webhook_tap();
     let mut hooks = Hooks::default();
     hooks.taps.response = vec![tap];
-    let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks);
+    let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks).await;
     let seen = Arc::new(Mutex::new(None));
     use tracing_subscriber::layer::SubscriberExt as _;
     let subscriber = tracing_subscriber::registry().with(RequestIdSpanCapture(seen.clone()));
@@ -1084,7 +1100,8 @@ async fn fire_faulty(
         ]),
         None,
         hooks,
-    );
+    )
+    .await;
     let answer = rig
         .fire_with(
             &crate::common::TestUnits::passing(),
@@ -1170,7 +1187,8 @@ async fn reject_kind_mapping_matches_status_semantics_required_hook_unavailable(
         one(),
         None,
         gates(vec![(0, faulty(Fault::Error, PolicyOnError::Reject))]),
-    );
+    )
+    .await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(answer.status, 503);
     assert_eq!(answer.json()["type"], "error");
@@ -1244,7 +1262,7 @@ async fn substrate_fire_stage_taps_honors_group_scope_via_host_seam() {
             ..Hooks::default()
         };
         hooks.taps.response = vec![entry];
-        let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks);
+        let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks).await;
         let answer = rig.fire(&chat_body()).await;
         assert_eq!(answer.status, 200);
         settled_count(&tap).await
@@ -1265,7 +1283,7 @@ async fn substrate_fire_stage_taps_honors_group_scope_via_host_seam() {
 #[tokio::test]
 async fn unreadable_content_reaches_the_gate_and_is_forwarded() {
     let (seen, gate) = capturing(true, false, None);
-    let rig = Rig::new(one(), None, gates(vec![(0, gate)]));
+    let rig = Rig::new(one(), None, gates(vec![(0, gate)])).await;
     let body = r#"{"model":"m0","max_tokens":10,"messages":[{"role":"user","content":[{"type":"text","text":"READABLE"},{"type":"never_heard_of","x":1}]}]}"#;
     let answer = rig
         .fire_with(
@@ -1395,7 +1413,8 @@ async fn apply_rewrite_to_body_swaps_messages_and_is_fail_safe() {
             rewrites: vec![seated(&hook)],
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     let answer = fire_chat_completions(
         &rig,
         &json!({
@@ -1459,7 +1478,8 @@ async fn apply_global_rewrites_chains_in_order() {
                 rewrites: vec![seated(&head), seated(&tail)],
                 ..Hooks::default()
             },
-        );
+        )
+        .await;
         let answer = rig.fire(&chat_body()).await;
         assert_eq!(answer.status, 200);
         let shown = tail.shown.lock().unwrap().clone();
@@ -1482,7 +1502,7 @@ async fn apply_global_rewrites_chains_in_order() {
 /// LEGACY `crates/busbar-llm/src/unit/tests/approve.rs::with_no_seat_installed_the_step_is_a_no_op_exactly_as_the_live_path_is`
 #[tokio::test]
 async fn with_no_seat_installed_the_step_is_a_no_op_exactly_as_the_live_path_is() {
-    let rig = Rig::new(one(), None, Hooks::default());
+    let rig = Rig::new(one(), None, Hooks::default()).await;
     let body =
         br#"{"model":"m0","max_tokens":10,"messages":[{"role":"user","content":"untouched"}]}"#;
     let answer = rig
@@ -1528,7 +1548,8 @@ async fn the_first_veto_wins_and_nothing_after_it_is_consulted() {
             rewrites: vec![seated(&vetoing), seated(&after)],
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(answer.status, 451, "the first seat vetoed");
     assert!(
@@ -1553,7 +1574,7 @@ async fn completion_tap_fires_once_on_the_walk_and_never_on_a_pre_forward_refusa
     let (tap, entry) = counting_tap(Vec::new());
     let mut hooks = Hooks::default();
     hooks.taps.response = vec![entry];
-    let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks);
+    let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks).await;
     let answer = rig.fire(&chat_body()).await;
     assert_eq!(answer.status, 200);
     assert_eq!(
@@ -1569,7 +1590,7 @@ async fn completion_tap_fires_once_on_the_walk_and_never_on_a_pre_forward_refusa
     let (missed, entry) = counting_tap(Vec::new());
     let mut hooks = Hooks::default();
     hooks.taps.response = vec![entry];
-    let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks);
+    let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks).await;
     let mut body = chat_body();
     body["model"] = json!("missing");
     let answer = rig
@@ -1603,7 +1624,7 @@ async fn completion_tap_carries_no_response_tokens_out_as_in_1_5_5() {
                 .requested
                 .insert(busbar_contract::Signal::ResponseTokensOut);
         }
-        let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks);
+        let rig = Rig::new(pool(vec![member("m0", "served")]), None, hooks).await;
         let answer = rig.fire(&chat_body()).await;
         assert_eq!(answer.status, 200, "the answer was delivered");
         settled_count(&tap).await;
@@ -1629,7 +1650,7 @@ async fn completion_tap_carries_no_response_tokens_out_as_in_1_5_5() {
 #[tokio::test]
 async fn an_adhoc_provider_mismatch_is_judged_behind_the_callers_grant() {
     use busbar_contract::caps::{Outcome, ReasonCode, StepName};
-    let rig = Rig::new(one(), None, Hooks::default());
+    let rig = Rig::new(one(), None, Hooks::default()).await;
     let body = serde_json::to_vec(&body()).unwrap();
 
     let target = "/oai/m0/v1/messages";

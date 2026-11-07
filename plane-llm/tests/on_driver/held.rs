@@ -106,7 +106,8 @@ async fn decide(resolved: ResolvedPolicy) -> Rig {
             policy: Some(resolved),
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     rig.fire(&access_body()).await;
     rig
 }
@@ -192,7 +193,8 @@ async fn a_rewrite_hook_handed_the_prompt_leaves_exactly_one_access_amendment() 
             rewrites: vec![(Duration::from_millis(500), named("access-rewrite"))],
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     rig.fire(&access_body()).await;
     let seen = accesses(&rig, "access-rewrite");
     assert_eq!(seen.len(), 1, "one access per hand-over: {seen:?}");
@@ -207,7 +209,7 @@ async fn a_global_tap_leaves_an_access_amendment_only_when_handed_the_prompt() {
         (ms, true, named("access-tap-prompt"), Vec::new()),
         (ms, false, named("access-tap-shape"), Vec::new()),
     ];
-    let rig = Rig::new(one(), None, hooks);
+    let rig = Rig::new(one(), None, hooks).await;
     rig.fire(&json!({
         "model": "p",
         "messages": [{"role": "user", "content": "hi"}],
@@ -232,7 +234,8 @@ async fn gate_view(path: &str, content_type: &str, body: &[u8]) -> (String, usiz
             policy: Some(policy),
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     rig.fire_with(
         &crate::common::TestUnits::passing(),
         path,
@@ -411,7 +414,8 @@ async fn rewrite(path: &str, provider: &'static str, v: Value) -> (Seen, Value) 
             rewrites: vec![(Duration::from_millis(50), hook.clone())],
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     let answer: Answered = rig
         .fire_with(
             &crate::common::TestUnits::passing(),
@@ -552,7 +556,8 @@ async fn responses_instructions_are_system_and_a_system_item_is_a_turn() {
             policy: Some(policy),
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     rig.fire_with(
         &crate::common::TestUnits::passing(),
         "/v1/responses",
@@ -591,7 +596,8 @@ async fn rewritten(path: &str, provider: &'static str, v: Value, messages: Vec<V
             )],
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     let answer: Answered = rig
         .fire_with(
             &crate::common::TestUnits::passing(),
@@ -690,7 +696,8 @@ async fn gemini_rewrite_role_round_trips_model_and_assistant() {
             policy: Some(policy),
             ..Hooks::default()
         },
-    );
+    )
+    .await;
     rig.fire_with(
         &crate::common::TestUnits::passing(),
         "/v1beta/models/m0:generateContent",
