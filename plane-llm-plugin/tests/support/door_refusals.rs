@@ -13,7 +13,7 @@ extern "C" fn mutated() -> *const Door {
     MUTATED.load(Ordering::SeqCst)
 }
 extern "C" fn real() -> *const Door {
-    busbar_plane_llm::plane_door::door()
+    busbar_plane_llm::door()
 }
 // Used by one sequential test only. The real table and all newly allocated metadata remain static.
 fn restate(parts: DoorParts) {
@@ -25,12 +25,18 @@ fn restate(parts: DoorParts) {
 #[test]
 fn incompatible_metadata_is_refused_before_any_plane_slot_runs() {
     let lib = plugin_cdylib();
-    let stated = rendering_of(busbar_plane_llm::plane_door::door).unwrap();
-    let d = Arc::new(Dispatcher::new(DispatchConfig::default()));
+    let stated = rendering_of(busbar_plane_llm::door).unwrap();
+    let d = Arc::new(Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    ));
     drop(load(false, &d));
     drop(load(true, &d));
-    let d = Arc::new(Dispatcher::new(DispatchConfig::default()));
-    let original = busbar_plane_llm::plane_door::door().parts();
+    let d = Arc::new(Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    ));
+    let original = busbar_plane_llm::door().parts();
     answer_layout_refusal(original, &d);
     let kind = KindCode::Plane;
     let abi = kind.abi_version();
@@ -139,9 +145,12 @@ fn incompatible_metadata_is_refused_before_any_plane_slot_runs() {
 }
 fn wrong<K: Kind>() {
     let lib = plugin_cdylib();
-    let stated = rendering_of(busbar_plane_llm::plane_door::door).unwrap();
-    let row = LinkedRow::of(busbar_plane_llm::plane_door::door).unwrap();
-    let d = Arc::new(Dispatcher::new(DispatchConfig::default()));
+    let stated = rendering_of(busbar_plane_llm::door).unwrap();
+    let row = LinkedRow::of(busbar_plane_llm::door).unwrap();
+    let d = Arc::new(Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    ));
     let want = Some(LoadError::ManifestKind {
         stated: KindCode::Plane,
         want: K::CODE,
@@ -152,7 +161,8 @@ fn wrong<K: Kind>() {
 #[test]
 fn every_other_kind_refuses_the_actual_plane_in_both_deliveries() {
     use busbar_plugin_loader::dispatch::kinds::{
-        auth::Auth, export::Export, hook::Hook, secret::Secret, store::Store, transport::Transport,
+        auth::Auth, export::Export, hook::Hook, secret::Secret, store_v4::StoreV4 as Store,
+        transport::Transport,
     };
     wrong::<Auth>();
     wrong::<Export>();
@@ -200,7 +210,7 @@ fn answer_layout_refusal(original: DoorParts, d: &Dispatcher) {
 
 #[test]
 fn llm_serving_requires_all_six_actual_http_needs_in_both_deliveries() {
-    let row = LinkedRow::of(busbar_plane_llm::plane_door::door).unwrap();
+    let row = LinkedRow::of(busbar_plane_llm::door).unwrap();
     let statement = rendering::read(&row.statement).unwrap();
     assert_eq!(
         statement.needs.len(),
@@ -212,7 +222,10 @@ fn llm_serving_requires_all_six_actual_http_needs_in_both_deliveries() {
         plugin: statement.name.clone(),
         needs: 6,
     };
-    let d = Arc::new(Dispatcher::new(DispatchConfig::default()));
+    let d = Arc::new(Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    ));
     let serving = || Bind {
         conns: ConnTable::NoNeeds,
         ..bind(&d)

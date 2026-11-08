@@ -69,23 +69,29 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     codec: dialect_codec!(VENDOR_NAME),
     handler: Some(&handler::ResponsesRequestHandler),
     verbs: &[busbar_contract::operation::OpVerb::CHAT],
+    #[cfg(test)]
     head_keys: super::proto_codec::LLM_CHAT_HEAD_KEYS,
     streaming_content_type: Some(crate::codec::protocol::TEXT_EVENT_STREAM),
     array_stream_shim_key: None,
     native_tool_id_prefix: Some("call_"),
+    #[cfg(test)]
     ingress_auth: IngressAuth::Bearer,
 
+    #[cfg(test)]
     egress_auth_headers: None,
+    #[cfg(test)]
     egress_auth_lane_constant: false,
+    #[cfg(test)]
     egress_scheme: Some(EgressScheme::bearer()),
     stream_usage_requires_opt_in: false,
     requires_max_tokens: false,
+    #[cfg(test)]
     stop_sequence_cap: None,
     cache_markers_model_gated: false,
     fills_thought_signature: false,
     frame_after_message_start: None,
-    reshapes_body_at_path_base: false,
     max_cache_control_breakpoints: None,
+    #[cfg(test)]
     quota_exceeded_status: busbar_contract::http::StatusCode::TOO_MANY_REQUESTS.as_u16(),
     ingress_is_eventstream: false,
     emits_sse_done_terminator: false,
@@ -97,10 +103,8 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
         busbar_contract::http::StatusCode::UNAUTHORIZED.as_u16(),
         crate::codec::protocol::ERR_TYPE_AUTHENTICATION,
     ),
-    ingress_relays_amzn_headers: false,
     ingress_relayed_response_header_names: &[],
     auth_failure_message: AUTH_FAILURE_MSG,
-    uses_array_stream_shim: false,
     has_native_path_not_found: false,
     egress_stream_accept: crate::codec::protocol::TEXT_EVENT_STREAM,
 

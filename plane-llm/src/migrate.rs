@@ -19,6 +19,7 @@ const DIALLED: [&str; 2] = ["base_url", "token_url"];
 pub struct LlmMigration;
 
 impl Migrate for LlmMigration {
+    type Kind = busbar_contract::plugin::markers::PlaneKind;
     fn migrate(settings: Value, _from: &str) -> Migrated {
         let mut needs: Vec<MigrateNeed> = Vec::new();
         let providers = settings.get(sections::PROVIDERS).and_then(Value::as_object);

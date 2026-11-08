@@ -3,7 +3,9 @@
 
 //! The per-`(operation, egress-protocol)` leaf-op writer dispatch.
 
-use crate::codec::cells::{CodecError, IngressReject, WireBody};
+use crate::codec::cells::WireBody;
+#[cfg(test)]
+use crate::codec::cells::{CodecError, IngressReject};
 use crate::codec::ir::audio::{SpeechReq, SpeechResp, TranscriptionReq, TranscriptionResp};
 use crate::codec::ir::embeddings::{EmbeddingsReq, EmbeddingsResp};
 use crate::codec::ir::image::{ImageReq, ImageResp};
@@ -17,7 +19,9 @@ use bytes::Bytes;
 pub struct LeafCodec<Q: 'static, A: 'static> {
     pub write_request: fn(&Q) -> Bytes,
     pub write_response: fn(&A) -> WireBody,
+    #[cfg(test)]
     pub read_request: fn(&[u8], &str) -> Result<Q, IngressReject>,
+    #[cfg(test)]
     pub read_response: fn(&[u8]) -> Result<A, CodecError>,
 }
 

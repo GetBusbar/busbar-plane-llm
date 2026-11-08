@@ -625,11 +625,10 @@ fn drive(p: &Plugin<Plane>, driver: Option<Ticket>) -> (Called, Vec<u64>) {
             Vec::new(),
         );
     };
-    let driven = &p.inner.driven;
-    let seen = driven.answers();
-    busbar_plugin_loader::dispatch::ticket::host_wake(p.inner.ctx(), driver);
-    match driven.answered_after(seen, OP_DEADLINE) {
-        Some(outcome) => (answer(outcome, None), driven.drain()),
+    let seen = p.test_driver_answers();
+    busbar_plugin_loader::dispatch::ticket::host_wake(p.test_host_context(), driver);
+    match p.test_driver_answer_after(seen, OP_DEADLINE) {
+        Some(outcome) => (answer(outcome, None), p.test_driver_sessions()),
         None => (
             answer(Outcome::Fault, Some(b"the woken driver never answered")),
             Vec::new(),
@@ -814,12 +813,15 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     let c = &carried;
     let claim = claimed.claim;
     let url = None;
-    let d = Arc::new(Dispatcher::new(DispatchConfig::default()));
+    let d = Arc::new(Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    ));
     let p = load(dropped_in, &d);
-    let held = p.inner.clone();
+    let probe = p.test_invocation_probe();
     let first = || {
-        held.crossings.load(std::sync::atomic::Ordering::SeqCst)
-            - held.resumes.load(std::sync::atomic::Ordering::SeqCst)
+        let (crossings, resumes) = probe();
+        crossings - resumes
     };
     let billable = p.served().billable_classes;
     let mut answers = Vec::new();
@@ -3341,7 +3343,7 @@ fn plugin_cdylib() -> std::path::PathBuf {
     path
 }
 fn load(dropped: bool, d: &Dispatcher) -> Plugin<Plane> {
-    let row = LinkedRow::of(busbar_plane_llm::plane_door::door).expect("actual LLM statement");
+    let row = LinkedRow::of(busbar_plane_llm::door).expect("actual LLM statement");
     if dropped {
         load_dropped::<Plane>(&plugin_cdylib(), &row.statement, bind(d))
             .expect("actual dropped LLM loads")
@@ -3364,7 +3366,7 @@ mod door_refusals;
 #[test]
 fn llm_declares_its_actual_statement_needs_and_requested_profile() {
     let declared: Value = serde_json::from_str(busbar_plane_llm::DECLARES).unwrap();
-    let row = LinkedRow::of(busbar_plane_llm::plane_door::door).unwrap();
+    let row = LinkedRow::of(busbar_plane_llm::door).unwrap();
     let statement = busbar_contract::abi::mechanism::rendering::read(&row.statement).unwrap();
     let mut needs: Vec<_> = statement
         .needs

@@ -196,6 +196,7 @@ pub fn rewrite_text_pairs(messages: &[serde_json::Value]) -> Option<Vec<(String,
 
 /// The `event:` name of one SSE frame, borrowed from the frame: the cheap probe for a consumer that
 /// needs only the event type.
+#[cfg(test)]
 pub fn sse_event_type(frame: &[u8]) -> &str {
     let mut name = "";
     for (start, end) in sse_line_spans(frame) {
@@ -258,6 +259,7 @@ pub fn write_sse_frame(out: &mut Vec<u8>, event_type: &str, data: &serde_json::V
 
 /// Byte-level removal of a top-level `"usage"` member from a JSON object string, preserving every
 /// other byte.
+#[cfg(test)]
 pub fn strip_top_level_usage_member(json: &str) -> Option<String> {
     let (start, end) = top_level_usage_cut(json)?;
     Some([&json[..start], &json[end..]].concat())

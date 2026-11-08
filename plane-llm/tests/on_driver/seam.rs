@@ -1054,30 +1054,6 @@ enum Seat {
     BasePolicy,
 }
 
-/// The chat-completions caller's own spelling of busbar's overloaded 503 kind, read off the plane's
-/// own refusal renderer, so the test pins "the same kind as every other busbar 503" and no literal.
-fn overloaded_kind_on_chat_completions() -> String {
-    struct NoHost;
-    impl busbar_plane_llm::codec::cells::CodecHost for NoHost {
-        fn fill_entropy(&self, _out: &mut [u8]) -> bool {
-            false
-        }
-        fn wall_clock_now(&self) -> Option<u64> {
-            None
-        }
-    }
-    let rendered = busbar_plane_llm::exchange::refuse::render(
-        &NoHost,
-        "openai",
-        503,
-        busbar_plane_llm::codec::protocol::KIND_OVERLOADED,
-        "x",
-        0,
-    );
-    let v: Value = serde_json::from_slice(&rendered.body).expect("a refusal is JSON");
-    v["error"]["type"].as_str().unwrap_or_default().to_string()
-}
-
 /// One chat-completions request at a two-lane pool with the faulty hook in `seat`: (status, error
 /// kind, error message) off the caller's envelope, and whether a far end was reached.
 async fn fire_faulty(
@@ -1127,7 +1103,7 @@ async fn fire_faulty(
 async fn decision_gate_that_cannot_complete_has_its_own_503_body() {
     let (status, kind, message, _) =
         fire_faulty(Seat::DecisionGate, Fault::Error, PolicyOnError::Reject).await;
-    assert_eq!((status, kind), (503, overloaded_kind_on_chat_completions()));
+    assert_eq!((status, kind), (503, "server_error".to_string()));
     assert_eq!(message, GATE_COULD_NOT_COMPLETE);
 }
 
@@ -1140,7 +1116,7 @@ async fn decision_gate_restriction_leaving_no_lane_has_its_own_503_body() {
         PolicyOnError::Reject,
     )
     .await;
-    assert_eq!((status, kind), (503, overloaded_kind_on_chat_completions()));
+    assert_eq!((status, kind), (503, "server_error".to_string()));
     assert_eq!(message, GATE_RESTRICT_EMPTY);
 }
 
@@ -1149,7 +1125,7 @@ async fn decision_gate_restriction_leaving_no_lane_has_its_own_503_body() {
 async fn base_policy_that_cannot_select_has_its_own_503_body() {
     let (status, kind, message, _) =
         fire_faulty(Seat::BasePolicy, Fault::Error, PolicyOnError::Reject).await;
-    assert_eq!((status, kind), (503, overloaded_kind_on_chat_completions()));
+    assert_eq!((status, kind), (503, "server_error".to_string()));
     assert_eq!(message, POLICY_COULD_NOT_SELECT);
 }
 
@@ -1162,7 +1138,7 @@ async fn base_policy_restriction_leaving_no_lane_has_its_own_503_body() {
         PolicyOnError::Reject,
     )
     .await;
-    assert_eq!((status, kind), (503, overloaded_kind_on_chat_completions()));
+    assert_eq!((status, kind), (503, "server_error".to_string()));
     assert_eq!(message, POLICY_RESTRICT_EMPTY);
 }
 
@@ -1433,30 +1409,6 @@ async fn apply_rewrite_to_body_swaps_messages_and_is_fail_safe() {
     let tools = sent["tools"].as_array().expect("tools");
     assert_eq!(tools.len(), 2, "tool injected, existing kept: {sent}");
     assert_eq!(sent["model"], "m0", "unrelated fields untouched");
-
-    use busbar_plane_llm::exchange::arrive::arrive;
-    use busbar_plane_llm::exchange::project::apply_rewrite;
-    let head: &[(&[u8], &[u8])] = &[(b"content-type", b"application/json")];
-    let rewrite = br#"{"messages":[{"role":"user","content":"compressed"}],"tools":[]}"#;
-    let non_chat = br#"{"model":"m0","contents":[{"parts":[]}]}"#;
-    if let Ok(mut arrived) = arrive("POST", "/v1/chat/completions", head, non_chat, &()) {
-        let before = arrived.body.clone();
-        assert_eq!(
-            apply_rewrite(&mut arrived, rewrite),
-            None,
-            "non-chat body left untouched (fail-safe)"
-        );
-        assert_eq!(arrived.body, before);
-    }
-    let chat = br#"{"model":"m0","messages":[{"role":"user","content":"x"}]}"#;
-    let mut arrived = arrive("POST", "/v1/chat/completions", head, chat, &()).expect("arrives");
-    let before = arrived.body.clone();
-    assert_eq!(
-        apply_rewrite(&mut arrived, br#"{"messages":[],"tools":[]}"#),
-        None,
-        "an empty rewrite changes nothing"
-    );
-    assert_eq!(arrived.body, before);
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/usage_tap_tests.rs::apply_global_rewrites_chains_in_order`

@@ -136,25 +136,31 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
         busbar_contract::operation::OpVerb::TRANSCRIPTION,
         busbar_contract::operation::OpVerb::SPEECH,
     ],
+    #[cfg(test)]
     head_keys: super::proto_codec::LLM_CHAT_HEAD_KEYS,
     streaming_content_type: Some(crate::codec::protocol::TEXT_EVENT_STREAM),
     array_stream_shim_key: Some(GEMINI_JSON_ARRAY_SHIM_KEY),
 
     native_tool_id_prefix: None,
+    #[cfg(test)]
     ingress_auth: IngressAuth::Bearer,
 
+    #[cfg(test)]
     egress_auth_headers: None,
+    #[cfg(test)]
     egress_auth_lane_constant: false,
+    #[cfg(test)]
     egress_scheme: Some(EgressScheme::header(FIELD_X_GOOG_API_KEY)),
 
     stream_usage_requires_opt_in: false,
     requires_max_tokens: false,
+    #[cfg(test)]
     stop_sequence_cap: Some((5, "Gemini")),
     cache_markers_model_gated: false,
     fills_thought_signature: true,
     frame_after_message_start: None,
-    reshapes_body_at_path_base: false,
     max_cache_control_breakpoints: None,
+    #[cfg(test)]
     quota_exceeded_status: busbar_contract::http::StatusCode::TOO_MANY_REQUESTS.as_u16(),
     ingress_is_eventstream: false,
     emits_sse_done_terminator: false,
@@ -166,10 +172,8 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
         busbar_contract::http::StatusCode::BAD_REQUEST.as_u16(),
         ERR_TYPE_INVALID_REQUEST,
     ),
-    ingress_relays_amzn_headers: false,
     ingress_relayed_response_header_names: &[],
     auth_failure_message: GEMINI_BAD_KEY_MESSAGE,
-    uses_array_stream_shim: true,
     has_native_path_not_found: true,
     egress_stream_accept: crate::codec::protocol::TEXT_EVENT_STREAM,
     models_list_envelope: Some(models_list_envelope),

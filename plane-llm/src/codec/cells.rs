@@ -36,34 +36,10 @@ pub enum IngressReject {
 /// ONE ROW OF A PROTOCOL'S SUPPORT MATRIX — a verb the protocol speaks and the codec that speaks it.
 pub type Cell = (OpVerb, &'static dyn OperationHandler);
 
-/// THE ROW LOOKUP every [`RequestHandler::operation_handler`] is — stated once so there are not
-pub fn cell_of(cells: &'static [Cell], op: OpVerb) -> Option<&'static dyn OperationHandler> {
-    cells
-        .iter()
-        .find(|(candidate, _)| *candidate == op)
-        .map(|(_, handler)| *handler)
-}
-
-/// THE (verb → upstream path) LOOKUP, for the protocols whose egress paths are constants rather
-pub fn path_of(paths: &'static [(OpVerb, &'static str)], op: OpVerb) -> Option<&'static str> {
-    paths
-        .iter()
-        .find(|(candidate, _)| *candidate == op)
-        .map(|(_, path)| *path)
-}
-
 /// A pure per-(protocol × operation) codec. Feed it wire, assert the IR; feed it IR, assert the wire.
 pub trait OperationHandler: Send + Sync {
-    /// WHAT THIS UPSTREAM'S FAILURE MEANT — the attributed outcome of one outbound attempt, which
-    fn extract_error(
-        &self,
-        status: u16,
-        _body: &[u8],
-    ) -> busbar_contract::upstream::RawUpstreamError {
-        busbar_contract::upstream::RawUpstreamError::from_status(status)
-    }
-
     /// Can this operation produce a client-facing incremental stream?
+    #[cfg(test)]
     fn streaming(&self) -> bool {
         false
     }
@@ -145,6 +121,7 @@ pub trait OperationHandler: Send + Sync {
 /// A protocol's dialect + its OperationHandlers (one impl per protocol).
 pub trait RequestHandler: Send + Sync {
     /// Stable protocol identity (matches the dialect's own protocol name). Called only from `busbar-core`'s
+    #[cfg(test)]
     fn protocol_name(&self) -> &'static str;
 
     /// This protocol's row of the support matrix. `None` ⇒ the protocol does not serve the operation

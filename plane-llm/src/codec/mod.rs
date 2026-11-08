@@ -33,13 +33,6 @@ pub mod leaf_handles;
 macro_rules! leaf_op {
     ($op:ident: $dialect:expr, $req:ident = $read_req:ident, $resp:ident = $read_resp:ident; $($extra:tt)*) => {
         impl crate::codec::cells::OperationHandler for $op {
-            fn extract_error(
-                &self,
-                status: u16,
-                body: &[u8],
-            ) -> busbar_contract::upstream::RawUpstreamError {
-                $crate::codec::proto_codec::protocol_error($dialect, status, body)
-            }
             fn read_request(
                 &self,
                 body: &[u8],
@@ -74,6 +67,7 @@ macro_rules! dialect_codec {
 /// cell for an operation from its `CELLS` table.
 macro_rules! dialect_identity {
     ($name:expr) => {
+        #[cfg(test)]
         fn protocol_name(&self) -> &'static str {
             $name
         }

@@ -8,7 +8,9 @@
 use crate::codec::cells::{Cell, OperationHandler};
 use crate::codec::protocol::HeadFields;
 use busbar_contract::operation::OpVerb;
-use busbar_contract::{Count, SlabBytes};
+#[cfg(test)]
+use busbar_contract::Count;
+use busbar_contract::SlabBytes;
 
 /// The row lookup every [`RequestHandler::operation_handler`] is, stated once. Rows are
 /// single-digit, so a few pointer comparisons beat a map.
@@ -68,6 +70,7 @@ pub struct ImageOutput {
 
 /// Render an exact duration back onto the wire: the only place a billable quantity becomes a double.
 #[must_use]
+#[cfg(test)]
 pub fn duration_seconds_to_wire(seconds: Count) -> f64 {
     seconds.micros() as f64 / 1_000_000.0_f64
 }

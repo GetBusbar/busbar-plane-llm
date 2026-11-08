@@ -194,16 +194,21 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
         busbar_contract::operation::OpVerb::IMAGE,
         busbar_contract::operation::OpVerb::RERANK,
     ],
+    #[cfg(test)]
     head_keys: super::proto_codec::LLM_CHAT_HEAD_KEYS,
 
     streaming_content_type: Some(APPLICATION_VND_AMAZON_EVENTSTREAM),
     array_stream_shim_key: None,
 
     native_tool_id_prefix: Some("tooluse_"),
+    #[cfg(test)]
     ingress_auth: IngressAuth::SigV4,
 
+    #[cfg(test)]
     egress_auth_headers: None,
+    #[cfg(test)]
     egress_auth_lane_constant: false,
+    #[cfg(test)]
     egress_scheme: Some(EgressScheme::SigV4 {
         service: VENDOR_NAME,
         region_of_host: declared_sigv4_region,
@@ -213,13 +218,14 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
 
     stream_usage_requires_opt_in: false,
     requires_max_tokens: false,
+    #[cfg(test)]
     stop_sequence_cap: None,
     cache_markers_model_gated: true,
     fills_thought_signature: false,
     frame_after_message_start: None,
-    reshapes_body_at_path_base: false,
     max_cache_control_breakpoints: None,
 
+    #[cfg(test)]
     quota_exceeded_status: busbar_contract::http::StatusCode::BAD_REQUEST.as_u16(),
     ingress_is_eventstream: true,
     emits_sse_done_terminator: false,
@@ -231,10 +237,8 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
         busbar_contract::http::StatusCode::FORBIDDEN.as_u16(),
         keys::AUTH_WORD,
     ),
-    ingress_relays_amzn_headers: true,
     ingress_relayed_response_header_names: &[HDR_AMZN_REQUEST_ID, HDR_AMZN_ERROR_TYPE],
     auth_failure_message: "",
-    uses_array_stream_shim: false,
     has_native_path_not_found: false,
 
     egress_stream_accept: APPLICATION_VND_AMAZON_EVENTSTREAM,
@@ -1179,6 +1183,7 @@ fn merge_marker_entries(
 }
 
 /// The declared SigV4 region of an upstream `host` ([`EgressScheme::SigV4`]'s `region_of_host`):
+#[cfg(test)]
 fn declared_sigv4_region(host: &str) -> Option<&str> {
     let region = derive_sigv4_region(host);
     if region.is_none() {
@@ -1190,6 +1195,7 @@ fn declared_sigv4_region(host: &str) -> Option<&str> {
 /// Derive the AWS region for the SigV4 scope from a Bedrock endpoint host. A bare
 /// `strip_prefix("bedrock-runtime.")` signs for the wrong region on non-vanilla endpoints, which
 /// AWS rejects as a 403 `SignatureDoesNotMatch`.
+#[cfg(test)]
 pub(crate) fn derive_sigv4_region(host: &str) -> Option<&str> {
     fn looks_like_region(label: &str) -> bool {
         let parts: Vec<&str> = label.split('-').collect();

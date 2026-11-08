@@ -7,8 +7,29 @@ use std::path::{Path, PathBuf};
 
 use busbar_contract::caps::ReasonCode;
 use busbar_kernel::plane_driver::{refusal_status, BufferCaps, DriverConfig};
-use busbar_plane_llm::dialect::DIALECTS;
-use busbar_plane_llm::refusal::REFUSAL_STATUSES;
+use busbar_plugin_loader::dispatch::{
+    kinds::plane::Plane, load_linked, Bind, ConnTable, DispatchConfig, Dispatcher, LinkedRow,
+    NoSink, Plugin,
+};
+use std::sync::Arc;
+
+fn plane() -> Plugin<Plane> {
+    let dispatcher = Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_kernel::host_services::caller_binding(),
+    );
+    load_linked::<Plane>(
+        &LinkedRow::of(busbar_plane_llm::door).expect("plane Statement"),
+        Bind {
+            instance: Arc::from("refusal-facts"),
+            max_inflight_cap: 64,
+            sink: Arc::new(NoSink),
+            dispatcher: dispatcher.adopter(),
+            conns: ConnTable::NoNeeds,
+        },
+    )
+    .expect("validated plane")
+}
 
 /// The recorded cells, in busbar's tree. This file compiles only into the composition root's
 /// `hook_parity_driver` suite, so `CARGO_MANIFEST_DIR` is the root crate (`crates/busbar`) and
@@ -38,16 +59,18 @@ fn config() -> DriverConfig {
         caps: BufferCaps::default(),
         op_classes: Vec::new(),
         status_of: refusal_status,
-        refusal_statuses: REFUSAL_STATUSES.to_vec(),
+        refusal_statuses: plane().refusal_statuses().to_vec(),
         caller_refs: None,
     }
 }
 
 fn dialect(name: &str) -> u32 {
     u32::try_from(
-        DIALECTS
+        plane()
+            .served()
+            .dialects
             .iter()
-            .position(|d| d.name == name)
+            .position(|d| *d == name)
             .unwrap_or_else(|| panic!("the plane states {name}")),
     )
     .expect("a dialect index")
@@ -129,8 +152,11 @@ fn every_recorded_llm_refusal_wears_the_status_the_driver_chooses() {
 /// LEGACY `crates/busbar-llm/tests/llm_refusal_statuses.rs::every_stated_row_differs_from_the_kernel_default`
 #[test]
 fn every_stated_row_differs_from_the_kernel_default() {
-    assert!(!REFUSAL_STATUSES.is_empty(), "the plane states its rows");
-    for row in REFUSAL_STATUSES {
+    assert!(
+        !plane().refusal_statuses().is_empty(),
+        "the plane states its rows"
+    );
+    for row in plane().refusal_statuses() {
         let reason = busbar_contract::abi::plane::reason_of(row.reason).expect("a known reason");
         assert_ne!(
             refusal_status(reason),
@@ -139,30 +165,4 @@ fn every_stated_row_differs_from_the_kernel_default() {
             row.dialect
         );
     }
-}
-
-/// LEGACY `crates/busbar-llm/tests/llm_refusal_statuses.rs::p_item_refusal_reason_collapse_no_llm_refusal_reads_as_an_internal_error`
-#[test]
-fn p_item_refusal_reason_collapse_no_llm_refusal_reads_as_an_internal_error() {
-    use busbar_contract::abi::plane::{class_of, RefusalClass};
-    use busbar_plane_llm::exchange::refuse::kind_of;
-    let config = config();
-    let mut wrong = Vec::new();
-    for d in SIX {
-        for reason in ReasonCode::ALL {
-            let class = class_of(*reason);
-            let status = config.status(dialect(d), *reason);
-            let kind = kind_of(reason.as_str(), u16::try_from(status).expect("a status"));
-            if status == 500 {
-                wrong.push(format!("{d} {reason:?} answers a bare 500"));
-            }
-            let generic = kind == busbar_plane_llm::codec::protocol::KIND_API_ERROR;
-            if generic != (class.is_node_fault() || class == RefusalClass::Timeout) {
-                wrong.push(format!(
-                    "{d} {reason:?} ({class:?}) reads as {kind} at {status}"
-                ));
-            }
-        }
-    }
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }

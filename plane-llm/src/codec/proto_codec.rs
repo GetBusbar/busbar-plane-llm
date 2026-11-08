@@ -15,6 +15,7 @@ pub const PROTO_ANTHROPIC: &str = "anthropic";
 pub const PROTO_OPENAI: &str = "openai";
 pub const PROTO_GEMINI: &str = "gemini";
 pub const PROTO_BEDROCK: &str = "bedrock";
+#[cfg(test)]
 pub const PROTO_COHERE: &str = "cohere";
 pub const PROTO_RESPONSES: &str = "responses";
 
@@ -67,6 +68,7 @@ impl crate::codec::cells::CodecHost for CheckedEntropy<'_> {
 use busbar_contract::upstream::CanonicalSignal;
 
 /// Top-level body keys the six chat dialects point-read on the pre-materialized path: `model`
+#[cfg(test)]
 pub const LLM_CHAT_HEAD_KEYS: &[&str] = &["model", "stream", "stream_options", "system"];
 
 #[cfg(test)]
@@ -319,7 +321,7 @@ pub trait ProtocolWriter: Send + Sync {
         self.dropped_egress_controls(req)
     }
 
-    /// Perform the `path_base` body reshape `ProtocolDecl::reshapes_body_at_path_base` promised,
+    /// Perform the dialect’s `path_base` body reshape,
     /// returning whether the body changed.
     fn reshape_for_path_base(&self, _body: &mut serde_json::Value) -> bool {
         false
@@ -819,16 +821,6 @@ pub fn with_reader<T>(name: &str, f: impl FnOnce(&dyn ProtocolReader) -> T) -> O
     out
 }
 
-/// The plane-local equivalent of the former core `handlers::protocol_error` round trip: the shared
-/// upstream-error-envelope extractor, by name.
-pub fn protocol_error(
-    name: &str,
-    status: u16,
-    body: &[u8],
-) -> busbar_contract::upstream::RawUpstreamError {
-    protocol_error_with_head(name, status, &[], body)
-}
-
 /// The same protocol-local extraction with borrowed response heads, consumed synchronously.
 pub fn protocol_error_with_head(
     name: &str,
@@ -908,9 +900,6 @@ impl DialectCodec for DialectRef {
     ) -> Option<(String, serde_json::Value)> {
         with_writer(self.0, |w| w.write_error_frame(host, err)).flatten()
     }
-    fn wants_array_stream(&self, body: &serde_json::Value) -> bool {
-        with_writer(self.0, |w| w.wants_array_stream(body)).unwrap_or(false)
-    }
     fn inject_response_metrics(&self, value: &mut serde_json::Value, elapsed_ms: Option<u64>) {
         with_writer(self.0, |w| w.inject_response_metrics(value, elapsed_ms));
     }
@@ -928,13 +917,6 @@ impl DialectCodec for DialectRef {
             .iter()
             .map(|(n, v)| (n.as_str().to_string(), v.as_bytes().to_vec()))
             .collect()
-    }
-    fn extract_error(
-        &self,
-        status: u16,
-        body: &[u8],
-    ) -> busbar_contract::upstream::RawUpstreamError {
-        protocol_error(self.0, status, body)
     }
     fn make_array_stream_framer(&self) -> Option<Box<dyn ArrayStreamFramer>> {
         with_writer(self.0, |w| w.make_array_stream_framer()).flatten()

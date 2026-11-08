@@ -514,14 +514,7 @@ pub(crate) fn inspect_response_usage(
 }
 
 impl OperationHandler for ChatOperation {
-    fn extract_error(
-        &self,
-        status: u16,
-        body: &[u8],
-    ) -> busbar_contract::upstream::RawUpstreamError {
-        super::proto_codec::protocol_error(self.0, status, body)
-    }
-
+    #[cfg(test)]
     fn streaming(&self) -> bool {
         true
     }

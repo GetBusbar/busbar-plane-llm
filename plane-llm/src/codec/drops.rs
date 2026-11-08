@@ -187,10 +187,13 @@ pub const HOSTED_TOOL: Member = block(kind::HOSTED_TOOL);
 /// The IR request members a drop names, spelled once (the dialects' `REQUEST_CODE_NAMES` and
 /// `UNREAD` tables name them from here).
 pub mod name {
+    #[cfg(test)]
     pub const N: &str = "n";
     pub const REASONING: &str = "reasoning";
     pub const THINKING_BUDGET: &str = "thinking_budget";
+    #[cfg(test)]
     pub const CACHE_CONTROL: &str = "cache_control";
+    #[cfg(test)]
     pub const STOP: &str = "stop";
     pub const TOOLS: &str = "tools";
     pub const TOOL_CHOICE: &str = "tool_choice";

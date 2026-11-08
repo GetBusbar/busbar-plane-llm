@@ -109,15 +109,20 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     codec: dialect_codec!(VENDOR_NAME),
     handler: Some(&handler::AnthropicRequestHandler),
     verbs: &[busbar_contract::operation::OpVerb::CHAT],
+    #[cfg(test)]
     head_keys: super::proto_codec::LLM_CHAT_HEAD_KEYS,
     streaming_content_type: Some(crate::codec::protocol::TEXT_EVENT_STREAM),
     array_stream_shim_key: None,
 
     native_tool_id_prefix: Some("toolu_"),
+    #[cfg(test)]
     ingress_auth: IngressAuth::Bearer,
 
+    #[cfg(test)]
     egress_auth_headers: None,
+    #[cfg(test)]
     egress_auth_lane_constant: false,
+    #[cfg(test)]
     egress_scheme: Some(EgressScheme::Static {
         families: &[
             CredentialFamily {
@@ -140,12 +145,13 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
     }),
     stream_usage_requires_opt_in: false,
     requires_max_tokens: true,
+    #[cfg(test)]
     stop_sequence_cap: None,
     cache_markers_model_gated: false,
     fills_thought_signature: false,
     frame_after_message_start: Some(ANTHROPIC_PING_SSE_FRAME),
-    reshapes_body_at_path_base: true,
     max_cache_control_breakpoints: Some(4),
+    #[cfg(test)]
     quota_exceeded_status: busbar_contract::http::StatusCode::TOO_MANY_REQUESTS.as_u16(),
     ingress_is_eventstream: false,
     emits_sse_done_terminator: false,
@@ -157,10 +163,8 @@ pub const DECL: ProtocolDecl = ProtocolDecl {
         busbar_contract::http::StatusCode::UNAUTHORIZED.as_u16(),
         crate::codec::protocol::ERR_TYPE_AUTHENTICATION,
     ),
-    ingress_relays_amzn_headers: false,
     ingress_relayed_response_header_names: &[HDR_REQUEST_ID],
     auth_failure_message: "invalid x-api-key",
-    uses_array_stream_shim: false,
     has_native_path_not_found: false,
     egress_stream_accept: crate::codec::protocol::TEXT_EVENT_STREAM,
     models_list_envelope: Some(models_list_envelope),
@@ -601,7 +605,9 @@ const HDR_X_API_KEY: &str = "x-api-key";
 const HDR_ANTHROPIC_VERSION: &str = "anthropic-version";
 
 /// Credential prefix strings used to classify a raw key into its native Anthropic scheme.
+#[cfg(test)]
 const CRED_PREFIX_API_KEY: &str = "sk-ant-api";
+#[cfg(test)]
 const CRED_PREFIX_OAUTH: &str = "sk-ant-oat";
 
 /// The upstream path this writer targets on the Anthropic Messages API.

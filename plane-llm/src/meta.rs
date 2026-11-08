@@ -26,6 +26,7 @@ macro_rules! help_tagline {
 
 /// The one-line description `busbar --help` opens with (`busbar <version> — <this>`), byte for byte
 /// as printed (shadow-oracle cells `cli__--help` / `cli__-h`).
+#[cfg(test)]
 pub const HELP_TAGLINE: &str = help_tagline!();
 
 /// [`HELP_ENDPOINTS`]'s text, spelled once for it and for [`CLI_HELP_TEXT`].
@@ -48,6 +49,7 @@ macro_rules! help_endpoints {
 /// This plane's lines in the `ENDPOINTS` block of `busbar --help` (the doors its dialects answer on),
 /// byte for byte as printed (shadow-oracle cells `cli__--help` / `cli__-h`), no trailing newline: the
 /// root splices them between two lines it owns.
+#[cfg(test)]
 pub const HELP_ENDPOINTS: &str = help_endpoints!();
 
 /// The same rows as the door's tail states them (`PlaneTail::cli_help`), in the contract's grammar

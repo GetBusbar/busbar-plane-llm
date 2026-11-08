@@ -887,25 +887,33 @@ pub(crate) const LEAF: crate::codec::leaf_codec::LeafCodecs =
         embeddings: Some(LeafCodec {
             write_request: write_embeddings_request,
             write_response: write_embeddings_response,
+            #[cfg(test)]
             read_request: read_embeddings_request,
+            #[cfg(test)]
             read_response: read_embeddings_response,
         }),
         image: Some(LeafCodec {
             write_request: write_image_request,
             write_response: write_image_response,
+            #[cfg(test)]
             read_request: read_image_request,
+            #[cfg(test)]
             read_response: read_image_response,
         }),
         transcription: Some(LeafCodec {
             write_request: write_transcription_request,
             write_response: write_transcription_response,
+            #[cfg(test)]
             read_request: read_transcription_request,
+            #[cfg(test)]
             read_response: read_transcription_response,
         }),
         speech: Some(LeafCodec {
             write_request: write_speech_request,
             write_response: write_speech_response,
+            #[cfg(test)]
             read_request: read_speech_request,
+            #[cfg(test)]
             read_response: read_speech_response,
         }),
         ..crate::codec::leaf_codec::LeafCodecs::NONE

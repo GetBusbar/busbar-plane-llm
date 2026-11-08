@@ -26,7 +26,7 @@ extern "C" fn fail_ready(
 }
 #[test]
 fn a_failing_llm_ready_is_refused_once_with_the_plugins_text() {
-    let original = busbar_plane_llm::plane_door::door().parts();
+    let original = busbar_plane_llm::door().parts();
     // SAFETY: all static product data retained; READY alone is replaced by a bounded raw negative.
     let door = unsafe {
         Door::__from_parts(DoorParts {
@@ -36,7 +36,10 @@ fn a_failing_llm_ready_is_refused_once_with_the_plugins_text() {
         })
     };
     READY_DOOR.store(Box::into_raw(Box::new(door)), Ordering::SeqCst);
-    let d = Arc::new(Dispatcher::new(DispatchConfig::default()));
+    let d = Arc::new(Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    ));
     let row = LinkedRow::of_raw(ready_door).unwrap();
     let p = load_linked::<Plane>(&row, bind(&d)).unwrap();
     assert!(p.has_ready());
@@ -44,8 +47,11 @@ fn a_failing_llm_ready_is_refused_once_with_the_plugins_text() {
     let settings = serde_json::to_vec(&config["settings"]).unwrap();
     let opened = open(&p, &handed(&p.served(), &settings), None);
     assert!(opened.starts_with("Ready "), "{opened}");
-    let held = p.inner.clone();
-    let first = || held.crossings.load(Ordering::SeqCst) - held.resumes.load(Ordering::SeqCst);
+    let probe = p.test_invocation_probe();
+    let first = || {
+        let (crossings, resumes) = probe();
+        crossings - resumes
+    };
     let before = first();
     let refused = p
         .ready(&d, OP_DEADLINE)

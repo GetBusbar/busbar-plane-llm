@@ -7,6 +7,10 @@
 //! (`busbar-plane-llm-plugin`, via `busbar_contract::export_door!`), so the two cannot answer
 //! differently.
 
+type StaticServices = KindStaticServices<busbar_contract::plugin::markers::PlaneKind>;
+
+type Services = KindServices<busbar_contract::plugin::markers::PlaneKind>;
+
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -45,7 +49,8 @@ use busbar_contract::abi::sdk::plane::UnitCancel;
 use busbar_contract::abi::sdk::plane_life::{Opened, PlaneLife, Published};
 use busbar_contract::abi::sdk::publish::{ClaimSpec, SnapshotSpec};
 use busbar_contract::abi::sdk::{
-    Generations, Instance, Lent, Out, Safe, SafeSlot, Services, StaticServices,
+    Generations, Instance, Lent, Out, Safe, SafeSlot, Services as KindServices,
+    Services as KindStaticServices,
 };
 use busbar_contract::abi::transport::{
     FAULT_CALLER, FAULT_HARD, FAULT_NONE, FAULT_RATE_LIMIT, FAULT_TRANSIENT,
@@ -66,6 +71,7 @@ use crate::meta::PROVIDER_KEYS;
 
 /// The protocol axis of the door's linked row: the plane's six dialect declarations in operator
 /// order, as contract data (`crate::codec::protocol::ProtocolDecl`).
+#[cfg(test)]
 pub use crate::codec::DECLS as PROTOCOLS;
 
 /// The version the Statement names: the crate's (a test pins the two equal).
@@ -563,6 +569,7 @@ impl<S> UnitBook<S> {
 
     /// What the book holds: `(units, ticket bindings)`.
     #[must_use]
+    #[cfg(test)]
     pub fn held(&self) -> (usize, usize) {
         (self.units.len(), self.tickets.len())
     }
@@ -1360,10 +1367,11 @@ macro_rules! slot {
         #[derive(Debug)]
         pub struct $name;
         impl SafeSlot for $name {
+    type Kind = busbar_contract::plugin::markers::PlaneKind;
             type In = $in;
             type Out = $out;
             type State = LlmDoor;
-            fn call($inst: Instance<'_, LlmDoor>, $input: Lent<'_, $in>, $o: Out<'_, $out>)
+            fn call($inst: Instance<'_, LlmDoor, busbar_contract::plugin::markers::PlaneKind>, $input: Lent<'_, $in>, $o: Out<'_, $out>)
                 -> Outcome $body
         }
     };
@@ -1388,7 +1396,15 @@ impl PlaneLife for LlmDoor {
 
     /// `open`: the instance, its host clock, and the first generation's tables and snapshot; a
     /// failed open answers FAILED with the reader's words in the host's reason buffer.
-    fn open(input: &Lent<'_, PlaneOpenIn>) -> Result<Opened<Self>, Refusal> {
+    fn open(
+        input: &Lent<'_, PlaneOpenIn>,
+        host: Option<
+            busbar_contract::abi::sdk::lent::KindHostLoan<
+                '_,
+                busbar_contract::plugin::markers::PlaneKind,
+            >,
+        >,
+    ) -> Result<Opened<Self>, Refusal> {
         let open = input.open();
         let shaping = read_settings(open.settings().bytes()).map_err(Refusal::failed)?;
         let webhooks = webhook::from_owned(input.owned().bytes()).map_err(Refusal::failed)?;
@@ -1396,7 +1412,7 @@ impl PlaneLife for LlmDoor {
             generations: Generations::new(),
             shapings: Mutex::new(BTreeMap::from([(open.generation(), Arc::new(shaping))])),
             units: Mutex::new(UnitBook::default()),
-            services: open.host().and_then(Services::of),
+            services: host.and_then(Services::of),
             webhooks,
         };
         let first = Published {
@@ -1425,7 +1441,7 @@ impl PlaneLife for LlmDoor {
     /// `cancel`: the cancelled unit (the unit the cancel names, else the one on its ticket) ends;
     /// nothing it owed is delivered.
     fn cancel(
-        instance: Instance<'_, Self>,
+        instance: Instance<'_, Self, busbar_contract::plugin::markers::PlaneKind>,
         input: Lent<'_, PlaneCancelIn>,
         mut out: Out<'_, PlaneCancelOut>,
     ) -> Outcome {

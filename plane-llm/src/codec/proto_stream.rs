@@ -669,6 +669,7 @@ impl StreamTranslate {
 
     /// Feed a chunk of egress SSE bytes; return translated ingress bytes for the complete frames now
     /// available (empty for a partial frame).
+    #[cfg(test)]
     pub fn feed(&mut self, host: &dyn crate::codec::cells::CodecHost, chunk: &[u8]) -> Vec<u8> {
         self.feed_borrowed(host, chunk).into_owned()
     }
@@ -1010,6 +1011,7 @@ impl StreamTranslate {
 /// Fan a whole (buffered) response out into the IR events a live stream of the same completion
 /// carries: `MessageStart`, per block a `BlockStart`, delta(s) and `BlockStop`, then the terminal
 /// `MessageDelta` and `MessageStop`, so the ingress writer sees the live-path shape.
+#[cfg(test)]
 pub fn response_to_ir_events(
     ir: &crate::codec::ir::IrResponse,
 ) -> Vec<crate::codec::ir::IrStreamEvent> {

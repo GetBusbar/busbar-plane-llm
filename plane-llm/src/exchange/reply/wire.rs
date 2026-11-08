@@ -308,6 +308,7 @@ pub fn open_units_of(usage: &Option<Billing>) -> BTreeMap<String, u64> {
 /// Whether the far end reported this whole answer's generation as failed: its dialect's reader
 /// reads the stop reason as the error reason.
 #[must_use]
+#[cfg(test)]
 pub fn generation_failed(
     host: &dyn crate::codec::cells::CodecHost,
     egress: &str,

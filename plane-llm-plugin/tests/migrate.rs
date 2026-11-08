@@ -57,7 +57,7 @@ fn sections() -> serde_json::Value {
 fn the_door_raises_every_provider_host_for_core_to_judge_both_ways() {
     let bytes = std::fs::read(cdylib()).expect("the cdylib reads");
     let s = sections();
-    let linked = migrate_door(raw(busbar_plane_llm::plane_door::door), &s, "1.5.5")
+    let linked = migrate_door(raw(busbar_plane_llm::door), &s, "1.5.5")
         .expect("migrates")
         .expect("the door states migrate");
     let dropped = migrate_library(&bytes, "busbar-plane-llm", &s, "1.5.5")
@@ -92,7 +92,7 @@ fn the_door_raises_every_provider_host_for_core_to_judge_both_ways() {
 #[test]
 fn sections_without_providers_raise_nothing() {
     let s = json!({ "pools": {} });
-    let m = migrate_door(raw(busbar_plane_llm::plane_door::door), &s, "1.5.5")
+    let m = migrate_door(raw(busbar_plane_llm::door), &s, "1.5.5")
         .expect("migrates")
         .expect("the door states migrate");
     assert_eq!(m.settings, s);

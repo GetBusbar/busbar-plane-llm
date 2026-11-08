@@ -39,13 +39,6 @@ pub(crate) fn request_id_field(
     head_field(name, id.as_bytes())
 }
 
-/// What the far end's dialect reads off its error answer: the codes and types its error shape
-/// names, or the status alone when the dialect does not serve `operation`.
-#[must_use]
-pub fn raw_error(far: &str, operation: OpVerb, status: u16, body: &[u8]) -> RawUpstreamError {
-    raw_error_with_head(far, operation, status, &[], body)
-}
-
 /// Read the supported operation's error identity from its response heads and body.
 #[must_use]
 pub fn raw_error_with_head(

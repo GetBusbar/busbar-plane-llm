@@ -5,7 +5,7 @@
 /// The OS CSPRNG and the system clock in whole seconds, read the way the kernel's host reads them.
 pub struct TestHost;
 
-impl busbar_plane_llm::codec::cells::CodecHost for TestHost {
+impl crate::codec::cells::CodecHost for TestHost {
     fn fill_entropy(&self, out: &mut [u8]) -> bool {
         getrandom::fill(out).is_ok()
     }
@@ -22,7 +22,7 @@ impl busbar_plane_llm::codec::cells::CodecHost for TestHost {
 /// Constant entropy (a minted id renders the same twice) and no clock.
 pub struct SevensHost;
 
-impl busbar_plane_llm::codec::cells::CodecHost for SevensHost {
+impl crate::codec::cells::CodecHost for SevensHost {
     fn fill_entropy(&self, out: &mut [u8]) -> bool {
         out.fill(7);
         true

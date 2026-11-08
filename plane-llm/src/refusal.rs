@@ -24,10 +24,13 @@ pub mod reason {
     /// `over_budget`: a spend cap blocked the unit.
     pub const OVER_BUDGET: u32 = 20;
     /// `destination_unreachable`: no member of the pool answered.
+    #[cfg(test)]
     pub const DESTINATION_UNREACHABLE: u32 = 31;
     /// `group_frozen`: the caller's group is disabled.
+    #[cfg(test)]
     pub const GROUP_FROZEN: u32 = 21;
     /// `no_rate`: a rate card is configured and the model it would bill names no rate.
+    #[cfg(test)]
     pub const NO_RATE: u32 = 17;
     /// `no_destination`: the arrival's model names no pool and no configured model.
     pub const NO_DESTINATION: u32 = 19;

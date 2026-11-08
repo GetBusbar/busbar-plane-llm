@@ -106,6 +106,7 @@ pub struct Arrived {
     /// The body as JSON, when it is JSON.
     pub parsed: Option<Value>,
     /// The request path.
+    #[cfg(test)]
     pub path: String,
     /// The query, without its `?`.
     pub query: Option<String>,
@@ -403,6 +404,7 @@ fn body_arrival(
         content_type: ct,
         body: body.to_vec(),
         parsed,
+        #[cfg(test)]
         path: path.to_string(),
         query: query.map(str::to_string),
         path_model: None,
@@ -592,7 +594,7 @@ pub fn splice_path_facts(
 #[allow(clippy::too_many_arguments)]
 fn path_model_arrival(
     proto: &'static str,
-    path: &str,
+    _path: &str,
     query: Option<&str>,
     fields: HeadFields<'_>,
     body: &[u8],
@@ -652,7 +654,8 @@ fn path_model_arrival(
         content_type: content_type(fields),
         body: spliced,
         parsed: Some(v),
-        path: path.to_string(),
+        #[cfg(test)]
+        path: _path.to_string(),
         query: query.map(str::to_string),
         path_model: Some(facts),
     })

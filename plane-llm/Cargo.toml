@@ -32,9 +32,12 @@ tracing = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+busbar-kernel = { workspace = true }
 # Refusal fixtures retain their independent normalization oracle.
 sonic-rs = { workspace = true }
 jsonschema = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde_json = { workspace = true, features = ["arbitrary_precision"] }
 getrandom = { workspace = true }
+busbar-contract = { workspace = true, features = ["test-seal"] }
+busbar-plugin-loader = { workspace = true, features = ["test-support"] }

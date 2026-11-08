@@ -59,6 +59,7 @@ pub enum DrainStatus {
 /// Drain every complete frame from `buf`, returning `(event_type, payload_bytes)` pairs and a
 /// [`DrainStatus`]. [`DrainStatus::MalformedPrelude`] is the explicit abort signal: the buffer is
 /// cleared (unrecoverable).
+#[cfg(test)]
 pub fn drain_frames_checked(
     buf: &mut Vec<u8>,
     consumed_sink: Option<&mut Vec<u8>>,
@@ -119,6 +120,7 @@ fn clear_all(buf: &mut Vec<u8>, work: &mut DrainWork) {
 }
 
 /// [`drain_frames_checked`], counting its buffer work into `work`.
+#[cfg(test)]
 pub(crate) fn drain_frames_counted(
     buf: &mut Vec<u8>,
     consumed_sink: Option<&mut Vec<u8>>,

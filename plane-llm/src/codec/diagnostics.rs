@@ -260,6 +260,7 @@ pub const PROTO_DROP_PROVIDER_METADATA: Diagnostic = Diagnostic {
 };
 
 /// Same-protocol non-stream billing copy hit the reassembly cap; the tail (with usage) is kept.
+#[cfg(test)]
 pub const USAGE_TAP_REASSEMBLY_CAP_EXCEEDED: Diagnostic = Diagnostic {
     code: 5001,
     class: Class::Proxy,
@@ -278,6 +279,7 @@ pub const USAGE_TAP_REASSEMBLY_CAP_EXCEEDED: Diagnostic = Diagnostic {
 };
 
 /// Upstream transport error mid-stream, after the first byte already reached the client.
+#[cfg(test)]
 pub const UPSTREAM_MIDSTREAM_TRANSPORT_ERROR: Diagnostic = Diagnostic {
     code: 5002,
     class: Class::Proxy,
@@ -296,6 +298,7 @@ pub const UPSTREAM_MIDSTREAM_TRANSPORT_ERROR: Diagnostic = Diagnostic {
 };
 
 /// Upstream transport error before the first byte of a streaming response arrived.
+#[cfg(test)]
 pub const UPSTREAM_PREFIRSTBYTE_TRANSPORT_ERROR: Diagnostic = Diagnostic {
     code: 5003,
     class: Class::Proxy,
@@ -313,6 +316,7 @@ pub const UPSTREAM_PREFIRSTBYTE_TRANSPORT_ERROR: Diagnostic = Diagnostic {
 };
 
 /// A (pool, lane) circuit breaker transitioned Closed→Open. Warn-once per logical trip.
+#[cfg(test)]
 pub const LANE_BREAKER_TRIPPED: Diagnostic = Diagnostic {
     code: 5004,
     class: Class::Proxy,
@@ -329,6 +333,7 @@ pub const LANE_BREAKER_TRIPPED: Diagnostic = Diagnostic {
 };
 
 /// A cross-protocol non-stream upstream body failed mid-transfer; success not recorded.
+#[cfg(test)]
 pub const CROSSPROTO_NONSTREAM_MIDTRANSFER_FAILED: Diagnostic = Diagnostic {
     code: 5010,
     class: Class::Proxy,
@@ -345,6 +350,7 @@ pub const CROSSPROTO_NONSTREAM_MIDTRANSFER_FAILED: Diagnostic = Diagnostic {
 };
 
 /// A cross-protocol success body exceeded busbar's translation cap; cannot translate.
+#[cfg(test)]
 pub const CROSSPROTO_TRANSLATION_CAP_EXCEEDED: Diagnostic = Diagnostic {
     code: 5011,
     class: Class::Proxy,
@@ -363,6 +369,7 @@ pub const CROSSPROTO_TRANSLATION_CAP_EXCEEDED: Diagnostic = Diagnostic {
 };
 
 /// A binary/opaque cross-protocol upstream body failed the egress codec's read_response.
+#[cfg(test)]
 pub const CROSSPROTO_BINARY_CODEC_FAILED: Diagnostic = Diagnostic {
     code: 5012,
     class: Class::Proxy,
@@ -379,6 +386,7 @@ pub const CROSSPROTO_BINARY_CODEC_FAILED: Diagnostic = Diagnostic {
 };
 
 /// A JSON 2xx cross-protocol upstream body was rejected by the egress codec.
+#[cfg(test)]
 pub const CROSSPROTO_JSON_CODEC_FAILED: Diagnostic = Diagnostic {
     code: 5013,
     class: Class::Proxy,
@@ -396,6 +404,7 @@ pub const CROSSPROTO_JSON_CODEC_FAILED: Diagnostic = Diagnostic {
 };
 
 /// Degraded-path cross-protocol response not translatable; ingress-native error returned.
+#[cfg(test)]
 pub const CROSSPROTO_RESPONSE_NOT_TRANSLATABLE_DEGRADED: Diagnostic = Diagnostic {
     code: 5014,
     class: Class::Proxy,
@@ -413,6 +422,7 @@ pub const CROSSPROTO_RESPONSE_NOT_TRANSLATABLE_DEGRADED: Diagnostic = Diagnostic
 };
 
 /// Cross-protocol response not translatable (would leak the upstream's native body).
+#[cfg(test)]
 pub const CROSSPROTO_RESPONSE_NOT_TRANSLATABLE: Diagnostic = Diagnostic {
     code: 5015,
     class: Class::Proxy,
@@ -430,6 +440,7 @@ pub const CROSSPROTO_RESPONSE_NOT_TRANSLATABLE: Diagnostic = Diagnostic {
 };
 
 /// A rewrite-gate hook rejected the request. Normal policy enforcement.
+#[cfg(test)]
 pub const REWRITE_GATE_REJECTED: Diagnostic = Diagnostic {
     code: 5016,
     class: Class::Proxy,
@@ -446,6 +457,7 @@ pub const REWRITE_GATE_REJECTED: Diagnostic = Diagnostic {
 };
 
 /// Materializing the validated request body for the rewrite pass failed; fail-closed reject.
+#[cfg(test)]
 pub const REWRITE_BODY_MATERIALIZE_FAILED: Diagnostic = Diagnostic {
     code: 5017,
     class: Class::Proxy,
@@ -464,6 +476,7 @@ pub const REWRITE_BODY_MATERIALIZE_FAILED: Diagnostic = Diagnostic {
 };
 
 /// Re-serializing a committed rewrite failed; reject rather than forward the un-rewritten body.
+#[cfg(test)]
 pub const REWRITE_RESERIALIZE_FAILED: Diagnostic = Diagnostic {
     code: 5018,
     class: Class::Proxy,
@@ -482,6 +495,7 @@ pub const REWRITE_RESERIALIZE_FAILED: Diagnostic = Diagnostic {
 };
 
 /// No response headers within the per-attempt cap; failing over to the next lane.
+#[cfg(test)]
 pub const ATTEMPT_TIMEOUT_FAILOVER: Diagnostic = Diagnostic {
     code: 5025,
     class: Class::Proxy,
@@ -498,6 +512,7 @@ pub const ATTEMPT_TIMEOUT_FAILOVER: Diagnostic = Diagnostic {
 };
 
 /// No response headers within the per-attempt cap on the degraded path.
+#[cfg(test)]
 pub const ATTEMPT_TIMEOUT_DEGRADED: Diagnostic = Diagnostic {
     code: 5030,
     class: Class::Proxy,
@@ -514,6 +529,7 @@ pub const ATTEMPT_TIMEOUT_DEGRADED: Diagnostic = Diagnostic {
 };
 
 /// A compliance restrict left no eligible lane in the fallback pool; fail closed.
+#[cfg(test)]
 pub const FALLBACK_RESTRICT_NO_ELIGIBLE_LANE: Diagnostic = Diagnostic {
     code: 5031,
     class: Class::Proxy,
@@ -583,6 +599,7 @@ mod reentry_tests;
 
 /// Every code this plane defines, in catalog order, for the composition root's
 /// `install_diagnostics`.
+#[cfg(test)]
 pub static DIAGNOSTICS: &[&Diagnostic] = &[
     &USAGE_TAP_UNKNOWN_PROTOCOL,
     &USAGE_TAP_BAD_JSON,

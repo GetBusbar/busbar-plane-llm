@@ -227,6 +227,7 @@ pub fn billed_count(
 /// split): an absent usage object, field or `null` is `None` (never `Some(0)`), a readable count is
 /// `Some(n)`, and a present-but-unreadable count is the same [`UnreadableCount`] refusal, never the
 /// `None` that reads as "no cache reported".
+#[cfg(test)]
 pub fn billed_count_opt(
     usage: Option<&serde_json::Value>,
     field: &'static str,

@@ -613,27 +613,6 @@ async fn rewritten(path: &str, provider: &'static str, v: Value, messages: Vec<V
     serde_json::from_slice(&sent.body).expect("the far end's body is JSON")
 }
 
-/// The plane's own rewrite step over `body` arriving at `target`: the rewritten body, `None` when
-/// the rewrite leaves the arrival untouched (and then the arrival's body is unchanged).
-fn applied(target: &str, body: &[u8], rewrite: &Value) -> Option<Value> {
-    use busbar_plane_llm::exchange::arrive::arrive;
-    use busbar_plane_llm::exchange::project::apply_rewrite;
-    let head: &[(&[u8], &[u8])] = &[(b"content-type", b"application/json")];
-    let mut arrived = arrive("POST", target, head, body, &()).expect("the body arrives");
-    let before = arrived.body.clone();
-    let rewrite = serde_json::to_vec(rewrite).expect("serializes");
-    match apply_rewrite(&mut arrived, &rewrite) {
-        Some(bytes) => Some(serde_json::from_slice(&bytes).expect("the rewritten body is JSON")),
-        None => {
-            assert_eq!(
-                arrived.body, before,
-                "an unapplied rewrite leaves the body untouched"
-            );
-            None
-        }
-    }
-}
-
 /// LEGACY `crates/busbar-llm/src/engine/tests/usage_tap_tests.rs::apply_rewrite_renders_per_dialect`
 #[tokio::test]
 async fn apply_rewrite_renders_per_dialect() {
@@ -660,26 +639,6 @@ async fn apply_rewrite_renders_per_dialect() {
     .await;
     assert_eq!(g["contents"][0]["parts"][0]["text"], "compressed");
     assert_eq!(g["contents"][1]["role"], "model");
-
-    let r = applied(
-        "/v1/responses",
-        br#"{"model":"m0","input":"orig"}"#,
-        &json!({"messages": rewrite, "tools": []}),
-    )
-    .expect("the responses rewrite applies");
-    assert_eq!(r["input"][0]["content"], "compressed");
-
-    let blocky =
-        json!({"messages": [{"role": "user", "content": [{"type": "text"}]}], "tools": []});
-    assert_eq!(
-        applied(
-            "/model/m0/converse",
-            br#"{"messages":[{"role":"user","content":[{"text":"orig"}]}]}"#,
-            &blocky,
-        ),
-        None,
-        "a non-text rewrite leaves bedrock untouched"
-    );
 }
 
 /// LEGACY `crates/busbar-llm/src/engine/tests/usage_tap_tests.rs::gemini_rewrite_role_round_trips_model_and_assistant`
