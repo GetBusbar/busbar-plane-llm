@@ -806,6 +806,14 @@ for changed in ("Cargo.toml", "Cargo.lock"):
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source / name, dst)
     (root / "testing/llm-conformance").mkdir()
+    # This fixture probes cache invalidation, not judge provisioning. Give its disposable host a
+    # tool-dir-only oracle shim so the production preflight can succeed before the deliberately
+    # failing Python bootstrap; never invoke the real CI judge or build a host in this probe.
+    (root / "bin").mkdir()
+    oracle = root / "bin/oracle"
+    oracle.write_text('#!/bin/sh\n[ "$#" = 1 ] && [ "$1" = tool-dir ] || exit 2\n'
+                      'printf "%s\\n" "$BUSBAR_ORACLE_JUDGE_PATH"\n')
+    oracle.chmod(0o755)
     # HEAD and working-tree changes are part of the actual cache API. This repository is disposable.
     def git(*args):
         subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
@@ -822,7 +830,13 @@ for changed in ("Cargo.toml", "Cargo.lock"):
     env = dict(os.environ, CARGO_TARGET_DIR=str(root / "target"), BUSBAR_CHECKOUT=str(root),
                BUSBAR_PIN="cache-fixture", CONFORMANCE_SUITE="llm-gemini",
                CONFORMANCE_OUT=str(output), LLM_CONFORMANCE_PYTHON=str(bootstrap),
-               CACHE_ATTEMPTS=str(attempts))
+               CACHE_ATTEMPTS=str(attempts),
+               BUSBAR_ORACLE_RELEASE_REPO="https://cache-fixture.invalid/oracle.git",
+               BUSBAR_ORACLE_RELEASE_REF="1" * 40,
+               BUSBAR_ORACLE_SHA256_LINUX_X86_64="2" * 64,
+               BUSBAR_ORACLE_SHA256_LINUX_AARCH64="3" * 64,
+               BUSBAR_ORACLE_CRATE="cache-fixture", BUSBAR_ORACLE_BIN="cache-fixture",
+               BUSBAR_ORACLE_JUDGE_PATH=str(oracle))
     def run_subject():
         return subprocess.run(["bash", str(root / "testing/conformance/llm.sh"), "--subject"],
                               env=env, capture_output=True, text=True)
