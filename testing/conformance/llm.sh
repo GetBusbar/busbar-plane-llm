@@ -187,17 +187,9 @@ shared_run() {
   if [ -z "$fail" ]; then
     say "=== subject: record the llm cells"
     export MODERNCI_CACHE_DIR="${MODERNCI_CACHE_DIR:-$TGT/llm-conformance/oracle-cache}"
-    # Under ModernCI the judge (the recorder) is named by environment, never by a file a candidate wrote
-    # (bin/oracle: NO JUDGE otherwise). The pin read here is busbar's oracle-rust.pin at the .busbar-ref
-    # sha, an immutable commit this change did not author, so the environment says exactly what that pin
-    # says and the shim's equality check holds.
-    pinf="$SRC/testing/shadow-oracle/oracle-rust.pin"
-    for pair in BUSBAR_ORACLE_RELEASE_REPO=release_repo BUSBAR_ORACLE_RELEASE_REF=release_ref \
-                BUSBAR_ORACLE_SHA256_LINUX_X86_64=sha256_linux_x86_64 BUSBAR_ORACLE_SHA256_LINUX_AARCH64=sha256_linux_aarch64 \
-                BUSBAR_ORACLE_CRATE=crate BUSBAR_ORACLE_BIN=bin; do
-      var="${pair%%=*}"; k="${pair#*=}"
-      [ -n "${!var:-}" ] || export "$var=$(sed -n "s/^$k=//p" "$pinf" | head -1)"
-    done
+    # The trusted runner supplies the immutable judge identity and pre-fetched judge path.
+    # bin/oracle verifies that path against the supplied architecture digest before executing it.
+    # Never derive judge authority from a candidate/host file or fetch a judge inside this run.
     rm -rf "$D/recording"
     "$SRC/bin/oracle" record --bin "$TGT/release/busbar" --plane llm --out "$D/recording" >"$D/record.log" 2>&1 || rec_rc=$?
     if [ "$rec_rc" -ne 0 ]; then tail -15 "$D/record.log" >&2; fail="the llm cells could not be recorded (exit $rec_rc; see record.log)"; fi
