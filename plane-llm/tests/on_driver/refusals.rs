@@ -25,7 +25,9 @@ fn plane() -> Plugin<Plane> {
             max_inflight_cap: 64,
             sink: Arc::new(NoSink),
             dispatcher: dispatcher.adopter(),
-            conns: ConnTable::NoNeeds,
+            // These witnesses read the plane's stated metadata without opening a serving door.
+            // Its six outbound Needs therefore require an explicit probe binding.
+            conns: ConnTable::Probe,
         },
     )
     .expect("validated plane")
