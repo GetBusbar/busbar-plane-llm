@@ -86,7 +86,16 @@ oracle_preflight() {
 [ "${1:-}" = --oracle-preflight ] && { oracle_preflight; exit $?; }
 
 # busbar (a checkout at the pin, $1) staged at $2, with no build output.
-stage_busbar() { rm -rf "$2"; mkdir -p "$2" && tar -C "$1" --exclude=./target -cf - . | tar -C "$2" -xf -; }
+stage_busbar() {
+  rm -rf "$2"
+  mkdir -p "$2" && tar -C "$1" --exclude=./target -cf - . | tar -C "$2" -xf - || return 1
+  # The signed recorder rebuilds its run-keyed candidate in product_root/target. Give both builds
+  # that same path and the same artifacts; removing this scratch tree removes only the symlink.
+  local target
+  mkdir -p "$TGT" && target="$(cd "$TGT" && pwd -P)" || return 1
+  [ ! -e "$2/target" ] && [ ! -L "$2/target" ] || return 1
+  ln -s "$target" "$2/target"
+}
 
 # Swap THIS checkout's plane-llm into the staged busbar at $1 (written at run time, never committed).
 # The plane is a git pin of busbar's distribution workspace (dist/default/Cargo.toml's
@@ -197,7 +206,7 @@ shared_run() {
   local build_rc=0 rec_rc=0 run_rc=0
   if [ -z "$fail" ]; then
     say "=== subject: build busbar with this plane"
-    ( cd "$SRC" && CARGO_TARGET_DIR="$TGT" cargo build --locked --release --manifest-path dist/default/Cargo.toml --bin busbar ) >"$D/build.log" 2>&1 || build_rc=$?
+    ( cd "$SRC" && CARGO_TARGET_DIR="$SRC/target" cargo build --locked --release --manifest-path dist/default/Cargo.toml --bin busbar ) >"$D/build.log" 2>&1 || build_rc=$?
     if [ "$build_rc" -ne 0 ]; then tail -15 "$D/build.log" >&2; fail="busbar with this plane could not be built (exit $build_rc; see build.log)"
     else cp "$TGT/release/busbar" "$D/busbar.new" && mv "$D/busbar.new" "$D/busbar"; fi
   fi
