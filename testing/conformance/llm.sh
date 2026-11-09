@@ -72,6 +72,19 @@ if [ "${1:-}" = --cache-key ]; then
   exit $?
 fi
 
+# Judge authority belongs to the trusted runner; validate it before staging or building a host.
+# The host shim verifies the pre-fetched executable against the immutable architecture digest.
+oracle_preflight() {
+  local var
+  for var in BUSBAR_ORACLE_RELEASE_REPO BUSBAR_ORACLE_RELEASE_REF \
+             BUSBAR_ORACLE_SHA256_LINUX_X86_64 BUSBAR_ORACLE_SHA256_LINUX_AARCH64 \
+             BUSBAR_ORACLE_CRATE BUSBAR_ORACLE_BIN BUSBAR_ORACLE_JUDGE_PATH; do
+    [ -n "${!var:-}" ] || { say "NO JUDGE: trusted runner sets no $var"; return 1; }
+  done
+  "${BUSBAR_CHECKOUT:?oracle preflight needs BUSBAR_CHECKOUT}/bin/oracle" tool-dir
+}
+[ "${1:-}" = --oracle-preflight ] && { oracle_preflight; exit $?; }
+
 # busbar (a checkout at the pin, $1) staged at $2, with no build output.
 stage_busbar() { rm -rf "$2"; mkdir -p "$2" && tar -C "$1" --exclude=./target -cf - . | tar -C "$2" -xf -; }
 
@@ -144,10 +157,14 @@ mkdir -p "$D"
 # ── the shared run ───────────────────────────────────────────────────────────────────────────────
 shared_run() {
   local fail=""   # the first reason the run cannot be judged at all; every suite inherits it
+  oracle_preflight >"$D/judge.log" 2>&1 || {
+    tail -n 30 "$D/judge.log" >&2
+    fail="the trusted oracle judge is unavailable (see judge.log)"
+  }
   # Python with PyYAML, from the hash-pinned file, once per requirements content.
   local req="$repo/testing/conformance/requirements-llm.txt" venv
   venv="$TGT/llm-conformance/venv-$(sha < "$req" | cut -c1-12)"
-  if [ ! -x "$venv/bin/python" ] || ! "$venv/bin/python" -c 'import yaml' 2>/dev/null; then
+  if [ -z "$fail" ] && { [ ! -x "$venv/bin/python" ] || ! "$venv/bin/python" -c 'import yaml' 2>/dev/null; }; then
     rm -rf "$venv"
     { "${LLM_CONFORMANCE_PYTHON:-python3}" -m venv "$venv" \
       && "$venv/bin/python" -m pip install --disable-pip-version-check --quiet --require-hashes --only-binary=:all: -r "$req"; } \
@@ -225,7 +242,7 @@ fi
 
 # ── this suite's verdict, from the shared ledger ─────────────────────────────────────────────────
 # The evidence this suite's verdict rests on, kept with the check's outputs (target/conformance/<id>/).
-for f in swap.log selftest.log build.log record.log run.log venv.log out/report.md out/ledger.tsv shared.json; do
+for f in judge.log swap.log selftest.log build.log record.log run.log venv.log out/report.md out/ledger.tsv shared.json; do
   if [ -f "$D/$f" ]; then
     case "$f" in build.log) tail -n 200 "$D/$f" ;; *) cat "$D/$f" ;; esac > "$CONFORMANCE_OUT/$(basename "$f")" 2>/dev/null || true
   fi
