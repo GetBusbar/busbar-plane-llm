@@ -151,7 +151,11 @@ shared_run() {
     rm -rf "$venv"
     { "${LLM_CONFORMANCE_PYTHON:-python3}" -m venv "$venv" \
       && "$venv/bin/python" -m pip install --disable-pip-version-check --quiet --require-hashes --only-binary=:all: -r "$req"; } \
-      >"$D/venv.log" 2>&1 || { rm -rf "$venv"; fail="the hash-pinned python environment could not be built (see venv.log)"; }
+      >"$D/venv.log" 2>&1 || {
+        tail -n 30 "$D/venv.log" >&2
+        rm -rf "$venv"
+        fail="the hash-pinned python environment could not be built (see venv.log)"
+      }
   fi
   [ -z "$fail" ] && export PATH="$venv/bin:$PATH"
 
