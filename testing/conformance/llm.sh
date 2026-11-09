@@ -38,7 +38,8 @@ import hashlib, os, stat, subprocess, sys
 from pathlib import Path
 root, pin = Path(sys.argv[1]), sys.argv[2]
 inputs = ["Cargo.toml", "Cargo.lock", "plane-llm", "testing/llm-conformance",
-          "testing/conformance/requirements-llm.txt", "testing/conformance/llm.sh"]
+          "testing/conformance/requirements-llm.txt", "testing/conformance/llm.sh",
+          "testing/conformance/test_llm_subject.py"]
 paths = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z", "--cached",
                                  "--others", "--", *inputs]).split(b"\0")
 digest = hashlib.sha256()
@@ -95,6 +96,56 @@ stage_busbar() {
   mkdir -p "$TGT" && target="$(cd "$TGT" && pwd -P)" || return 1
   [ ! -e "$2/target" ] && [ ! -L "$2/target" ] || return 1
   ln -s "$target" "$2/target"
+}
+
+# On source-plugin lines the signed recorder builds the shipping candidate with its run key.
+# As in bin/oracle ci-run, a metadata-derived line probe supplies only --version for that build.
+# Released lines still need the real initial binary because the recorder does not rebuild them.
+subject_input() {
+  local src="$1" out="$2" info version builds
+  info="$(cd "$src" && cargo metadata --locked --no-deps --format-version 1 --manifest-path dist/default/Cargo.toml | python3 -c '
+import json, re, sys
+m = json.load(sys.stdin)
+v = [p["version"] for p in m["packages"] if any(t["name"] == "busbar" and "bin" in t["kind"] for t in p["targets"])]
+if len(v) != 1:
+    sys.exit("metadata names no unique busbar binary version")
+line = ".".join(v[0].split(".")[:2])
+rows = [r.split("\t") for r in open(sys.argv[1]) if r.strip() and not r.startswith("#")]
+rows = [r for r in rows if len(r) >= 4 and (r[4].strip() if len(r) > 4 and r[4].strip() else "1.5") == line]
+def source(r):
+    return re.fullmatch(r"src:[0-9a-fA-F]{40}", r[1]) and re.fullmatch(r"build:[A-Za-z0-9._-]+", r[2])
+print(v[0], "yes" if rows and all(source(r) for r in rows) else "no")
+' "$src/testing/shadow-oracle/plugin-digests.tsv")" || return 1
+  read -r version builds <<<"$info"
+  if [ "$builds" = yes ]; then
+    printf '#!/bin/sh\n[ "$#" = 1 ] && [ "$1" = --version ] || exit 2\nprintf "busbar %%s\\n" "%s"\n' "$version" >"$out/line-probe"
+    chmod +x "$out/line-probe" || return 1
+    printf '%s\n' "$out/line-probe"
+  else
+    ( cd "$src" && CARGO_TARGET_DIR="$src/target" cargo build --locked --release --manifest-path dist/default/Cargo.toml --bin busbar ) >&2 || return 1
+    printf '%s\n' "$TGT/release/busbar"
+  fi
+}
+
+# Audio uses the exact executable the signed recorder measured, never a line probe or an unrelated
+# preexisting build. On source-plugin lines the signed engine retains it at work/busbar-candidate.
+retain_recorded_subject() {
+  python3 -I - "$D" "$1" <<'PYSUBJECT'
+import hashlib, json, os, pathlib, shutil, sys
+root, supplied = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+meta = json.loads((root / "recording/meta.json").read_text())
+expected = root / "work/busbar-candidate" if supplied == root / "line-probe" else supplied
+actual = pathlib.Path(meta["binary"])
+if actual.resolve() != expected.resolve() or not actual.is_file() or not os.access(actual, os.X_OK):
+    sys.exit("recording did not name the expected executable subject")
+measured = hashlib.sha256(actual.read_bytes()).hexdigest()
+if measured != meta["binary_sha256"]:
+    sys.exit("recorded subject bytes no longer match the recording digest")
+if supplied == root / "line-probe" and measured == hashlib.sha256(supplied.read_bytes()).hexdigest():
+    sys.exit("the recorder measured the line probe instead of building its candidate")
+shutil.copy2(actual, root / "busbar.new")
+os.replace(root / "busbar.new", root / "busbar")
+PYSUBJECT
 }
 
 # Swap THIS checkout's plane-llm into the staged busbar at $1 (written at run time, never committed).
@@ -202,13 +253,14 @@ shared_run() {
     grep -vE '^PASS' "$D/selftest.log" | head -60 >&2
   fi
 
-  # 3. SUBJECT: build, record the llm cells, validate.
-  local build_rc=0 rec_rc=0 run_rc=0
+  # 3. SUBJECT: let the signed recorder build source-plugin lines, then validate its wire.
+  local rec_rc=0 run_rc=0 subject_bin=""
   if [ -z "$fail" ]; then
-    say "=== subject: build busbar with this plane"
-    ( cd "$SRC" && CARGO_TARGET_DIR="$SRC/target" cargo build --locked --release --manifest-path dist/default/Cargo.toml --bin busbar ) >"$D/build.log" 2>&1 || build_rc=$?
-    if [ "$build_rc" -ne 0 ]; then tail -15 "$D/build.log" >&2; fail="busbar with this plane could not be built (exit $build_rc; see build.log)"
-    else cp "$TGT/release/busbar" "$D/busbar.new" && mv "$D/busbar.new" "$D/busbar"; fi
+    say "=== subject: resolve recorder input"
+    subject_bin="$(subject_input "$SRC" "$D" 2>"$D/build.log")" || {
+      tail -15 "$D/build.log" >&2
+      fail="the recorder subject input could not be prepared (see build.log)"
+    }
   fi
   if [ -z "$fail" ]; then
     say "=== subject: record the llm cells"
@@ -217,8 +269,11 @@ shared_run() {
     # bin/oracle verifies that path against the supplied architecture digest before executing it.
     # Never derive judge authority from a candidate/host file or fetch a judge inside this run.
     rm -rf "$D/recording"
-    "$SRC/bin/oracle" record --bin "$TGT/release/busbar" --plane llm --out "$D/recording" >"$D/record.log" 2>&1 || rec_rc=$?
+    "$SRC/bin/oracle" record --bin "$subject_bin" --plane llm --out "$D/recording" >"$D/record.log" 2>&1 || rec_rc=$?
     if [ "$rec_rc" -ne 0 ]; then tail -15 "$D/record.log" >&2; fail="the llm cells could not be recorded (exit $rec_rc; see record.log)"; fi
+    if [ -z "$fail" ]; then
+      retain_recorded_subject "$subject_bin" >>"$D/record.log" 2>&1 || fail="the recording did not retain its measured subject (see record.log)"
+    fi
   fi
   if [ -z "$fail" ]; then
     say "=== subject: validate against the published specs"

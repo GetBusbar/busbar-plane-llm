@@ -883,5 +883,14 @@ else
   say FAIL "shared-run cache reused stale evidence or failed its unchanged-input control"
 fi
 
+# Source-plugin lines leave the sole shipping build to the signed recorder; audio must reuse only
+# the executable the recording actually measured. These probes never build or replace the judge.
+if python3 "$here/../conformance/test_llm_subject.py" >"$W/subject-contract.log" 2>&1; then
+  say PASS "source-line recorder input avoids a duplicate build; measured subject path and digest are enforced"
+else
+  cat "$W/subject-contract.log"
+  say FAIL "recorder subject input or measured binary retention violated its contract"
+fi
+
 echo
 if [ "$fails" -eq 0 ]; then echo "llm-conformance selftest: GREEN (${total}/${total})"; else echo "llm-conformance selftest: RED (${fails} failed)"; exit 1; fi
