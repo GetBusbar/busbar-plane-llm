@@ -32,40 +32,23 @@ fn main() -> Result<(), Box<dyn Error>> {
             .join("tests/blackbox")
             .display()
     );
-    export_test_source(
-        "tests/root_support/mod.rs",
-        "__busbar_common_tests",
-        "common_test_source.rs",
-    )?;
+    export_context_source()?;
     Ok(())
 }
 
-/// Export source-only test support to the composition root without a runtime dependency.
-/// The caller includes OUT_DIR/root_test_source.rs from the owner library's crate root.
-fn export_test_source(relative: &str, macro_name: &str, output_name: &str) -> std::io::Result<()> {
-    use std::path::PathBuf;
+fn export_context_source() -> std::io::Result<()> {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"))
         .canonicalize()?;
-    let source = manifest.join(relative);
+    let source = manifest.join("tests/root_context/inbound.rs");
     if source.canonicalize()? != source {
         return Err(std::io::Error::other(
-            "test source must be the owner's own declared path, without symlink escapes",
+            "test source must remain in its owner",
         ));
     }
-    let package = std::env::var("CARGO_PKG_NAME").expect("package name");
     let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("output dir"));
-    std::fs::write(
-        output.join(output_name),
-        format!(
-            "#[doc(hidden)]\n#[macro_export]\nmacro_rules! {macro_name} {{\n    \
-             ($module:ident, {package:?}) => {{\n        \
-             #[path = {source:?}]\n        pub(crate) mod $module;\n    }};\n}}\n"
-        ),
-    )?;
+    std::fs::write(output.join("context_test_source.rs"), format!(
+        "#[doc(hidden)]\n#[macro_export]\nmacro_rules! __busbar_context_tests {{\n    (inbound, \"busbar-plane-llm\") => {{ include!({source:?}); }};\n}}\n"
+    ))?;
     println!("cargo::rerun-if-changed={}", source.display());
-    println!(
-        "cargo::rerun-if-changed={}",
-        manifest.join("Cargo.toml").display()
-    );
     Ok(())
 }

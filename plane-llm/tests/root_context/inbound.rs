@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-use crate::root::loader::dispatch::auth_handle::{self, RefSpace};
-use busbar_kernel::guest::{GuestList, Matched};
-use busbar_kernel::inbound as kin;
-use std::sync::Arc;
+// Copyright (C) 2026 Busbar Inc and contributors
 
-pub(crate) async fn actual_listener_with_routers(
+async fn actual_listener_with_routers(
     app: Arc<busbar_kernel::state::App>,
     config: &busbar_kernel::config::RootCfg,
     book: &crate::root::durability::NodeBook,
