@@ -53,3 +53,5 @@ mod serve_tests;
 pub(crate) fn minimal_valid_config() -> (&'static str, serde_json::Value) {
     ("pools", serde_json::json!({}))
 }
+
+mod misc_operation;
