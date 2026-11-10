@@ -136,7 +136,7 @@ duration rules and allowance policy; the adapter contains no monetary defaults.
 A container ID alone is insufficient. Responses image usage may omit billed
 cache counts, so exact image accounting can require additional provider evidence.
 
-Native buffered create/get/cancel/delete is opt-in through the LLM-owned
+Native create/get/cancel/delete and create/get streaming are opt-in through the LLM-owned
 `interactions` section. For each concrete Gemini model entry, configure
 `interactions.models.<entry>.account_namespace` and
 `interactions.models.<entry>.pricing_modes: [standard]`. Ordinary routes do not
@@ -157,20 +157,23 @@ route/model/account; each continuation creates a new paid run and new scope.
 A deliberate signing-key rotation changes the lookup reference and fails closed;
 no global index fallback or ownership migration is attempted.
 
-The first native profile supports buffered, stored, ordinary text model requests,
-including background creation followed by request-driven polling. It refuses
-stream/replay requests, nonstandard service tiers, agents, hosted tools,
+The native profile supports buffered and streamed ordinary text model requests,
+including background creation followed by request-driven polling and stream
+replay with an opaque `last_event_id` cursor. It refuses nonstandard service tiers, agents, hosted tools,
 multimodal controls and unsupported request fields before paid dispatch. A
 provider response with missing usage or unsupported final steps remains
-unresolved; it never fabricates zero usage or closes the reservation. Responses
-are limited to 1 MiB, and original response bytes are preserved on successful
-native delivery. A lost create with no recorded provider ID is retained as an
+unresolved; it never fabricates zero usage or closes the reservation. Buffered responses and individual retained stream buffers are limited to 1 MiB.
+Successful native delivery preserves original response/event bytes. Stream IDs
+are durably bound before forwarding; terminal events wait for clean EOF and
+accounting settlement. A replay needs a complete final snapshot to establish
+usage; partial history remains unresolved. Live streams may establish the text
+profile from a complete observed step sequence. Neither cursors nor local event
+counts become billing revisions. A lost create with no recorded provider ID is retained as an
 uncertain intent and never automatically resubmitted. Changed final totals retain
 new protected evidence and submit the same economic keys for host quarantine;
 no provider revision is invented and quarantined components cannot close a scope.
 
-Stream/replay serving, background reconciliation under restored original
-principal authority, signing-key-rotation recovery, additional service-tier
+Background reconciliation under restored original principal authority, signing-key-rotation recovery, additional service-tier
 pricing, and authenticated hosted-evidence acquisition/runtime settlement remain
 active followups. The hosted module remains an adapter API, not automatic billing
 jobs. Complete Interactions/hosted-billing parity is not claimed.

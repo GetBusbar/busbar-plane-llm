@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! Pure preparation for the bounded, buffered Gemini Interactions profile.
+//! Pure preparation for the bounded Gemini Interactions text profile.
 //!
 //! This module does not dispatch requests or establish ownership. Before calling
 //! it, the runtime must perform principal-scoped durable lookup for stored IDs and
@@ -92,9 +92,6 @@ pub fn prepare_create(
     if interactions::create(body)? != *create {
         return Err("create envelope differs from original request body");
     }
-    if create.stream {
-        return Err("native interaction streaming is not supported");
-    }
     if !opt_in.pricing_modes.contains(&create.pricing_mode) {
         return Err("native service tier is not enabled");
     }
@@ -119,7 +116,7 @@ pub fn prepare_create(
     Ok(FarRequest {
         verb: "POST",
         target: "/v1beta/interactions".into(),
-        fields: default_fields(lane)?,
+        fields: default_fields(lane, create.stream)?,
         body,
         pristine,
         dropped_controls: Vec::new(),
@@ -142,15 +139,39 @@ pub fn prepare_stored(
     if !opt_in.pricing_modes.contains(&binding.pricing_mode) {
         return Err("original native service tier is not enabled");
     }
-    let (verb, id, suffix) = match operation {
+    let (verb, id, suffix, stream) = match operation {
         Operation::Get {
             id,
-            stream: false,
-            last_event_id: None,
-        } => ("GET", id, ""),
-        Operation::Get { .. } => return Err("native interaction streaming is not supported"),
-        Operation::Cancel { id } => ("POST", id, "/cancel"),
-        Operation::Delete { id } => ("DELETE", id, ""),
+            stream,
+            last_event_id,
+        } => {
+            if last_event_id.is_some() && !stream {
+                return Err("event cursor requires streaming");
+            }
+            let mut query = if *stream {
+                "?stream=true".to_owned()
+            } else {
+                String::new()
+            };
+            if let Some(cursor) = last_event_id {
+                if !interactions::valid_cursor(cursor) {
+                    return Err("invalid event cursor");
+                }
+                query.push_str("&last_event_id=");
+                for byte in cursor.bytes() {
+                    if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+                        query.push(byte as char);
+                    } else {
+                        use std::fmt::Write;
+                        write!(&mut query, "%{byte:02X}")
+                            .map_err(|_| "cannot encode event cursor")?;
+                    }
+                }
+            }
+            ("GET", id, query, *stream)
+        }
+        Operation::Cancel { id } => ("POST", id, "/cancel".to_owned(), false),
+        Operation::Delete { id } => ("DELETE", id, String::new(), false),
         Operation::Create => return Err("stored operation cannot create a paid run"),
     };
     if !interactions::valid_id(id) {
@@ -159,7 +180,7 @@ pub fn prepare_stored(
     Ok(FarRequest {
         verb,
         target: format!("/v1beta/interactions/{id}{suffix}"),
-        fields: default_fields(lane)?,
+        fields: default_fields(lane, stream)?,
         body: Vec::new(),
         pristine: true,
         dropped_controls: Vec::new(),
@@ -339,7 +360,7 @@ fn validate_binding_route(
     Ok(())
 }
 
-fn default_fields(lane: &Lane) -> Result<Vec<(String, Vec<u8>)>, &'static str> {
+fn default_fields(lane: &Lane, stream: bool) -> Result<Vec<(String, Vec<u8>)>, &'static str> {
     let user_agent = crate::exchange::decl(lane.dialect)
         .map_or(crate::codec::protocol::EGRESS_UA_DEFAULT, |decl| {
             decl.egress_user_agent
@@ -349,7 +370,14 @@ fn default_fields(lane: &Lane) -> Result<Vec<(String, Vec<u8>)>, &'static str> {
         [
             ("content-type".into(), b"application/json".to_vec()),
             ("user-agent".into(), user_agent.as_bytes().to_vec()),
-            ("accept".into(), b"application/json".to_vec()),
+            (
+                "accept".into(),
+                if stream {
+                    b"text/event-stream".to_vec()
+                } else {
+                    b"application/json".to_vec()
+                },
+            ),
         ],
     );
     fields.extend(forced);
@@ -575,24 +603,43 @@ mod tests {
     }
 
     #[test]
-    fn stream_intent_is_explicitly_refused_and_never_silently_buffered() {
-        assert!(prepare(br#"{"model":"entry","input":"hi","stream":true}"#).is_err());
-        for operation in [
-            Operation::Get {
-                id: "run-1".into(),
-                stream: true,
-                last_event_id: Some("evt-1".into()),
-            },
-            Operation::Get {
-                id: "run-1".into(),
-                stream: false,
-                last_event_id: Some("evt-1".into()),
-            },
-        ] {
-            assert!(
-                prepare_stored(&shaping().lanes["entry"], &opt_in(), &binding(), &operation)
-                    .is_err()
-            );
+    fn stream_intent_and_opaque_replay_cursor_are_preserved_canonically() {
+        let request = prepare(br#"{"model":"entry","input":"hi","stream":true}"#).unwrap();
+        assert!(request
+            .fields
+            .contains(&("accept".into(), b"text/event-stream".to_vec())));
+        let operation = Operation::Get {
+            id: "run-1".into(),
+            stream: true,
+            last_event_id: Some("opaque/+= token".into()),
+        };
+        let request =
+            prepare_stored(&shaping().lanes["entry"], &opt_in(), &binding(), &operation).unwrap();
+        assert_eq!(
+            request.target,
+            "/v1beta/interactions/run-1?stream=true&last_event_id=opaque%2F%2B%3D%20token"
+        );
+        assert!(request
+            .fields
+            .contains(&("accept".into(), b"text/event-stream".to_vec())));
+        assert_eq!(
+            interactions::operation("GET", &request.target).unwrap(),
+            operation
+        );
+        let invalid = Operation::Get {
+            id: "run-1".into(),
+            stream: false,
+            last_event_id: Some("evt-1".into()),
+        };
+        assert!(
+            prepare_stored(&shaping().lanes["entry"], &opt_in(), &binding(), &invalid).is_err()
+        );
+        for cursor in ["%FF", "%00", "%", "", "x%0Ay"] {
+            assert!(interactions::operation(
+                "GET",
+                &format!("/v1beta/interactions/id?stream=true&last_event_id={cursor}")
+            )
+            .is_err());
         }
     }
 
@@ -818,10 +865,10 @@ mod tests {
     fn configured_header_defaults_keep_credentials_out_and_reject_injection() {
         let mut lane = shaping().lanes["entry"].clone();
         lane.statics = &[("x-goog-api-key", "secret"), ("x-native-version", "v1")];
-        let fields = default_fields(&lane).unwrap();
+        let fields = default_fields(&lane, false).unwrap();
         assert!(!fields.iter().any(|(name, _)| name == "x-goog-api-key"));
         assert!(fields.contains(&("x-native-version".into(), b"v1".to_vec())));
         lane.statics = &[("x-native-version", "v1\r\nx-evil: yes")];
-        assert!(default_fields(&lane).is_err());
+        assert!(default_fields(&lane, false).is_err());
     }
 }

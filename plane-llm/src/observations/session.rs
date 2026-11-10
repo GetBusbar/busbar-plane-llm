@@ -53,7 +53,7 @@ pub struct Session {
     dispatched: bool,
     responded: bool,
     unresolved_final: bool,
-    response: Option<(u16, Vec<u8>, bool)>,
+    response: Option<(u16, Vec<u8>, bool, Vec<u8>)>,
 }
 impl Session {
     /// Start only after concrete route selection, request/profile validation and capability checks.
@@ -117,7 +117,11 @@ impl Session {
     /// Consume the single dispatch permission. No retry, restore or uncertain receipt can grant
     /// another paid create; even a second invocation on this same object is refused.
     pub fn dispatch(&mut self) -> Result<(), &'static str> {
-        if !matches!(self.stage, Stage::Ready) || self.dispatched || self.run.is_none() {
+        if !matches!(self.stage, Stage::Ready)
+            || self.dispatched
+            || self.responded
+            || self.run.is_none()
+        {
             return Err("native request has no dispatch permission");
         }
         self.dispatched = true;
@@ -166,6 +170,40 @@ impl Session {
         };
         Ok(())
     }
+    /// Bind a streamed create's provider ID before any created/content frame reaches the caller.
+    /// This grants no dispatch permission and cannot change an existing original ID.
+    pub fn bind_provider_id(&mut self, id: &str, input: &[u8]) -> Result<(), &'static str> {
+        if !self.dispatched || self.responded || !matches!(self.stage, Stage::Ready) {
+            return Err("stream identity cannot be bound in this lifecycle phase");
+        }
+        let run = self.run.as_ref().ok_or("missing run")?;
+        if let Some(original) = run.provider_id() {
+            return if original == id {
+                Ok(())
+            } else {
+                Err("stream changed provider identity")
+            };
+        }
+        let correlation = self.correlation()?;
+        let checkpoint = self.run.as_ref().unwrap().bind_provider(
+            RECORD_INDEX,
+            correlation,
+            &self.original,
+            id,
+        )?;
+        self.publish(checkpoint, AfterPublish::Ready, input)
+    }
+
+    /// End a cut/incomplete stream without fabricating final usage or releasing original custody.
+    pub fn incomplete_stream(&mut self) -> Result<(), &'static str> {
+        if !self.dispatched || self.responded || !matches!(self.stage, Stage::Ready) {
+            return Err("stream cannot end in this lifecycle phase");
+        }
+        self.responded = true;
+        self.unresolved_final = true;
+        Ok(())
+    }
+
     /// Supply one complete buffered response. The caller's bytes remain unchanged outside this
     /// object. `supported_final_profile` must be established by the native provider validator;
     /// false preserves unresolved accounting instead of pretending all components are complete.
@@ -177,6 +215,28 @@ impl Session {
         supported_final_profile: bool,
         input: &[u8],
     ) -> Result<(), &'static str> {
+        self.response_with_profile(
+            status,
+            body,
+            deleted,
+            supported_final_profile,
+            b"gemini-text-full-steps/v1",
+            input,
+        )
+    }
+    /// Accept streamed or buffered provider facts with separately validated type-only evidence.
+    pub fn response_with_profile(
+        &mut self,
+        status: u16,
+        body: &[u8],
+        deleted: bool,
+        supported_final_profile: bool,
+        profile: &[u8],
+        input: &[u8],
+    ) -> Result<(), &'static str> {
+        if profile.len() > 4096 || (supported_final_profile && profile.is_empty()) {
+            return Err("invalid profile evidence");
+        }
         if !self.dispatched
             || self.responded
             || !matches!(self.stage, Stage::Ready)
@@ -210,7 +270,12 @@ impl Session {
         if run.provider_id().is_some_and(|original| original != id) {
             return Err("provider response identity changed");
         }
-        self.response = Some((status, body.to_vec(), supported_final_profile));
+        self.response = Some((
+            status,
+            body.to_vec(),
+            supported_final_profile,
+            profile.to_vec(),
+        ));
         if run.provider_id().is_none() {
             let correlation = self.correlation()?;
             let checkpoint = self.run.as_ref().unwrap().bind_provider(
@@ -224,7 +289,8 @@ impl Session {
         self.final_response(input)
     }
     fn final_response(&mut self, input: &[u8]) -> Result<(), &'static str> {
-        let (status, body, supported) = self.response.take().ok_or("missing response evidence")?;
+        let (status, body, supported, profile) =
+            self.response.take().ok_or("missing response evidence")?;
         let correlation = self.correlation()?;
         let run = self.run.as_ref().ok_or("missing run")?;
         // Existing complete manifests are immutable. Retrieval and replay settle the same stored
@@ -232,7 +298,14 @@ impl Session {
         if !supported || run.same_final_response(status, &body) {
             return self.reconcile(input);
         }
-        match run.final_response(RECORD_INDEX, correlation, &self.original, status, &body) {
+        match run.final_response_with_profile(
+            RECORD_INDEX,
+            correlation,
+            &self.original,
+            status,
+            &body,
+            &profile,
+        ) {
             Ok(checkpoint) => self.publish(checkpoint, AfterPublish::Reconcile, input),
             Err(_) => {
                 self.unresolved_final = matches!(

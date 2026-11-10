@@ -146,8 +146,8 @@ pub fn operation(method: &str, target: &str) -> Result<Operation, &'static str> 
                             _ => return Err("invalid stream switch"),
                         })
                     }
-                    "last_event_id" if event.is_none() && valid_id(value) => {
-                        event = Some(value.into())
+                    "last_event_id" if event.is_none() => {
+                        event = Some(decode_cursor(value)?);
                     }
                     _ => return Err("unsupported or repeated query parameter"),
                 }
@@ -163,6 +163,50 @@ pub fn operation(method: &str, target: &str) -> Result<Operation, &'static str> 
         }
         _ => Err("unsupported interaction operation"),
     }
+}
+
+pub(super) fn valid_cursor(cursor: &str) -> bool {
+    !cursor.is_empty() && cursor.len() <= 1024 && !cursor.chars().any(char::is_control)
+}
+fn decode_cursor(value: &str) -> Result<String, &'static str> {
+    if value.len() > 3072 {
+        return Err("oversized event cursor");
+    }
+    let mut bytes = Vec::with_capacity(value.len());
+    let mut i = 0;
+    let input = value.as_bytes();
+    while i < input.len() {
+        match input[i] {
+            b'%' => {
+                let hex = |v: u8| (v as char).to_digit(16).map(|n| n as u8);
+                let hi = input
+                    .get(i + 1)
+                    .copied()
+                    .and_then(hex)
+                    .ok_or("malformed event cursor escape")?;
+                let lo = input
+                    .get(i + 2)
+                    .copied()
+                    .and_then(hex)
+                    .ok_or("malformed event cursor escape")?;
+                bytes.push(hi * 16 + lo);
+                i += 3;
+            }
+            b'+' => {
+                bytes.push(b' ');
+                i += 1;
+            }
+            byte => {
+                bytes.push(byte);
+                i += 1;
+            }
+        }
+    }
+    let cursor = String::from_utf8(bytes).map_err(|_| "event cursor is not UTF-8")?;
+    if !valid_cursor(&cursor) {
+        return Err("invalid event cursor");
+    }
+    Ok(cursor)
 }
 
 pub(super) fn valid_id(id: &str) -> bool {
@@ -283,7 +327,7 @@ fn normalize_inner(
     let root: Value =
         crate::codec::json::parse(bytes).map_err(|_| "malformed interaction evidence")?;
     let object = match root.get("event_type").and_then(Value::as_str) {
-        Some("interaction.completed" | "interaction.status_update") => root
+        Some("interaction.completed") => root
             .get("interaction")
             .ok_or("event lacks complete interaction")?,
         Some(_) => return Err("event is not authoritative final usage"),

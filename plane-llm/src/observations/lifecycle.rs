@@ -126,6 +126,8 @@ pub struct Run {
 struct FinalEvidence {
     http_status: u16,
     body: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    profile: Vec<u8>,
 }
 
 /// Safe next step after a restart or retry. There is intentionally no create action.
@@ -298,10 +300,11 @@ impl Run {
             || run.accepted.len() > 64
             || run.quarantined.len() > 64
             || run.evidence_history.len() > 8
-            || run
-                .evidence_history
-                .iter()
-                .any(|e| e.body.len() > 16 * 1024 || !(200..300).contains(&e.http_status))
+            || run.evidence_history.iter().any(|e| {
+                e.body.len() > 16 * 1024
+                    || e.profile.len() > 4096
+                    || !(200..300).contains(&e.http_status)
+            })
             || run.components.as_ref().is_some_and(|v| {
                 let identities: BTreeSet<_> = v.iter().map(component_identity).collect();
                 v.is_empty()
@@ -323,6 +326,7 @@ impl Run {
             || (run.closed && (run.components.is_none() || run.provider_id.is_none()))
             || run.final_evidence.as_ref().is_some_and(|e| {
                 e.body.len() > 16 * 1024
+                    || e.profile.len() > 4096
                     || run.components.is_none()
                     || !(200..300).contains(&e.http_status)
             })
@@ -472,6 +476,29 @@ impl Run {
         http_status: u16,
         body: &[u8],
     ) -> Result<Checkpoint, &'static str> {
+        self.final_response_with_profile(
+            kind,
+            correlation,
+            original,
+            http_status,
+            body,
+            b"gemini-text-full-steps/v1",
+        )
+    }
+    /// Retain the bounded type-only proof for a complete observed stream or full-step snapshot.
+    /// This metadata attests the adapter's validation; it never supplies missing provider counts.
+    pub fn final_response_with_profile(
+        &self,
+        kind: u32,
+        correlation: u64,
+        original: &[u8],
+        http_status: u16,
+        body: &[u8],
+        profile: &[u8],
+    ) -> Result<Checkpoint, &'static str> {
+        if profile.is_empty() || profile.len() > 4096 {
+            return Err("invalid economic profile evidence");
+        }
         use super::interactions::{normalize, Evidence, Normalized};
         let id = self.provider_id().ok_or("unbound provider response")?;
         let mut reference = self.key();
@@ -533,12 +560,17 @@ impl Run {
             self.final_components(kind, correlation, original, &observations)?
         };
         if self.components.is_some() {
-            checkpoint
-                .next
-                .evidence_history
-                .push(FinalEvidence { http_status, body });
+            checkpoint.next.evidence_history.push(FinalEvidence {
+                http_status,
+                body,
+                profile: profile.to_vec(),
+            });
         } else {
-            checkpoint.next.final_evidence = Some(FinalEvidence { http_status, body });
+            checkpoint.next.final_evidence = Some(FinalEvidence {
+                http_status,
+                body,
+                profile: profile.to_vec(),
+            });
         }
         // Rebuild the one CAS value after adding the raw facts, preserving the exact predicate.
         let RecordMutation::Put { value, .. } = &mut checkpoint.candidate.mutations[0] else {

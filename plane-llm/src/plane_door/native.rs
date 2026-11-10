@@ -1,6 +1,8 @@
 //! Native Interactions serving. Provider semantics stay in the LLM plane; ownership and prices
 //! cross only the generic authenticated-route, conditional-record and observation mechanisms.
 
+mod stream;
+
 use super::*;
 use crate::observations::{
     crossing::Crossing,
@@ -27,6 +29,8 @@ pub(super) struct Native {
     response_fields: Vec<(Vec<u8>, Vec<u8>)>,
     response_status: u16,
     response_queued: bool,
+    streaming: bool,
+    stream: Option<stream::State>,
 }
 
 pub(super) fn config(owned: &[u8], shaping: &Shaping) -> Result<NativeConfig, String> {
@@ -103,12 +107,14 @@ pub(super) fn arrive(
         if !body.is_empty() {
             return Err("stored interaction operation does not accept a body");
         }
-        if matches!(operation, Operation::Get { stream: true, .. }) {
-            return Err("native interaction streaming is not supported");
-        }
         out.route(busbar_contract::abi::plane::ROUTE_AUTHENTICATED, "");
         None
     };
+    let streaming = create.as_ref().is_some_and(|c| c.stream)
+        || matches!(operation, Operation::Get { stream: true, .. });
+    if streaming {
+        out.stream();
+    }
     out.once();
     out.set(|o| &o.dialect, dialect_index("gemini"));
     out.set(
@@ -128,6 +134,8 @@ pub(super) fn arrive(
         response_fields: Vec::new(),
         response_status: 0,
         response_queued: false,
+        streaming,
+        stream: None,
     });
     Ok(())
 }
@@ -219,6 +227,17 @@ pub(super) fn piece(
 ) -> Result<PieceResult, &'static str> {
     let mut native = unit.native.take().ok_or("missing native request")?;
     let result = piece_inner(door, unit, &mut native, input);
+    let result = match result {
+        Err(message) if native.stream.as_ref().is_some_and(|s| s.head_delivered) => {
+            if let Some(session) = native.session.as_mut() {
+                let _ = session.incomplete_stream();
+            }
+            Ok(PieceResult::Answer(
+                native.stream.as_mut().unwrap().error(message),
+            ))
+        }
+        other => other,
+    };
     unit.native = Some(native);
     result
 }
@@ -315,6 +334,26 @@ fn piece_inner(
                 Step::Pending(bytes) => return Ok(PieceResult::Pending(bytes)),
                 Step::Ready => native.session.as_mut().unwrap().dispatch()?,
             }
+            if native.streaming {
+                let mode = if matches!(
+                    &native.operation,
+                    Operation::Get {
+                        last_event_id: Some(_),
+                        ..
+                    }
+                ) {
+                    crate::observations::native_stream::StreamMode::Replay
+                } else {
+                    crate::observations::native_stream::StreamMode::Fresh
+                };
+                let id = native
+                    .session
+                    .as_ref()
+                    .and_then(|s| s.run())
+                    .and_then(|r| r.provider_id())
+                    .map(str::to_owned);
+                native.stream = Some(stream::State::new(mode, id)?);
+            }
             native.head_sent = true;
             let request = unit
                 .request
@@ -344,6 +383,19 @@ fn piece_inner(
             ..Answer::default()
         })),
         FROM_FAR_END => {
+            if native.streaming {
+                if input.flags() & PIECE_HAS_STATUS != 0 && input.flags() & PIECE_FIELDS == 0 {
+                    native.response_status = u16::try_from(input.status_code())
+                        .map_err(|_| "invalid native stream status")?;
+                }
+                if (200..300).contains(&native.response_status) {
+                    return stream::receive(native, input);
+                }
+                if native.response_status == 0 {
+                    return Err("native stream has no upstream status");
+                }
+                native.streaming = false; // Preserve a provider's ordinary JSON error response.
+            }
             if !native.response_queued {
                 if input.flags() & busbar_contract::abi::plane::PIECE_REFUSED != 0 {
                     return Err("native upstream dispatch refused; accounting remains unresolved");
@@ -414,7 +466,7 @@ fn piece_inner(
                     audits: native.session.as_ref().filter(|s| s.unresolved_final()).map(|_| vec![(
                         AUDIT_DEGRADED,
                         b"interaction.usage_unresolved".to_vec(),
-                        b"terminal provider response lacks supported complete usage evidence; scope remains open".to_vec(),
+                        b"terminal provider response lacks supported complete usage evidence".to_vec(),
                     )]).unwrap_or_default(),
                     ..Answer::default()
                 })),

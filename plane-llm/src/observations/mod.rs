@@ -10,4 +10,5 @@ pub mod interactions;
 pub mod lifecycle;
 pub mod lookup;
 pub mod native_request;
+pub mod native_stream;
 pub mod session;
