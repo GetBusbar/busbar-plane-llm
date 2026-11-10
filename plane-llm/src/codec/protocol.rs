@@ -5,9 +5,12 @@
 
 use crate::codec::cells::CodecHost;
 #[cfg(test)]
-pub use busbar_contract::auth_egress::{
-    CredentialFamily, CredentialHeader, EgressAuthHeaders, EgressScheme, IngressAuth,
-};
+#[path = "tests/auth_descriptors.rs"]
+mod auth_descriptors;
+#[cfg(test)]
+pub use auth_descriptors::{CredentialFamily, CredentialHeader, EgressScheme, IngressAuth};
+#[cfg(test)]
+pub use busbar_contract::auth_egress::EgressAuthHeaders;
 use busbar_contract::operation::OpVerb;
 pub use busbar_contract::protocol::{
     find_frame_terminator, sse_line_spans, HeadFields, IrError, SseFrames, APPLICATION_JSON,

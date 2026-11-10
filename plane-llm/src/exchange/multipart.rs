@@ -203,9 +203,13 @@ pub(crate) fn transcription_fields<'a>(
     let mut fields = Vec::new();
     for segment in parts.by_ref() {
         let segment = segment.strip_prefix(b"\r\n").unwrap_or(segment);
-        let Some(hpos) = find_sub(segment, b"\r\n\r\n") else { continue };
+        let Some(hpos) = find_sub(segment, b"\r\n\r\n") else {
+            continue;
+        };
         let headers = String::from_utf8_lossy(&segment[..hpos]);
-        let Some(name) = multipart_field_name(&headers) else { continue };
+        let Some(name) = multipart_field_name(&headers) else {
+            continue;
+        };
         let name = name.into_owned();
         let value = &segment[hpos + 4..];
         let value = value.strip_suffix(b"\r\n").unwrap_or(value);

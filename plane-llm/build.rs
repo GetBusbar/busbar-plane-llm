@@ -32,5 +32,23 @@ fn main() -> Result<(), Box<dyn Error>> {
             .join("tests/blackbox")
             .display()
     );
+    export_context_source()?;
+    Ok(())
+}
+
+fn export_context_source() -> std::io::Result<()> {
+    let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"))
+        .canonicalize()?;
+    let source = manifest.join("tests/root_context/inbound.rs");
+    if source.canonicalize()? != source {
+        return Err(std::io::Error::other(
+            "test source must remain in its owner",
+        ));
+    }
+    let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("output dir"));
+    std::fs::write(output.join("context_test_source.rs"), format!(
+        "#[doc(hidden)]\n#[macro_export]\nmacro_rules! __busbar_context_tests {{\n    (inbound, \"busbar-plane-llm\") => {{ include!({source:?}); }};\n}}\n"
+    ))?;
+    println!("cargo::rerun-if-changed={}", source.display());
     Ok(())
 }

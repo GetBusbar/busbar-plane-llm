@@ -1411,8 +1411,9 @@ const REQUEST_METADATA_MAX_ENTRIES: usize = 16;
 fn bedrock_request_metadata_fits(s: &str, min: usize) -> bool {
     let n = s.chars().count();
     (min..=256).contains(&n)
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c.is_ascii_whitespace() || ":_@$#=/+,-.".contains(c))
+        && s.chars().all(|c| {
+            c.is_ascii_alphanumeric() || c.is_ascii_whitespace() || ":_@$#=/+,-.".contains(c)
+        })
 }
 
 /// The typed [`crate::codec::ir::IrRequest::metadata`] to `requestMetadata` (IR-03). An entry
