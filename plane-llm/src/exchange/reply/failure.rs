@@ -138,22 +138,25 @@ pub fn relay_verbatim(ingress: &str, far: &FarError<'_>) -> Rendered {
 
 /// The far end's error as the caller reads it when the walk ends on it: across dialects, reshaped
 /// into the caller's envelope (a foreign error body is never relayed); within one, verbatim.
+/// `retry_after_s` is forwarded as a `Retry-After` header on cross-dialect 429/503 responses.
 #[must_use]
 pub fn relay(
     host: &dyn crate::codec::cells::CodecHost,
     ingress: &str,
     egress: &str,
     far: &FarError<'_>,
+    retry_after_s: u32,
 ) -> Rendered {
     if ingress != egress {
         let (kind, msg) = wire::cross_protocol_error(far.status, far.body);
-        return render(host, ingress, far.status, kind, &msg, 0);
+        return render(host, ingress, far.status, kind, &msg, retry_after_s);
     }
     relay_verbatim(ingress, far)
 }
 
 /// A client fault as the caller reads it: across dialects, reshaped with the kind its class names
 /// and the far end's own message (else the generic one); within one, verbatim.
+/// `retry_after_s` is forwarded as a `Retry-After` header on cross-dialect responses.
 #[must_use]
 pub fn client_fault(
     host: &dyn crate::codec::cells::CodecHost,
@@ -161,6 +164,7 @@ pub fn client_fault(
     egress: &str,
     class: StatusClass,
     far: &FarError<'_>,
+    retry_after_s: u32,
 ) -> Rendered {
     if ingress != egress {
         let msg = wire::extract_error_message(far.body)
@@ -171,7 +175,7 @@ pub fn client_fault(
             far.status,
             wire::client_fault_kind(class),
             &msg,
-            0,
+            retry_after_s,
         );
     }
     relay_verbatim(ingress, far)
@@ -219,7 +223,7 @@ pub fn judge(
         return Judged {
             signal: None,
             disposition: Disposition::ClientFault,
-            answer: relay(host, ingress, egress, far),
+            answer: relay(host, ingress, egress, far, 0),
         };
     }
     let sig = normalize(
@@ -228,11 +232,12 @@ pub fn judge(
         error_map,
     );
     let disposition = sig.class.disposition();
+    let retry_s = u32::try_from(sig.retry_after.unwrap_or(0)).unwrap_or(u32::MAX);
     let answer = match disposition {
-        Disposition::ClientFault => client_fault(host, ingress, egress, sig.class, far),
+        Disposition::ClientFault => client_fault(host, ingress, egress, sig.class, far, retry_s),
         Disposition::HardDown if sig.class == StatusClass::Auth => auth_failure(host, ingress),
         Disposition::HardDown | Disposition::TransientUpstream | Disposition::ContextLength => {
-            relay(host, ingress, egress, far)
+            relay(host, ingress, egress, far, retry_s)
         }
     };
     Judged {

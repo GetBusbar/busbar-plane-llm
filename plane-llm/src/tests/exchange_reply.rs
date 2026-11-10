@@ -1808,7 +1808,7 @@ mod rehomed_answers {
                 head: JSON_HEAD,
                 body,
             };
-            let relayed = failure::relay(HOST, "anthropic", "openai", &far);
+            let relayed = failure::relay(HOST, "anthropic", "openai", &far, 0);
             let judged = judge(
                 HOST,
                 "anthropic",
@@ -3033,7 +3033,7 @@ mod rehomed_answers {
                         head: JSON_HEAD,
                         body,
                     };
-                    let relayed = failure::relay(HOST, caller, far, &far_error);
+                    let relayed = failure::relay(HOST, caller, far, &far_error, 0);
                     assert_eq!(relayed.status, status, "{caller}<-{far} {status}");
                     if caller == far {
                         assert_eq!(relayed.body, body, "{caller}: verbatim");

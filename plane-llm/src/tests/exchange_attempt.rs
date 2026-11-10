@@ -1947,12 +1947,11 @@ fn multipart_relay_adds_a_missing_model_and_refuses_ambiguity() {
         .as_deref(),
         Some("whisper-1")
     );
+    // A duplicate model cannot be rewritten: the original body is preserved unchanged (the
+    // upstream's own error for the duplicate is more helpful than forwarding an empty body).
     let duplicate = b"--B\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nx\r\n--B\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ny\r\n--B--\r\n";
-    assert!(
-        relay_request(lane.shape(), "multipart/form-data; boundary=B", duplicate)
-            .bytes
-            .is_empty()
-    );
+    let dup_result = relay_request(lane.shape(), "multipart/form-data; boundary=B", duplicate);
+    assert_eq!(dup_result.bytes.as_ref(), &duplicate[..]);
 }
 
 #[test]

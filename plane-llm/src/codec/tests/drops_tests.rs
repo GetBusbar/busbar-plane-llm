@@ -899,6 +899,7 @@ fn anthropic_web_fetch_usage_is_carried_without_hiding_unknown_siblings() {
 /// were both carried and listed as drops after DF-MAP mapped them).
 #[test]
 fn no_dialect_drops_a_path_it_carries() {
+    let mut checked = 0usize;
     for dialect in [
         "anthropic",
         "bedrock",
@@ -913,6 +914,7 @@ fn no_dialect_drops_a_path_it_carries() {
                 ("stream", r.grammar().stream_carried),
             ] {
                 let Some(c) = carried else { continue };
+                checked += 1;
 
                 let mut listed: Vec<String> = c.drops.iter().map(|d| d.to_string()).collect();
                 if let Some(r) = c.reroot {
@@ -933,6 +935,7 @@ fn no_dialect_drops_a_path_it_carries() {
             }
         });
     }
+    assert!(checked > 0, "no dialect had a carried table to check");
 }
 
 /// Every dialect's drop list is sorted ascending, each path once: the walk binary-searches it for
@@ -940,6 +943,7 @@ fn no_dialect_drops_a_path_it_carries() {
 /// linear scan it replaced made a Responses stream four times slower to relay).
 #[test]
 fn every_drop_list_is_sorted_for_the_walks_search() {
+    let mut checked = 0usize;
     for dialect in [
         "anthropic",
         "bedrock",
@@ -954,6 +958,7 @@ fn every_drop_list_is_sorted_for_the_walks_search() {
                 ("stream", r.grammar().stream_carried),
             ] {
                 let Some(c) = carried else { continue };
+                checked += 1;
                 for pair in c.drops.windows(2) {
                     assert!(
                         pair[0] < pair[1],
@@ -965,6 +970,7 @@ fn every_drop_list_is_sorted_for_the_walks_search() {
             }
         });
     }
+    assert!(checked > 0, "no dialect had a carried table to check");
 }
 
 #[test]

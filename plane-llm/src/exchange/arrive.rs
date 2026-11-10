@@ -157,7 +157,8 @@ pub fn envelope_for(path: &str) -> &'static str {
         .unwrap_or("")
 }
 
-/// `%XX` decoding of a path segment; a malformed escape (or invalid UTF-8) is left as it was.
+/// `%XX` decoding of a path segment; a malformed escape is left as it was. Invalid UTF-8
+/// produced by a valid escape (e.g. `%FF`) is replaced with U+FFFD.
 #[must_use]
 pub fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
@@ -586,7 +587,7 @@ pub fn splice_path_facts(
     if let Some(key) = shim_key {
         edits.push(Edit::Set(key, Cow::Borrowed(b"true")));
     }
-    Some(spans::apply(body, &obj, &edits).unwrap_or_else(|| body.to_vec()))
+    spans::apply(body, &obj, &edits)
 }
 
 /// A path-model arrival's arrival step (the model and the stream flag spliced into the caller's

@@ -1140,7 +1140,9 @@ fn write_responses_status(reason: crate::codec::ir::IrStopReason) -> &'static st
     match reason {
         S::MaxTokens | S::Safety => STATUS_INCOMPLETE,
         S::Error => STATUS_FAILED,
-        _ => STATUS_COMPLETED,
+        S::EndTurn | S::StopSequence | S::ToolUse | S::Refusal | S::PauseTurn | S::Other => {
+            STATUS_COMPLETED
+        }
     }
 }
 
@@ -1151,7 +1153,8 @@ fn write_responses_incomplete_reason(reason: crate::codec::ir::IrStopReason) -> 
     match reason {
         S::MaxTokens => INCOMPLETE_REASON_MAX_OUTPUT,
         S::Safety => INCOMPLETE_REASON_CONTENT_FILTER,
-        _ => INCOMPLETE_REASON_OTHER,
+        S::EndTurn | S::StopSequence | S::ToolUse | S::Refusal | S::PauseTurn | S::Error
+        | S::Other => INCOMPLETE_REASON_OTHER,
     }
 }
 

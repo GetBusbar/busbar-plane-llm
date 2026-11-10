@@ -940,11 +940,11 @@ fn bedrock_media_content_block(
             !name.is_empty()
                 && name.chars().count() <= 200
                 && name.chars().all(|ch| {
-                    let repeated_whitespace = whitespace && ch.is_whitespace();
-                    whitespace = ch.is_whitespace();
+                    let repeated_whitespace = whitespace && ch.is_ascii_whitespace();
+                    whitespace = ch.is_ascii_whitespace();
                     !repeated_whitespace
-                        && (ch.is_alphanumeric()
-                            || ch.is_whitespace()
+                        && (ch.is_ascii_alphanumeric()
+                            || ch.is_ascii_whitespace()
                             || matches!(ch, '-' | '(' | ')' | '[' | ']'))
                 })
         });
@@ -1412,7 +1412,7 @@ fn bedrock_request_metadata_fits(s: &str, min: usize) -> bool {
     let n = s.chars().count();
     (min..=256).contains(&n)
         && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c.is_whitespace() || ":_@$#=/+,-.".contains(c))
+            .all(|c| c.is_ascii_alphanumeric() || c.is_ascii_whitespace() || ":_@$#=/+,-.".contains(c))
 }
 
 /// The typed [`crate::codec::ir::IrRequest::metadata`] to `requestMetadata` (IR-03). An entry

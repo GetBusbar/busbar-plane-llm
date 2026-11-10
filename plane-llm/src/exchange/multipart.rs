@@ -195,33 +195,42 @@ pub(crate) fn transcription_fields<'a>(
     content_type: &str,
     body: &'a [u8],
 ) -> Vec<TranscriptionField<'a>> {
-    let Some(parts) = multipart_segments(content_type, body) else {
+    let Some(mut parts) = multipart_segments(content_type, body) else {
         return Vec::new();
     };
 
     const MAX_MULTIPART_PARTS: usize = 64;
-    parts
-        .filter_map(|segment| {
-            let segment = segment.strip_prefix(b"\r\n").unwrap_or(segment);
-            let hpos = find_sub(segment, b"\r\n\r\n")?;
-            let headers = String::from_utf8_lossy(&segment[..hpos]);
-            let name = multipart_field_name(&headers)?.into_owned();
-            let value = &segment[hpos + 4..];
-            let value = value.strip_suffix(b"\r\n").unwrap_or(value);
-            let content_type = headers.lines().find_map(|line| {
-                let (name, value) = line.split_once(':')?;
-                name.trim()
-                    .eq_ignore_ascii_case("content-type")
-                    .then(|| value.trim().to_string())
-            });
-            Some(TranscriptionField {
-                name,
-                content_type,
-                value,
-            })
-        })
-        .take(MAX_MULTIPART_PARTS)
-        .collect()
+    let mut fields = Vec::new();
+    for segment in parts.by_ref() {
+        let segment = segment.strip_prefix(b"\r\n").unwrap_or(segment);
+        let Some(hpos) = find_sub(segment, b"\r\n\r\n") else { continue };
+        let headers = String::from_utf8_lossy(&segment[..hpos]);
+        let Some(name) = multipart_field_name(&headers) else { continue };
+        let name = name.into_owned();
+        let value = &segment[hpos + 4..];
+        let value = value.strip_suffix(b"\r\n").unwrap_or(value);
+        let content_type = headers.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.trim()
+                .eq_ignore_ascii_case("content-type")
+                .then(|| value.trim().to_string())
+        });
+        fields.push(TranscriptionField {
+            name,
+            content_type,
+            value,
+        });
+        if fields.len() >= MAX_MULTIPART_PARTS {
+            break;
+        }
+    }
+    // Drain remaining parts to advance to the closing delimiter. Reject a body truncated
+    // before it, consistent with multipart_field_value and rewrite_model.
+    for _ in parts.by_ref() {}
+    if !parts.closed {
+        return Vec::new();
+    }
+    fields
 }
 
 fn multipart_field_value<'a>(
@@ -234,8 +243,10 @@ fn multipart_field_value<'a>(
     let mut found: Option<&[u8]> = None;
     for part in parts.by_ref() {
         let hdr_len = find_sub(part, b"\r\n\r\n")?;
-        let headers = std::str::from_utf8(&part[..hdr_len]).ok()?;
-        if multipart_field_name(headers)? == name {
+        // Use lossy UTF-8 so a non-UTF-8 filename in a file part does not prevent reading
+        // the model form field (RFC 7578 permits legacy 8-bit filenames).
+        let headers = String::from_utf8_lossy(&part[..hdr_len]);
+        if multipart_field_name(&headers)? == name {
             if unique && found.is_some() {
                 return None;
             }
@@ -261,8 +272,10 @@ pub(crate) fn rewrite_model(content_type: &str, body: &[u8], model: &str) -> Opt
     let mut value_range = None;
     for part in parts.by_ref() {
         let header_end = find_sub(part, b"\r\n\r\n")?;
-        let headers = std::str::from_utf8(&part[..header_end]).ok()?;
-        if multipart_field_name(headers)?.as_ref() == "model" {
+        // Use lossy UTF-8 so a non-UTF-8 filename in a file part does not prevent
+        // rewriting the model form field (RFC 7578 permits legacy 8-bit filenames).
+        let headers = String::from_utf8_lossy(&part[..header_end]);
+        if multipart_field_name(&headers)?.as_ref() == "model" {
             if value_range.is_some() {
                 return None;
             }

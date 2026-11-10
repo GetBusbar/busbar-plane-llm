@@ -223,10 +223,15 @@ pub fn relay_request<'a>(
         {
             return match super::multipart::rewrite_model(content_type, hop_bytes, lane.wire_model) {
                 Some(bytes) if bytes == hop_bytes => unchanged,
-                bytes => Translated {
-                    bytes: Cow::Owned(bytes.unwrap_or_default()),
+                Some(bytes) => Translated {
+                    bytes: Cow::Owned(bytes),
                     pristine: false,
                 },
+                // A rewrite that cannot parse the multipart structure (missing boundary,
+                // duplicate model field, unclosed body, or delimiter in the model) preserves
+                // the caller's body: the upstream receives it unchanged and returns its own
+                // error for the malformed parts, rather than receiving an empty body.
+                None => unchanged,
             };
         }
         return unchanged;

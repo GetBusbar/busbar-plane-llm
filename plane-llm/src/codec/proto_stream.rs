@@ -1274,10 +1274,14 @@ fn backfill_from_start_usage(
             exact.entry(class.clone()).or_insert(*count);
         }
     }
-    usage
-        .detail
-        .refused_counts
-        .extend(start.detail.refused_counts.iter().cloned());
+    for rc in &start.detail.refused_counts {
+        if usage.detail.refused_counts.len() >= 64 {
+            break;
+        }
+        if !usage.detail.refused_counts.contains(rc) {
+            usage.detail.refused_counts.push(rc.clone());
+        }
+    }
     if usage.input_tokens == 0 {
         usage.input_tokens = start.input_tokens;
     }
@@ -1361,7 +1365,17 @@ fn merge_trailing_usage_detail(
             .get_or_insert_with(Default::default)
             .extend(exact.clone());
     }
-    acc.refused_counts.extend(refused_counts.iter().cloned());
+    // Cap refused_counts to avoid unbounded growth on long streams that repeat the same
+    // refusal in every usage frame. Only distinct messages matter for diagnostics; the
+    // vec's non-emptiness gates the null-total signal.
+    for rc in refused_counts {
+        if acc.refused_counts.len() >= 64 {
+            break;
+        }
+        if !acc.refused_counts.contains(rc) {
+            acc.refused_counts.push(rc.clone());
+        }
+    }
 
     if reasoning_tokens.is_some() {
         acc.reasoning_tokens = *reasoning_tokens;

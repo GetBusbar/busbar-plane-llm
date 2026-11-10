@@ -187,13 +187,17 @@ pub fn kernel_refusal(
     )
 }
 
-/// RENDER one of the plane's own arrival refusals.
+/// RENDER one of the plane's own arrival refusals. A 405 carries `Allow: POST` per RFC 9110.
 #[must_use]
 pub fn declined(
     host: &dyn crate::codec::cells::CodecHost,
     d: &super::arrive::Declined,
 ) -> Rendered {
-    render(host, d.envelope, d.status, d.kind, &d.message, 0)
+    let mut r = render(host, d.envelope, d.status, d.kind, &d.message, 0);
+    if d.status == 405 {
+        r.fields.push(("allow".to_string(), b"POST".to_vec()));
+    }
+    r
 }
 
 /// RENDER a refusal an attempt answers without reaching the far end.
