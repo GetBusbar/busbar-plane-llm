@@ -10,6 +10,16 @@ use busbar_plugin_loader::dispatch::load::raw;
 use busbar_plugin_loader::dispatch::migrate::{migrate_door, migrate_library};
 use serde_json::json;
 
+fn settings(answer: &busbar_contract::abi::sdk::migrate::MigrationAnswer) -> serde_json::Value {
+    serde_json::from_slice(
+        answer
+            .encode()
+            .unwrap()
+            .expose(&busbar_contract::plugin::TestKernelSeal),
+    )
+    .unwrap()
+}
+
 fn cdylib() -> PathBuf {
     let path = PathBuf::from(
         std::env::var_os("BUSBAR_PLUGIN_CDYLIB")
@@ -65,7 +75,7 @@ fn the_door_raises_every_provider_host_for_core_to_judge_both_ways() {
         .expect("the door states migrate");
     let if_private = |h: &str| MigrateNeed::AllowDestinationIfPrivate(h.to_string());
     for m in [linked, dropped] {
-        assert_eq!(m.settings, s, "the sections come back as they went in");
+        assert_eq!(settings(&m), s, "the sections come back as they went in");
         assert!(m.report.is_empty(), "core reports each host it decides");
         let mut needs = m.needs.clone();
         needs.sort_by_key(|n| format!("{n:?}"));
@@ -95,6 +105,6 @@ fn sections_without_providers_raise_nothing() {
     let m = migrate_door(raw(busbar_plane_llm::door), &s, "1.5.5")
         .expect("migrates")
         .expect("the door states migrate");
-    assert_eq!(m.settings, s);
+    assert_eq!(settings(&m), s);
     assert!(m.needs.is_empty() && m.report.is_empty());
 }

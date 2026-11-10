@@ -20,6 +20,17 @@ pub struct LlmMigration;
 
 impl Migrate for LlmMigration {
     type Kind = busbar_contract::plugin::markers::PlaneKind;
+    fn migrate_references(settings: Value, from: &str) -> Migrated {
+        let mut needs = Vec::new();
+        if from == "1.5.5" {
+            credential_needs(&settings, &mut needs);
+        }
+        Migrated {
+            settings,
+            needs,
+            report: Vec::new(),
+        }
+    }
     fn migrate(settings: Value, from: &str) -> Migrated {
         let mut needs: Vec<MigrateNeed> = Vec::new();
         let providers = settings.get(sections::PROVIDERS).and_then(Value::as_object);
@@ -127,5 +138,22 @@ mod provenance_tests {
                 }
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+    #[test]
+    fn provider_only_discovery_converts_credentials_without_destination_changes() {
+        let settings = serde_json::json!({"providers":{"old":{"auth":"jwt-bearer","base_url":"http://127.0.0.1","api_key":{"env":"SOURCE"}}}});
+        let answer = LlmMigration::migrate_references(settings.clone(), "1.5.5");
+        assert_eq!(answer.settings, settings);
+        assert!(answer.report.is_empty());
+        assert_eq!(answer.needs.len(), 1);
+        assert!(matches!(
+            answer.needs[0],
+            MigrateNeed::MigrateCredential { .. }
+        ));
     }
 }
