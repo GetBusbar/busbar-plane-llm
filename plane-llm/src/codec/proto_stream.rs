@@ -1273,6 +1273,10 @@ fn backfill_from_start_usage(
         for (class, count) in start_exact {
             exact.entry(class.clone()).or_insert(*count);
         }
+        use crate::codec::ir::open_class::{CACHE_WRITE_12H_CLASS, CACHE_WRITE_30M_CLASS};
+        if exact.contains_key(CACHE_WRITE_30M_CLASS) && exact.contains_key(CACHE_WRITE_12H_CLASS) {
+            exact.remove("cache_write");
+        }
     }
     for rc in &start.detail.refused_counts {
         if usage.detail.refused_counts.len() >= 64 {
@@ -1334,6 +1338,8 @@ fn merge_trailing_usage_detail(
         reasoning_tokens,
         cache_creation_5m_input_tokens,
         cache_creation_1h_input_tokens,
+        cache_creation_30m_input_tokens,
+        cache_creation_12h_input_tokens,
         search_units,
         web_search_requests,
         web_fetch_requests,
@@ -1361,6 +1367,12 @@ fn merge_trailing_usage_detail(
         acc.exact_tool_use_prompt_tokens = *exact_tool_use_prompt_tokens;
     }
     if let Some(exact) = exact_counts {
+        use crate::codec::ir::open_class::{CACHE_WRITE_12H_CLASS, CACHE_WRITE_30M_CLASS};
+        if exact.contains_key(CACHE_WRITE_30M_CLASS) && exact.contains_key(CACHE_WRITE_12H_CLASS) {
+            if let Some(previous) = &mut acc.exact_counts {
+                previous.remove("cache_write");
+            }
+        }
         acc.exact_counts
             .get_or_insert_with(Default::default)
             .extend(exact.clone());
@@ -1385,6 +1397,12 @@ fn merge_trailing_usage_detail(
     }
     if cache_creation_1h_input_tokens.is_some() {
         acc.cache_creation_1h_input_tokens = *cache_creation_1h_input_tokens;
+    }
+    if cache_creation_30m_input_tokens.is_some() {
+        acc.cache_creation_30m_input_tokens = *cache_creation_30m_input_tokens;
+    }
+    if cache_creation_12h_input_tokens.is_some() {
+        acc.cache_creation_12h_input_tokens = *cache_creation_12h_input_tokens;
     }
     if search_units.is_some() {
         acc.search_units = *search_units;

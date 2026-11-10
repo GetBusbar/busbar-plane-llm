@@ -1009,7 +1009,8 @@ pub struct IrUsage {
 }
 
 /// Sub-bucket attribution for [`IrUsage`]. Most fields are a slice of a total, never an addition,
-/// and [`IrUsage::billable_tokens`] ignores this struct, so none can change what busbar bills.
+/// and [`IrUsage::billable_tokens`] ignores the detail fields to avoid counting them twice.
+/// Responses 30m/12h writes replace their reporting aggregate in `exact_counts` for pricing.
 ///
 /// The exception is the Cohere `billed_*` trio, Cohere's separately metered bucket.
 /// [`IrUsage::to_token_usage`] ledgers the raw totals; the billed token counts are attribution the
@@ -1033,6 +1034,10 @@ pub struct IrUsageDetail {
     /// Anthropic 1-hour-TTL slice of `cache_creation_input_tokens`
     /// (`usage.cache_creation.ephemeral_1h_input_tokens`).
     pub cache_creation_1h_input_tokens: Option<u64>,
+    /// Responses disjoint thirty-minute writes; aggregate cache creation is reporting only.
+    pub cache_creation_30m_input_tokens: Option<u64>,
+    /// Responses disjoint twelve-hour writes; exact values live in `exact_counts`.
+    pub cache_creation_12h_input_tokens: Option<u64>,
     /// Cohere `usage.billed_units.search_units`, a separately billed unit that is not a token count.
     pub search_units: Option<u64>,
     /// Anthropic `usage.server_tool_use.web_search_requests`, a separately metered bucket. Only the
@@ -1135,7 +1140,7 @@ impl IrUsage {
     /// for a legacy producer. Unknown/refused exact counts remain null, never invented zero.
     pub fn wire_count(&self, class: &str, whole: u64) -> serde_json::Value {
         match &self.detail.exact_counts {
-            Some(exact) => exact.get(class).map_or_else(
+            Some(exact) => crate::codec::usage_count::exact_class(exact, class).map_or_else(
                 || {
                     if self.detail.refused_counts.is_empty() {
                         serde_json::json!(0)
@@ -1157,7 +1162,9 @@ impl IrUsage {
         match &self.detail.exact_counts {
             Some(exact) => {
                 let total = busbar_contract::Count::total(
-                    classes.iter().filter_map(|c| exact.get(*c).copied()),
+                    classes
+                        .iter()
+                        .filter_map(|c| crate::codec::usage_count::exact_class(exact, c)),
                 );
                 total.map_or(serde_json::Value::Null, |n| serde_json::json!(n))
             }

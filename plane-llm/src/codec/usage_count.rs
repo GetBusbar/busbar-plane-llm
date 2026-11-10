@@ -80,7 +80,7 @@ pub fn wire_token_count(
     whole: u64,
 ) -> serde_json::Value {
     match &usage.exact_counts {
-        Some(exact) => exact.get(class).map_or_else(
+        Some(exact) => exact_class(exact, class).map_or_else(
             || {
                 if usage.refused_counts.is_empty() {
                     serde_json::json!(0)
@@ -103,11 +103,29 @@ pub fn wire_token_total(usage: &busbar_contract::billing::TokenUsage) -> serde_j
         Some(exact) => Count::total(
             ["input", "output", "cache_read", "cache_write"]
                 .iter()
-                .filter_map(|class| exact.get(*class).copied()),
+                .filter_map(|class| exact_class(exact, class)),
         )
         .map_or(serde_json::Value::Null, |n| serde_json::json!(n)),
         None => serde_json::json!(usage.input.saturating_add(usage.output)),
     }
+}
+
+/// Read a reporting total without putting a priced parent beside its priced children.
+/// Split cache writes are stored only as open classes in the authoritative billed map.
+pub fn exact_class(
+    exact: &std::collections::BTreeMap<String, Count>,
+    class: &str,
+) -> Option<Count> {
+    if class == "cache_write" {
+        use crate::codec::ir::open_class::{CACHE_WRITE_12H_CLASS, CACHE_WRITE_30M_CLASS};
+        if let (Some(a), Some(b)) = (
+            exact.get(CACHE_WRITE_30M_CLASS),
+            exact.get(CACHE_WRITE_12H_CLASS),
+        ) {
+            return a.checked_add(*b).ok();
+        }
+    }
+    exact.get(class).copied()
 }
 
 /// A usage field that was there and could not be read as a count. Distinct from absence: "reported
@@ -299,9 +317,13 @@ pub enum CountSlot {
     AcceptedPrediction,
     /// `IrUsageDetail::rejected_prediction_tokens`.
     RejectedPrediction,
+    /// Responses disjoint thirty-minute cache writes.
+    CacheWrite30m,
+    /// Responses disjoint twelve-hour cache writes.
+    CacheWrite12h,
 }
 
-const SLOTS: usize = 18;
+const SLOTS: usize = 20;
 
 /// How one count is read off the usage object and folded into its slot. A path names the member
 /// from the usage object down; every member before the last is a parent object.
@@ -516,6 +538,14 @@ pub fn read_usage(
     }
     let mut exact_counts = std::collections::BTreeMap::new();
     for (slot, class) in [
+        (
+            CountSlot::CacheWrite30m,
+            crate::codec::ir::open_class::CACHE_WRITE_30M_CLASS,
+        ),
+        (
+            CountSlot::CacheWrite12h,
+            crate::codec::ir::open_class::CACHE_WRITE_12H_CLASS,
+        ),
         (CountSlot::Input, busbar_contract::records::UNIT_INPUT),
         (CountSlot::Output, busbar_contract::records::UNIT_OUTPUT),
         (
@@ -575,6 +605,8 @@ pub fn read_usage(
             reasoning_tokens: get(CountSlot::Reasoning),
             cache_creation_5m_input_tokens: get(CountSlot::CacheWrite5m),
             cache_creation_1h_input_tokens: get(CountSlot::CacheWrite1h),
+            cache_creation_30m_input_tokens: get(CountSlot::CacheWrite30m),
+            cache_creation_12h_input_tokens: get(CountSlot::CacheWrite12h),
             web_search_requests: get(CountSlot::WebSearchRequests),
             web_fetch_requests: get(CountSlot::WebFetchRequests),
             search_units: get(CountSlot::SearchUnits),
@@ -644,7 +676,7 @@ pub fn stated_total_note(
         let summed = Count::total(
             ["input", "output", "cache_read", "cache_write"]
                 .iter()
-                .filter_map(|class| exact.get(*class).copied()),
+                .filter_map(|class| exact_class(exact, class)),
         )
         .ok()?;
         if !reported.fits_a_64_bit_column() {

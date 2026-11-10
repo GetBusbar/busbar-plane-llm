@@ -390,7 +390,7 @@ fn build_responses_usage(usage: &crate::codec::ir::IrUsage) -> serde_json::Value
         .saturating_add(cache_read)
         .saturating_add(cache_write);
     let total = input_total.saturating_add(usage.output_tokens);
-    serde_json::json!({
+    let mut wire = serde_json::json!({
         (keys::INPUT_TOKENS): usage.wire_total(&["input", "cache_read", "cache_write"], input_total),
         (INPUT_TOKENS_DETAILS): {
             (keys::CACHED_TOKENS): usage.wire_count("cache_read", cache_read),
@@ -401,7 +401,17 @@ fn build_responses_usage(usage: &crate::codec::ir::IrUsage) -> serde_json::Value
             (keys::REASONING_TOKENS): usage.detail.reasoning_tokens.unwrap_or(0),
         },
         "total_tokens": usage.wire_total(&["input", "output", "cache_read", "cache_write"], total),
-    })
+    });
+    use crate::codec::ir::open_class::{CACHE_WRITE_12H_CLASS, CACHE_WRITE_30M_CLASS};
+    if usage.detail.exact_counts.as_ref().is_some_and(|e| {
+        e.contains_key(CACHE_WRITE_30M_CLASS) && e.contains_key(CACHE_WRITE_12H_CLASS)
+    }) {
+        wire[INPUT_TOKENS_DETAILS]["cache_write_tokens_details"] = serde_json::json!({
+            "ttl_30m_tokens": usage.wire_count(CACHE_WRITE_30M_CLASS, 0),
+            "ttl_12h_tokens": usage.wire_count(CACHE_WRITE_12H_CLASS, 0),
+        });
+    }
+    wire
 }
 
 /// The `usage` object for a response that has counted nothing yet (the `response.created`
@@ -1199,10 +1209,28 @@ fn write_text_format(rf: &crate::codec::ir::IrResponseFormat) -> serde_json::Val
     }
 }
 
+mod cache_writes;
+
 /// The Responses usage counts, as data. `input_tokens` includes the cached prefix, so
 /// `input_tokens_details.cached_tokens` is subtracted (saturating) to leave uncached input and
 /// carried as the additive cache read (`None` when absent, never `Some(0)`).
 const USAGE: &[UsageCount] = &[
+    (
+        CountSlot::CacheWrite30m,
+        CountRead::Opt(&[
+            INPUT_TOKENS_DETAILS,
+            "cache_write_tokens_details",
+            "ttl_30m_tokens",
+        ]),
+    ),
+    (
+        CountSlot::CacheWrite12h,
+        CountRead::Opt(&[
+            INPUT_TOKENS_DETAILS,
+            "cache_write_tokens_details",
+            "ttl_12h_tokens",
+        ]),
+    ),
     (CountSlot::Input, CountRead::Zero(&[keys::INPUT_TOKENS])),
     (
         CountSlot::Input,
@@ -1238,6 +1266,7 @@ fn read_responses_usage(
     response: Option<&serde_json::Value>,
 ) -> Result<crate::codec::ir::IrUsage, IrError> {
     let mut ir = crate::codec::usage_count::read_usage(COUNT_LABEL, usage, USAGE)?;
+    cache_writes::normalize(usage, &mut ir);
 
     ir.detail.usage_identity_note = (!crate::codec::usage_count::refused_any(usage, USAGE))
         .then(|| {

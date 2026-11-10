@@ -63,7 +63,10 @@ fn a_cohere_answer_fills_none_of_the_answer_slots() {
             _ => Vec::new(),
         })
         .collect();
-    assert!(!cites.is_empty(), "the fixture's tool-source citation must be read");
+    assert!(
+        !cites.is_empty(),
+        "the fixture's tool-source citation must be read"
+    );
     assert!(cites.iter().all(|c| c.file.is_none()), "{cites:?}");
 }
 

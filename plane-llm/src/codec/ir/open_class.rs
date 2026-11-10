@@ -53,6 +53,11 @@ pub const GUARDRAIL_TOPIC_POLICY_UNITS_CLASS: &str = "guardrail_topic_policy_uni
 /// Bedrock guardrail `invocationMetrics.usage.wordPolicyUnits`.
 pub const GUARDRAIL_WORD_POLICY_UNITS_CLASS: &str = "guardrail_word_policy_units";
 
+/// Disjoint Responses cache writes, priced by their own operator-supplied rates.
+pub const CACHE_WRITE_30M_CLASS: &str = "cache_write_30m";
+/// Disjoint Responses twelve-hour cache writes.
+pub const CACHE_WRITE_12H_CLASS: &str = "cache_write_12h";
+
 /// The family a count-shaped open class rolls up into.
 const COUNT: &str = "count";
 
@@ -77,10 +82,12 @@ pub const OPEN_CLASSES: &[(&str, &str)] = &[
     (GUARDRAIL_SENSITIVE_INFORMATION_POLICY_UNITS_CLASS, COUNT),
     (GUARDRAIL_TOPIC_POLICY_UNITS_CLASS, COUNT),
     (GUARDRAIL_WORD_POLICY_UNITS_CLASS, COUNT),
+    (CACHE_WRITE_30M_CLASS, busbar_contract::plane::TOKEN_FAMILY),
+    (CACHE_WRITE_12H_CLASS, busbar_contract::plane::TOKEN_FAMILY),
 ];
 
 /// The number of [`OPEN_CLASSES`], for the const tables that state them one by one.
-pub const OPEN_CLASS_COUNT: usize = 15;
+pub const OPEN_CLASS_COUNT: usize = 17;
 const _: () = assert!(OPEN_CLASSES.len() == OPEN_CLASS_COUNT);
 
 /// Bedrock's guardrail usage counts (`GuardrailUsage`), each with the open class it is ledgered

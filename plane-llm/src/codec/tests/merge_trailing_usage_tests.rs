@@ -60,6 +60,8 @@ fn trailing_detail_merge_is_exhaustive_over_every_bucket() {
         reasoning_tokens: Some(1),
         cache_creation_5m_input_tokens: Some(2),
         cache_creation_1h_input_tokens: Some(3),
+        cache_creation_30m_input_tokens: Some(31),
+        cache_creation_12h_input_tokens: Some(32),
         search_units: Some(4),
         web_search_requests: Some(5),
         web_fetch_requests: Some(16),
@@ -159,4 +161,33 @@ fn exact_trailing_usage_replaces_reported_zero_and_preserves_absent_input() {
     let exact = acc.to_token_usage().exact_counts.unwrap();
     assert_eq!(exact["input"].to_decimal_string(), "27.5");
     assert_eq!(exact["output"], busbar_contract::Count::ZERO);
+}
+
+#[test]
+fn split_cache_writes_replace_reporting_aggregate_during_terminal_fold() {
+    use crate::codec::ir::open_class::{CACHE_WRITE_12H_CLASS, CACHE_WRITE_30M_CLASS};
+    let count = |n| busbar_contract::Count::from_integer(n).unwrap();
+    let mut acc = usage(100, 0, Some(0), Some(0));
+    acc.detail.exact_counts = Some(std::collections::BTreeMap::from([(
+        "cache_write".into(),
+        count(0),
+    )]));
+    let mut trailing = usage(0, 1, Some(5), Some(0));
+    trailing.detail.cache_creation_30m_input_tokens = Some(2);
+    trailing.detail.cache_creation_12h_input_tokens = Some(3);
+    trailing.detail.exact_counts = Some(std::collections::BTreeMap::from([
+        (CACHE_WRITE_30M_CLASS.into(), count(2)),
+        (CACHE_WRITE_12H_CLASS.into(), count(3)),
+    ]));
+    merge_trailing_usage(&mut acc, &trailing);
+    assert!(!acc
+        .detail
+        .exact_counts
+        .as_ref()
+        .unwrap()
+        .contains_key("cache_write"));
+    assert_eq!(acc.wire_count("cache_write", 0), 5);
+    assert_eq!(acc.detail.cache_creation_12h_input_tokens, Some(3));
+    super::backfill_from_start_usage(&mut acc, &usage(100, 0, Some(0), Some(0)));
+    assert_eq!(acc.wire_count("cache_write", 0), 5);
 }

@@ -89,8 +89,8 @@ fn the_tail_is_one_the_contract_accepts() {
     assert_eq!(TAIL.op_classes_len(), 7);
     assert_eq!(
         TAIL.billable_classes_len(),
-        20,
-        "tokens in, out, cache read, cache write, the open classes, then the per-request fee unit"
+        22,
+        "historical classes and fee retain their indices; disjoint writes follow"
     );
 
     assert_eq!(
@@ -111,6 +111,8 @@ fn the_tail_is_one_the_contract_accepts() {
             ("guardrail_sensitive_information_policy_units", "count"),
             ("guardrail_topic_policy_units", "count"),
             ("guardrail_word_policy_units", "count"),
+            ("cache_write_30m", "token"),
+            ("cache_write_12h", "token"),
         ]
     );
     let stated = unsafe { TAIL.billable_classes() };
@@ -122,7 +124,7 @@ fn the_tail_is_one_the_contract_accepts() {
         ("cache_write", "token"),
     ];
     for (k, (class, family)) in tokens.iter().chain(OPEN_CLASSES).enumerate() {
-        let b = &stated[k];
+        let b = &stated[k + usize::from(k >= 19)];
         // SAFETY: each `AbiStr` names a `'static` string of `len` bytes.
         let (c, f) = unsafe {
             (
@@ -142,10 +144,7 @@ fn the_tail_is_one_the_contract_accepts() {
     // SAFETY: a `'static` str the door states (abi_str).
     let fee = unsafe { std::slice::from_raw_parts(fee.ptr(), fee.len()) };
     assert_eq!(fee, busbar_contract::plane::PER_REQUEST.as_bytes());
-    assert_eq!(
-        crate::plane_door::FEE_CLASS_INDEX as usize,
-        TAIL.billable_classes_len() - 1
-    );
+    assert_eq!(crate::plane_door::FEE_CLASS_INDEX as usize, 19);
 }
 
 #[test]
@@ -532,7 +531,17 @@ fn the_sticky_key_is_the_pools_header_else_the_chat_bodys_system() {
 #[test]
 fn every_open_class_becomes_one_reported_count_at_its_tail_index() {
     use busbar_contract::abi::plane::UNITS_REPORTED;
-    for (k, (class, _)) in OPEN_CLASSES.iter().enumerate() {
+    // SAFETY: the static tail owns all class declarations for this process.
+    let declared = unsafe { TAIL.billable_classes() };
+    for (class, _) in OPEN_CLASSES.iter() {
+        let index = declared
+            .iter()
+            .position(|row| {
+                // SAFETY: each AbiStr is backed by a static class name.
+                (unsafe { std::slice::from_raw_parts(row.class.ptr(), row.class.len()) })
+                    == class.as_bytes()
+            })
+            .expect("declared class");
         let units = crate::exchange::reply::Units {
             open: std::collections::BTreeMap::from([(class.to_string(), 7)]),
             ..Default::default()
@@ -541,7 +550,7 @@ fn every_open_class_becomes_one_reported_count_at_its_tail_index() {
         assert_eq!(out.len(), 1, "{class}: {out:?}");
         assert_eq!(
             (out[0].class, out[0].source, out[0].amount),
-            (u32::try_from(4 + k).expect("small"), UNITS_REPORTED, 7),
+            (u32::try_from(index).expect("small"), UNITS_REPORTED, 7),
             "{class}"
         );
     }

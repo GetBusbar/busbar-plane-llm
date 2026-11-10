@@ -168,14 +168,22 @@ const fn open_class(k: usize) -> BillableClass {
 /// and never where it is refunded (the plane's report is the one fee decider).
 pub const FEE_CLASS: &str = busbar_contract::plane::PER_REQUEST;
 /// [`FEE_CLASS`]'s index in the tail's billable classes.
-pub const FEE_CLASS_INDEX: u32 = (TOKEN_CLASSES.len() + OPEN_CLASSES.len()) as u32;
+pub const FEE_CLASS_INDEX: u32 = 19;
 
-/// Billable class `i` of the tail: the token classes, the open classes, then the fee unit.
+// Preserve every historical index, including the request fee. New open classes follow it.
+const fn open_class_index(k: usize) -> u32 {
+    let index = TOKEN_CLASSES.len() + k;
+    (index + (index >= FEE_CLASS_INDEX as usize) as usize) as u32
+}
+
+/// Billable class `i`: historical tokens/open classes/fee, followed by newly appended classes.
 const fn billable_class(i: usize) -> BillableClass {
     if i < TOKEN_CLASSES.len() {
         billable(i)
     } else if i < FEE_CLASS_INDEX as usize {
         open_class(i - TOKEN_CLASSES.len())
+    } else if i > FEE_CLASS_INDEX as usize {
+        open_class(i - TOKEN_CLASSES.len() - 1)
     } else {
         BillableClass {
             class: abi_str(FEE_CLASS),
@@ -185,7 +193,7 @@ const fn billable_class(i: usize) -> BillableClass {
 }
 
 const BILLABLE_CLASSES: &[BillableClass] =
-    &rows!(BillableClass; FEE_CLASS_INDEX as usize + 1, billable_class);
+    &rows!(BillableClass; TOKEN_CLASSES.len() + OPEN_CLASSES.len() + 1, billable_class);
 /// The tail's fee units: [`FEE_CLASS`].
 const FEE_UNITS: &[AbiStr] = &[abi_str(FEE_CLASS)];
 
@@ -860,7 +868,8 @@ pub fn counts(units: &Units) -> Vec<UnitCount> {
         return TOKEN_CLASSES.iter().copied().chain(OPEN_CLASSES.iter().map(|(name, _)| *name))
             .enumerate().filter_map(|(class, name)| {
                 let count = exact.get(name)?;
-                match UnitCount::from_count(class as u32, source, *count) {
+                let class = if class < TOKEN_CLASSES.len() { class as u32 } else { open_class_index(class - TOKEN_CLASSES.len()) };
+                match UnitCount::from_count(class, source, *count) {
                     Ok(unit) => Some(unit),
                     Err(error) => {
                         tracing::warn!(class = name, %error, "usage count REFUSED at declared store range");
@@ -894,7 +903,7 @@ pub fn counts(units: &Units) -> Vec<UnitCount> {
             .position(|(class, _)| *class == name.as_str())
         {
             Some(k) => out.push(UnitCount {
-                class: u32::try_from(TOKEN_CLASSES.len() + k).unwrap_or(u32::MAX),
+                class: open_class_index(k),
                 source: UNITS_REPORTED,
                 amount,
             }),

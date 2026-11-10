@@ -69,3 +69,25 @@ Hook output-cap projections now recognize OpenAI `max_completion_tokens` and Gem
 Request arrival now recognizes JSON and multipart media types without regard to case and matches the JSON media-type token exactly, so valid mixed-case content types route correctly and `application/json` prefix lookalikes are not treated as JSON (`crates/busbar/src/ingress/dispatch.rs:98–100,126–127`).
 
 Malformed OpenAI and Gemini image containers or entries now fail decoding instead of becoming empty successful images (`crates/busbar/src/handlers/openai.rs:734–758`, `crates/busbar/src/handlers/gemini.rs:449–471`). Independently reported image usage remains recoverable. Documented Imagen storage outputs retain their URI through the existing URL carrier, and filtered entries do not count as delivered images. Large same-dialect replies retain Titan input token counts, transcription usage, and validated image counts without retaining image payloads; the original reported fields are present in v1.5.5 (`crates/busbar/src/handlers/bedrock.rs:244–252`, `crates/busbar/src/handlers/openai.rs:336–339`).
+
+## Responses cache write attribution
+
+When `usage.input_tokens_details.cache_write_tokens_details` reports both
+`ttl_30m_tokens` and `ttl_12h_tokens`, the plane validates their sum against
+`cache_write_tokens` and the complete input partition. It emits `input`,
+`cache_read`, `cache_write_30m`, `cache_write_12h`, and `output` exclusively.
+The aggregate cache write count remains available in response totals but is not
+another priced count. Configure dated operator rates for the two open classes;
+the plane does not derive a rate from the TTL name.
+
+Explicit zeros and exact fractional values survive buffered, streaming, and
+recovered usage. A malformed or inconsistent split carries an explicit count
+refusal and does not fall back to a cheaper aggregate tariff. Responses without
+a split retain legacy aggregate semantics; model capability enforcement for
+requiring splits and translation of cache request controls remain separate work.
+
+The split classes belong to the existing token family. A reserved `cache_write`
+limit or export column does not yet aggregate these children: that requires
+neutral host declaration metadata. This response-attribution support does not
+claim complete cache budget/export parity, Gemini Interactions accounting, or
+cross-request hosted-tool settlement.

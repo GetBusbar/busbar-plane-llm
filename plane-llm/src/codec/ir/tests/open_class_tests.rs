@@ -22,15 +22,14 @@ fn every_open_class_is_named_once() {
     }
 }
 
-/// No open class is in the token family: a token-family class counts toward a `tokens:` cap, and
-/// the caps count exactly the itemized tokens they counted in 1.5.5.
+/// Only disjoint cache write children join the token family; their aggregate is reporting-only.
 #[test]
-fn no_open_class_counts_toward_a_token_cap() {
+fn only_disjoint_cache_writes_count_toward_a_token_cap() {
     for (class, family) in OPEN_CLASSES {
-        assert_ne!(
-            *family,
-            busbar_contract::plane::TOKEN_FAMILY,
-            "{class} would count toward a tokens: cap"
+        assert_eq!(
+            *family == busbar_contract::plane::TOKEN_FAMILY,
+            matches!(*class, CACHE_WRITE_30M_CLASS | CACHE_WRITE_12H_CLASS),
+            "unexpected token family for {class}"
         );
     }
 }

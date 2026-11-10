@@ -113,6 +113,8 @@ pub(crate) const RESPONSE_PATHS: &[&str] = &[
     "output[].type=function_call.arguments",
     "service_tier",
     "usage.input_tokens_details.cache_write_tokens",
+    "usage.input_tokens_details.cache_write_tokens_details.ttl_30m_tokens",
+    "usage.input_tokens_details.cache_write_tokens_details.ttl_12h_tokens",
 ];
 
 /// The stream wire paths this dialect carries (the drop walk's map).

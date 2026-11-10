@@ -119,6 +119,8 @@ park = true
 "output[].type=function_call.arguments" = { prim = "arguments" }
 "service_tier" = { prim = "served_tier" }
 "usage.input_tokens_details.cache_write_tokens" = { prim = "cache_write_tokens" }
+"usage.input_tokens_details.cache_write_tokens_details.ttl_30m_tokens" = { prim = "ttl_30m_tokens" }
+"usage.input_tokens_details.cache_write_tokens_details.ttl_12h_tokens" = { prim = "ttl_12h_tokens" }
 
 # The stream events the dialect's stream reader and writer carry (`prim`: code carries them).
 [rows.stream]
