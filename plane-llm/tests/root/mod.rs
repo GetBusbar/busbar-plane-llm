@@ -48,3 +48,8 @@ use super::*;
 pub(crate) mod hook_seat_tests;
 #[cfg(linked_driver_proofs)]
 mod serve_tests;
+
+/// The owner's minimal valid section for composition-root coverage fixtures.
+pub(crate) fn minimal_valid_config() -> (&'static str, serde_json::Value) {
+    ("pools", serde_json::json!({}))
+}
