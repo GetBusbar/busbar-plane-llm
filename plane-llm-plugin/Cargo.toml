@@ -34,3 +34,6 @@ serde_json = { workspace = true }
 # The translation-cap proof provisions the real door's host entropy service.
 getrandom = { workspace = true }
 busbar-contract = { workspace = true, features = ["test-seal"] }
+
+[package.metadata.busbar.test-artifacts]
+cdylib = ["BUSBAR_GOVERNANCE_TEST_PLANE_PLUGIN"]

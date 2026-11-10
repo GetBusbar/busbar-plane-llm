@@ -112,6 +112,20 @@ pub struct Run {
     accepted: BTreeSet<Vec<u8>>,
     content_deleted: bool,
     closed: bool,
+    /// Protected identity and raw usage facts, published atomically with the final manifest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    final_evidence: Option<FinalEvidence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    evidence_history: Vec<FinalEvidence>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    quarantined: BTreeSet<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FinalEvidence {
+    http_status: u16,
+    body: Vec<u8>,
 }
 
 /// Safe next step after a restart or retry. There is intentionally no create action.
@@ -139,6 +153,8 @@ pub enum Recovery {
     Close(ScopeRequest),
     /// Retain the tombstone through the provider replay horizon.
     Tombstone,
+    /// Conflicting authoritative totals were durably quarantined; never close or invent ordering.
+    Quarantined,
 }
 
 /// One create-intent publication. This value is consumed before it can grant one dispatch.
@@ -203,6 +219,9 @@ pub fn prepare_create(
         accepted: BTreeSet::new(),
         content_deleted: false,
         closed: false,
+        final_evidence: None,
+        evidence_history: Vec::new(),
+        quarantined: BTreeSet::new(),
     };
     let key = run.key();
     let candidate = ConditionalCandidate {
@@ -277,6 +296,12 @@ impl Run {
             || !valid_id(&run.intent)
             || run.provider_id.as_deref().is_some_and(|id| !valid_id(id))
             || run.accepted.len() > 64
+            || run.quarantined.len() > 64
+            || run.evidence_history.len() > 8
+            || run
+                .evidence_history
+                .iter()
+                .any(|e| e.body.len() > 16 * 1024 || !(200..300).contains(&e.http_status))
             || run.components.as_ref().is_some_and(|v| {
                 let identities: BTreeSet<_> = v.iter().map(component_identity).collect();
                 v.is_empty()
@@ -288,10 +313,19 @@ impl Run {
                             || o.validate().is_err()
                     })
                     || !run.accepted.is_subset(&identities)
+                    || !run.quarantined.is_subset(&identities)
+                    || !run.accepted.is_disjoint(&run.quarantined)
                     || (run.closed && run.accepted != identities)
             })
-            || (run.components.is_none() && !run.accepted.is_empty())
+            || (run.components.is_none()
+                && (!run.accepted.is_empty() || !run.quarantined.is_empty()))
+            || (run.closed && !run.quarantined.is_empty())
             || (run.closed && (run.components.is_none() || run.provider_id.is_none()))
+            || run.final_evidence.as_ref().is_some_and(|e| {
+                e.body.len() > 16 * 1024
+                    || run.components.is_none()
+                    || !(200..300).contains(&e.http_status)
+            })
         {
             return Err("run ownership or schema mismatch");
         }
@@ -305,10 +339,16 @@ impl Run {
         if let Some(components) = &self.components {
             let observations: Vec<_> = components
                 .iter()
-                .filter(|o| !self.accepted.contains(&component_identity(o)))
+                .filter(|o| {
+                    !self.accepted.contains(&component_identity(o))
+                        && !self.quarantined.contains(&component_identity(o))
+                })
                 .cloned()
                 .collect();
             if observations.is_empty() {
+                if !self.quarantined.is_empty() {
+                    return Recovery::Quarantined;
+                }
                 return Recovery::Close(ScopeRequest::close(self.binding.scope));
             }
             return Recovery::Submit {
@@ -419,6 +459,137 @@ impl Run {
         next.components = Some(observations.to_vec());
         self.change(kind, correlation, original, next)
     }
+
+    /// Freeze authenticated buffered provider usage and its exact independent component manifest
+    /// in one transaction. Generated text and caller data are not retained in the evidence row.
+    /// The native owner must separately establish the supported text-only economic profile before
+    /// calling this method; unknown hosted/modality evidence must remain unresolved.
+    pub fn final_response(
+        &self,
+        kind: u32,
+        correlation: u64,
+        original: &[u8],
+        http_status: u16,
+        body: &[u8],
+    ) -> Result<Checkpoint, &'static str> {
+        use super::interactions::{normalize, Evidence, Normalized};
+        let id = self.provider_id().ok_or("unbound provider response")?;
+        let mut reference = self.key();
+        if self.components.is_some() {
+            if self.evidence_history.len() >= 8 {
+                return Err("conflict evidence bound reached");
+            }
+            reference.extend(format!("#evidence/{}", self.evidence_history.len()).as_bytes());
+        } else {
+            reference.extend(b"#final-evidence");
+        }
+        let Normalized::Final { observations, .. } = normalize(
+            &self.binding,
+            Evidence {
+                known_id: Some(id),
+                http_status,
+                body,
+                evidence_ref: &reference,
+            },
+        ) else {
+            return Err("provider response has no complete authoritative usage");
+        };
+        let value: serde_json::Value =
+            crate::codec::json::parse(body).map_err(|_| "invalid evidence")?;
+        let object = value.as_object().ok_or("invalid buffered evidence")?;
+        if object.contains_key("event_type") {
+            return Err("buffered evidence cannot be an event envelope");
+        }
+        let retained = ["id", "model", "service_tier", "status", "usage"]
+            .into_iter()
+            .filter_map(|k| object.get(k).map(|v| (k.to_owned(), v.clone())))
+            .collect::<serde_json::Map<_, _>>();
+        let body = serde_json::to_vec(&retained).map_err(|_| "invalid evidence")?;
+        if body.len() > 16 * 1024 {
+            return Err("oversized usage evidence");
+        }
+        let mut checkpoint = if let Some(previous) = &self.components {
+            if same_economics(previous, &observations) {
+                return Err("unchanged final evidence");
+            }
+            if previous
+                .iter()
+                .map(component_identity)
+                .collect::<BTreeSet<_>>()
+                != observations
+                    .iter()
+                    .map(component_identity)
+                    .collect::<BTreeSet<_>>()
+            {
+                return Err("changed economic component set");
+            }
+            let mut next = self.clone();
+            next.components = Some(observations);
+            next.accepted.clear();
+            next.quarantined.clear();
+            next.closed = false;
+            self.change(kind, correlation, original, next)?
+        } else {
+            self.final_components(kind, correlation, original, &observations)?
+        };
+        if self.components.is_some() {
+            checkpoint
+                .next
+                .evidence_history
+                .push(FinalEvidence { http_status, body });
+        } else {
+            checkpoint.next.final_evidence = Some(FinalEvidence { http_status, body });
+        }
+        // Rebuild the one CAS value after adding the raw facts, preserving the exact predicate.
+        let RecordMutation::Put { value, .. } = &mut checkpoint.candidate.mutations[0] else {
+            return Err("invalid final checkpoint");
+        };
+        *value = checkpoint.next.encode()?;
+        Ok(checkpoint)
+    }
+    /// Compare incoming final quantities with the durable manifest without inventing a revision.
+    pub fn same_final_response(&self, http_status: u16, body: &[u8]) -> bool {
+        let Some(previous) = &self.components else {
+            return false;
+        };
+        let super::interactions::Normalized::Final { observations, .. } =
+            super::interactions::normalize(
+                &self.binding,
+                super::interactions::Evidence {
+                    known_id: self.provider_id(),
+                    http_status,
+                    body,
+                    evidence_ref: b"comparison-only",
+                },
+            )
+        else {
+            return false;
+        };
+        same_economics(previous, &observations)
+    }
+    /// Retain a definitive quarantine receipt as unresolved state, never accepted closure.
+    pub fn quarantined_receipt(
+        &self,
+        kind: u32,
+        correlation: u64,
+        original: &[u8],
+        observation: &Observation,
+        result: &ObservationResult,
+    ) -> Result<Checkpoint, &'static str> {
+        if self.closed
+            || !self
+                .components
+                .as_ref()
+                .is_some_and(|c| c.contains(observation))
+            || !matches!(result,ObservationResult::Accepted(r) if r.quarantined)
+        {
+            return Err("component has no quarantine receipt");
+        }
+        let mut next = self.clone();
+        next.accepted.remove(&component_identity(observation));
+        next.quarantined.insert(component_identity(observation));
+        self.change(kind, correlation, original, next)
+    }
     /// Persist one non-quarantined final host receipt. Pending or refused results remain pending.
     pub fn accepted(
         &self,
@@ -469,6 +640,21 @@ impl Run {
         next.closed = true;
         self.change(kind, correlation, original, next)
     }
+}
+
+fn same_economics(left: &[Observation], right: &[Observation]) -> bool {
+    left.len() == right.len()
+        && left.iter().all(|a| {
+            right.iter().any(|b| {
+                a.scope == b.scope
+                    && a.event_key == b.event_key
+                    && a.component_key == b.component_key
+                    && a.revision == b.revision
+                    && a.state == b.state
+                    && a.counts == b.counts
+                    && a.rated_subject == b.rated_subject
+            })
+        })
 }
 
 fn component_identity(observation: &Observation) -> Vec<u8> {

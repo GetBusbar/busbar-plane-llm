@@ -30,6 +30,8 @@ slot!(TestOpen, OpenIn, OpenOut, |instance, input, _out| {
     let mut book = UnitBook::default();
     book.hold(1, unit);
     instance.open(LlmDoor {
+        leases: Default::default(),
+        native: Default::default(),
         generations: Generations::new(),
         shapings: Mutex::new(BTreeMap::new()),
         units: Mutex::new(book),

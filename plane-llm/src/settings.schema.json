@@ -723,6 +723,48 @@
               "type": "null"
             }
           ]
+        },
+        "interactions": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "models": {
+                  "type": "object",
+                  "default": {},
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "account_namespace": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "Stable configured provider account; no leading/trailing whitespace or control characters."
+                      },
+                      "pricing_modes": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "enum": [
+                            "standard"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "account_namespace",
+                      "pricing_modes"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
         }
       }
     }

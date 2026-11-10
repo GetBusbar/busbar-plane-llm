@@ -7,6 +7,8 @@
 //! (`busbar-plane-llm-plugin`, via `busbar_contract::export_door!`), so the two cannot answer
 //! differently.
 
+mod native;
+
 type StaticServices = KindStaticServices<busbar_contract::plugin::markers::PlaneKind>;
 
 type Services = KindServices<busbar_contract::plugin::markers::PlaneKind>;
@@ -107,6 +109,7 @@ const SECTIONS: &[Section] = &[
     ),
     section(sections::LIMITS, SECTION_CONSUMED),
     section(webhook::SECTION, 0),
+    section(native::SECTION, 0),
 ];
 
 const OPS: &[OpClassId] = crate::meta::OP_CLASSES;
@@ -322,6 +325,7 @@ const STREAMING_CONTENT_TYPES: &[AbiStr] = &[
 /// The Statement tail: the plane's static facts.
 const TAIL_ROW: PlaneTail = {
     let mut t = PlaneTail::EMPTY
+        .with_record_kinds(&[abi_str(crate::observations::lookup::RECORD_KIND)])
         .with_streaming_content_types(STREAMING_CONTENT_TYPES)
         .with_dialects(DIALECT_NAMES)
         .with_dialect_auth(DIALECT_AUTH)
@@ -341,7 +345,7 @@ const TAIL_ROW: PlaneTail = {
         .with_fee_units(FEE_UNITS)
         .with_route_cost(ROUTE_COST)
         .with_refusal_statuses(&crate::refusal::REFUSAL_STATUSES);
-    t.flags = TAIL_FALLBACK | TAIL_PROBES;
+    t.flags = TAIL_FALLBACK | TAIL_PROBES | busbar_contract::abi::plane::TAIL_AUTHENTICATED_ROUTE;
     t.ingress = INGRESS_REQUEST_RESPONSE | INGRESS_RESPONSE_STREAM;
 
     t.dispatch_shape = SHAPE_PIECEWISE;
@@ -360,9 +364,67 @@ pub const TAIL: &PlaneTail = &TAIL_ROW;
 
 /// The Statement's extensions: the plane's provider keys ([`crate::meta::PROVIDER_KEYS`]) under the
 /// contract's one key for them, built at compile time.
-pub(crate) const EXTENSIONS: &[u8] = &extensions::entry::<
+const PROVIDER_EXTENSION: &[u8] = &extensions::entry::<
     { extensions::entry_len(EXT_PROVIDER_KEYS, PROVIDER_KEYS.as_bytes()) },
 >(EXT_PROVIDER_KEYS, PROVIDER_KEYS.as_bytes());
+const CONDITIONAL_EXTENSION: &[u8] = &extensions::entry::<
+    {
+        extensions::entry_len(
+            busbar_contract::abi::sdk::plane::conditional::CAPABILITY,
+            b"1",
+        )
+    },
+>(
+    busbar_contract::abi::sdk::plane::conditional::CAPABILITY,
+    b"1",
+);
+const GUARD_EXTENSION: &[u8] = &extensions::entry::<
+    {
+        extensions::entry_len(
+            busbar_contract::abi::sdk::plane::conditional::REQUIRED_KINDS,
+            &[1, 0, 0, 0, 0, 0, 0, 0],
+        )
+    },
+>(
+    busbar_contract::abi::sdk::plane::conditional::REQUIRED_KINDS,
+    &[1, 0, 0, 0, 0, 0, 0, 0],
+);
+const OPTIONAL_EXTENSION: &[u8] = &extensions::entry::<
+    {
+        extensions::entry_len(
+            busbar_contract::abi::sdk::plane::conditional::OPTIONAL,
+            b"1",
+        )
+    },
+>(
+    busbar_contract::abi::sdk::plane::conditional::OPTIONAL,
+    b"1",
+);
+const EXTENSIONS_LEN: usize = PROVIDER_EXTENSION.len()
+    + CONDITIONAL_EXTENSION.len()
+    + GUARD_EXTENSION.len()
+    + OPTIONAL_EXTENSION.len();
+pub(crate) const EXTENSIONS: &[u8] = &{
+    let mut bytes = [0; EXTENSIONS_LEN];
+    let parts = [
+        PROVIDER_EXTENSION,
+        CONDITIONAL_EXTENSION,
+        GUARD_EXTENSION,
+        OPTIONAL_EXTENSION,
+    ];
+    let mut offset = 0;
+    let mut part = 0;
+    while part < parts.len() {
+        let mut i = 0;
+        while i < parts[part].len() {
+            bytes[offset] = parts[part][i];
+            offset += 1;
+            i += 1;
+        }
+        part += 1;
+    }
+    bytes
+};
 
 /// The schema of the lifecycle shaping envelope, separate from dialect requests.
 const SETTINGS_SCHEMA: &[u8] = include_bytes!("settings.schema.json");
@@ -452,6 +514,7 @@ struct Pending {
 
 /// What the door keeps for one unit, from its `arrive` to its end.
 struct UnitState {
+    native: Option<native::Native>,
     /// The generation's tables the unit arrived on.
     shaping: Arc<Shaping>,
     /// The arrival, read once at `arrive`.
@@ -492,6 +555,7 @@ struct UnitState {
 impl UnitState {
     fn new(shaping: Arc<Shaping>) -> Self {
         UnitState {
+            native: None,
             shaping,
             arrived: None,
             caller: Vec::new(),
@@ -596,6 +660,8 @@ impl<S> UnitBook<S> {
 /// One instance: every live generation's snapshot and tables, the units in flight, and the host's
 /// clock.
 pub struct LlmDoor {
+    leases: busbar_contract::abi::sdk::life::Leases,
+    native: crate::observations::native_request::NativeConfig,
     generations: Generations<PlaneSnapshot>,
     shapings: Mutex<BTreeMap<u64, Arc<Shaping>>>,
     units: Mutex<UnitBook<UnitState>>,
@@ -815,11 +881,12 @@ pub fn webhook_claims(webhooks: Webhooks) -> Vec<ClaimSpec> {
 const RESPONSES: &str = "responses";
 
 /// The generation's snapshot: the plane's claims, and its receivers' claims.
-fn snapshot(webhooks: Webhooks) -> SnapshotSpec {
+fn snapshot(webhooks: Webhooks, native_enabled: bool) -> SnapshotSpec {
     SnapshotSpec {
         claims: claims()
             .into_iter()
             .chain(webhook_claims(webhooks))
+            .chain(native::claims(native_enabled))
             .collect(),
         ..SnapshotSpec::default()
     }
@@ -1397,10 +1464,14 @@ macro_rules! slot {
 }
 
 /// The plane's lifecycle on the SDK's [`PlaneLife`] (`lifecycle: plane_life(LlmDoor)`): `tick`,
-/// `drive`, `release` and `close` are defaults (no tick, no unsolicited output, no lease); the plane
+/// `drive` and `close` are defaults; generic release owns native pending-answer leases. The plane
 /// states its settings, what a generation publishes, its tables beside each generation, and its `cancel`.
 impl PlaneLife for LlmDoor {
     type Held = ();
+
+    fn leases(&self) -> Option<&busbar_contract::abi::sdk::life::Leases> {
+        Some(&self.leases)
+    }
 
     fn generations(&self) -> &Generations<PlaneSnapshot> {
         &self.generations
@@ -1427,7 +1498,10 @@ impl PlaneLife for LlmDoor {
         let open = input.open();
         let shaping = read_settings(open.settings().bytes()).map_err(Refusal::failed)?;
         let webhooks = webhook::from_owned(input.owned().bytes()).map_err(Refusal::failed)?;
+        let native = native::config(input.owned().bytes(), &shaping).map_err(Refusal::failed)?;
         let door = LlmDoor {
+            native,
+            leases: Default::default(),
             generations: Generations::new(),
             shapings: Mutex::new(BTreeMap::from([(open.generation(), Arc::new(shaping))])),
             units: Mutex::new(UnitBook::default()),
@@ -1435,7 +1509,7 @@ impl PlaneLife for LlmDoor {
             webhooks,
         };
         let first = Published {
-            spec: snapshot(door.webhooks),
+            spec: snapshot(door.webhooks, !door.native.models.is_empty()),
             held: (),
         };
         Ok(Opened { plane: door, first })
@@ -1444,9 +1518,10 @@ impl PlaneLife for LlmDoor {
     /// `refresh`: the new tables judged and kept for `generation`, and its snapshot.
     fn refresh(&self, settings: &[u8], generation: u64) -> Result<Published<()>, Refusal> {
         let shaping = read_settings(settings).map_err(Refusal::refused)?;
+        self.native.validate(&shaping).map_err(Refusal::refused)?;
         guard(&self.shapings).insert(generation, Arc::new(shaping));
         Ok(Published {
-            spec: snapshot(self.webhooks),
+            spec: snapshot(self.webhooks, !self.native.models.is_empty()),
             held: (),
         })
     }
@@ -1541,6 +1616,21 @@ slot!(
                 }
             };
         }
+        if native::recognizes(&target) {
+            let result = native::arrive(door, &mut unit, &method, &target, body, &mut out);
+            let outcome = match result {
+                Ok(()) => Outcome::Ready,
+                Err(message) => {
+                    let declined=Declined {why:arrive::Decline::BodyParse,status:400,envelope:"gemini",kind:crate::codec::protocol::KIND_INVALID_REQUEST,message:message.into(),entry:None};
+                    out.set(|o|&o.refusal,declined.why.code());
+                    out.set(|o|&o.refusal_status,400);
+                    unit.declined=Some(declined);
+                    out.fail(Refusal::bare())
+                }
+            };
+            guard(&door.units).hold(input.unit(),unit);
+            return outcome;
+        }
         let caller = unit.caller_fields();
         let arrival = arrive::arrive(&method, &target, &caller, body, &*unit.shaping);
         drop(caller);
@@ -1596,6 +1686,31 @@ slot!(
 );
 
 slot!(
+    /// Read only original ownership after authentication and before normal route authorization.
+    AuthenticatedRoute, busbar_contract::abi::plane::AuthenticatedRouteIn, busbar_contract::abi::plane::AuthenticatedRouteOut, |instance,input,mut out| {
+        let Some(door)=instance.get() else {return Outcome::Failed;};
+        let key=input.unit();
+        let Some(mut unit)=guard(&door.units).take(key) else {return Outcome::Fault;};
+        guard(&door.units).bind(input.head().ticket(),key);
+        let result=native::authenticated(door,&mut unit,&input);
+        guard(&door.units).hold(key,unit);
+        match result {
+            std::task::Poll::Pending=>Outcome::Pending,
+            std::task::Poll::Ready(Err(_))=> {
+                out.set(|o|&o.refusal,1);out.set(|o|&o.refusal_status,404);Outcome::Refused
+            }
+            std::task::Poll::Ready(Ok(entry))=> {
+                let mut buffer=input.entry_buf();buffer.extend(entry.as_bytes());
+                if !buffer.fits() {return Outcome::Fault;}
+                let (written,_)=buffer.settle(false);
+                out.set(|o|&o.entry_written,written as u32);out.set(|o|&o.route,ROUTE_DIRECT);
+                Outcome::Ready
+            }
+        }
+    }
+);
+
+slot!(
     /// `on_piece`: the plane's answer to the piece, computed once and delivered in host-sized
     /// chunks; a unit whose caller's reply is complete ends.
     OnPiece, OnPieceIn, OnPieceOut, |instance, input, mut out| {
@@ -1621,6 +1736,19 @@ slot!(
         let Some(mut unit) = taken else {
             return Outcome::Fault;
         };
+        if unit.pending.is_none() && unit.native.is_some() {
+            let mut answer=match native::piece(door,&mut unit,&input) {
+                Ok(native::PieceResult::Pending(bytes))=> {
+                    out.lease_secret(|o|&o.head.extensions,&door.leases,bytes,busbar_contract::abi::mechanism::call::BLOB_OCTETS);
+                    guard(&door.units).hold(key,unit);
+                    return Outcome::Pending;
+                }
+                Ok(native::PieceResult::Answer(answer))=>answer,
+                Err(error)=>native::failure(error),
+            };
+            fee_unit(&mut unit,&mut answer);
+            unit.pending=Some(Pending {answer,sent:0,opened:false});
+        }
         if unit.pending.is_none() {
             if input.from() == FROM_FAR_END && input.flags() & PIECE_FINAL != 0 {
                 unit.final_answer = true;
@@ -1760,7 +1888,7 @@ slot!(
 );
 
 slot!(
-    /// `hydrate`: the plane keeps no durable state.
+    /// `hydrate`: native records are read through authenticated request-driven lookup.
     Hydrate, GenIn, OutHead, |_, _, _| { Outcome::Ready }
 );
 
@@ -1930,6 +2058,7 @@ busbar_contract::plugin_door! {
         arrive: Safe<Arrive>, on_piece: Safe<OnPiece>, refusal: Safe<RefusalSlot>,
         serve: Safe<Serve>, hydrate: Safe<Hydrate>, start: Safe<Start>, project: Safe<Project>,
         catalog: Safe<CatalogSlot>,
+        authenticated_route: Safe<AuthenticatedRoute>,
     },
 }
 
@@ -1977,3 +2106,9 @@ mod exact_count_ingress_tests {
 #[cfg(test)]
 #[path = "tests/settings_schema.rs"]
 mod settings_schema_tests;
+
+#[cfg(test)]
+// This targeted fixture exercises raw ABI entry points only in test builds.
+#[allow(unsafe_code)]
+#[path = "../tests/support/native_interactions.rs"]
+mod native_interactions_tests;

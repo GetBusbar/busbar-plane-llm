@@ -110,10 +110,9 @@ The split classes belong to the existing token family and declare `cache_write`
 as their parent through neutral host metadata. Host cap/reporting projections
 include both children in that reserved total; raw metering and pricing retain
 only the disjoint components. Historical class indices, including fee index 19,
-are preserved. This does not enable Gemini Interactions or cross-request
-hosted-tool settlement.
+are preserved. Hosted-tool settlement remains a separate evidence integration.
 
-## Observation adapter checkpoint
+## Native Interactions and observation accounting
 
 `observations::interactions` provides a native operation table and validates
 stored model creates. Its final-response/SSE adapter keeps input, cache reads,
@@ -127,8 +126,8 @@ index and frozen run binding, and persistent final observations/receipt progress
 The host's original scope carries ownership and prices. A restored intent with
 no provider ID never authorizes another create. Content deletion preserves the
 accounting record, and scope close requires all declared final components to
-have non-quarantined host receipts. The integration must retain these records
-through the supported provider replay horizon.
+have non-quarantined host receipts. Native serving retains these records and their
+protected usage facts; it does not delete them when upstream content is deleted.
 
 `observations::hosted` normalizes authenticated, typed supplemental evidence for
 OpenAI container intervals, Anthropic execution duration and image-tool leaf
@@ -137,12 +136,44 @@ duration rules and allowance policy; the adapter contains no monetary defaults.
 A container ID alone is insufficient. Responses image usage may omit billed
 cache counts, so exact image accounting can require additional provider evidence.
 
-These are adapter and persistence-planning APIs, not enabled native routes or
-automatic billing jobs. Native Interactions serving still needs authenticated
-stored-object route resolution and door/configuration wiring. Background
-reconciliation additionally needs authorized restoration of the original
-principal. Hosted evidence acquisition and runtime integration remain pending.
-No complete Interactions/hosted-billing parity is claimed by this checkpoint.
+Native buffered create/get/cancel/delete is opt-in through the LLM-owned
+`interactions` section. For each concrete Gemini model entry, configure
+`interactions.models.<entry>.account_namespace` and
+`interactions.models.<entry>.pricing_modes: [standard]`. Ordinary routes do not
+require a conditional-record backend merely because this feature exists.
+
+The served plane also needs the host-owned `usage_observations.<entry>` policy:
+a matching stable `accounting_namespace`, `classes: [input, output, cache_read]`,
+a positive `reserve_nanos`, and explicit dated rates for those classes on the
+serving subject. Native create requires host proof of all three priced classes
+and a durable create-intent receipt before emitting any upstream request head.
+No provider token counts are also emitted through ordinary request metering.
+
+Stored IDs resolve only after authentication through the original protected
+principal/account index, then ordinary destination authorization and original
+host-scope attachment. Unknown, ambiguous or changed-account IDs are refused.
+Continuations require the same protected predecessor lookup and original
+route/model/account; each continuation creates a new paid run and new scope.
+A deliberate signing-key rotation changes the lookup reference and fails closed;
+no global index fallback or ownership migration is attempted.
+
+The first native profile supports buffered, stored, ordinary text model requests,
+including background creation followed by request-driven polling. It refuses
+stream/replay requests, nonstandard service tiers, agents, hosted tools,
+multimodal controls and unsupported request fields before paid dispatch. A
+provider response with missing usage or unsupported final steps remains
+unresolved; it never fabricates zero usage or closes the reservation. Responses
+are limited to 1 MiB, and original response bytes are preserved on successful
+native delivery. A lost create with no recorded provider ID is retained as an
+uncertain intent and never automatically resubmitted. Changed final totals retain
+new protected evidence and submit the same economic keys for host quarantine;
+no provider revision is invented and quarantined components cannot close a scope.
+
+Stream/replay serving, background reconciliation under restored original
+principal authority, signing-key-rotation recovery, additional service-tier
+pricing, and authenticated hosted-evidence acquisition/runtime settlement remain
+active followups. The hosted module remains an adapter API, not automatic billing
+jobs. Complete Interactions/hosted-billing parity is not claimed.
 
 Hook request projections now attest text completeness only after checking the
 concrete normalized chat request. Media, tools, unsupported structured content,

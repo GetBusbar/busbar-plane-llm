@@ -1,9 +1,13 @@
 //! Provider evidence adapters for host-owned observation settlement.
 //!
-//! These adapters do not issue paid requests or store ownership in process memory. Native
-//! serving must first durably bind the original host scope and freeze provider configuration;
-//! publishing this module alone does not enable Interactions or hosted-tool billing at the door.
+//! Native Interactions serving uses these adapters behind explicit model opt-in and durable
+//! host scope/record barriers. Hosted-tool adapters remain evidence APIs pending runtime wiring;
+//! no ownership or paid-create recovery is reconstructed from process memory alone.
 
+pub mod crossing;
 pub mod hosted;
 pub mod interactions;
 pub mod lifecycle;
+pub mod lookup;
+pub mod native_request;
+pub mod session;

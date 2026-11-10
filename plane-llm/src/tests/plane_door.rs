@@ -84,7 +84,26 @@ fn the_tail_is_one_the_contract_accepts() {
         ),
         Ok(())
     );
-    assert_eq!(TAIL.flags, TAIL_FALLBACK | TAIL_PROBES);
+    assert_eq!(
+        TAIL.flags,
+        TAIL_FALLBACK | TAIL_PROBES | busbar_contract::abi::plane::TAIL_AUTHENTICATED_ROUTE
+    );
+    assert_eq!(TAIL.record_kinds_len, 1);
+    assert_eq!(
+        busbar_contract::abi::sdk::plane::conditional::required_kinds(
+            crate::plane_door::EXTENSIONS
+        )
+        .unwrap(),
+        vec![0]
+    );
+    assert_eq!(
+        busbar_contract::abi::mechanism::extensions::unique(
+            crate::plane_door::EXTENSIONS,
+            busbar_contract::abi::sdk::plane::conditional::OPTIONAL
+        )
+        .unwrap(),
+        Some(b"1".as_slice())
+    );
     assert_eq!(TAIL.dialects_len(), DIALECTS.len());
     assert_eq!(TAIL.op_classes_len(), 7);
     assert_eq!(

@@ -331,6 +331,7 @@ fn normalize_inner(
     // These are preserved as evidence, never added to their parent totals.
     for (field, total) in [
         ("input_tokens_by_modality", input),
+        ("cached_tokens_by_modality", cache),
         ("output_tokens_by_modality", output),
         ("tool_use_tokens_by_modality", tools),
     ] {

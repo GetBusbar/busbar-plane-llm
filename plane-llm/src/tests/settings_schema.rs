@@ -256,3 +256,33 @@ fn settings_schema_gemini_timeout_preserves_u64_and_signed_zero() {
         );
     }
 }
+
+#[test]
+fn settings_schema_describes_optional_native_interactions() {
+    let schema: Value = serde_json::from_slice(SETTINGS_SCHEMA).unwrap();
+    let validator = jsonschema::validator_for(&schema["$defs"]["owned_sections"]).unwrap();
+    let shaping=Shaping::from_settings(&serde_json::json!({"providers":{"google":{"protocol":"gemini"}},"models":{"entry":{"provider":"google"}}})).unwrap();
+    for (value, valid) in [
+        (serde_json::json!({"interactions":null}), true),
+        (serde_json::json!({"interactions":{}}), true),
+        (
+            serde_json::json!({"interactions":{"models":{"entry":{"account_namespace":"account","pricing_modes":["standard"]}}}}),
+            true,
+        ),
+        (
+            serde_json::json!({"interactions":{"models":{"entry":{"account_namespace":"account","pricing_modes":["flex"]}}}}),
+            false,
+        ),
+        (
+            serde_json::json!({"interactions":{"models":{"entry":{"account_namespace":"account"}}}}),
+            false,
+        ),
+        (serde_json::json!({"interactions":{"typo":true}}), false),
+    ] {
+        assert_eq!(validator.is_valid(&value), valid);
+        assert_eq!(
+            native::config(&serde_json::to_vec(&value).unwrap(), &shaping).is_ok(),
+            valid
+        );
+    }
+}

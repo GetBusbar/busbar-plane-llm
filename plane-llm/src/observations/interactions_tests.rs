@@ -257,3 +257,23 @@ fn create_validates_reconcilable_model_variant_without_reusing_previous_scope() 
         assert!(create(body).is_err());
     }
 }
+
+#[test]
+fn cached_modality_partition_is_validated_without_adding_to_token_total() {
+    let mut snapshot = body();
+    snapshot["usage"]["cached_tokens_by_modality"] = json!([{"modality":"text","tokens":20}]);
+    assert_eq!(
+        finals(normalized(&binding(), &snapshot))[1].counts[&2],
+        Count::from(20)
+    );
+    snapshot["usage"]["cached_tokens_by_modality"] = json!([{"modality":"text","tokens":21}]);
+    assert!(matches!(
+        normalized(&binding(), &snapshot),
+        Normalized::Pending(_)
+    ));
+    snapshot["usage"]["cached_tokens_by_modality"] = json!([{"modality":"image","tokens":20}]);
+    assert!(matches!(
+        normalized(&binding(), &snapshot),
+        Normalized::Pending(_)
+    ));
+}

@@ -824,6 +824,34 @@ fn forward_over(
         .collect()
 }
 
+/// Apply the same native caller forwarding rules to the dedicated JSON Interactions adapter.
+/// Preserve JSON framing, the configured billing-project header and operator-forced fields;
+/// the kernel supplies governed credentials.
+pub(crate) fn native_forward_fields(
+    lane: &Lane,
+    own: Vec<(String, Vec<u8>)>,
+    caller: HeadFields<'_>,
+) -> Vec<(String, Vec<u8>)> {
+    let forwarded = caller
+        .iter()
+        .filter_map(|(name, value)| {
+            let name = std::str::from_utf8(name).ok()?.to_ascii_lowercase();
+            let forced = lane.options.iter().any(|o| {
+                o.place == Place::Header
+                    && o.precedence == Precedence::Forced
+                    && o.wire.eq_ignore_ascii_case(&name)
+            });
+            (!governed(&name)
+                && name != ACCEPT
+                && name != "content-type"
+                && name != "x-goog-user-project"
+                && !forced)
+                .then(|| (name, value.to_vec()))
+        })
+        .collect();
+    forward_over(own, forwarded)
+}
+
 /// Build one attempt's far-end request for `member` of `pool`.
 pub fn build(
     host: &dyn crate::codec::cells::CodecHost,
