@@ -133,8 +133,25 @@ protected usage facts; it does not delete them when upstream content is deleted.
 OpenAI container intervals, Anthropic execution duration and image-tool leaf
 models. Configuration supplies dated tariff variants, rate bindings, explicit
 duration rules and allowance policy; the adapter contains no monetary defaults.
-A container ID alone is insufficient. Responses image usage may omit billed
-cache counts, so exact image accounting can require additional provider evidence.
+A container ID alone is insufficient. Automatic hosted settlement is not enabled.
+The [Responses reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
+exposes image usage as `tool_usage.image_gen`, which can skip incomplete call
+records and omit cache or output detail. Image result items provide no per-call
+image usage. Consequently, that aggregate alone cannot establish the complete
+per-call manifest required here, even when some totals are present. The
+[image guide](https://developers.openai.com/api/docs/guides/image-generation)
+also describes billed cache hits that are absent from response usage. No missing
+cache count is converted to zero, and no aggregate is assigned to an invented
+leaf-call record.
+
+Container/execution settlement additionally needs authoritative dated interval,
+eligibility and duration evidence, and custody for an interval distinct from the
+parent response. The current live path supplies neither that complete evidence
+nor multiple independent economic scopes within one unit. Typed supplemental
+fixtures do not establish a live evidence acquisition path. Native Interactions
+requests with hosted tools are refused before scope creation or paid dispatch;
+ordinary existing routes do not opt into exact hosted settlement through this
+adapter API.
 
 Native create/get/cancel/delete and create/get streaming are opt-in through the LLM-owned
 `interactions` section. For each concrete Gemini model entry, configure
