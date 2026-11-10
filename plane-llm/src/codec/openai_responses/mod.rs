@@ -1153,7 +1153,12 @@ fn write_responses_incomplete_reason(reason: crate::codec::ir::IrStopReason) -> 
     match reason {
         S::MaxTokens => INCOMPLETE_REASON_MAX_OUTPUT,
         S::Safety => INCOMPLETE_REASON_CONTENT_FILTER,
-        S::EndTurn | S::StopSequence | S::ToolUse | S::Refusal | S::PauseTurn | S::Error
+        S::EndTurn
+        | S::StopSequence
+        | S::ToolUse
+        | S::Refusal
+        | S::PauseTurn
+        | S::Error
         | S::Other => INCOMPLETE_REASON_OTHER,
     }
 }
