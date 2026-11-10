@@ -493,7 +493,7 @@ async fn the_pools_doors_traffic_appears_on_the_metrics_scrape() {
         after > before,
         "this pool's attempt was counted: {before} -> {after}"
     );
-    let scrape = crate::root::serve::door_tests::render_metrics();
+    let scrape = crate::root::serve::metrics_fixture::render_metrics();
     assert!(
         scrape
             .lines()
@@ -4386,7 +4386,7 @@ mod pools_door_counts_and_routes {
         assert_eq!(status, 404, "an unknown model is a 404");
         let after = unresolved_client_errors();
         assert_eq!(after - before, 1.0, "this unknown request was counted once");
-        let scrape = crate::root::serve::door_tests::render_metrics();
+        let scrape = crate::root::serve::metrics_fixture::render_metrics();
         assert!(
             !scrape.contains(probe),
             "the raw model is never a label:\n{scrape}"
@@ -4511,7 +4511,7 @@ mod pools_door_counts_and_routes {
                 "`{model}` counts under `{label}`: {before} -> {after}"
             );
         }
-        let scrape = crate::root::serve::door_tests::render_metrics();
+        let scrape = crate::root::serve::metrics_fixture::render_metrics();
         assert!(!scrape.contains("pool=\"anything-else\""), "{scrape}");
         assert!(!scrape.contains("pool=\"\""), "{scrape}");
     }
@@ -5340,7 +5340,7 @@ fn a_1_5_5_request_lifecycle_emits_no_alarm_or_dispute_event_or_metric() {
             .join("\n")
     );
 
-    let exposition = crate::root::serve::door_tests::render_metrics();
+    let exposition = crate::root::serve::metrics_fixture::render_metrics();
     let leaked: Vec<&str> = exposition
         .lines()
         .filter_map(exposition_metric_name)
@@ -5628,7 +5628,7 @@ async fn the_model_plane_families_stay_v1_5_4_shaped_on_a_real_scrape() {
         after.1 > before.1,
         "this pool's duration observed: {before:?} -> {after:?}"
     );
-    let exposition = crate::root::serve::door_tests::render_metrics();
+    let exposition = crate::root::serve::metrics_fixture::render_metrics();
     let model_counters = exposition_family(&exposition, busbar_kernel::snapshot::REQUESTS_TOTAL);
     assert!(
         model_counters
