@@ -22,6 +22,8 @@ const RESPONSES: &str = "responses";
 /// What a hook is shown of one arrival.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HookView {
+    /// Every prompt item was normalized ordinary text; no opaque, tool or structured item omitted.
+    pub text_complete: bool,
     /// The wire turn count.
     pub turn_count: usize,
     /// The screenable text's characters, system included.
@@ -80,17 +82,53 @@ pub fn max_tokens_for(v: &Value, dialect: &str) -> Option<u32> {
 
 /// The facts the operation's reader reads off `arrived`; `Ok(None)` when there is no reader or no
 /// body to read.
-fn facts(arrived: &Arrived) -> Result<Option<Box<dyn IrFacts + Send + Sync>>, Unreadable> {
+type ProjectionFacts = (Box<dyn IrFacts + Send + Sync>, bool);
+
+fn facts(arrived: &Arrived) -> Result<Option<ProjectionFacts>, Unreadable> {
     let Some(handler) = handler_of(arrived) else {
         return Ok(None);
     };
+    // The neutral facts walk intentionally omits media. Determine completeness on the concrete
+    // normalized chat IR before taking that projection, using the same protocol reader once.
+    if arrived.operation == OpVerb::CHAT {
+        if let Some(value) = arrived.parsed.as_ref().filter(|v| v.is_object()) {
+            if let Some(read) = crate::codec::proto_codec::with_reader(arrived.dialect, |reader| {
+                reader.read_request(value).map(|request| {
+                    use crate::codec::ir::{IrBlock, IrRole};
+                    let complete = request.tools.is_empty()
+                        && request.hosted_tools.is_empty()
+                        && request.extra.is_empty()
+                        && request
+                            .system
+                            .iter()
+                            .all(|b| matches!(b, IrBlock::Text { .. }))
+                        && request.messages.iter().all(|m| {
+                            m.role != IrRole::Tool
+                                && m.content.iter().all(|b| matches!(b, IrBlock::Text { .. }))
+                        })
+                        && reader
+                            .grammar()
+                            .request_blocks
+                            .iter()
+                            .all(|g| g.unmodelled(value).is_empty());
+                    (
+                        Box::new(request.facts_snapshot()) as Box<dyn IrFacts + Send + Sync>,
+                        complete,
+                    )
+                })
+            }) {
+                return read.map(Some).map_err(|_| Unreadable);
+            }
+        }
+    }
     let read = match &arrived.parsed {
         Some(v) if v.is_object() => handler.read_facts_value(v),
         _ if arrived.body.is_empty() => return Ok(None),
 
         _ => handler.read_facts(&arrived.body, &arrived.content_type),
     };
-    read.map(Some).map_err(|_| Unreadable)
+    read.map(|facts| Some((facts, false)))
+        .map_err(|_| Unreadable)
 }
 
 /// One bucket's pieces joined with a newline.
@@ -103,10 +141,19 @@ fn join(pieces: Vec<String>) -> Option<String> {
 }
 
 /// The prompt view of `ir`: the system slot's text, and one `(role, text)` entry per turn.
-fn prompt(ir: &dyn IrFacts) -> (Option<String>, Vec<(String, String)>) {
+fn prompt(ir: &dyn IrFacts) -> (Option<String>, Vec<(String, String)>, bool) {
     let mut system: Vec<String> = Vec::new();
     let mut turns: Vec<(&'static str, Vec<String>)> = Vec::new();
+    let mut complete = !ir.shape().has_tools;
     for item in ir.content() {
+        complete &= matches!(
+            &item,
+            ContentItem::Text {
+                slot: Slot::System | Slot::Turn(_),
+                author: "system" | "developer" | "user" | "assistant",
+                ..
+            }
+        );
         let piece = match &item {
             ContentItem::Text { text, .. } => text.to_string(),
             other => other.screenable_text().into_owned(),
@@ -128,6 +175,7 @@ fn prompt(ir: &dyn IrFacts) -> (Option<String>, Vec<(String, String)>) {
             .into_iter()
             .map(|(role, pieces)| (role.to_string(), join(pieces).unwrap_or_default()))
             .collect(),
+        complete,
     )
 }
 
@@ -153,6 +201,7 @@ pub fn project(arrived: &Arrived) -> HookView {
                 .unwrap_or(&null);
             let raw = raw::raw_view(v, arrived.dialect);
             return HookView {
+                text_complete: false,
                 turn_count: raw.turn_count,
                 text_chars: raw.text_chars,
                 has_tools: raw.has_tools,
@@ -164,7 +213,7 @@ pub fn project(arrived: &Arrived) -> HookView {
             };
         }
     };
-    let Some(ir) = read else {
+    let Some((ir, normalized_complete)) = read else {
         let shape = Shape::EMPTY;
         return HookView {
             turn_count: shape.turn_count,
@@ -176,8 +225,9 @@ pub fn project(arrived: &Arrived) -> HookView {
         };
     };
     let shape = ir.shape();
-    let (system, turns) = prompt(&*ir);
+    let (system, turns, complete) = prompt(&*ir);
     HookView {
+        text_complete: normalized_complete && complete && turns.len() == shape.turn_count,
         turn_count: shape.turn_count,
         text_chars: shape.text_chars,
         has_tools: shape.has_tools,

@@ -116,6 +116,15 @@ fn the_tail_is_one_the_contract_accepts() {
         ]
     );
     let stated = unsafe { TAIL.billable_classes() };
+    // SAFETY: the declaration borrows a static class-parent table.
+    let parents = unsafe { TAIL.class_parents() };
+    assert_eq!(
+        parents
+            .iter()
+            .map(|p| (p.child, p.parent))
+            .collect::<Vec<_>>(),
+        [(20, 3), (21, 3)]
+    );
 
     let tokens = [
         ("input", "token"),

@@ -106,8 +106,44 @@ controls never silently become another provider's cache settings. Legacy native
 `prompt_cache_retention` remains separate and cannot be combined with the new
 model contract. Prices always follow reported usage, not the requested TTL.
 
-The split classes belong to the existing token family. A reserved `cache_write`
-limit or export column does not yet aggregate these children: that requires
-neutral host declaration metadata. This response-attribution support does not
-claim complete cache budget/export parity, Gemini Interactions accounting, or
-cross-request hosted-tool settlement.
+The split classes belong to the existing token family and declare `cache_write`
+as their parent through neutral host metadata. Host cap/reporting projections
+include both children in that reserved total; raw metering and pricing retain
+only the disjoint components. Historical class indices, including fee index 19,
+are preserved. This does not enable Gemini Interactions or cross-request
+hosted-tool settlement.
+
+## Observation adapter checkpoint
+
+`observations::interactions` provides a native operation table and validates
+stored model creates. Its final-response/SSE adapter keeps input, cache reads,
+output, thoughts and explicitly priced tool-use prompts separate. Missing usage,
+changed models, unsupported modalities or tariffs remain unresolved. Event-stream
+cursors are not accounting revisions. Unknown provider IDs are unattributed.
+
+`observations::lifecycle` produces exact conditional-record publications using
+the host SDK: an absent-only intent before paid dispatch, an atomic provider-ID
+index and frozen run binding, and persistent final observations/receipt progress.
+The host's original scope carries ownership and prices. A restored intent with
+no provider ID never authorizes another create. Content deletion preserves the
+accounting record, and scope close requires all declared final components to
+have non-quarantined host receipts. The integration must retain these records
+through the supported provider replay horizon.
+
+`observations::hosted` normalizes authenticated, typed supplemental evidence for
+OpenAI container intervals, Anthropic execution duration and image-tool leaf
+models. Configuration supplies dated tariff variants, rate bindings, explicit
+duration rules and allowance policy; the adapter contains no monetary defaults.
+A container ID alone is insufficient. Responses image usage may omit billed
+cache counts, so exact image accounting can require additional provider evidence.
+
+These are adapter and persistence-planning APIs, not enabled native routes or
+automatic billing jobs. Native Interactions serving still needs authenticated
+stored-object route resolution and door/configuration wiring. Background
+reconciliation additionally needs authorized restoration of the original
+principal. Hosted evidence acquisition and runtime integration remain pending.
+No complete Interactions/hosted-billing parity is claimed by this checkpoint.
+
+Hook request projections now attest text completeness only after checking the
+concrete normalized chat request. Media, tools, unsupported structured content,
+remote history and raw fallback never receive that attestation.

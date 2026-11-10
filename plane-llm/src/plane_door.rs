@@ -328,6 +328,16 @@ const TAIL_ROW: PlaneTail = {
         .with_scope_kinds(SCOPE_KINDS)
         .with_op_classes(OP_CLASSES)
         .with_billable_classes(BILLABLE_CLASSES)
+        .with_class_parents(&[
+            busbar_contract::abi::plane::ClassParent {
+                child: 20,
+                parent: 3,
+            },
+            busbar_contract::abi::plane::ClassParent {
+                child: 21,
+                parent: 3,
+            },
+        ])
         .with_fee_units(FEE_UNITS)
         .with_route_cost(ROUTE_COST)
         .with_refusal_statuses(&crate::refusal::REFUSAL_STATUSES);
@@ -1836,6 +1846,9 @@ slot!(
         }
         if view.stream {
             flags |= REQUEST_STREAM;
+        }
+        if view.text_complete {
+            flags |= busbar_contract::abi::hook::REQUEST_TEXT_COMPLETE;
         }
         flags |= rewrite_flags;
         out.host_str(|o| &o.view.pool, &arena, pool);
