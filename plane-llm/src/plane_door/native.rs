@@ -294,6 +294,8 @@ fn piece_inner(
                             &mut random,
                         )
                         .map_err(|_| "host random unavailable")?;
+                    let classes =
+                        crate::observations::profiles::text_classes(&create.pricing_mode)?;
                     let binding = Binding {
                         scope: [0; 32],
                         account_namespace: config.account_namespace.clone(),
@@ -301,11 +303,11 @@ fn piece_inner(
                         model: lane.wire_model().into(),
                         pricing_mode: create.pricing_mode.clone(),
                         usage_schema: "gemini-interactions-2026-11-10".into(),
-                        input_class: 0,
-                        cache_read_class: 2,
-                        output_class: 1,
+                        input_class: classes.input,
+                        cache_read_class: classes.cache_read,
+                        output_class: classes.output,
                         tool_use_class: None,
-                        priced_classes: vec![0, 1, 2],
+                        priced_classes: classes.required().to_vec(),
                     };
                     (
                         request,

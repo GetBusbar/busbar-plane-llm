@@ -247,6 +247,19 @@ pub struct Binding {
     pub priced_classes: Vec<u32>,
 }
 
+impl Binding {
+    /// Exact classes whose rates must be proved by the host before any dispatch. The pinned
+    /// profile, rather than today's model configuration or a standard-tier fallback, determines
+    /// reattachment requirements for an existing run.
+    pub fn required_classes(&self) -> Vec<u32> {
+        let mut classes = vec![self.input_class, self.output_class, self.cache_read_class];
+        classes.extend(self.tool_use_class);
+        classes.sort_unstable();
+        classes.dedup();
+        classes
+    }
+}
+
 /// A protected provider response and its attributable original run.
 pub struct Evidence<'a> {
     /// Original ID found through durable, principal-scoped lookup; `None` is historical/unknown.
@@ -352,6 +365,9 @@ fn normalize_inner(
         .is_some_and(|value| value.as_str() != Some(binding.pricing_mode.as_str()))
     {
         return Err("changed provider pricing mode");
+    }
+    if binding.pricing_mode != "standard" && object.get("service_tier").is_none() {
+        return Err("nonstandard provider pricing mode is not confirmed");
     }
     match object.get("status").and_then(Value::as_str) {
         Some("completed" | "failed" | "cancelled" | "incomplete" | "budget_exceeded") => {}

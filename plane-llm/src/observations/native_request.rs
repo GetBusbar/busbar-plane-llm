@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! Pure preparation for the bounded Gemini Interactions text profile.
+//! Pure preparation for the bounded Gemini Interactions text tariff profiles.
 //!
 //! This module does not dispatch requests or establish ownership. Before calling
 //! it, the runtime must perform principal-scoped durable lookup for stored IDs and
@@ -12,9 +12,9 @@
 //!
 //! Supported native paths and text request fields were checked against
 //! <https://aistudio.google.com/api-reference/interactions-api/create-interaction>
-//! and <https://ai.google.dev/api/interactions-api> on 2026-11-10. Streaming,
-//! hosted tools, agents, multimodal input/output controls and arbitrary query/path
-//! overrides are deliberately refused by this first request profile.
+//! and <https://ai.google.dev/api/interactions-api> on 2026-11-10. Hosted tools,
+//! agents, multimodal input/output controls and arbitrary query/path overrides
+//! remain outside these text profiles.
 
 use super::interactions::{self, Binding, Create, Operation};
 use crate::exchange::attempt::{self, FarRequest};
@@ -44,7 +44,7 @@ pub struct NativeConfig {
 pub struct NativeModel {
     /// Stable provider account namespace used by durable ownership records.
     pub account_namespace: String,
-    /// Explicitly enabled provider service tiers; currently only `standard` is supported.
+    /// Explicitly enabled provider service tiers: `standard`, `flex`, and/or `priority`.
     pub pricing_modes: BTreeSet<String>,
 }
 
@@ -328,7 +328,11 @@ fn validate_lane(lane: &Lane, opt_in: &NativeModel) -> Result<(), &'static str> 
     {
         return Err("invalid native account namespace");
     }
-    if opt_in.pricing_modes.is_empty() || opt_in.pricing_modes.iter().any(|mode| mode != "standard")
+    if opt_in.pricing_modes.is_empty()
+        || opt_in
+            .pricing_modes
+            .iter()
+            .any(|mode| super::profiles::text_classes(mode).is_err())
     {
         return Err("invalid native pricing modes");
     }
@@ -349,11 +353,20 @@ fn validate_binding_route(
     opt_in: &NativeModel,
     binding: &Binding,
 ) -> Result<(), &'static str> {
+    let classes = super::profiles::text_classes(&binding.pricing_mode)?;
     if binding.scope == [0; 32]
         || binding.route_entry != lane.model
         || binding.model != lane.wire_model()
         || binding.account_namespace != opt_in.account_namespace
-        || binding.pricing_mode != "standard"
+        || !opt_in.pricing_modes.contains(&binding.pricing_mode)
+        || binding.input_class != classes.input
+        || binding.output_class != classes.output
+        || binding.cache_read_class != classes.cache_read
+        || binding.tool_use_class.is_some()
+        || classes
+            .required()
+            .iter()
+            .any(|class| !binding.priced_classes.contains(class))
     {
         return Err("original interaction binding does not match selected native lane");
     }
@@ -493,11 +506,11 @@ mod tests {
             model: "gemini-pinned".into(),
             pricing_mode: "standard".into(),
             usage_schema: "gemini-interactions-2026-11-10".into(),
-            input_class: 1,
+            input_class: 0,
             cache_read_class: 2,
-            output_class: 3,
+            output_class: 1,
             tool_use_class: None,
-            priced_classes: vec![1, 2, 3],
+            priced_classes: vec![0, 1, 2],
         }
     }
     fn prepare(body: &[u8]) -> Result<FarRequest, &'static str> {
@@ -751,13 +764,25 @@ mod tests {
     }
 
     #[test]
-    fn nonstandard_tiers_are_refused_without_an_explicit_host_class_mapping() {
+    fn nonstandard_tiers_require_explicit_opt_in_and_preserve_provider_request() {
         for mode in ["priority", "flex"] {
             let mut configured = opt_in();
             configured.pricing_modes.insert(mode.into());
-            assert!(validate_lane(&shaping().lanes["entry"], &configured).is_err());
+            assert!(validate_lane(&shaping().lanes["entry"], &configured).is_ok());
             let body = format!(r#"{{"model":"entry","input":"hi","service_tier":"{mode}"}}"#);
             assert!(prepare(body.as_bytes()).is_err());
+            let create = interactions::create(body.as_bytes()).unwrap();
+            let request = prepare_create(
+                &shaping().lanes["entry"],
+                &configured,
+                &create,
+                body.as_bytes(),
+                None,
+            )
+            .unwrap();
+            let sent: Value = serde_json::from_slice(&request.body).unwrap();
+            assert_eq!(sent["service_tier"], mode);
+            assert_eq!(sent["model"], "gemini-pinned");
         }
     }
 

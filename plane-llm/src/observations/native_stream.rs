@@ -171,6 +171,7 @@ pub struct NativeStream {
     pending_cr: bool,
     provider_id: Option<String>,
     reported_model: Option<String>,
+    reported_tier: Option<String>,
     event_ids: BTreeSet<String>,
     steps: BTreeMap<u32, (StepKind, bool)>,
     next_step: u32,
@@ -196,6 +197,7 @@ impl NativeStream {
             pending_cr: false,
             provider_id: expected_id,
             reported_model: None,
+            reported_tier: None,
             event_ids: BTreeSet::new(),
             steps: BTreeMap::new(),
             next_step: 0,
@@ -381,6 +383,7 @@ impl NativeStream {
                 let interaction = root.get("interaction").ok_or(StreamIssue::MalformedEvent)?;
                 let id = self.identity(interaction.get("id"))?.to_owned();
                 self.model(interaction.get("model"))?;
+                self.tier(interaction.get("service_tier"))?;
                 interaction_fields(interaction)?;
                 let span = spans::members(&data, 0)
                     .and_then(|members| members.last("interaction").cloned())
@@ -550,6 +553,21 @@ impl NativeStream {
         }
         Ok(())
     }
+    fn tier(&mut self, value: Option<&Value>) -> Result<(), StreamIssue> {
+        if let Some(value) = value {
+            let tier = value.as_str().ok_or(StreamIssue::UnsupportedUsage)?;
+            super::profiles::text_classes(tier).map_err(|_| StreamIssue::UnsupportedUsage)?;
+            if self
+                .reported_tier
+                .as_deref()
+                .is_some_and(|original| original != tier)
+            {
+                return Err(StreamIssue::UnsupportedUsage);
+            }
+            self.reported_tier.get_or_insert_with(|| tier.to_owned());
+        }
+        Ok(())
+    }
 }
 
 struct ParsedFrame {
@@ -632,10 +650,10 @@ fn interaction_fields(value: &Value) -> Result<(), StreamIssue> {
             "error",
         ],
     )?;
-    if value
-        .get("service_tier")
-        .is_some_and(|tier| tier.as_str() != Some("standard"))
-    {
+    if value.get("service_tier").is_some_and(|tier| {
+        tier.as_str()
+            .is_none_or(|tier| super::profiles::text_classes(tier).is_err())
+    }) {
         return Err(StreamIssue::UnsupportedUsage);
     }
     Ok(())
@@ -920,6 +938,29 @@ mod tests {
                 completion.profile,
                 ProfileVerdict::Supported(ProofKind::ObservedFreshStream)
             );
+        }
+    }
+
+    #[test]
+    fn native_service_tiers_stream_without_standard_fallback_or_midstream_switches() {
+        for tier in ["flex", "priority"] {
+            let mut created = created();
+            created["interaction"]["service_tier"] = tier.into();
+            let mut completed = completed(true);
+            completed["interaction"]["service_tier"] = tier.into();
+            let bytes: Vec<_> = [created.clone(), completed.clone()]
+                .iter()
+                .flat_map(|event| frame(event, "\n"))
+                .collect();
+            let (_, result) = run(&bytes, StreamMode::Fresh);
+            assert!(matches!(result.profile, ProfileVerdict::Supported(_)));
+            completed["interaction"]["service_tier"] = "standard".into();
+            let bytes: Vec<_> = [created, completed]
+                .iter()
+                .flat_map(|event| frame(event, "\n"))
+                .collect();
+            let (_, result) = run(&bytes, StreamMode::Fresh);
+            unresolved(&result, StreamIssue::UnsupportedUsage);
         }
     }
 

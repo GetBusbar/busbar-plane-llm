@@ -181,7 +181,15 @@ const fn open_class_index(k: usize) -> u32 {
 
 /// Billable class `i`: historical tokens/open classes/fee, followed by newly appended classes.
 const fn billable_class(i: usize) -> BillableClass {
-    if i < TOKEN_CLASSES.len() {
+    if i >= crate::observations::profiles::FIRST_CLASS {
+        BillableClass {
+            class: abi_str(
+                crate::observations::profiles::CLASSES
+                    [i - crate::observations::profiles::FIRST_CLASS],
+            ),
+            family: abi_str(busbar_contract::plane::TOKEN_FAMILY),
+        }
+    } else if i < TOKEN_CLASSES.len() {
         billable(i)
     } else if i < FEE_CLASS_INDEX as usize {
         open_class(i - TOKEN_CLASSES.len())
@@ -195,8 +203,10 @@ const fn billable_class(i: usize) -> BillableClass {
     }
 }
 
-const BILLABLE_CLASSES: &[BillableClass] =
-    &rows!(BillableClass; TOKEN_CLASSES.len() + OPEN_CLASSES.len() + 1, billable_class);
+const _: () = assert!(
+    TOKEN_CLASSES.len() + OPEN_CLASSES.len() + 1 == crate::observations::profiles::FIRST_CLASS
+);
+const BILLABLE_CLASSES: &[BillableClass] = &rows!(BillableClass; crate::observations::profiles::FIRST_CLASS + crate::observations::profiles::CLASSES.len(), billable_class);
 /// The tail's fee units: [`FEE_CLASS`].
 const FEE_UNITS: &[AbiStr] = &[abi_str(FEE_CLASS)];
 
@@ -340,6 +350,30 @@ const TAIL_ROW: PlaneTail = {
             busbar_contract::abi::plane::ClassParent {
                 child: 21,
                 parent: 3,
+            },
+            busbar_contract::abi::plane::ClassParent {
+                child: 22,
+                parent: 0,
+            },
+            busbar_contract::abi::plane::ClassParent {
+                child: 23,
+                parent: 1,
+            },
+            busbar_contract::abi::plane::ClassParent {
+                child: 24,
+                parent: 2,
+            },
+            busbar_contract::abi::plane::ClassParent {
+                child: 25,
+                parent: 0,
+            },
+            busbar_contract::abi::plane::ClassParent {
+                child: 26,
+                parent: 1,
+            },
+            busbar_contract::abi::plane::ClassParent {
+                child: 27,
+                parent: 2,
             },
         ])
         .with_fee_units(FEE_UNITS)

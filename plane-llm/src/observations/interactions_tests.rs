@@ -48,6 +48,43 @@ fn final_components_are_disjoint_and_thoughts_are_additional_output() {
     assert_eq!(rows[4].counts[&22], Count::from(5));
     assert!(rows.iter().all(|o| o.revision.is_none()));
 }
+
+#[test]
+fn native_tier_usage_requires_confirmation_and_uses_only_its_original_classes() {
+    for tier in ["flex", "priority"] {
+        let classes = super::super::profiles::text_classes(tier).unwrap();
+        let mut binding = binding();
+        binding.pricing_mode = tier.into();
+        binding.input_class = classes.input;
+        binding.output_class = classes.output;
+        binding.cache_read_class = classes.cache_read;
+        binding.tool_use_class = None;
+        binding.priced_classes = classes.required().to_vec();
+        let mut body = body();
+        body["usage"]["total_tool_use_tokens"] = json!(0);
+        assert!(matches!(
+            normalized(&binding, &body),
+            Normalized::Pending(_)
+        ));
+        body["service_tier"] = json!("standard");
+        assert!(matches!(
+            normalized(&binding, &body),
+            Normalized::Pending(_)
+        ));
+        body["service_tier"] = json!(tier);
+        let rows = finals(normalized(&binding, &body));
+        assert_eq!(rows[0].counts[&classes.input], Count::from(80));
+        assert_eq!(rows[1].counts[&classes.cache_read], Count::from(20));
+        assert_eq!(rows[2].counts[&classes.output], Count::from(30));
+        assert_eq!(rows[3].counts[&classes.output], Count::from(40));
+        assert!(rows.iter().all(|r| r.counts.keys().all(|c| *c >= 22)));
+        binding.priced_classes.retain(|c| *c != classes.cache_read);
+        assert!(matches!(
+            normalized(&binding, &body),
+            Normalized::Pending(_)
+        ));
+    }
+}
 #[test]
 fn repeated_polls_and_sse_replay_produce_identical_economic_observations() {
     let expected = finals(normalized(&binding(), &body()));

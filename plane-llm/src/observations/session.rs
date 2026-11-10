@@ -76,7 +76,10 @@ impl Session {
             unresolved_final: false,
             response: None,
             stage: Stage::Scope(
-                Crossing::scope(ScopeRequest::create_requiring([0, 1, 2]), input)?,
+                Crossing::scope(
+                    ScopeRequest::create_requiring(binding.required_classes()),
+                    input,
+                )?,
                 AfterScope::Create {
                     partition,
                     intent,
@@ -90,7 +93,10 @@ impl Session {
     pub fn stored(found: Found, input: &[u8]) -> Result<Self, &'static str> {
         let stage = Stage::Scope(
             Crossing::scope(
-                ScopeRequest::attach_requiring(found.run.binding().scope, [0, 1, 2]),
+                ScopeRequest::attach_requiring(
+                    found.run.binding().scope,
+                    found.run.binding().required_classes(),
+                ),
                 input,
             )?,
             AfterScope::Existing,
@@ -597,6 +603,74 @@ mod tests {
     fn response() -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({"id":"provider-id","model":"wire","status":"completed","outputs":[{"text":"private output not retained"}],"usage":{"total_input_tokens":10,"total_cached_tokens":3,"total_output_tokens":5,"total_thought_tokens":2,"total_tool_use_tokens":0}})).unwrap()
     }
+    #[test]
+    fn native_tiers_require_exact_rates_before_create_and_after_restore() {
+        for tier in ["flex", "priority"] {
+            let mut host = Host::new();
+            let classes = super::super::profiles::text_classes(tier).unwrap();
+            let mut binding = binding();
+            binding.pricing_mode = tier.into();
+            binding.input_class = classes.input;
+            binding.output_class = classes.output;
+            binding.cache_read_class = classes.cache_read;
+            binding.priced_classes = classes.required().to_vec();
+            let mut session = Session::create(
+                Partition::new(&"a".repeat(64), "a").unwrap(),
+                "intent".into(),
+                binding,
+                &host.input,
+            )
+            .unwrap();
+            let Step::Pending(bytes) = session.poll(&host.input).unwrap() else {
+                panic!()
+            };
+            let request = ScopeRequest::from_extensions(&bytes).unwrap().unwrap();
+            assert_eq!(request.required_classes, classes.required());
+            assert!(session.dispatch().is_err());
+            assert!(host.records.is_empty());
+            host.apply(&bytes);
+            host.drive(&mut session);
+            session.dispatch().unwrap();
+            session
+                .bind_provider_id("provider-id", &host.input)
+                .unwrap();
+            host.drive(&mut session);
+            let found = Found {
+                run: session.run().unwrap().clone(),
+                record: session.original.clone(),
+            };
+            let mut restored = Session::stored(found, &host.input).unwrap();
+            let Step::Pending(bytes) = restored.poll(&host.input).unwrap() else {
+                panic!()
+            };
+            let request = ScopeRequest::from_extensions(&bytes).unwrap().unwrap();
+            assert_eq!(request.scope, Some([7; 32]));
+            assert_eq!(request.required_classes, classes.required());
+            assert!(restored.dispatch().is_err());
+            host.apply(&bytes);
+            host.drive(&mut restored);
+            restored.dispatch().unwrap();
+            let mut response: serde_json::Value = serde_json::from_slice(&response()).unwrap();
+            response["service_tier"] = serde_json::json!(tier);
+            restored
+                .response(
+                    200,
+                    &serde_json::to_vec(&response).unwrap(),
+                    false,
+                    true,
+                    &host.input,
+                )
+                .unwrap();
+            host.drive(&mut restored);
+            assert_eq!(host.close, 1);
+            assert_eq!(host.counts, 4);
+            assert!(host
+                .settled
+                .values()
+                .all(|counts| counts.keys().all(|c| classes.required().contains(c))));
+        }
+    }
+
     #[test]
     fn paid_send_waits_for_scope_and_durable_intent_then_all_receipts_precede_close() {
         let mut host = Host::new();

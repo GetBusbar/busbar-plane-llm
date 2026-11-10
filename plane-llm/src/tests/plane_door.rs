@@ -108,8 +108,8 @@ fn the_tail_is_one_the_contract_accepts() {
     assert_eq!(TAIL.op_classes_len(), 7);
     assert_eq!(
         TAIL.billable_classes_len(),
-        22,
-        "historical classes and fee retain their indices; disjoint writes follow"
+        28,
+        "historical classes and fee retain their indices; native tariff classes are appended"
     );
 
     assert_eq!(
@@ -142,7 +142,16 @@ fn the_tail_is_one_the_contract_accepts() {
             .iter()
             .map(|p| (p.child, p.parent))
             .collect::<Vec<_>>(),
-        [(20, 3), (21, 3)]
+        [
+            (20, 3),
+            (21, 3),
+            (22, 0),
+            (23, 1),
+            (24, 2),
+            (25, 0),
+            (26, 1),
+            (27, 2)
+        ]
     );
 
     let tokens = [
@@ -151,6 +160,18 @@ fn the_tail_is_one_the_contract_accepts() {
         ("cache_read", "token"),
         ("cache_write", "token"),
     ];
+    for (k, expected) in crate::observations::profiles::CLASSES.iter().enumerate() {
+        let b = &stated[crate::observations::profiles::FIRST_CLASS + k];
+        // SAFETY: each declared class and family is backed by a static string.
+        let (name, family) = unsafe {
+            (
+                std::slice::from_raw_parts(b.class.ptr(), b.class.len()),
+                std::slice::from_raw_parts(b.family.ptr(), b.family.len()),
+            )
+        };
+        assert_eq!(name, expected.as_bytes());
+        assert_eq!(family, b"token");
+    }
     for (k, (class, family)) in tokens.iter().chain(OPEN_CLASSES).enumerate() {
         let b = &stated[k + usize::from(k >= 19)];
         // SAFETY: each `AbiStr` names a `'static` string of `len` bytes.
