@@ -384,10 +384,13 @@ impl Reply {
         at: At,
     ) -> Piece<'a> {
         let Some(transcoder) = self.invoke.as_mut() else {
-            return self.read(host, ctx, bytes, last, at);
+            let mut piece = self.read(host, ctx, bytes, last, at);
+            super::cache::enforce_usage(ctx, &mut piece);
+            return piece;
         };
         let framed = transcoder.feed(bytes);
-        let p = self.read(host, ctx, &framed, last, at);
+        let mut p = self.read(host, ctx, &framed, last, at);
+        super::cache::enforce_usage(ctx, &mut p);
         Piece {
             head: p.head,
             bytes: Cow::Owned(p.bytes.into_owned()),
@@ -550,7 +553,7 @@ impl Reply {
         ctx: &ReplyCtx<'_>,
         transport: bool,
     ) -> Piece<'static> {
-        match std::mem::replace(&mut self.state, State::Done) {
+        let mut piece = match std::mem::replace(&mut self.state, State::Done) {
             State::Done => pending(),
             state @ State::Error { .. } => {
                 self.state = state;
@@ -582,7 +585,9 @@ impl Reply {
                     tap_fault: None,
                 }
             }
-        }
+        };
+        super::cache::enforce_usage(ctx, &mut piece);
+        piece
     }
 
     fn judge<'a>(

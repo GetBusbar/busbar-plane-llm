@@ -81,6 +81,25 @@ pub trait TranslateCodec: OperationHandler {
         prep: &EgressPrep,
         model: &str,
     ) -> Result<TranslatedRequest, TranslateReqReject> {
+        match &input {
+            TranslateReqInput::Json(value) => crate::exchange::cache::validate_request_bytes(
+                prep.ingress_protocol,
+                egress_proto.unwrap_or_default(),
+                prep.lane_caps,
+                Some(value),
+                &[],
+            ),
+            TranslateReqInput::Opaque { bytes, .. } => {
+                crate::exchange::cache::validate_request_bytes(
+                    prep.ingress_protocol,
+                    egress_proto.unwrap_or_default(),
+                    prep.lane_caps,
+                    None,
+                    bytes,
+                )
+            }
+        }
+        .map_err(TranslateReqReject::Unrepresentable)?;
         match input {
             TranslateReqInput::Opaque {
                 bytes,

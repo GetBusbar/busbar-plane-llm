@@ -352,6 +352,10 @@ fn translate_into<'a>(
 ) -> Result<Translated<'a>, Answer> {
     let egress = lane.dialect;
     if ingress == egress {
+        if operation == OpVerb::CHAT {
+            super::cache::validate_request_bytes(ingress, egress, lane.caps, body, hop_bytes)
+                .map_err(|message| answer(envelope, 400, KIND_INVALID_REQUEST, message))?;
+        }
         let relayed = relay_request(lane, content_type, hop_bytes);
         if relayed.bytes.is_empty() && !hop_bytes.is_empty() {
             return Err(answer(
@@ -837,8 +841,8 @@ pub fn build(
         .ok_or_else(|| internal(ingress))?;
     let body_is_json = arrived.parsed.is_some();
     let intent = stream_intent(handler, arrived.parsed.as_ref());
-    let relay = ingress == lane.dialect;
-    let hop_v = if relay { None } else { arrived.parsed.as_ref() };
+    // Native relay also uses the already-parsed view to validate lane-bound controls.
+    let hop_v = arrived.parsed.as_ref();
     let reasoning = shaping.reasoning(pool, member).unwrap_or(lane.reasoning);
     let t = translate_request(
         host,

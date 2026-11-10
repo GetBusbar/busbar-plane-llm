@@ -83,8 +83,28 @@ the plane does not derive a rate from the TTL name.
 Explicit zeros and exact fractional values survive buffered, streaming, and
 recovered usage. A malformed or inconsistent split carries an explicit count
 refusal and does not fall back to a cheaper aggregate tariff. Responses without
-a split retain legacy aggregate semantics; model capability enforcement for
-requiring splits and translation of cache request controls remain separate work.
+a split retain legacy aggregate semantics unless their configured model requires
+the new usage contract. Declare exact model versions in the provider table:
+
+```yaml
+model_capabilities:
+  - models: [cache-model-version]
+    responses_cache_ttl: true
+```
+
+The first matching rule applies to the resolved upstream model name. Enabling
+this flag on a non-Responses lane is refused. A declared model must report both
+write counts, including explicit zeros, even when the caller sends no cache
+controls. Missing splits remain unresolved; a response model name cannot weaken
+the requirement. This applies to buffered, streamed, translated and cut replies.
+
+Declared native Responses lanes preserve `prompt_cache_options` (`ttl: 30m|12h`,
+`mode: implicit|explicit`, `prewarm: boolean`) and explicit content/tool-output
+breakpoints with optional TTL overrides. Invalid values, undeclared model
+support, and cross-protocol cache controls are refused before dispatch. These
+controls never silently become another provider's cache settings. Legacy native
+`prompt_cache_retention` remains separate and cannot be combined with the new
+model contract. Prices always follow reported usage, not the requested TTL.
 
 The split classes belong to the existing token family. A reserved `cache_write`
 limit or export column does not yet aggregate these children: that requires

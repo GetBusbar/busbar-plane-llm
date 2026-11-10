@@ -162,6 +162,8 @@ struct ModelCapabilities {
     reasoning_none: Option<bool>,
     #[serde(default)]
     thinking_always_on: Option<bool>,
+    #[serde(default)]
+    responses_cache_ttl: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -278,6 +280,9 @@ fn lane_caps(p: &ProviderCfg, wire_model: &str) -> LaneCaps {
         }
         if let Some(b) = rule.thinking_always_on {
             caps.thinking_always_on = b;
+        }
+        if let Some(b) = rule.responses_cache_ttl {
+            caps.responses_cache_ttl = b;
         }
     }
     caps
@@ -459,6 +464,10 @@ impl Shaping {
                 _ => decl.static_headers,
             };
             let wire = m.upstream_model.as_deref().unwrap_or(&name);
+            let caps = lane_caps(p, wire);
+            if caps.responses_cache_ttl && dialect != "responses" {
+                return Err(format!("model '{name}' declares responses_cache_ttl but does not use the responses protocol"));
+            }
             let lane = Lane {
                 model: name.clone(),
                 provider: m.provider.clone(),
@@ -471,7 +480,7 @@ impl Shaping {
                 context_max: context.get(&name).copied().flatten(),
                 reasoning: m.reasoning.unwrap_or(false),
                 prompt_caching: m.prompt_caching.unwrap_or(false),
-                caps: lane_caps(p, wire),
+                caps,
                 error_map: p.error_map.clone(),
                 statics,
                 invoke,

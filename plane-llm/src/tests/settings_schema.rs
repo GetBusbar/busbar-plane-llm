@@ -43,6 +43,14 @@ fn settings_schema_matches_lifecycle_grammar() {
             false,
         ),
         (r#"{"providers":{"p":{"max_output_key":"typo"}}}"#, false),
+        (
+            r#"{"providers":{"p":{"protocol":"responses","model_capabilities":[{"models":["cache-v1"],"responses_cache_ttl":true}]}},"models":{"m":{"provider":"p","upstream_model":"cache-v1"}}}"#,
+            true,
+        ),
+        (
+            r#"{"providers":{"p":{"model_capabilities":[{"models":["cache-v1"],"responses_cache_ttl":"true"}]}}}"#,
+            false,
+        ),
         (r#"{"limits":{"default_max_tokens":-1}}"#, false),
         (r#"{"pools":{"p":{"members":[{}]}}}"#, false),
     ] {

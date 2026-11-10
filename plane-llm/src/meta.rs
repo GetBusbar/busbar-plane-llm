@@ -81,7 +81,8 @@ pub const PROVIDER_KEYS: &str = r#"{
           {"name": "anthropic_adaptive_thinking", "shape": "bool", "required": false},
           {"name": "native_structured_output", "shape": "bool", "required": false},
           {"name": "reasoning_none", "shape": "bool", "required": false},
-          {"name": "thinking_always_on", "shape": "bool", "required": false}
+          {"name": "thinking_always_on", "shape": "bool", "required": false},
+          {"name": "responses_cache_ttl", "shape": "bool", "required": false}
         ]
       }}}, "required": false}
     ]
@@ -102,7 +103,8 @@ pub const PROVIDER_KEYS: &str = r#"{
           {"name": "anthropic_adaptive_thinking", "shape": "bool", "required": false},
           {"name": "native_structured_output", "shape": "bool", "required": false},
           {"name": "reasoning_none", "shape": "bool", "required": false},
-          {"name": "thinking_always_on", "shape": "bool", "required": false}
+          {"name": "thinking_always_on", "shape": "bool", "required": false},
+          {"name": "responses_cache_ttl", "shape": "bool", "required": false}
         ]
       }}}, "required": false}
     ]
@@ -123,7 +125,8 @@ pub const PROVIDER_KEYS: &str = r#"{
           {"name": "anthropic_adaptive_thinking", "shape": "bool", "required": false},
           {"name": "native_structured_output", "shape": "bool", "required": false},
           {"name": "reasoning_none", "shape": "bool", "required": false},
-          {"name": "thinking_always_on", "shape": "bool", "required": false}
+          {"name": "thinking_always_on", "shape": "bool", "required": false},
+          {"name": "responses_cache_ttl", "shape": "bool", "required": false}
         ]
       }}}, "required": false}
     ]

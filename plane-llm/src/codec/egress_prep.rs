@@ -66,6 +66,9 @@ pub struct LaneCaps {
     /// The lane's model cannot switch thinking off: an Off ask OMITS the dialect's `thinking` member instead of writing `{type:"disabled"}`, which such a
     /// model rejects. False: Off is written as `{type:"disabled"}`.
     pub thinking_always_on: bool,
+    /// This exact configured Responses model accepts 30m/12h cache controls and always reports
+    /// both disjoint write counts. No model-name heuristic enables this capability.
+    pub responses_cache_ttl: bool,
 }
 
 impl LaneCaps {
@@ -77,5 +80,6 @@ impl LaneCaps {
         native_structured_output: false,
         reasoning_none: false,
         thinking_always_on: false,
+        responses_cache_ttl: false,
     };
 }

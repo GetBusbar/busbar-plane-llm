@@ -25,3 +25,6 @@ pub fn handler_of(arrived: &arrive::Arrived) -> Option<&'static dyn OperationHan
         .and_then(|d| d.handler)
         .and_then(|rh| rh.operation_handler(arrived.operation))
 }
+
+/// Responses cache controls and lane-pinned accounting requirements.
+pub mod cache;
