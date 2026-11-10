@@ -241,5 +241,3 @@ mod regression_both_ways;
 #[cfg(test)]
 #[path = "tests/driver_private.rs"]
 mod regression_driver_private;
-
-include!(concat!(env!("OUT_DIR"), "/context_test_source.rs"));

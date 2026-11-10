@@ -41,3 +41,6 @@ serde_json = { workspace = true, features = ["arbitrary_precision"] }
 getrandom = { workspace = true }
 busbar-contract = { workspace = true, features = ["test-seal"] }
 busbar-plugin-loader = { workspace = true, features = ["test-support"] }
+
+[package.metadata.busbar.test-contexts]
+inbound = [{ path = "tests/root_context/inbound.rs" }]
