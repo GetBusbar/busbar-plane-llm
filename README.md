@@ -156,14 +156,14 @@ adapter API.
 Native create/get/cancel/delete and create/get streaming are opt-in through the LLM-owned
 `interactions` section. For each concrete Gemini model entry, configure
 `interactions.models.<entry>.account_namespace` and
-`interactions.models.<entry>.pricing_modes: [standard]`. Ordinary routes do not
+`interactions.models.<entry>.pricing_modes: [standard, flex, priority]` (enable only the tiers supported for that model/account). Ordinary routes do not
 require a conditional-record backend merely because this feature exists.
 
 The served plane also needs the host-owned `usage_observations.<entry>` policy:
 a matching stable `accounting_namespace`, `classes: [input, output, cache_read]`,
 a positive `reserve_nanos`, and explicit dated rates for those classes on the
 serving subject. Native create requires host proof of all three priced classes
-and a durable create-intent receipt before emitting any upstream request head.
+and durable create-intent and recovery-work receipts before emitting any upstream request head.
 No provider token counts are also emitted through ordinary request metering.
 
 Stored IDs resolve only after authentication through the original protected
@@ -171,12 +171,13 @@ principal/account index, then ordinary destination authorization and original
 host-scope attachment. Unknown, ambiguous or changed-account IDs are refused.
 Continuations require the same protected predecessor lookup and original
 route/model/account; each continuation creates a new paid run and new scope.
-A deliberate signing-key rotation changes the lookup reference and fails closed;
-no global index fallback or ownership migration is attempted.
+The host preserves authenticated caller-reference continuity across signing-key rotation;
+the plugin never scans other principals or migrates ownership itself. Pre-existing
+indices from before host continuity was established still need host-proven migration.
 
 The native profile supports buffered and streamed ordinary text model requests,
 including background creation followed by request-driven polling and stream
-replay with an opaque `last_event_id` cursor. It refuses nonstandard service tiers, agents, hosted tools,
+replay with an opaque `last_event_id` cursor. It refuses agents, hosted tools,
 multimodal controls and unsupported request fields before paid dispatch. A
 provider response with missing usage or unsupported final steps remains
 unresolved; it never fabricates zero usage or closes the reservation. Buffered responses and individual retained stream buffers are limited to 1 MiB.
@@ -190,10 +191,51 @@ uncertain intent and never automatically resubmitted. Changed final totals retai
 new protected evidence and submit the same economic keys for host quarantine;
 no provider revision is invented and quarantined components cannot close a scope.
 
-Background reconciliation under restored original principal authority, signing-key-rotation recovery, additional service-tier
-pricing, and authenticated hosted-evidence acquisition/runtime settlement remain
-active followups. The hosted module remains an adapter API, not automatic billing
-jobs. Complete Interactions/hosted-billing parity is not claimed.
+Flex and Priority use dedicated token classes, appended without renumbering existing
+classes. Configure the three relevant names in both `usage_observations.<entry>.classes`
+and the serving model's `rate_card.<model>.units`; rates are operator supplied:
+
+| Tier | Input | Output and thinking | Cached input |
+| --- | --- | --- | --- |
+| Flex | `interactions_flex_input_tokens` (22) | `interactions_flex_output_tokens` (23) | `interactions_flex_cache_read_tokens` (24) |
+| Priority | `interactions_priority_input_tokens` (25) | `interactions_priority_output_tokens` (26) | `interactions_priority_cache_read_tokens` (27) |
+
+Each class rolls up to its ordinary token parent for reporting. Original scope
+reattachment proves the frozen tier classes again; configuration changes never
+substitute standard prices. Nonstandard final usage must explicitly confirm the
+original `service_tier`. No automatic create retry or tier upgrade occurs, including
+Flex capacity errors. These semantics follow the provider's [Flex](https://ai.google.dev/gemini-api/docs/flex-inference)
+and [Priority](https://ai.google.dev/gemini-api/docs/priority-inference) specifications.
+
+For new runs, the host owns autonomous recovery. Before paid dispatch the plugin
+atomically stores an original-principal intent index and registers durable work
+for `GET /_busbar/llm/interactions/<host-random-intent>`. The host restores the
+original principal and rechecks current standing before polling. The plugin reads
+its protected intent, reattaches the original scope, and retrieves only the recorded
+provider ID. The host work reference must resolve under that principal and name the
+exact recovery target; it is stripped from upstream headers. Work is settled only
+after final observations, their receipts, scope closure, and the closed checkpoint
+are durable. A lost create without a recorded provider ID remains unresolved and
+cannot trigger a replacement create. Historical runs predating work registration
+retain request-driven recovery; this version does not invent background jobs for them.
+
+Authenticated hosted-evidence acquisition remains an external dependency. The
+hosted module is a typed adapter, not automatic image/container invoice settlement.
+The exact public-provider evidence limits checked on 2026-11-10 are:
+
+| Provider path checked | What it supplies | Missing for exact hosted settlement |
+| --- | --- | --- |
+| [OpenAI Responses retrieve](https://developers.openai.com/api/reference/go/resources/responses/methods/retrieve) | Aggregate `tool_usage.image_gen` when available | Calls with incomplete usage may be skipped, cache/output detail may be omitted, and no complete per-call leaf manifest is guaranteed. |
+| [OpenAI container retrieve](https://developers.openai.com/api/reference/resources/containers/methods/retrieve) | Container identity, creation/last-active time, expiration policy, memory tier | Economic interval identity, eligible-minute classification, authoritative billed duration, and interval ownership across requests. Expiration policy is not a billing measurement. |
+| [OpenAI code-interpreter usage](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/code_interpreter_sessions) and [costs](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs) | Bucketed project session counts; daily cost/quantity groups | No container/session/request identity joining those aggregates to an original caller scope. Account totals cannot be allocated speculatively. |
+| [Anthropic code execution](https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool) | Request count and documented request-level exemptions | Duration and authoritative organization allowance allocation for each economic interval; preloading can accrue time without a call. |
+| [Anthropic analytics costs](https://platform.claude.com/docs/en/api/beta/organization/analytics/cost/list) | Aggregated cost dimensions, including Managed Agents session IDs | The documented session IDs refer to Managed Agents, not Messages code-execution containers, and do not provide their execution interval or allowance allocation. |
+
+Completing those paths requires an authenticated provider export/feed with complete
+call or interval identity, usage and allowance facts, plus host-issued interval
+custody. None was established by the public schemas above. No paid probe was made,
+no account aggregate was assigned to a caller, and refusal is not counted as completion
+of these features.
 
 Hook request projections now attest text completeness only after checking the
 concrete normalized chat request. Media, tools, unsupported structured content,

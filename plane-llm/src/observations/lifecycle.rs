@@ -64,6 +64,53 @@ pub fn provider_lookup_prefix(caller_ref: &str, id: &str) -> Result<Vec<u8>, &'s
     Ok(format!("ids/{caller_ref}/{id}/").into_bytes())
 }
 
+/// Principal-bound lookup for the host-random intent used by autonomous polling.
+pub fn intent_key(caller_ref: &str, intent: &str) -> Result<Vec<u8>, &'static str> {
+    Partition::new(caller_ref, "validation")?;
+    if !valid_id(intent) {
+        return Err("invalid create intent");
+    }
+    Ok(format!("intents/{caller_ref}/{intent}").into_bytes())
+}
+
+/// Protected original intent lookup, published atomically with the create intent before work
+/// registration and before any paid dispatch. It never authorizes recreating a lost request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IntentIndex {
+    partition: Partition,
+    intent: String,
+    run_key: Vec<u8>,
+}
+impl IntentIndex {
+    /// Validate the original principal and exact run key before reading the run.
+    pub fn decode(bytes: &[u8], caller: &str, intent: &str) -> Result<Self, &'static str> {
+        if bytes.len() > MAX_RECORD {
+            return Err("oversized intent index");
+        }
+        intent_key(caller, intent)?;
+        let index: Self = serde_json::from_slice(bytes).map_err(|_| "invalid intent index")?;
+        Partition::new(&index.partition.caller, &index.partition.account)?;
+        if index.partition.caller != caller || index.intent != intent {
+            return Err("intent ownership mismatch");
+        }
+        let mut expected = index.partition.run_prefix();
+        expected.extend(intent.as_bytes());
+        if expected != index.run_key {
+            return Err("intent run key mismatch");
+        }
+        Ok(index)
+    }
+    /// Exact protected run key.
+    pub fn run_key(&self) -> &[u8] {
+        &self.run_key
+    }
+    /// Frozen original partition.
+    pub fn partition(&self) -> &Partition {
+        &self.partition
+    }
+}
+
 /// Protected provider-ID index. Its route is read from the immutable original run record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -226,7 +273,7 @@ pub fn prepare_create(
         quarantined: BTreeSet::new(),
     };
     let key = run.key();
-    let candidate = ConditionalCandidate {
+    let mut candidate = ConditionalCandidate {
         correlation,
         predicates: vec![RecordPredicate {
             kind,
@@ -240,6 +287,22 @@ pub fn prepare_create(
         }],
         chains: Vec::new(),
     };
+    let key = intent_key(&run.partition.caller, intent)?;
+    candidate.predicates.push(RecordPredicate {
+        kind,
+        key: key.clone(),
+        expected: Expected::Absent,
+    });
+    candidate.mutations.push(RecordMutation::Put {
+        kind,
+        key,
+        value: serde_json::to_vec(&IntentIndex {
+            partition: run.partition.clone(),
+            intent: intent.into(),
+            run_key: run.key(),
+        })
+        .map_err(|_| "invalid intent index")?,
+    });
     Ok(CreatePlan { candidate, run })
 }
 
@@ -262,6 +325,10 @@ impl Checkpoint {
 }
 
 impl Run {
+    /// Host-random local create intent, never a provider operation identifier.
+    pub fn intent(&self) -> &str {
+        &self.intent
+    }
     /// Frozen provider normalization binding; host attach still validates authority.
     pub fn binding(&self) -> &Binding {
         &self.binding

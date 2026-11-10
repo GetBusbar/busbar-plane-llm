@@ -77,6 +77,36 @@ fn recovered_lost_create_never_grants_a_second_send() {
     let restored = Run::decode(&r.encode().unwrap(), &partition()).unwrap();
     assert_eq!(restored.recovery(), Recovery::LostCreate);
 }
+
+#[test]
+fn recovery_intent_index_is_atomic_owned_and_names_only_the_original_run() {
+    let plan = prepare_create(0, 1, partition(), "server-intent-a", binding()).unwrap();
+    assert_eq!(plan.candidate.predicates.len(), 2);
+    assert!(plan
+        .candidate
+        .predicates
+        .iter()
+        .all(|p| p.expected == Expected::Absent));
+    let RecordMutation::Put { key, value, .. } = &plan.candidate.mutations[1] else {
+        panic!()
+    };
+    assert_eq!(
+        *key,
+        intent_key(&"a".repeat(64), "server-intent-a").unwrap()
+    );
+    let index = IntentIndex::decode(value, &"a".repeat(64), "server-intent-a").unwrap();
+    assert_eq!(index.run_key(), plan.run.key());
+    assert!(IntentIndex::decode(value, &"b".repeat(64), "server-intent-a").is_err());
+    assert!(IntentIndex::decode(value, &"a".repeat(64), "different-intent").is_err());
+    let mut changed: serde_json::Value = serde_json::from_slice(value).unwrap();
+    changed["run_key"] = serde_json::json!(b"runs/other");
+    assert!(IntentIndex::decode(
+        &serde_json::to_vec(&changed).unwrap(),
+        &"a".repeat(64),
+        "server-intent-a"
+    )
+    .is_err());
+}
 #[test]
 fn id_binding_is_atomic_absent_only_with_original_record_cas() {
     let r = new_run();

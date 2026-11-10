@@ -175,6 +175,10 @@ fn initial(replay: bool) -> (Native, Backend) {
         response_fields: Vec::new(),
         response_status: 0,
         response_queued: false,
+        recovery_intent: None,
+        intent_lookup: None,
+        work: None,
+        pending_answer: None,
         streaming: true,
         stream: Some(
             State::new(

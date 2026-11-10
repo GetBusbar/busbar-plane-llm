@@ -1,11 +1,9 @@
 //! Read-only authenticated stored-object lookup through the plane SDK's record services.
 //!
-//! Caller references are signing-key-derived, not permanent owner IDs. A deliberate key rotation
-//! makes an old index undiscoverable here. Such a miss stays unattributed; this module does not
-//! scan other principals or migrate ownership. Reindexing needs a separate host proof of the
-//! current authenticated principal's ownership of the original observation scope.
+//! The host owns caller-reference continuity across signing-key rotation. A miss stays
+//! unattributed; the plugin never scans other principals or migrates ownership itself.
 
-use super::lifecycle::{provider_lookup_prefix, ProviderIndex, Run};
+use super::lifecycle::{intent_key, provider_lookup_prefix, IntentIndex, ProviderIndex, Run};
 use busbar_contract::abi::host::service::ItemSpan;
 use busbar_contract::abi::mechanism::ticket::{CompletionHandle, Ticket};
 use busbar_contract::abi::sdk::Services;
@@ -38,6 +36,74 @@ pub struct Found {
     pub run: Run,
     /// Exact original bytes, never reconstructed from caller input.
     pub record: Vec<u8>,
+}
+
+/// Recovery resolves the pre-dispatch intent rather than requiring a provider ID at registration.
+pub struct IntentLookup {
+    caller: String,
+    intent: String,
+    ticket: Ticket,
+    index: Option<IntentIndex>,
+}
+impl IntentLookup {
+    /// Bind to this authenticated callback only.
+    pub fn new(caller: &str, intent: &str, ticket: Ticket) -> Result<Self, Failure> {
+        intent_key(caller, intent).map_err(|_| Failure::Invalid)?;
+        if ticket.is_none() {
+            return Err(Failure::Invalid);
+        }
+        Ok(Self {
+            caller: caller.into(),
+            intent: intent.into(),
+            ticket,
+            index: None,
+        })
+    }
+    /// Read two protected rows and validate their immutable original binding.
+    pub fn poll(
+        &mut self,
+        services: &Services<PlaneKind>,
+        ticket: Ticket,
+        caller: &str,
+    ) -> Poll<Result<Found, Failure>> {
+        if self.ticket != ticket || self.caller != caller {
+            return Poll::Ready(Err(Failure::Invalid));
+        }
+        let mut buffer = vec![0; MAX_RECORD_BYTES];
+        if self.index.is_none() {
+            let key = intent_key(caller, &self.intent).map_err(|_| Failure::Invalid)?;
+            let handle = CompletionHandle {
+                ticket,
+                seq: 4,
+                ..CompletionHandle::ZERO
+            };
+            let bytes = match services.records_get(handle, RECORD_KIND, &key, &mut buffer) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(Some(bytes))) => bytes,
+                Poll::Ready(Ok(None)) => return Poll::Ready(Err(Failure::Unattributed)),
+                Poll::Ready(Err(_)) => return Poll::Ready(Err(Failure::Unavailable)),
+            };
+            self.index = Some(
+                IntentIndex::decode(bytes, caller, &self.intent).map_err(|_| Failure::Invalid)?,
+            );
+        }
+        let index = self.index.as_ref().unwrap();
+        let handle = CompletionHandle {
+            ticket,
+            seq: 5,
+            ..CompletionHandle::ZERO
+        };
+        let record = match services.records_get(handle, RECORD_KIND, index.run_key(), &mut buffer) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Ok(Some(bytes))) => bytes.to_vec(),
+            _ => return Poll::Ready(Err(Failure::Unavailable)),
+        };
+        let run = Run::decode(&record, index.partition()).map_err(|_| Failure::Invalid)?;
+        if run.intent() != self.intent || run.key() != index.run_key() {
+            return Poll::Ready(Err(Failure::Invalid));
+        }
+        Poll::Ready(Ok(Found { run, record }))
+    }
 }
 
 /// One lookup invocation, retaining only completed reads and an immutable principal/ID binding.
@@ -163,7 +229,8 @@ mod tests {
         abi::sdk::plane::conditional::{ConditionalResult, RecordMutation},
         host_records::Decision,
     };
-    fn fixture() -> (Vec<(Vec<u8>, Vec<u8>)>, Vec<u8>) {
+    type StoredRows = Vec<(Vec<u8>, Vec<u8>)>;
+    fn fixture() -> (StoredRows, Vec<u8>) {
         let partition = Partition::new(&"a".repeat(64), "account").unwrap();
         let binding = Binding {
             scope: [7; 32],

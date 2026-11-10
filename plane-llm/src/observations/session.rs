@@ -677,7 +677,7 @@ mod tests {
         let mut session = create(&host);
         assert!(session.dispatch().is_err());
         host.drive(&mut session);
-        assert_eq!(host.records.len(), 1);
+        assert_eq!(host.records.len(), 2);
         assert!(matches!(
             session.run().unwrap().recovery(),
             Recovery::LostCreate
@@ -778,7 +778,7 @@ mod tests {
         ));
         assert_eq!(host.counts, 0);
         assert_eq!(host.close, 0);
-        assert_eq!(host.records.len(), 2);
+        assert_eq!(host.records.len(), 3);
     }
 }
 

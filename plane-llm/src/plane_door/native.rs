@@ -1,6 +1,7 @@
 //! Native Interactions serving. Provider semantics stay in the LLM plane; ownership and prices
 //! cross only the generic authenticated-route, conditional-record and observation mechanisms.
 
+mod recovery;
 mod stream;
 
 use super::*;
@@ -8,7 +9,7 @@ use crate::observations::{
     crossing::Crossing,
     interactions::{self, Binding, Create, Operation},
     lifecycle::Partition,
-    lookup::{Found, Lookup},
+    lookup::{Found, IntentLookup, Lookup},
     native_request::{self, NativeConfig},
     session::{Session, Step},
 };
@@ -31,6 +32,10 @@ pub(super) struct Native {
     response_queued: bool,
     streaming: bool,
     stream: Option<stream::State>,
+    recovery_intent: Option<String>,
+    intent_lookup: Option<IntentLookup>,
+    work: Option<recovery::Work>,
+    pending_answer: Option<Answer>,
 }
 
 pub(super) fn config(owned: &[u8], shaping: &Shaping) -> Result<NativeConfig, String> {
@@ -57,6 +62,7 @@ pub(super) fn claims(enabled: bool) -> Vec<ClaimSpec> {
         ("GET", "/v1beta/interactions/", 0),
         ("POST", "/v1beta/interactions/", 0),
         ("DELETE", "/v1beta/interactions/", 0),
+        ("GET", recovery::PREFIX, 0),
     ]
     .into_iter()
     .map(|(verb, path, flags)| {
@@ -69,7 +75,9 @@ pub(super) fn claims(enabled: bool) -> Vec<ClaimSpec> {
 
 pub(super) fn recognizes(target: &str) -> bool {
     let path = target.split_once('?').map_or(target, |(path, _)| path);
-    path == "/v1beta/interactions" || path.starts_with("/v1beta/interactions/")
+    path == "/v1beta/interactions"
+        || path.starts_with("/v1beta/interactions/")
+        || path.starts_with(recovery::PREFIX)
 }
 
 pub(super) fn arrive(
@@ -83,7 +91,20 @@ pub(super) fn arrive(
     if door.native.models.is_empty() {
         return Err("native interactions are not enabled");
     }
-    let operation = interactions::operation(method, target)?;
+    let recovery_intent = recovery::intent(method, target)?;
+    let work = recovery_intent
+        .as_deref()
+        .map(|intent| recovery::Work::restore(intent, &unit.caller_fields()))
+        .transpose()?;
+    let operation = if recovery_intent.is_some() {
+        Operation::Get {
+            id: String::new(),
+            stream: false,
+            last_event_id: None,
+        }
+    } else {
+        interactions::operation(method, target)?
+    };
     let create = if operation == Operation::Create {
         let create = interactions::create(body)?;
         // Continuation ownership is checked in the authenticated route callback before admission.
@@ -136,6 +157,10 @@ pub(super) fn arrive(
         response_queued: false,
         streaming,
         stream: None,
+        recovery_intent,
+        intent_lookup: None,
+        work,
+        pending_answer: None,
     });
     Ok(())
 }
@@ -152,6 +177,48 @@ pub(super) fn authenticated(
         Ok(c) => c,
         Err(_) => return Poll::Ready(Err("invalid authenticated identity")),
     };
+    if let Some(intent) = native.recovery_intent.as_deref() {
+        let services = door.services.as_ref().ok_or("record lookup unavailable")?;
+        if native.intent_lookup.is_none() {
+            native.intent_lookup = Some(
+                IntentLookup::new(caller, intent, input.head().ticket())
+                    .map_err(|_| "invalid native intent lookup")?,
+            );
+        }
+        let found = match native.intent_lookup.as_mut().unwrap().poll(
+            services,
+            input.head().ticket(),
+            caller,
+        ) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(_)) => {
+                return Poll::Ready(Err("recovery intent is not attributable to this caller"))
+            }
+            Poll::Ready(Ok(found)) => found,
+        };
+        let id = found
+            .run
+            .provider_id()
+            .ok_or("lost create has no provider ID; automatic resubmission forbidden")?;
+        native.operation = Operation::Get {
+            id: id.into(),
+            stream: false,
+            last_event_id: None,
+        };
+        let entry = found.run.binding().route_entry.clone();
+        let lane = unit
+            .shaping
+            .lane(&entry)
+            .ok_or("original model is not configured")?;
+        let config = door
+            .native
+            .models
+            .get(&entry)
+            .ok_or("original native model is not enabled")?;
+        native_request::prepare_stored(lane, config, found.run.binding(), &native.operation)?;
+        native.found = Some(found);
+        return Poll::Ready(Ok(entry));
+    }
     let id = match &native.operation {
         Operation::Get { id, .. } | Operation::Cancel { id } | Operation::Delete { id } => id,
         Operation::Create => match native
@@ -226,7 +293,51 @@ pub(super) fn piece(
     input: &Lent<'_, OnPieceIn>,
 ) -> Result<PieceResult, &'static str> {
     let mut native = unit.native.take().ok_or("missing native request")?;
-    let result = piece_inner(door, unit, &mut native, input);
+    let result = if let Some(answer) = native.pending_answer.take() {
+        Ok(PieceResult::Answer(answer))
+    } else {
+        piece_inner(door, unit, &mut native, input)
+    };
+    let result = match result {
+        Ok(PieceResult::Answer(answer))
+            if answer.done
+                && native
+                    .session
+                    .as_ref()
+                    .and_then(|s| s.run())
+                    .is_some_and(|r| {
+                        matches!(
+                            r.recovery(),
+                            crate::observations::lifecycle::Recovery::Tombstone
+                        )
+                    })
+                && native.work.is_some() =>
+        {
+            match door
+                .services
+                .as_ref()
+                .ok_or("recovery work unavailable")
+                .and_then(|services| {
+                    match native
+                        .work
+                        .as_mut()
+                        .unwrap()
+                        .settle(services, input.head().ticket())
+                    {
+                        Poll::Pending => Ok(false),
+                        Poll::Ready(result) => result.map(|()| true),
+                    }
+                }) {
+                Ok(true) => Ok(PieceResult::Answer(answer)),
+                Ok(false) => {
+                    native.pending_answer = Some(answer);
+                    Ok(PieceResult::Pending(Vec::new()))
+                }
+                Err(error) => Err(error),
+            }
+        }
+        result => result,
+    };
     let result = match result {
         Err(message) if native.stream.as_ref().is_some_and(|s| s.head_delivered) => {
             if let Some(session) = native.session.as_mut() {
@@ -255,6 +366,9 @@ fn piece_inner(
             }
             if native.session.is_none() {
                 Crossing::supported(extension)?;
+                if !busbar_contract::abi::sdk::recovery::supported(extension) {
+                    return Err("host autonomous recovery capability required");
+                }
                 let member = std::str::from_utf8(input.member().bytes())
                     .map_err(|_| "invalid selected native member")?;
                 let lane = unit
@@ -326,16 +440,61 @@ fn piece_inner(
                     )?;
                     (request, Session::stored(found, extension)?)
                 };
-                request.fields =
-                    attempt::native_forward_fields(lane, request.fields, &unit.caller_fields());
+                let forwarded = recovery::forwarded(&unit.caller_fields());
+                let forwarded: Vec<_> = forwarded
+                    .iter()
+                    .map(|(name, value)| (name.as_slice(), value.as_slice()))
+                    .collect();
+                request.fields = attempt::native_forward_fields(lane, request.fields, &forwarded);
                 unit.request = Some(request);
                 unit.member = member.into();
                 native.session = Some(session);
             }
             match native.session.as_mut().unwrap().poll(extension)? {
                 Step::Pending(bytes) => return Ok(PieceResult::Pending(bytes)),
-                Step::Ready => native.session.as_mut().unwrap().dispatch()?,
+                Step::Ready => {}
             }
+            if native.create.is_some() && native.work.is_none() {
+                native.work = Some(recovery::Work::new(
+                    native
+                        .session
+                        .as_ref()
+                        .unwrap()
+                        .run()
+                        .ok_or("missing durable create intent")?
+                        .intent(),
+                ));
+            }
+            if let Some(work) = native.work.as_mut() {
+                let services = door
+                    .services
+                    .as_ref()
+                    .ok_or("durable recovery work unavailable")?;
+                match work.attach(services, input.head().ticket()) {
+                    Poll::Pending => return Ok(PieceResult::Pending(Vec::new())),
+                    Poll::Ready(result) => result?,
+                }
+            }
+            if native.recovery_intent.is_some()
+                && native
+                    .session
+                    .as_ref()
+                    .and_then(|s| s.run())
+                    .is_some_and(|r| {
+                        matches!(
+                            r.recovery(),
+                            crate::observations::lifecycle::Recovery::Tombstone
+                        )
+                    })
+            {
+                return Ok(PieceResult::Answer(Answer {
+                    status: 204,
+                    done: true,
+                    verdict: VERDICT_OK,
+                    ..Answer::default()
+                }));
+            }
+            native.session.as_mut().unwrap().dispatch()?;
             if native.streaming {
                 let mode = if matches!(
                     &native.operation,
