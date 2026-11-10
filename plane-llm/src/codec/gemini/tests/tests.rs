@@ -6581,6 +6581,7 @@ fn writer_stream_text_copy_is_bounded_by_the_translate_cap() {
         );
     }
     let kept = writer.stream.lock().stream_text.text.len();
+    assert!(kept > 0, "the writer must retain some stream text before the cap");
     assert!(kept <= 1024, "kept {kept} bytes past the 1024-byte cap");
 }
 
