@@ -2,15 +2,6 @@
 
 use busbar_contract::Count;
 
-/// A request counter is not priceable execution duration. Only the live outbound request's
-/// authenticated exemption proof may discharge this refusal; codecs alone cannot do so.
-pub(crate) const ANTHROPIC_EXECUTION_UNRESOLVED: &str =
-    "Anthropic execution requires authoritative duration and allowance or a proven request exemption";
-
-/// Hosted image/container usage must not disappear behind the parent model's token report.
-pub(crate) const RESPONSES_HOSTED_UNRESOLVED: &str =
-    "Responses hosted image and container billing requires complete attributable provider evidence";
-
 /// Read the original decimal spelling retained by serde_json's arbitrary_precision feature.
 pub fn read_count(v: &serde_json::Value) -> Option<Count> {
     let serde_json::Value::Number(number) = v else {
@@ -308,6 +299,8 @@ pub enum CountSlot {
     WebSearchRequests,
     /// `IrUsageDetail::web_fetch_requests`.
     WebFetchRequests,
+    /// Provider-reported execution request count; never seconds.
+    CodeExecutionRequests,
     /// `IrUsageDetail::search_units`.
     SearchUnits,
     /// `IrUsageDetail::billed_input_tokens`.
@@ -332,7 +325,7 @@ pub enum CountSlot {
     CacheWrite12h,
 }
 
-const SLOTS: usize = 20;
+const SLOTS: usize = 21;
 
 /// How one count is read off the usage object and folded into its slot. A path names the member
 /// from the usage object down; every member before the last is a parent object.
@@ -578,6 +571,10 @@ pub fn read_usage(
             crate::codec::ir::open_class::WEB_FETCH_REQUESTS_CLASS,
         ),
         (
+            CountSlot::CodeExecutionRequests,
+            crate::codec::ir::open_class::CODE_EXECUTION_REQUESTS_CLASS,
+        ),
+        (
             CountSlot::Classifications,
             crate::codec::ir::open_class::CLASSIFICATIONS_CLASS,
         ),
@@ -618,6 +615,7 @@ pub fn read_usage(
             cache_creation_12h_input_tokens: get(CountSlot::CacheWrite12h),
             web_search_requests: get(CountSlot::WebSearchRequests),
             web_fetch_requests: get(CountSlot::WebFetchRequests),
+            code_execution_requests: get(CountSlot::CodeExecutionRequests),
             search_units: get(CountSlot::SearchUnits),
             billed_input_tokens: get(CountSlot::ProviderInput),
             billed_output_tokens: get(CountSlot::ProviderOutput),

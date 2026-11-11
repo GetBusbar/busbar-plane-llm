@@ -32,11 +32,7 @@ impl ProtocolReader for AnthropicReader {
     fn recover_truncated_usage(&self, tail: &[u8]) -> Option<busbar_contract::billing::TokenUsage> {
         let v = super::super::usage_tail::isolate_tail_usage_object(tail, b"\"usage\"")?;
 
-        Some(
-            crate::codec::usage_count::read_usage(COUNT_LABEL, Some(&v), USAGE)
-                .ok()?
-                .to_token_usage(),
-        )
+        Some(usage::read_anthropic_usage(Some(&v)).ok()?.to_token_usage())
     }
 
     fn extract_error(

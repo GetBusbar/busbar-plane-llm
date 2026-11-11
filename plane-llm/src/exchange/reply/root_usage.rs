@@ -252,6 +252,8 @@ impl RootUsage {
                             if let Some(index) = self.array_key {
                                 self.arrays[index] = None;
                             }
+                            let repeated_usage =
+                                name.as_deref() == Some("usage") && self.image_usage_present[0];
                             match name.as_deref() {
                                 Some("usage") => self.image_usage_present[0] = true,
                                 Some("usageMetadata") => self.image_usage_present[1] = true,
@@ -272,6 +274,9 @@ impl RootUsage {
                             });
                             if let Some(name) = &self.name {
                                 self.values.remove(name);
+                            }
+                            if repeated_usage {
+                                self.name = None;
                             }
                         }
                         if self.stack.len() == 3 {
@@ -366,6 +371,12 @@ impl RootUsage {
         }
         if self.stack.len() == 1 && self.capturing {
             if !self.oversized {
+                if self.name.as_deref() == Some("usage")
+                    && crate::codec::json::validate_unique_json(&self.capture).is_err()
+                {
+                    self.bad = true;
+                    return;
+                }
                 match serde_json::from_slice::<Value>(&self.capture) {
                     Ok(value) => {
                         if let Some(name) = self.name.take() {

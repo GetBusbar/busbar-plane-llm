@@ -108,7 +108,7 @@ fn the_tail_is_one_the_contract_accepts() {
     assert_eq!(TAIL.op_classes_len(), 7);
     assert_eq!(
         TAIL.billable_classes_len(),
-        28,
+        29,
         "historical classes and fee retain their indices; native tariff classes are appended"
     );
 
@@ -132,6 +132,7 @@ fn the_tail_is_one_the_contract_accepts() {
             ("guardrail_word_policy_units", "count"),
             ("cache_write_30m", "token"),
             ("cache_write_12h", "token"),
+            ("code_execution_requests", "count"),
         ]
     );
     let stated = unsafe { TAIL.billable_classes() };
@@ -173,7 +174,11 @@ fn the_tail_is_one_the_contract_accepts() {
         assert_eq!(family, b"token");
     }
     for (k, (class, family)) in tokens.iter().chain(OPEN_CLASSES).enumerate() {
-        let b = &stated[k + usize::from(k >= 19)];
+        let b = &stated[if k >= 21 {
+            k + 7
+        } else {
+            k + usize::from(k >= 19)
+        }];
         // SAFETY: each `AbiStr` names a `'static` string of `len` bytes.
         let (c, f) = unsafe {
             (

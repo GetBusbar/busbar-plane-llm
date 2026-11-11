@@ -71,6 +71,7 @@ pub fn isolate_tail_usage_object(tail: &[u8], key: &[u8]) -> Option<serde_json::
     }
     at += 1;
     let mut found = None;
+    let mut seen = false;
     loop {
         at = whitespace(tail, at);
         if tail.get(at) != Some(&b'"') {
@@ -94,6 +95,10 @@ pub fn isolate_tail_usage_object(tail: &[u8], key: &[u8]) -> Option<serde_json::
             return if name == expected { None } else { found };
         }
         if name == expected {
+            if seen || crate::codec::json::validate_unique_json(&tail[at..end]).is_err() {
+                return None;
+            }
+            seen = true;
             found = crate::codec::json::parse::<serde_json::Value>(&tail[at..end])
                 .ok()
                 .filter(serde_json::Value::is_object);

@@ -70,7 +70,6 @@ pub const PROVIDER_KEYS: &str = r#"{
     "keys": [
       {"name": "protocol", "shape": "str", "required": true},
       {"name": "error_map", "shape": "str-map", "required": false},
-      {"name": "anthropic_execution_policy", "shape": {"one-of": ["web_tools_exempt_2026_11_10"]}, "required": false},
       {"name": "max_output_key", "shape": {"one-of": ["max_tokens", "max_completion_tokens"]}, "required": false},
       {"name": "anthropic_adaptive_thinking", "shape": "bool", "required": false},
       {"name": "native_structured_output", "shape": "bool", "required": false},
@@ -93,7 +92,6 @@ pub const PROVIDER_KEYS: &str = r#"{
     "keys": [
       {"name": "protocol", "shape": "str", "required": false},
       {"name": "error_map", "shape": "str-map", "required": false},
-      {"name": "anthropic_execution_policy", "shape": {"one-of": ["web_tools_exempt_2026_11_10"]}, "required": false},
       {"name": "max_output_key", "shape": {"one-of": ["max_tokens", "max_completion_tokens"]}, "required": false},
       {"name": "anthropic_adaptive_thinking", "shape": "bool", "required": false},
       {"name": "native_structured_output", "shape": "bool", "required": false},
@@ -116,7 +114,6 @@ pub const PROVIDER_KEYS: &str = r#"{
     "keys": [
       {"name": "protocol", "shape": "str", "required": false},
       {"name": "error_map", "shape": "str-map", "required": true},
-      {"name": "anthropic_execution_policy", "shape": {"one-of": ["web_tools_exempt_2026_11_10"]}, "required": false},
       {"name": "max_output_key", "shape": {"one-of": ["max_tokens", "max_completion_tokens"]}, "required": false},
       {"name": "anthropic_adaptive_thinking", "shape": "bool", "required": false},
       {"name": "native_structured_output", "shape": "bool", "required": false},

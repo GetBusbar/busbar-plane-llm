@@ -14,6 +14,9 @@ pub const CLASSIFICATIONS_CLASS: &str = "classifications";
 /// Anthropic `usage.server_tool_use.web_fetch_requests`: the server-side URL fetches a turn made.
 pub const WEB_FETCH_REQUESTS_CLASS: &str = "web_fetch_requests";
 
+/// Anthropic server-side execution requests, exactly as reported; not execution duration.
+pub const CODE_EXECUTION_REQUESTS_CLASS: &str = "code_execution_requests";
+
 /// The tokens a provider's stated total counts above the itemized buckets this dialect reads (OpenAI
 /// and Responses `total_tokens`, Gemini `totalTokenCount`, Bedrock `totalTokens`): `reported_total -
 /// summed_total` when positive.
@@ -84,10 +87,11 @@ pub const OPEN_CLASSES: &[(&str, &str)] = &[
     (GUARDRAIL_WORD_POLICY_UNITS_CLASS, COUNT),
     (CACHE_WRITE_30M_CLASS, busbar_contract::plane::TOKEN_FAMILY),
     (CACHE_WRITE_12H_CLASS, busbar_contract::plane::TOKEN_FAMILY),
+    (CODE_EXECUTION_REQUESTS_CLASS, COUNT),
 ];
 
 /// The number of [`OPEN_CLASSES`], for the const tables that state them one by one.
-pub const OPEN_CLASS_COUNT: usize = 17;
+pub const OPEN_CLASS_COUNT: usize = 18;
 const _: () = assert!(OPEN_CLASSES.len() == OPEN_CLASS_COUNT);
 
 /// Bedrock's guardrail usage counts (`GuardrailUsage`), each with the open class it is ledgered

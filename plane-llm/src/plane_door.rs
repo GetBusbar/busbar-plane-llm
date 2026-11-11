@@ -7,7 +7,6 @@
 //! (`busbar-plane-llm-plugin`, via `busbar_contract::export_door!`), so the two cannot answer
 //! differently.
 
-mod execution;
 mod native;
 
 type StaticServices = KindStaticServices<busbar_contract::plugin::markers::PlaneKind>;
@@ -175,14 +174,23 @@ pub const FEE_CLASS: &str = busbar_contract::plane::PER_REQUEST;
 pub const FEE_CLASS_INDEX: u32 = 19;
 
 // Preserve every historical index, including the request fee. New open classes follow it.
+const LEGACY_OPEN_CLASSES: usize = 17;
+const APPENDED_OPEN_FIRST: usize =
+    crate::observations::profiles::FIRST_CLASS + crate::observations::profiles::CLASSES.len();
+
 const fn open_class_index(k: usize) -> u32 {
+    if k >= LEGACY_OPEN_CLASSES {
+        return (APPENDED_OPEN_FIRST + k - LEGACY_OPEN_CLASSES) as u32;
+    }
     let index = TOKEN_CLASSES.len() + k;
     (index + (index >= FEE_CLASS_INDEX as usize) as usize) as u32
 }
 
 /// Billable class `i`: historical tokens/open classes/fee, followed by newly appended classes.
 const fn billable_class(i: usize) -> BillableClass {
-    if i >= crate::observations::profiles::FIRST_CLASS {
+    if i >= APPENDED_OPEN_FIRST {
+        open_class(LEGACY_OPEN_CLASSES + i - APPENDED_OPEN_FIRST)
+    } else if i >= crate::observations::profiles::FIRST_CLASS {
         BillableClass {
             class: abi_str(
                 crate::observations::profiles::CLASSES
@@ -205,9 +213,9 @@ const fn billable_class(i: usize) -> BillableClass {
 }
 
 const _: () = assert!(
-    TOKEN_CLASSES.len() + OPEN_CLASSES.len() + 1 == crate::observations::profiles::FIRST_CLASS
+    TOKEN_CLASSES.len() + LEGACY_OPEN_CLASSES + 1 == crate::observations::profiles::FIRST_CLASS
 );
-const BILLABLE_CLASSES: &[BillableClass] = &rows!(BillableClass; crate::observations::profiles::FIRST_CLASS + crate::observations::profiles::CLASSES.len(), billable_class);
+const BILLABLE_CLASSES: &[BillableClass] = &rows!(BillableClass; APPENDED_OPEN_FIRST + OPEN_CLASSES.len() - LEGACY_OPEN_CLASSES, billable_class);
 /// The tail's fee units: [`FEE_CLASS`].
 const FEE_UNITS: &[AbiStr] = &[abi_str(FEE_CLASS)];
 
@@ -550,8 +558,6 @@ struct Pending {
 /// What the door keeps for one unit, from its `arrive` to its end.
 struct UnitState {
     native: Option<native::Native>,
-    /// Policy facts from the actual outbound request, never caller/response exemption flags.
-    execution: Option<execution::Guard>,
     /// The generation's tables the unit arrived on.
     shaping: Arc<Shaping>,
     /// The arrival, read once at `arrive`.
@@ -593,7 +599,6 @@ impl UnitState {
     fn new(shaping: Arc<Shaping>) -> Self {
         UnitState {
             native: None,
-            execution: None,
             shaping,
             arrived: None,
             caller: Vec::new(),
@@ -1223,7 +1228,6 @@ fn attempt(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
     unit.final_answer = false;
     unit.reply = None;
     unit.request = None;
-    unit.execution = None;
     unit.far_status = 0;
     unit.started = host.clock().map(|c| c.mono_ns);
     let built = if unit.probe {
@@ -1243,32 +1247,21 @@ fn attempt(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
     };
     match built {
         Ok(mut request) => {
-            if !unit.probe {
-                let Some(lane) = unit.shaping.lane(&unit.member) else {
-                    return Answer::hard();
-                };
-                match execution::Guard::prepare(
-                    &request,
-                    lane,
-                    unit.shaping.translate_cap(),
-                    unit.shaping
-                        .anthropic_execution_policy_providers
-                        .contains(&lane.provider),
-                    piece.passthrough,
-                ) {
-                    Ok(guard) => unit.execution = guard,
-                    Err(reason) => {
-                        return answered(refuse::answered(
-                            host,
-                            &attempt::Answer {
-                                status: 400,
-                                envelope: unit.arrived.as_ref().map_or("anthropic", |a| a.dialect),
-                                kind: crate::codec::protocol::KIND_INVALID_REQUEST,
-                                message: reason.into(),
-                            },
-                        ));
-                    }
-                }
+            if unit
+                .shaping
+                .lane(&unit.member)
+                .is_some_and(|l| l.dialect == "anthropic")
+                && crate::codec::json::validate_unique_json(&request.body).is_err()
+            {
+                return answered(refuse::answered(
+                    host,
+                    &attempt::Answer {
+                        status: 400,
+                        envelope: unit.arrived.as_ref().map_or("anthropic", |a| a.dialect),
+                        kind: crate::codec::protocol::KIND_INVALID_REQUEST,
+                        message: "ambiguous or malformed request JSON".into(),
+                    },
+                ));
             }
             let egress = unit.shaping.lane(&unit.member).map_or("", |l| l.dialect);
             let answer = Answer {
@@ -1334,20 +1327,8 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
     let Some(reply) = unit.reply.as_mut() else {
         return Answer::hard();
     };
-    if let Some(guard) = &mut unit.execution {
-        guard.feed(piece.bytes);
-    }
-    let buffered = unit.execution.as_ref().and_then(|g| g.buffered_body());
-    if buffered.is_some() && !piece.last && (200..300).contains(&unit.far_status) {
-        return Answer::default();
-    }
-    let buffered = (200..300)
-        .contains(&unit.far_status)
-        .then(|| buffered.map(<[u8]>::to_vec))
-        .flatten();
-    let provider_bytes = buffered.as_deref().unwrap_or(piece.bytes);
     if piece.cut {
-        let arrived = provider_bytes;
+        let arrived = piece.bytes;
         let mut fed = if arrived.is_empty() {
             Piece::default()
         } else {
@@ -1366,9 +1347,6 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
         if cut.head.is_none() {
             cut.head = fed.head.take();
         }
-        if unit.execution.is_some() && (200..300).contains(&unit.far_status) {
-            cut.units.refused_counts.push(execution::UNRESOLVED.into());
-        }
         return far_answer(cut, unit.far_status);
     }
 
@@ -1377,28 +1355,7 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
     } else {
         At::default()
     };
-    let mut fed = reply.feed(host, &ctx, provider_bytes, piece.last, time);
-
-    let mut execution_proof = None;
-    if piece.last && (200..300).contains(&unit.far_status) {
-        if let Some(guard) = unit.execution.take() {
-            let proof = if piece.passthrough && guard.buffered_body().is_some() {
-                Err(execution::UNRESOLVED)
-            } else {
-                guard.finish()
-            };
-            match proof {
-                Ok(Some(proof)) => {
-                    fed.units
-                        .refused_counts
-                        .retain(|r| r != execution::UNRESOLVED);
-                    execution_proof = Some(proof);
-                }
-                Ok(None) => {}
-                Err(reason) => fed.units.refused_counts.push(reason.into()),
-            }
-        }
-    }
+    let mut fed = reply.feed(host, &ctx, piece.bytes, piece.last, time);
 
     let dropped = std::mem::take(&mut fed.dropped);
     let synthesized = fed.synthesized;
@@ -1413,12 +1370,6 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
             )
         })
         .collect();
-
-    if let Some(proof) = execution_proof {
-        answer
-            .audits
-            .push((AUDIT_APPLIED, b"llm.execution.exempt".to_vec(), proof));
-    }
 
     if synthesized {
         answer.audits.push((
@@ -2220,3 +2171,8 @@ mod settings_schema_tests;
 #[allow(unsafe_code)]
 #[path = "../tests/support/native_interactions.rs"]
 mod native_interactions_tests;
+
+#[cfg(test)]
+#[allow(unsafe_code)]
+#[path = "../tests/support/execution_counts.rs"]
+mod execution_counts;

@@ -1046,6 +1046,8 @@ pub struct IrUsageDetail {
     /// Anthropic `usage.server_tool_use.web_fetch_requests`, ledgered as the open class
     /// `web_fetch_requests`. Only the Anthropic reader populates it.
     pub web_fetch_requests: Option<u64>,
+    /// Anthropic server execution requests. Absent is unknown; not duration or invoice units.
+    pub code_execution_requests: Option<u64>,
     /// Anthropic `usage.service_tier` (`standard` / `priority` / `batch`): the tier that served and
     /// billed the request. Only the Anthropic reader and writer touch it.
     pub service_tier: Option<String>,
@@ -1218,6 +1220,11 @@ impl IrUsage {
             &mut open,
             WEB_FETCH_REQUESTS_CLASS,
             self.detail.web_fetch_requests.unwrap_or(0),
+        );
+        add(
+            &mut open,
+            crate::codec::ir::open_class::CODE_EXECUTION_REQUESTS_CLASS,
+            self.detail.code_execution_requests.unwrap_or(0),
         );
         add(
             &mut open,

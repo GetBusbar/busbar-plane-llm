@@ -68,3 +68,62 @@ pub fn parse_err_log(bytes_len: usize) -> String {
 #[cfg(test)]
 #[path = "tests/json_seam_tests.rs"]
 mod seam_tests;
+
+// Validate duplicates independently without retaining or reserializing generated text.
+// Numeric visitors discard values; accounting always reads the original exact-number JSON.
+pub(crate) fn validate_unique_json(bytes: &[u8]) -> Result<(), serde_json::Error> {
+    use serde::Deserialize;
+    use std::collections::BTreeSet;
+    struct Unique;
+    impl<'de> Deserialize<'de> for Unique {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Visitor;
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = Unique;
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str("JSON with unique object keys")
+                }
+                fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_unit<E: serde::de::Error>(self) -> Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                    self,
+                    mut seq: A,
+                ) -> Result<Unique, A::Error> {
+                    while seq.next_element::<Unique>()?.is_some() {}
+                    Ok(Unique)
+                }
+                fn visit_map<A: serde::de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> Result<Unique, A::Error> {
+                    let mut keys = BTreeSet::new();
+                    while let Some(key) = map.next_key::<String>()? {
+                        if !keys.insert(key) {
+                            return Err(serde::de::Error::custom("duplicate key"));
+                        }
+                        map.next_value::<Unique>()?;
+                    }
+                    Ok(Unique)
+                }
+            }
+            deserializer.deserialize_any(Visitor)
+        }
+    }
+    serde_json::from_slice::<Unique>(bytes).map(|_| ())
+}

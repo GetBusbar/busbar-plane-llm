@@ -39,6 +39,10 @@ pub(super) const USAGE: &[UsageCount] = &[
         CountRead::Opt(&[super::SERVER_TOOL_USE, super::WEB_FETCH_REQUESTS]),
     ),
     (
+        CountSlot::CodeExecutionRequests,
+        CountRead::Opt(&[super::SERVER_TOOL_USE, "code_execution_requests"]),
+    ),
+    (
         CountSlot::Reasoning,
         CountRead::Lenient(&[keys::OUTPUT_TOKENS_DETAILS, super::THINKING_TOKENS]),
     ),
@@ -53,14 +57,20 @@ pub(super) fn read_anthropic_usage(
     usage_val: Option<&serde_json::Value>,
 ) -> Result<crate::codec::ir::IrUsage, IrError> {
     let mut usage = read_usage(COUNT_LABEL, usage_val, USAGE)?;
+    // This provider field is an integer counter. Keep independently valid tokens when
+    // the execution count is malformed; absent/null remains unknown, not zero.
     if usage_val
         .and_then(|u| u.pointer("/server_tool_use/code_execution_requests"))
-        .is_some()
+        .is_some_and(|v| !v.is_null() && v.as_u64().is_none())
     {
+        usage.detail.code_execution_requests = None;
+        if let Some(exact) = &mut usage.detail.exact_counts {
+            exact.remove(crate::codec::ir::open_class::CODE_EXECUTION_REQUESTS_CLASS);
+        }
         usage
             .detail
             .refused_counts
-            .push(crate::codec::usage_count::ANTHROPIC_EXECUTION_UNRESOLVED.to_owned());
+            .push("Anthropic code_execution_requests is not a nonnegative integer".into());
     }
     usage.detail.service_tier = usage_val
         .and_then(|u| u.get(keys::SERVICE_TIER))
@@ -105,17 +115,31 @@ pub(super) fn write_server_tool_use(usage: &crate::codec::ir::IrUsage) -> serde_
     let detail = &usage.detail;
     if detail.web_search_requests.is_none()
         && detail.web_fetch_requests.is_none()
-        && !detail
-            .exact_counts
-            .as_ref()
-            .is_some_and(|e| e.contains_key("search_units") || e.contains_key("web_fetch_requests"))
+        && detail.code_execution_requests.is_none()
+        && !detail.exact_counts.as_ref().is_some_and(|e| {
+            e.contains_key("search_units")
+                || e.contains_key("web_fetch_requests")
+                || e.contains_key("code_execution_requests")
+        })
     {
         return serde_json::Value::Null;
     }
-    serde_json::json!({
+    let mut value = serde_json::json!({
         (super::WEB_SEARCH_REQUESTS): usage.wire_count("search_units", detail.web_search_requests.unwrap_or(0)),
         (super::WEB_FETCH_REQUESTS): usage.wire_count("web_fetch_requests", detail.web_fetch_requests.unwrap_or(0)),
-    })
+    });
+    if detail.code_execution_requests.is_some()
+        || detail
+            .exact_counts
+            .as_ref()
+            .is_some_and(|e| e.contains_key("code_execution_requests"))
+    {
+        value["code_execution_requests"] = usage.wire_count(
+            "code_execution_requests",
+            detail.code_execution_requests.unwrap_or(0),
+        );
+    }
+    value
 }
 
 /// The full wire `usage` object of a `Message` (the buffered response and the

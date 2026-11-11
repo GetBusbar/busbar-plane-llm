@@ -121,6 +121,7 @@ drop_field = "parameter"
 "usage.cache_creation.ephemeral_5m_input_tokens" = { prim = "ephemeral_5m_input_tokens" }
 "usage.cache_creation.ephemeral_1h_input_tokens" = { prim = "ephemeral_1h_input_tokens" }
 "usage.server_tool_use.web_search_requests" = { prim = "web_search_requests" }
+"usage.server_tool_use.code_execution_requests" = { prim = "code_execution_requests" }
 "usage.service_tier" = { prim = "served_tier" }
 "content[].type=web_search_tool_result" = { ir = "web_search" }
 "content[].type=web_search_tool_result.tool_use_id" = { ir = "web_search" }

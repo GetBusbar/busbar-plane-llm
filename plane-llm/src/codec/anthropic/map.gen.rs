@@ -115,6 +115,7 @@ pub(crate) const RESPONSE_PATHS: &[&str] = &[
     "usage.cache_creation.ephemeral_1h_input_tokens",
     "usage.server_tool_use.web_search_requests",
     "usage.server_tool_use.web_fetch_requests",
+    "usage.server_tool_use.code_execution_requests",
     "usage.service_tier",
     "content[].type=web_search_tool_result",
     "content[].type=web_search_tool_result.tool_use_id",

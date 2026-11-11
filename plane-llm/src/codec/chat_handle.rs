@@ -480,6 +480,11 @@ pub(crate) fn inspect_response_usage(
             );
             return Err(UsageTapFault::UnknownProtocol);
         };
+        if ingress_protocol == "anthropic"
+            && crate::codec::json::validate_unique_json(body).is_err()
+        {
+            return Err(UsageTapFault::BadJson);
+        }
         let v = match crate::codec::json::parse::<Value>(body) {
             Ok(v) => v,
             Err(_e) => {
@@ -605,6 +610,11 @@ impl OperationHandler for ChatOperation {
         host: &dyn crate::codec::cells::CodecHost,
         wire: &[u8],
     ) -> Result<Box<dyn IrHandle>, CodecError> {
+        if self.0 == "anthropic" {
+            crate::codec::json::validate_unique_json(wire).map_err(|_| {
+                CodecError::Malformed("ambiguous or malformed provider JSON".into())
+            })?;
+        }
         let v: Value =
             serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
         let p = self

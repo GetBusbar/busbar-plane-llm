@@ -848,6 +848,13 @@ impl StreamTranslate {
             if data.is_empty() || data == SSE_DONE_SENTINEL {
                 continue;
             }
+            if self.egress.name_static() == "anthropic"
+                && crate::codec::json::validate_unique_json(data.as_bytes()).is_err()
+            {
+                // Never let a later duplicate value turn ambiguous usage into a measured count.
+                self.abort();
+                break;
+            }
             if !self.same_proto {
                 #[cfg(test)]
                 self.decode_calls.set(self.decode_calls.get() + 1);
@@ -1343,6 +1350,7 @@ fn merge_trailing_usage_detail(
         search_units,
         web_search_requests,
         web_fetch_requests,
+        code_execution_requests,
         service_tier,
         input_audio_tokens,
         output_audio_tokens,
@@ -1415,6 +1423,10 @@ fn merge_trailing_usage_detail(
     if web_fetch_requests.is_some() {
         acc.web_fetch_requests = *web_fetch_requests;
     }
+    if code_execution_requests.is_some() {
+        acc.code_execution_requests = *code_execution_requests;
+    }
+
     if service_tier.is_some() {
         acc.service_tier = service_tier.clone();
     }

@@ -65,6 +65,7 @@ fn trailing_detail_merge_is_exhaustive_over_every_bucket() {
         search_units: Some(4),
         web_search_requests: Some(5),
         web_fetch_requests: Some(16),
+        code_execution_requests: Some(18),
         service_tier: Some("priority".to_string()),
         input_audio_tokens: Some(6),
         output_audio_tokens: Some(7),
