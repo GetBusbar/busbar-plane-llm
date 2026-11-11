@@ -28,6 +28,9 @@ slot!(TestClose, InHead, OutHead, |_, _, _| { Outcome::Ready });
 struct Harness(*mut std::ffi::c_void);
 impl Harness {
     fn open(stream: bool) -> Self {
+        Self::open_ingress(stream, false)
+    }
+    fn open_ingress(stream: bool, cross: bool) -> Self {
         // SAFETY: zero-valid ABI structures and live inputs; SDK owns this one instance.
         unsafe {
             let input: OpenIn = std::mem::zeroed();
@@ -37,14 +40,20 @@ impl Harness {
                 Outcome::Ready
             );
             let harness = Self(out.instance);
-            let body = serde_json::to_vec(&serde_json::json!({
-                "model":"entry", "stream":stream, "input":"draw and compute",
-                "tools":[{"type":"image_generation"},{"type":"code_interpreter","container":{"type":"auto"}}]
-            })).unwrap();
+            let request = if cross {
+                serde_json::json!({"model":"entry","stream":stream,"messages":[{"role":"user","content":"draw and compute"}]})
+            } else {
+                serde_json::json!({"model":"entry","stream":stream,"input":"draw and compute","tools":[{"type":"image_generation"},{"type":"code_interpreter","container":{"type":"auto"}}]})
+            };
+            let body = serde_json::to_vec(&request).unwrap();
             let mut arrive: ArriveIn = std::mem::zeroed();
             arrive.unit = 1;
             arrive.method = abi_str("POST");
-            arrive.target = abi_str("/v1/responses");
+            arrive.target = abi_str(if cross {
+                "/v1/chat/completions"
+            } else {
+                "/v1/responses"
+            });
             arrive.body = Blob::from_raw_parts(body.as_ptr(), body.len(), 0, 0);
             let mut arrived: ArriveOut = std::mem::zeroed();
             assert_eq!(
@@ -422,4 +431,149 @@ fn responses_tools_shell_environment_absence_is_unknown_and_wrong_identity_is_re
     assert_eq!(out.verdict, VERDICT_COUNT_REFUSED);
     assert_eq!(count(&units, 0), Some(7));
     assert!((29..=40).all(|c| count(&units, c).is_none()));
+}
+
+fn event(name: &str, body: serde_json::Value) -> String {
+    format!("event: {name}\ndata: {body}\n\n")
+}
+fn item_event(index: usize, item: serde_json::Value) -> String {
+    event(
+        "response.output_item.done",
+        serde_json::json!({"type":"response.output_item.done","output_index":index,"sequence_number":index+1,"item":item}),
+    )
+}
+#[test]
+fn responses_completed_items_survive_cut_stream_on_same_and_cross_protocol_abi() {
+    for cross in [false, true] {
+        let h = Harness::open_ingress(true, cross);
+        let items = calls();
+        let frames = (0..3)
+            .map(|i| item_event(i, items[i].clone()))
+            .collect::<String>();
+        let (_, units, _) = h.piece(
+            FROM_FAR_END,
+            frames.as_bytes(),
+            PIECE_HAS_STATUS | PIECE_LAST,
+            true,
+        );
+        for class in 41..=43 {
+            assert_eq!(
+                count(&units, class),
+                Some(1),
+                "class {class}, cross {cross}"
+            );
+        }
+        assert!((29..=40).all(|c| count(&units, c).is_none()));
+        assert_eq!(count(&units, 0), None);
+        assert_eq!(count(&units, 1), None);
+    }
+}
+#[test]
+fn responses_completed_events_need_real_container_evidence_and_do_not_invent_other_counts() {
+    let image = event(
+        "response.image_generation_call.completed",
+        serde_json::json!({"item_id":"ig_1","output_index":0,"sequence_number":1}),
+    );
+    let code = event(
+        "response.code_interpreter_call.completed",
+        serde_json::json!({"item_id":"ci_1","output_index":1,"sequence_number":2}),
+    );
+    for with_metadata in [false, true] {
+        let h = Harness::open(true);
+        let mut frames = String::new();
+        if with_metadata {
+            frames.push_str(&event("response.output_item.added",serde_json::json!({"output_index":1,"sequence_number":0,"item":{"id":"ci_1","type":"code_interpreter_call","status":"in_progress","container_id":"cntr_1"}})));
+        }
+        frames.push_str(&image);
+        frames.push_str(&image);
+        frames.push_str(&code);
+        let (_, units, _) = h.piece(
+            FROM_FAR_END,
+            frames.as_bytes(),
+            PIECE_HAS_STATUS | PIECE_LAST,
+            true,
+        );
+        assert_eq!(count(&units, 41), Some(1));
+        assert_eq!(count(&units, 42), with_metadata.then_some(1));
+        assert_eq!(count(&units, 43), None);
+    }
+}
+#[test]
+fn responses_completed_events_and_final_snapshots_are_one_identity_union() {
+    for omit_from_snapshot in [false, true] {
+        let h = Harness::open(true);
+        let items = calls();
+        let prefix = item_event(0, items[0].clone());
+        h.piece(FROM_FAR_END, prefix.as_bytes(), PIECE_HAS_STATUS, true);
+        let mut final_response = response(
+            image(),
+            if omit_from_snapshot {
+                serde_json::json!([])
+            } else {
+                items
+            },
+        );
+        final_response["usage"] = serde_json::json!({"input_tokens":7,"output_tokens":3});
+        let tail = format!(
+            "{}{}",
+            prefix,
+            event(
+                "response.completed",
+                serde_json::json!({"response":final_response})
+            )
+        );
+        let (out, units, _) = h.piece(FROM_FAR_END, tail.as_bytes(), PIECE_LAST, true);
+        assert_eq!(out.verdict, VERDICT_OK);
+        assert_eq!(count(&units, 41), Some(1));
+        assert_eq!(count(&units, 29), Some(30));
+        assert_eq!(count(&units, 0), Some(7));
+    }
+}
+#[test]
+fn responses_completed_event_conflicts_and_ambiguous_json_keep_independent_tokens() {
+    let first = item_event(0, calls()[0].clone());
+    let bad_events = [
+        event(
+            "response.image_generation_call.completed",
+            serde_json::json!({"item_id":"ig_other","output_index":0}),
+        ),
+        item_event(
+            0,
+            serde_json::json!({"id":"ig_1","type":"image_generation_call","status":"failed"}),
+        ),
+        event(
+            "response.image_generation_call.completed",
+            serde_json::json!({"item_id":"ig_2","output_index":4096}),
+        ),
+        format!(
+            "event: response.image_generation_call.completed\ndata: {}\n\n",
+            r#"{"item_id":"ig_1","item_id":"ig_2","output_index":0}"#
+        ),
+        format!(
+            "event: response.output_item.done\ndata: {}\n\n",
+            r#"{"output_index":0,"item":{"type":"image_generation_call","id":"ig_1","id":"ig_2","status":"completed"}}"#
+        ),
+    ];
+    for bad in bad_events {
+        let h = Harness::open(true);
+        let frames = format!(
+            "{}{}{}",
+            first,
+            bad,
+            event(
+                "response.completed",
+                serde_json::json!({"response":response(image(),calls())})
+            )
+        );
+        let (out, units, _) = h.piece(
+            FROM_FAR_END,
+            frames.as_bytes(),
+            PIECE_HAS_STATUS | PIECE_LAST,
+            true,
+        );
+        assert_eq!(out.verdict, VERDICT_COUNT_REFUSED);
+        assert!((41..=43).all(|c| count(&units, c).is_none()));
+        assert_eq!(count(&units, 0), Some(7));
+        assert_eq!(count(&units, 29), Some(30));
+    }
 }

@@ -1301,6 +1301,8 @@ pub enum IrDelta {
 /// OpenAI's flat stream uses it to synthesize block boundaries from chunks.
 #[derive(Debug, Clone, Default)]
 pub struct StreamDecodeState {
+    /// Provider-observed Responses tool-call identities, independent of content block lifetime.
+    pub(crate) responses_tool_calls: crate::codec::openai_responses::tool_usage::StreamCalls,
     /// Responses message parts retain distinct IR identities for the stream lifetime.
     pub responses_parts: std::collections::BTreeMap<(usize, usize), usize>,
     /// Responses blocks already stopped; late frames must not reopen their identities.

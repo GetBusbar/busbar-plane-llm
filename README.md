@@ -253,18 +253,25 @@ Input/output aggregate rows and their modality components are mutually exclusive
 Reported cache quantities partition inclusive input; absent cache quantities use
 an explicit cache-unknown class, never an assumed zero. `total_tokens` validates
 the partition and does not create another row. Partial modality observations
-without a total retain only the supplied parts. Counts deduplicate call IDs within
-the response; repeated terminal SSE snapshots cannot add or reclassify them.
-An absent output list yields no call counts. Missing shell environment evidence
-leaves the hosted-shell count unknown. These counts measure observed completed
+without a total retain only the supplied parts. Counts deduplicate call IDs across
+completed SSE events and the final response snapshot. A complete
+`response.output_item.done` or `response.image_generation_call.completed` can
+establish a completed call even when the stream ends before its final snapshot.
+Code-interpreter completion additionally needs actual container metadata from an
+item event; shell completion needs the reported hosted environment. At most 4096
+call IDs and output-index bindings are retained, with bounded identity strings and
+no generated payloads. Contradictory IDs, statuses, indices, or container metadata
+refuse the call counts. Repeated terminal snapshots cannot add or reclassify them.
+A buffered reply without output, or a stream without complete call evidence,
+yields no call counts. Missing shell environment evidence leaves that count unknown. These counts measure observed completed
 calls, not new containers, sessions, elapsed seconds, or billable intervals.
 
 Malformed, negative, inconsistent, or duplicated quantity evidence refuses the
 affected component while retaining independently known parent-model tokens.
 Large same-protocol JSON replies use bounded projection of aggregate usage and
 call identity/status/environment, discarding image payloads from the metering
-buffer. SSE retains the existing bounded frame limit. Incomplete JSON/SSE does
-not synthesize tool quantities. SVG authoring `svg_usage` is not additionally
+buffer. SSE retains the existing bounded frame limit. Partial JSON/SSE frames do
+not synthesize tool quantities; earlier complete call events retain their facts. SVG authoring `svg_usage` is not additionally
 counted because its overlap with the image aggregate is not specified.
 
 The plugin declares and measures units. The host applies the selected rate card,
@@ -297,6 +304,12 @@ observations remains unimplemented. The schemas above do not supply all the
 attributed physical measurements required by that reference adapter. This limits
 measurement coverage; it does not prevent ordinary requests or make reporting raw
 units depend on reconstructing a provider invoice, discounts, or free allowances.
+Anthropic also documents [provider-emitted OpenTelemetry tool spans](https://platform.claude.com/docs/en/api/opentelemetry/spans)
+joined to request and tool-call IDs. An authenticated OTLP ingestion path could
+measure received tool-span elapsed time using the span timestamps; that integration
+is not implemented. [Delivery is best-effort and can repeat spans](https://platform.claude.com/docs/en/manage-claude/opentelemetry/api),
+so it needs deduplication and original-request custody. Tool-span elapsed time is
+not complete container execution time, preload time, or an invoice interval.
 No paid probe was made and no account aggregate was assigned to an invented caller.
 
 Hook request projections now attest text completeness only after checking the

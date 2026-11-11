@@ -1581,12 +1581,20 @@ impl ProtocolReader for ResponsesReader {
         Some(crate::codec::ir::IrSignatureOrigin::OpenAi)
     }
 
-    /// Usage and terminal failures ride the terminal and error events; the reader reads the
+    /// Aggregate usage and failures ride terminal events; completed-call facts also ride item
+    /// and tool completion events. The reader reads the
     /// event name, never the payload's `type`.
     fn same_proto_reads(&self, event_type: &str, _payload: &[u8]) -> bool {
         matches!(
             event_type,
-            EVT_RESPONSE_COMPLETED | EVT_RESPONSE_FAILED | EVT_RESPONSE_INCOMPLETE | "error"
+            EVT_RESPONSE_COMPLETED
+                | EVT_RESPONSE_FAILED
+                | EVT_RESPONSE_INCOMPLETE
+                | "error"
+                | EVT_OUTPUT_ITEM_ADDED
+                | EVT_OUTPUT_ITEM_DONE
+                | "response.image_generation_call.completed"
+                | "response.code_interpreter_call.completed"
         )
     }
 

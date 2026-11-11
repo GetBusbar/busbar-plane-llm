@@ -207,6 +207,7 @@ impl StreamTranslate {
                 self.translate_ir_event(host, ingress_name, ev, out);
             }
         }
+        self.capture_responses_calls(event_type, data);
     }
 
     /// Far-end wire paths this stream dropped on its way to the caller, each warned once; the host
@@ -498,6 +499,17 @@ impl StreamTranslate {
         }
     }
 
+    // The ordinary metering carrier keeps completed-call facts even if no final usage frame
+    // arrives. Both stream paths use the same bounded provider-owned accumulator.
+    fn capture_responses_calls(&mut self, event: &str, data: &serde_json::Value) {
+        if self.egress.name_static() == "responses"
+            && self.decode.responses_tool_calls.observe(event, data)
+        {
+            let usage = self.last_usage.get_or_insert_with(Default::default);
+            self.decode.responses_tool_calls.apply(usage);
+        }
+    }
+
     /// Same-protocol usage side-channel (Change B step 2): runs only the egress reader and the
     /// start-usage/backfill/`last_usage` accumulation of `translate_event`, with no remap, identity
     /// strip, writer or reframe, since the original bytes re-emit verbatim.
@@ -542,6 +554,7 @@ impl StreamTranslate {
                 self.fold_reported_usage(&trailing);
             }
         }
+        self.capture_responses_calls(event_type, data);
     }
 
     /// Write one IR event through the ingress writer and append its framed bytes to `out`. Branches

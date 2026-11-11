@@ -160,14 +160,94 @@ fn identity(value: Option<&Value>) -> Result<&str, &'static str> {
         .filter(|s| !s.is_empty() && s.len() <= 256)
         .ok_or(BAD)
 }
-fn calls(response: &Value) -> Result<Quantities, &'static str> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ShellEnvironment {
+    Local,
+    Container(String),
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CallFact {
+    kind: usize,
+    container: Option<String>,
+    environment: Option<ShellEnvironment>,
+    final_status: Option<String>,
+}
+fn call_fact(item: &Value, final_item: bool) -> Result<Option<(String, CallFact)>, &'static str> {
+    let kind = match item.get("type").and_then(Value::as_str).ok_or(BAD)? {
+        "image_generation_call" => 0,
+        "code_interpreter_call" => 1,
+        "shell_call" => 2,
+        _ => return Ok(None),
+    };
+    let id = identity(item.get("id"))?.to_owned();
+    let status = item.get("status").and_then(Value::as_str).ok_or(BAD)?;
+    if !matches!(
+        status,
+        "completed" | "in_progress" | "incomplete" | "failed" | "generating" | "interpreting"
+    ) {
+        return Err(BAD);
+    }
+    let container = if kind == 1 {
+        Some(identity(item.get("container_id"))?.to_owned())
+    } else {
+        None
+    };
+    let environment = if kind == 2 {
+        let env = object(item.get("environment"))?;
+        match env.and_then(|e| e.get("type")) {
+            None | Some(Value::Null) => None,
+            Some(Value::String(kind)) if kind == "local" => Some(ShellEnvironment::Local),
+            Some(Value::String(kind)) if kind == "container_reference" => {
+                Some(ShellEnvironment::Container(
+                    identity(env.and_then(|e| e.get("container_id")))?.to_owned(),
+                ))
+            }
+            _ => return Err(BAD),
+        }
+    } else {
+        None
+    };
+    Ok(Some((
+        id,
+        CallFact {
+            kind,
+            container,
+            environment,
+            final_status: final_item.then(|| status.to_owned()),
+        },
+    )))
+}
+fn call_rows(items: &BTreeMap<String, CallFact>, snapshot: bool) -> Quantities {
+    let mut counts = [0u64; 3];
+    let mut unknown = [false; 3];
+    for item in items.values() {
+        if item.kind == 2 && item.environment.is_none() {
+            unknown[2] = true;
+        }
+        if item.final_status.as_deref() != Some("completed") {
+            continue;
+        }
+        match item.kind {
+            0 => counts[0] += 1,
+            1 if item.container.is_some() => counts[1] += 1,
+            1 => unknown[1] = true,
+            2 if matches!(item.environment, Some(ShellEnvironment::Container(_))) => counts[2] += 1,
+            _ => {}
+        }
+    }
+    counts
+        .into_iter()
+        .enumerate()
+        .filter(|(i, n)| !unknown[*i] && (snapshot || *n > 0))
+        .map(|(i, n)| (12 + i, n))
+        .collect()
+}
+fn snapshot_calls(response: &Value) -> Result<Option<BTreeMap<String, CallFact>>, &'static str> {
     let Some(output) = response.get("output") else {
-        return Ok(vec![]);
+        return Ok(None);
     };
     let output = output.as_array().ok_or(BAD)?;
-    let mut seen = BTreeMap::new();
-    let mut quantities = [0u64; 3];
-    let mut shell_known = true;
+    let mut items = BTreeMap::new();
     let mut kinds = BTreeMap::new();
     for item in output {
         let kind = item.get("type").and_then(Value::as_str).ok_or(BAD)?;
@@ -180,68 +260,179 @@ fn calls(response: &Value) -> Result<Quantities, &'static str> {
                 return Err(BAD);
             }
         }
-        let class = match kind {
-            "image_generation_call" => 0,
-            "code_interpreter_call" => 1,
-            "shell_call" => 2,
-            _ => continue,
-        };
-        let id = identity(item.get("id"))?;
-        let status = item.get("status").and_then(Value::as_str).ok_or(BAD)?;
-        if !matches!(
-            status,
-            "completed" | "in_progress" | "incomplete" | "failed" | "generating" | "interpreting"
-        ) {
-            return Err(BAD);
-        }
-        let container = if class == 1 {
-            Some(identity(item.get("container_id"))?)
-        } else {
-            None
-        };
-        let environment = if class == 2 {
-            object(item.get("environment"))?
-        } else {
-            None
-        };
-        let hosted = if class == 2 {
-            match environment.and_then(|e| e.get("type")) {
-                None | Some(Value::Null) => {
-                    shell_known = false;
-                    false
-                }
-                Some(Value::String(kind)) if kind == "local" => false,
-                Some(Value::String(kind)) if kind == "container_reference" => true,
-                _ => return Err(BAD),
-            }
-        } else {
-            true
-        };
-        let shell_container = if class == 2 && hosted {
-            Some(identity(environment.and_then(|e| e.get("container_id")))?)
-        } else {
-            None
-        };
-        let fact = (class, status, container, shell_container, hosted);
-        if let Some(previous) = seen.insert(id, fact) {
-            if previous != fact {
+        if let Some((id, fact)) = call_fact(item, true)? {
+            if items
+                .insert(id, fact.clone())
+                .is_some_and(|previous| previous != fact)
+                || items.len() > 4096
+            {
                 return Err(BAD);
             }
-            continue;
-        }
-        if seen.len() > 4096 {
-            return Err(BAD);
-        }
-        if status == "completed" && hosted {
-            quantities[class] += 1;
         }
     }
-    Ok(quantities
-        .into_iter()
-        .enumerate()
-        .filter(|(i, _)| *i != 2 || shell_known)
-        .map(|(i, n)| (12 + i, n))
-        .collect())
+    Ok(Some(items))
+}
+fn calls(response: &Value) -> Result<Quantities, &'static str> {
+    Ok(snapshot_calls(response)?.map_or_else(Vec::new, |items| call_rows(&items, true)))
+}
+
+/// Bounded call metadata observed on one provider stream. Payloads are never retained.
+/// A completed event can survive a cut stream, and a final snapshot refines the same identities.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct StreamCalls {
+    items: BTreeMap<String, CallFact>,
+    indices: BTreeMap<u64, String>,
+    snapshot: bool,
+    refused: bool,
+}
+impl StreamCalls {
+    fn insert(&mut self, id: String, fact: CallFact) -> Result<(), &'static str> {
+        if let Some(previous) = self.items.get_mut(&id) {
+            fn refine<T: PartialEq>(
+                old: &mut Option<T>,
+                new: Option<T>,
+            ) -> Result<(), &'static str> {
+                if let Some(new) = new {
+                    if old.as_ref().is_some_and(|old| old != &new) {
+                        return Err(BAD);
+                    }
+                    *old = Some(new);
+                }
+                Ok(())
+            }
+            if previous.kind != fact.kind {
+                return Err(BAD);
+            }
+            refine(&mut previous.container, fact.container)?;
+            refine(&mut previous.environment, fact.environment)?;
+            refine(&mut previous.final_status, fact.final_status)?;
+        } else {
+            if self.items.len() == 4096 {
+                return Err(BAD);
+            }
+            self.items.insert(id, fact);
+        }
+        Ok(())
+    }
+    fn bind_index(&mut self, index: u64, id: &str) -> Result<(), &'static str> {
+        if index >= 4096 {
+            return Err(BAD);
+        }
+        if let Some(previous) = self.indices.get(&index) {
+            if previous != id {
+                return Err(BAD);
+            }
+        } else {
+            self.indices.insert(index, id.to_owned());
+        }
+        Ok(())
+    }
+    fn event(&mut self, event: &str, data: &Value) -> Result<(), &'static str> {
+        match event {
+            "response.output_item.added" | "response.output_item.done" => {
+                let index = event_index(data)?;
+                if let Some((id, fact)) =
+                    call_fact(data.get("item").ok_or(BAD)?, event.ends_with(".done"))?
+                {
+                    self.bind_index(index, &id)?;
+                    self.insert(id, fact)?;
+                }
+            }
+            "response.image_generation_call.completed"
+            | "response.code_interpreter_call.completed" => {
+                let index = event_index(data)?;
+                let id = identity(data.get("item_id"))?.to_owned();
+                self.bind_index(index, &id)?;
+                self.insert(
+                    id,
+                    CallFact {
+                        kind: usize::from(event == "response.code_interpreter_call.completed"),
+                        container: None,
+                        environment: None,
+                        final_status: Some("completed".into()),
+                    },
+                )?;
+            }
+            _ => {
+                let response = data.get("response").ok_or(BAD)?;
+                if let Some(items) = snapshot_calls(response)? {
+                    for (index, item) in response
+                        .get("output")
+                        .and_then(Value::as_array)
+                        .ok_or(BAD)?
+                        .iter()
+                        .enumerate()
+                    {
+                        if let Some(id) = item
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .filter(|id| items.contains_key(*id))
+                        {
+                            self.bind_index(index as u64, id)?;
+                        }
+                    }
+                    for (id, fact) in items {
+                        self.insert(id, fact)?;
+                    }
+                    self.snapshot = true;
+                }
+            }
+        }
+        Ok(())
+    }
+    /// Return whether this event carries call evidence; malformed relevant evidence is sticky.
+    pub(crate) fn observe(&mut self, event: &str, data: &Value) -> bool {
+        if !matches!(
+            event,
+            "response.output_item.added"
+                | "response.output_item.done"
+                | "response.image_generation_call.completed"
+                | "response.code_interpreter_call.completed"
+                | "response.completed"
+                | "response.incomplete"
+                | "response.failed"
+        ) {
+            return false;
+        }
+        if !self.refused && self.event(event, data).is_err() {
+            self.refused = true;
+        }
+        true
+    }
+    /// Replace only call classes. This also removes an earlier plausible count after contradictory
+    /// evidence, while independent parent and image-token observations remain available.
+    pub(crate) fn apply(&self, usage: &mut IrUsage) {
+        let exact = usage
+            .detail
+            .exact_counts
+            .get_or_insert_with(Default::default);
+        for name in &C[12..] {
+            exact.remove(*name);
+            usage.detail.open_units.remove(*name);
+        }
+        record(
+            usage,
+            if self.refused {
+                Err(BAD)
+            } else {
+                Ok(call_rows(&self.items, self.snapshot))
+            },
+        );
+    }
+}
+fn event_index(data: &Value) -> Result<u64, &'static str> {
+    let index = data
+        .get("output_index")
+        .and_then(Value::as_u64)
+        .filter(|i| *i < 4096)
+        .ok_or(BAD)?;
+    if data
+        .get("sequence_number")
+        .is_some_and(|n| n.as_u64().is_none())
+    {
+        return Err(BAD);
+    }
+    Ok(index)
 }
 fn record(ir: &mut IrUsage, result: Result<Quantities, &'static str>) {
     let result = result.and_then(|rows| {
@@ -358,6 +549,18 @@ pub(crate) fn mask_ambiguous_event(bytes: &[u8], value: &mut Value) {
     let Ok(root) = serde_json::from_slice::<Members<'_>>(bytes) else {
         return;
     };
+    if let Some(value) = value.as_object_mut() {
+        for key in ["item", "item_id", "output_index", "sequence_number"] {
+            let fields: Vec<_> = root.0.iter().filter(|(name, _)| name == key).collect();
+            if fields.len() > 1
+                || fields.first().is_some_and(|(_, raw)| {
+                    crate::codec::json::validate_unique_json(raw.get().as_bytes()).is_err()
+                })
+            {
+                value.insert(key.into(), Value::Bool(false));
+            }
+        }
+    }
     let responses: Vec<_> = root.0.iter().filter(|(key, _)| key == "response").collect();
     let Some((_, raw)) = responses.first() else {
         return;
