@@ -82,6 +82,7 @@ import json, os, sys
 with open(os.environ["COMMAND_LOG"], "w") as f:
     json.dump({"args": sys.argv[1:], "lto": os.environ["CARGO_PROFILE_RELEASE_LTO"],
                "units": os.environ["CARGO_PROFILE_RELEASE_CODEGEN_UNITS"],
+               "opt": os.environ["CARGO_PROFILE_RELEASE_OPT_LEVEL"],
                "judge": os.environ["BUSBAR_ORACLE_JUDGE_PATH"]}, f)
 for i in range(140):
     print("record --native: building the candidate private detail " + str(i), file=sys.stderr, flush=True)
@@ -99,12 +100,23 @@ sys.exit(int(os.environ["RECORDER_EXIT"]))
                 self.assertEqual(invocation, {
                     "args": ["record", "--bin", str(self.out / "line-probe"),
                              "--plane", "llm", "--out", str(self.out / "recording")],
-                    "lto": "thin", "units": "16", "judge": "/controller/immutable-judge"})
+                    "lto": "off", "units": "16", "opt": "0", "judge": "/controller/immutable-judge"})
                 self.assertEqual(len(result.stderr.splitlines()), 120)
                 self.assertIn("llm recorder phase: building run-keyed candidate", result.stderr)
                 self.assertNotIn("private detail", result.stderr)
                 self.assertNotIn("credential fixture", result.stderr)
                 self.assertEqual(len((self.out / "record.log").read_text().splitlines()), 141)
+
+        # The functional recording must not alter a subsequent release producer's profile.
+        self.env.update(RECORDER_EXIT='0', CARGO_PROFILE_RELEASE_OPT_LEVEL='3',
+                        CARGO_PROFILE_RELEASE_LTO='fat', CARGO_PROFILE_RELEASE_CODEGEN_UNITS='1')
+        result = self.shell('''record_subject "$SRC" "$D/line-probe" || exit $?
+printf '%s/%s/%s' "$CARGO_PROFILE_RELEASE_OPT_LEVEL" "$CARGO_PROFILE_RELEASE_LTO" "$CARGO_PROFILE_RELEASE_CODEGEN_UNITS"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '3/fat/1')
+        invocation = json.loads(self.log.read_text())
+        self.assertEqual((invocation['opt'], invocation['lto'], invocation['units']), ('0', 'off', '16'))
 
     def test_recording_phase_is_visible_before_recorder_exit(self):
         (self.src / "bin").mkdir()
