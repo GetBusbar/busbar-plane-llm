@@ -39,16 +39,16 @@ fn owed(cell: &str) -> Value {
     if cell == "llm__anthropic__anthropic__request__over_budget_total" {
         want["body"]["json"]["error"]["type"] = Value::String("billing_error".into());
     }
-    // The current router supplies the required method advertisement for a 405.
-    if cell == "http.crosscut__wrong-method__GET-messages" {
-        want["headers"]["allow"] = Value::String("POST".into());
-    }
     want
 }
 
 /// The owed answer's status, body and head-field names (content-length is the transport's).
 fn assert_matches(cell: &str, r: &Rendered) {
     let want = owed(cell);
+    assert_matches_answer(cell, r, &want);
+}
+
+fn assert_matches_answer(cell: &str, r: &Rendered, want: &Value) {
     assert_eq!(
         u64::from(r.status),
         want["status"].as_u64().expect("status"),
@@ -241,10 +241,12 @@ fn a_dialect_path_hit_with_another_method_reads_the_405() {
             .map(|(_, value)| value.as_slice()),
         Some(b"POST".as_slice())
     );
-    assert_matches(
-        "http.crosscut__wrong-method__GET-messages",
-        &arrival_refusal("GET", "/v1/messages", &[], b""),
-    );
+    let cell = "http.crosscut__wrong-method__GET-messages";
+    let mut want = owed(cell);
+    // Arrival knows the route's method; the generic kernel-refusal renderer does not.
+    // Keep this required advertisement local to the route-aware refusal's answer.
+    want["headers"]["allow"] = Value::String("POST".into());
+    assert_matches_answer(cell, &rendered, &want);
 }
 
 #[test]
