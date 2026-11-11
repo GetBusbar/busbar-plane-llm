@@ -103,8 +103,7 @@ fn capped_usage_is_chunk_independent_and_never_nested_or_fabricated() {
         assert!(r.end(HOST).usage.is_none(), "{body}");
     }
 
-    // The later null replaces the earlier report. The leaf tap retains a present usage
-    // envelope as an authoritative empty count carrier, with no reported billing classes.
+    // A duplicate usage member is ambiguous, even when its later value is null.
     let body = format!(
         r#"{{"data":"{}","usage":{{"prompt_tokens":5}},"usage":null}}"#,
         "x".repeat(200)
@@ -114,20 +113,8 @@ fn capped_usage_is_chunk_independent_and_never_nested_or_fabricated() {
         let _ = r.feed(HOST, chunk);
     }
     let end = r.end(HOST);
-    let empty = busbar_contract::billing::TokenUsage {
-        exact_counts: Some(Default::default()),
-        ..Default::default()
-    };
-    assert_eq!(end.usage, Some(empty));
+    assert!(end.usage.is_none());
     assert!(end.open_units.is_empty());
-    assert_eq!(
-        crate::exchange::reply::Units::of(end.usage.as_ref(), end.open_units),
-        crate::exchange::reply::Units {
-            exact_counts: Some(Default::default()),
-            ..Default::default()
-        },
-        "no billing rows, refused counts, open units, tokens, or floor"
-    );
 }
 
 #[test]

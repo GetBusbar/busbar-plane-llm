@@ -28,7 +28,7 @@ use serde_json::Value;
 use busbar_plugin_loader::dispatch::kinds::plane::{OwnedSnapshot, Plane, ServedFacts};
 use busbar_plugin_loader::dispatch::{now_ns, Called, Dispatcher, Frame, Lent, Plugin};
 
-const CAP: usize = 8;
+const CAP: usize = 64;
 
 const OP_DEADLINE: Duration = Duration::from_secs(30);
 
@@ -787,6 +787,9 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
             }
         }
     }
+    config["settings"]["providers"]["rsp"] =
+        serde_json::json!({"protocol":"responses","base_url":"https://responses.example"});
+    config["settings"]["models"]["response-model"] = serde_json::json!({"provider":"rsp"});
     let k = &config["plane"];
     let settings = serde_json::to_vec(&config["settings"]).unwrap();
     let bad: Vec<Vec<u8>> = k["bad_settings"]
@@ -2398,6 +2401,8 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
         answers.push((("cancel").to_string(), answer));
     };
 
+    raw_measurements::exercise(&p, &d, &mut answers);
+
     let refresh = |what: &[u8]| {
         let mut f: Frame<RefreshIn, PlaneRefreshOut> = Frame::new(input(), output());
         (f.input.generation, f.input.settings) = (2, json(what));
@@ -2439,6 +2444,7 @@ fn exercise(dropped_in: bool) -> Vec<(String, String)> {
     }
 
     contract(&answers, k);
+    answers.extend(native_observations::exercise(dropped_in));
     let unreported = unreported_classes(&answers, &billable);
     assert!(unreported.is_empty(), "unreported classes: {unreported:?}");
     answers
@@ -3391,3 +3397,11 @@ fn llm_declares_its_actual_statement_needs_and_requested_profile() {
 }
 #[path = "support/ready_refusal.rs"]
 mod ready_refusal;
+
+#[path = "support/raw_measurements.rs"]
+mod raw_measurements;
+
+#[path = "support/native_observation_host.rs"]
+mod native_observation_host;
+#[path = "support/native_observations.rs"]
+mod native_observations;

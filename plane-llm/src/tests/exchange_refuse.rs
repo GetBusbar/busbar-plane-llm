@@ -39,6 +39,10 @@ fn owed(cell: &str) -> Value {
     if cell == "llm__anthropic__anthropic__request__over_budget_total" {
         want["body"]["json"]["error"]["type"] = Value::String("billing_error".into());
     }
+    // The current router supplies the required method advertisement for a 405.
+    if cell == "http.crosscut__wrong-method__GET-messages" {
+        want["headers"]["allow"] = Value::String("POST".into());
+    }
     want
 }
 
@@ -228,6 +232,15 @@ fn a_path_no_dialect_serves_reads_the_routers_not_found_in_the_paths_envelope() 
 
 #[test]
 fn a_dialect_path_hit_with_another_method_reads_the_405() {
+    let rendered = arrival_refusal("GET", "/v1/messages", &[], b"");
+    assert_eq!(
+        rendered
+            .fields
+            .iter()
+            .find(|(name, _)| name == "allow")
+            .map(|(_, value)| value.as_slice()),
+        Some(b"POST".as_slice())
+    );
     assert_matches(
         "http.crosscut__wrong-method__GET-messages",
         &arrival_refusal("GET", "/v1/messages", &[], b""),

@@ -106,7 +106,6 @@ fn buffered_responses_failed_usage_is_observable_without_masking_failure() {
     for absent in [
         serde_json::json!({"status":"failed","output":[],"error":{"code":"server_error"}}),
         serde_json::json!({"status":"failed","output":[],"usage":null}),
-        serde_json::json!({"status":"failed","output":[],"usage":"invalid"}),
         serde_json::json!({"status":"failed","output":[],"metadata":{"usage":{"input_tokens":999,"output_tokens":888}}}),
     ] {
         let bytes = serde_json::to_vec(&absent).unwrap();
@@ -115,6 +114,19 @@ fn buffered_responses_failed_usage_is_observable_without_masking_failure() {
             "unreported/nested usage must not be invented: {absent}"
         );
     }
+    let malformed = handler
+        .extract_usage(
+            host,
+            "responses",
+            br#"{"status":"failed","output":[],"usage":"invalid"}"#,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(!malformed.refused_counts.is_empty());
+    assert!(
+        malformed.exact_counts.as_ref().unwrap().is_empty(),
+        "malformed usage reports a refusal, never invented zero rows"
+    );
     let partially_readable =
         br#"{"status":"failed","output":[],"usage":{"input_tokens":"17","output_tokens":11}}"#;
     let usage = handler

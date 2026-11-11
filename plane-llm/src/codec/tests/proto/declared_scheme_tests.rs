@@ -9,12 +9,7 @@
 use crate::codec::protocol::{CredentialHeader, EgressScheme, ProtocolDecl};
 
 fn fixture() -> serde_json::Value {
-    let path =
-        std::path::PathBuf::from(std::env::var_os("BUSBAR_CHECKOUT").expect(
-            "BUSBAR_CHECKOUT is unset: busbar's tree at .busbar-ref (plugin CI exports it)",
-        ))
-        .join("testing/plane-copies/declared-credentials.json");
-    serde_json::from_str(&std::fs::read_to_string(path).expect("fixture readable"))
+    serde_json::from_str(include_str!("fixtures/declared-credentials.json"))
         .expect("fixture is JSON")
 }
 

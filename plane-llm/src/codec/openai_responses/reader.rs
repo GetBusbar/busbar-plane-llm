@@ -142,11 +142,15 @@ impl ProtocolReader for ResponsesReader {
             return None;
         }
 
-        Some(
-            read_responses_usage(usage, Some(body))
-                .ok()?
-                .to_token_usage(),
-        )
+        let measured = read_responses_usage(usage, Some(body)).ok()?;
+        (usage.is_some_and(|value| !value.is_null())
+            || measured
+                .detail
+                .exact_counts
+                .as_ref()
+                .is_some_and(|counts| !counts.is_empty())
+            || !measured.detail.refused_counts.is_empty())
+        .then(|| measured.to_token_usage())
     }
 
     fn recover_truncated_usage(&self, tail: &[u8]) -> Option<busbar_contract::billing::TokenUsage> {
@@ -1114,8 +1118,12 @@ impl ProtocolReader for ResponsesReader {
                             response_obj.get(keys::USAGE),
                             Some(response_obj),
                         )
-                        .map(Some)
-                        {
+                        .map(|usage| {
+                            (response_obj.get(keys::USAGE).is_some_and(|v| !v.is_null())
+                                || !usage.detail.open_units.is_empty()
+                                || !usage.detail.refused_counts.is_empty())
+                            .then_some(usage)
+                        }) {
                             Ok(usage) => usage,
                             Err(refusal) => {
                                 out.push(IrStreamEvent::Error(refusal));

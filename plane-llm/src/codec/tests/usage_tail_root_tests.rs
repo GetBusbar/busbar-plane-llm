@@ -31,13 +31,13 @@ fn only_a_complete_response_root_member_can_supply_usage() {
 }
 
 #[test]
-fn duplicate_root_usage_has_the_same_last_member_custody_as_json() {
+fn duplicate_root_usage_cannot_select_an_ambiguous_report() {
     assert_eq!(
         isolate_tail_usage_object(
             br#"{"usage":{"prompt_tokens":7},"usage":{"prompt_tokens":8},"after":"#,
             b"\"usage\""
         ),
-        Some(json!({"prompt_tokens":8}))
+        None
     );
     for bytes in [
         br#"{"usage":{"prompt_tokens":7},"usage":null}"#.as_slice(),

@@ -1696,17 +1696,20 @@ mod rehomed_answers {
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_sse_events_single_data_prefix`
     #[test]
     fn test_sse_events_single_data_prefix() {
-        let (arrived, lane) = ask("anthropic", "anthropic", true);
+        let (arrived, lane) = ask("openai", "openai", true);
         let ctx = reply_ctx(&arrived, &lane, false);
-        let far = data_stream(&["event-0", "event-1"]);
+        let events = [
+            r#"{"choices":[{"delta":{"content":"event-0"}}]}"#,
+            r#"{"choices":[{"delta":{"content":"event-1"}}]}"#,
+        ];
+        let far = data_stream(&events);
         let read = answer(&ctx, 200, SSE_HEAD, &[&far], false);
         assert_eq!(read.status, 200);
         let text = read.text();
         assert!(!text.contains("data: data:"), "{text}");
-        assert!(
-            text.contains("data: event-0\n\n") && text.contains("data: event-1\n\n"),
-            "{text}"
-        );
+        for event in events {
+            assert!(text.contains(&format!("data: {event}\n\n")), "{text}");
+        }
     }
 
     /// REHOMES `crates/busbar-llm/src/engine/tests/forward_pool_integration_tests.rs::test_stream_inspection_tap_usage_parsing`

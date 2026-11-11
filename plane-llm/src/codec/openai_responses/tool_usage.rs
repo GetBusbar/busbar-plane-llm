@@ -238,7 +238,9 @@ fn call_rows(items: &BTreeMap<String, CallFact>, snapshot: bool) -> Quantities {
     counts
         .into_iter()
         .enumerate()
-        .filter(|(i, n)| !unknown[*i] && (snapshot || *n > 0))
+        .filter(|(i, n)| {
+            !unknown[*i] && (*n > 0 || (snapshot && items.values().any(|item| item.kind == *i)))
+        })
         .map(|(i, n)| (12 + i, n))
         .collect()
 }
@@ -246,11 +248,15 @@ fn snapshot_calls(response: &Value) -> Result<Option<BTreeMap<String, CallFact>>
     let Some(output) = response.get("output") else {
         return Ok(None);
     };
-    let output = output.as_array().ok_or(BAD)?;
+    let Some(output) = output.as_array() else {
+        return Ok(None);
+    };
     let mut items = BTreeMap::new();
     let mut kinds = BTreeMap::new();
     for item in output {
-        let kind = item.get("type").and_then(Value::as_str).ok_or(BAD)?;
+        let Some(kind) = item.get("type").and_then(Value::as_str) else {
+            continue;
+        };
         if let Some(id) = item.get("id").and_then(Value::as_str) {
             if kinds
                 .insert(id, kind)

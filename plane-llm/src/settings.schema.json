@@ -749,7 +749,9 @@
                         "minItems": 1,
                         "items": {
                           "enum": [
-                            "standard"
+                            "standard",
+                            "flex",
+                            "priority"
                           ]
                         }
                       }

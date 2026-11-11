@@ -271,6 +271,14 @@ fn settings_schema_describes_optional_native_interactions() {
         ),
         (
             serde_json::json!({"interactions":{"models":{"entry":{"account_namespace":"account","pricing_modes":["flex"]}}}}),
+            true,
+        ),
+        (
+            serde_json::json!({"interactions":{"models":{"entry":{"account_namespace":"account","pricing_modes":["priority"]}}}}),
+            true,
+        ),
+        (
+            serde_json::json!({"interactions":{"models":{"entry":{"account_namespace":"account","pricing_modes":["unknown"]}}}}),
             false,
         ),
         (
@@ -279,7 +287,7 @@ fn settings_schema_describes_optional_native_interactions() {
         ),
         (serde_json::json!({"interactions":{"typo":true}}), false),
     ] {
-        assert_eq!(validator.is_valid(&value), valid);
+        assert_eq!(validator.is_valid(&value), valid, "schema: {value}");
         assert_eq!(
             native::config(&serde_json::to_vec(&value).unwrap(), &shaping).is_ok(),
             valid

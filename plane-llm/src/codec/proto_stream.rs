@@ -505,8 +505,18 @@ impl StreamTranslate {
         if self.egress.name_static() == "responses"
             && self.decode.responses_tool_calls.observe(event, data)
         {
-            let usage = self.last_usage.get_or_insert_with(Default::default);
-            self.decode.responses_tool_calls.apply(usage);
+            let mut usage = self.last_usage.clone().unwrap_or_default();
+            self.decode.responses_tool_calls.apply(&mut usage);
+            if self.last_usage.is_some()
+                || usage
+                    .detail
+                    .exact_counts
+                    .as_ref()
+                    .is_some_and(|counts| !counts.is_empty())
+                || !usage.detail.refused_counts.is_empty()
+            {
+                self.last_usage = Some(usage);
+            }
         }
     }
 

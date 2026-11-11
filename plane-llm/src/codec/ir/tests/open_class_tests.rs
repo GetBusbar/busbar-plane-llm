@@ -22,13 +22,14 @@ fn every_open_class_is_named_once() {
     }
 }
 
-/// Only disjoint cache write children join the token family; their aggregate is reporting-only.
+/// Disjoint cache-write children and image-tool token partitions join the token family.
 #[test]
-fn only_disjoint_cache_writes_count_toward_a_token_cap() {
+fn only_disjoint_token_classes_count_toward_a_token_cap() {
     for (class, family) in OPEN_CLASSES {
         assert_eq!(
             *family == busbar_contract::plane::TOKEN_FAMILY,
-            matches!(*class, CACHE_WRITE_30M_CLASS | CACHE_WRITE_12H_CLASS),
+            matches!(*class, CACHE_WRITE_30M_CLASS | CACHE_WRITE_12H_CLASS)
+                || RESPONSES_TOOL_CLASSES[..12].contains(class),
             "unexpected token family for {class}"
         );
     }

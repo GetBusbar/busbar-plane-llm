@@ -81,7 +81,7 @@ fn the_statement_owns_the_section_neither_declaring_nor_consumed() {
         // SAFETY: each `AbiStr` names a `'static` string of `len` bytes.
         .map(|s| unsafe { std::slice::from_raw_parts(s.name.ptr(), s.name.len()) })
         .collect();
-    assert_eq!(owned, [SECTION.as_bytes()]);
+    assert_eq!(owned, [SECTION.as_bytes(), b"interactions".as_slice()]);
 }
 
 #[test]
