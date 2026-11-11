@@ -131,8 +131,11 @@ protected usage facts; it does not delete them when upstream content is deleted.
 
 `observations::hosted` normalizes authenticated, typed supplemental evidence for
 OpenAI container intervals, Anthropic execution duration and image-tool leaf
-models. Configuration supplies dated tariff variants, rate bindings, explicit
-duration rules and allowance policy; the adapter contains no monetary defaults.
+models. Configuration binds physical quantity classes and a measurement schema.
+Measured seconds are preserved exactly: no minimum, quantum rounding, exemption
+zeroing, allowance subtraction, or rate-availability decision occurs in the adapter.
+Prices and invoice treatment belong to the host; these observations do not claim
+equivalence to a provider invoice.
 A container ID alone is insufficient. Automatic hosted settlement is not enabled.
 The [Responses reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
 exposes image usage as `tool_usage.image_gen`, which can skip incomplete call
@@ -240,20 +243,20 @@ call identities, requested image models, and aggregate cost quantities do not by
 themselves supply the missing complete accounting records.
 The exact public-provider evidence limits checked on 2026-11-10 are:
 
-| Provider path checked | What it supplies | Missing for exact hosted settlement |
+| Provider path checked | What it supplies | Missing for attributed supplemental measurements |
 | --- | --- | --- |
 | [OpenAI Responses retrieve](https://developers.openai.com/api/reference/go/resources/responses/methods/retrieve) | Aggregate `tool_usage.image_gen` when available | Calls with incomplete usage may be skipped, cache/output detail may be omitted, and no complete per-call leaf manifest is guaranteed. |
-| [OpenAI container retrieve](https://developers.openai.com/api/reference/resources/containers/methods/retrieve) | Container identity, creation/last-active time, expiration policy, memory tier | Economic interval identity, eligible-minute classification, authoritative billed duration, and interval ownership across requests. Expiration policy is not a billing measurement. |
+| [OpenAI container retrieve](https://developers.openai.com/api/reference/resources/containers/methods/retrieve) | Container identity, creation/last-active time, expiration policy, memory tier | Observed interval identity, measured execution duration, and interval ownership across requests. Expiration policy is not measured execution time. |
 | [OpenAI code-interpreter usage](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/code_interpreter_sessions) and [costs](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs) | Bucketed project session counts; daily cost/quantity groups | No container/session/request identity joining those aggregates to an original caller scope. Account totals cannot be allocated speculatively. |
-| [Anthropic code execution](https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool) | Request count and documented request-level exemptions | Duration and authoritative organization allowance allocation for each economic interval; preloading can accrue time without a call. |
-| [Anthropic analytics costs](https://platform.claude.com/docs/en/api/beta/organization/analytics/cost/list) | Aggregated cost dimensions, including Managed Agents session IDs | The documented session IDs refer to Managed Agents, not Messages code-execution containers, and do not provide their execution interval or allowance allocation. |
+| [Anthropic code execution](https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool) | Request count | Measured duration for each observed interval; preloading can accrue time without a call. |
+| [Anthropic analytics costs](https://platform.claude.com/docs/en/api/beta/organization/analytics/cost/list) | Aggregated cost dimensions, including Managed Agents session IDs | The documented session IDs refer to Managed Agents, not Messages code-execution containers, and do not provide their execution interval or measured duration. |
 
-Completing general interval and raster-image settlement requires authenticated
-provider evidence with complete
-call or interval identity, usage and allowance facts, plus host-issued interval
-custody. None was established by the public schemas above. No paid probe was made,
-no account aggregate was assigned to a caller, and refusal is not counted as completion
-of these features.
+Live acquisition for supplemental interval and complete per-call raster-image
+observations remains unimplemented. The schemas above do not supply all the
+attributed physical measurements required by those typed adapters. This limits
+measurement coverage; it does not prevent ordinary requests or make reporting raw
+units depend on reconstructing a provider invoice, discounts, or free allowances.
+No paid probe was made and no account aggregate was assigned to an invented caller.
 
 Hook request projections now attest text completeness only after checking the
 concrete normalized chat request. Media, tools, unsupported structured content,

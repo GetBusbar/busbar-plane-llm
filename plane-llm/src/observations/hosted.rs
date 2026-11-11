@@ -5,8 +5,8 @@
 //!
 //! This is a typed evidence boundary, not a decoder for arbitrary provider JSON.
 //! Its caller must authenticate evidence and obtain configuration/scope from the
-//! host. In particular, a client cannot assert its own tariff, allowance or scope.
-//! Raw evidence and the dated tariff snapshot belong in protected storage behind
+//! host. In particular, a client cannot assert its own authenticated provenance or scope.
+//! Raw evidence and the measurement schema belong in protected storage behind
 //! `evidence_ref`. Outputs must never also become ordinary billable UnitCounts.
 //! This module supplies adapter APIs only. It does not wire native provider routes,
 //! durable provider-ID lookup/checkpoints, scope recovery or reconciliation jobs.
@@ -17,11 +17,11 @@
 //! - <https://developers.openai.com/api/docs/guides/image-generation>
 //! - <https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool>
 //!
-//! OpenAI distinguishes session and eligible-minute container billing. Neither
-//! interval identity nor eligibility follows from a container ID/idle timeout.
+//! Container session and measured-duration facts require authoritative interval
+//! evidence. Neither follows from a container ID/idle timeout.
 //! Anthropic's request count does not measure duration; file preloading can cost
 //! execution time without a tool call. Image cache counts can be absent from the
-//! Responses API despite actual cache billing: absent never means zero here.
+//! Responses API: absent never means zero here.
 
 use busbar_contract::{
     abi::sdk::plane::observation::{Observation, ScopeId},
@@ -35,69 +35,42 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct HostedContext {
     /// Host-authorized original accounting scope.
     pub scope: ScopeId,
-    /// Reference to raw evidence and the pinned tariff, not the evidence itself.
+    /// Reference to raw evidence and its schema, not the evidence itself.
     pub evidence_ref: Vec<u8>,
 }
 
-/// Dated, host-approved configuration for one account and tool version.
+/// Class bindings and measurement schema for one account and tool version.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostedConfig {
     /// Stable provider-account namespace, never an API credential.
     pub account_namespace: String,
-    /// Operator-pinned immutable tariff snapshot identity.
-    pub tariff_version: String,
+    /// Pinned measurement schema identity.
+    pub schema_version: String,
     /// Exact tool/API version covered by this configuration.
     pub tool_version: String,
-    /// Provider-specific measurement rules; monetary rates stay with the host.
-    pub tariff: HostedTariff,
+    /// Provider-specific physical quantities; prices and invoice treatment stay with the host.
+    pub measurement: HostedMeasurement,
 }
 
-/// A class/subject binding whose rate availability was checked by the host.
+/// A declared class and host-approved subject binding, without monetary policy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RatedClass {
+pub struct ClassBinding {
     /// Declared billable class.
     pub class: u32,
     /// Index into the host-approved accounting subjects.
     pub rated_subject: u32,
-    /// Host has resolved a configured rate, including an explicitly zero rate.
-    pub rate_available: bool,
 }
 
-/// Explicit configured duration rule, applied once to authoritative interval totals.
+/// Physical container quantity to extract from authenticated evidence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DurationRule {
-    /// Minimum billed duration for this tariff version.
-    pub minimum_seconds: u64,
-    /// Round up to this many seconds; must be nonzero and documented in the tariff.
-    pub quantum_seconds: u64,
-}
-
-/// OpenAI container billing variants are deliberately separate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ContainerTariff {
-    /// One measured unit per authoritative economic session interval.
-    Session,
-    /// Minutes measured from authoritative eligible interval duration.
-    EligibleMinutes {
-        /// Pinned minimum and rounding rule, never inferred from idle timeout.
-        duration: DurationRule,
-    },
-}
-
-/// How organization-wide Anthropic allowance is handled for this scope.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AllowancePolicy {
-    /// No account-wide allocation is known; final paid quantity remains unresolved.
-    Unresolved,
-    /// Explicit operator policy to meter gross duration, not net invoice cost.
-    GrossDuration,
-    /// Require an authoritative allocation for this exact economic interval.
-    Reconciled,
+pub enum ContainerMeasure {
+    /// One observed session identified by authoritative interval evidence.
+    Session,
+    /// Measured seconds, with no minimum or rounding.
+    DurationSeconds,
 }
 
 /// The six nonoverlapping image-token classes, all rated to one actual leaf model.
@@ -118,8 +91,6 @@ pub struct ImageBinding {
     pub text_output: u32,
     /// Image output class.
     pub image_output: u32,
-    /// Classes for which the host resolved rates, including explicit zero rates.
-    pub priced_classes: BTreeSet<u32>,
 }
 
 /// A documented leaf default valid for one exact parent model and tool version.
@@ -134,25 +105,21 @@ pub struct ImageDefault {
     pub documentation_ref: String,
 }
 
-/// Provider-owned measurements; no hardcoded prices or current model defaults.
+/// Provider-owned measurements; no prices, duration rounding, or allowance allocation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum HostedTariff {
+pub enum HostedMeasurement {
     /// OpenAI hosted shell/code interpreter containers.
     OpenAiContainer {
-        /// Billing variant selected by the operator.
-        variant: ContainerTariff,
-        /// Exact memory tiers mapped to approved rated classes.
-        tiers: BTreeMap<String, RatedClass>,
+        /// Physical quantity selected for this component.
+        variant: ContainerMeasure,
+        /// Exact memory tiers mapped to declared classes.
+        tiers: BTreeMap<String, ClassBinding>,
     },
-    /// Anthropic execution seconds; allowance is never inferred from local traffic.
+    /// Anthropic measured execution seconds.
     AnthropicExecution {
         /// Seconds class and host subject.
-        binding: RatedClass,
-        /// Documented minimum and rounding rule for this version.
-        duration: DurationRule,
-        /// Explicit account allowance policy.
-        allowance: AllowancePolicy,
+        binding: ClassBinding,
     },
     /// Responses image-generation leaf usage, independent of parent LLM usage.
     OpenAiImage {
@@ -167,7 +134,7 @@ pub enum HostedTariff {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceStage {
-    /// Complete authoritative usage, including charged failed/cancelled work.
+    /// Complete authoritative usage, including measured failed/cancelled work.
     Final,
     /// Usage is not yet final; do not release the host's reservation.
     Pending,
@@ -183,43 +150,31 @@ pub enum EvidenceStage {
 pub struct Provenance {
     /// Provider-account namespace authenticated by the caller.
     pub account_namespace: String,
-    /// Original tariff snapshot for this economic event.
-    pub tariff_version: String,
+    /// Original measurement schema for this event.
+    pub schema_version: String,
     /// Tool/API version recorded with original evidence.
     pub tool_version: String,
     /// Completeness classification, not inferred from a tool result's presence.
     pub stage: EvidenceStage,
 }
 
-/// Explicit billing-variant evidence, independent of a container identifier.
+/// Explicit measured container usage, independent of a container identifier.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ContainerBilling {
-    /// Provider evidence identifies exactly one chargeable session interval.
+pub enum ContainerUsage {
+    /// Provider evidence identifies exactly one session interval.
     Session,
-    /// Provider evidence establishes minute eligibility and interval duration.
-    EligibleMinutes {
+    /// Provider evidence supplies a measured interval duration.
+    DurationSeconds {
         /// Authoritative total seconds, not request latency or idle timeout.
         duration_seconds: Count,
     },
 }
 
-/// Whole-interval Anthropic charging classification established by evidence.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecutionDisposition {
-    /// Tool-version/request evidence establishes an exempt interval.
-    Exempt,
-    /// Execution, including file preloading, is subject to duration billing.
-    Billable,
-    /// Request/tool-version or exemption evidence is insufficient.
-    Unknown,
-}
-
 /// Complete image usage in one deliberately narrow, inclusive-input schema.
 ///
 /// Input modality totals include their cache subsets. Output totals contain all
-/// billed output, including any partial-image overhead, exactly once. The caller
+/// reported output, including any partial-image overhead, exactly once. The caller
 /// must establish this schema from authenticated evidence; plain Responses usage
 /// with missing cache detail is insufficient.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,9 +204,9 @@ pub struct ImageUsage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HostedEvidence {
-    /// OpenAI container facts. An ID alone never creates a billable session.
+    /// OpenAI container facts. An ID alone never proves one observed session.
     OpenAiContainer {
-        /// Original accounting provenance.
+        /// Original measurement provenance.
         provenance: Provenance,
         /// Upstream container ID, namespaced by account.
         container_id: String,
@@ -259,29 +214,25 @@ pub enum HostedEvidence {
         interval_id: Option<String>,
         /// Exact provider memory tier.
         memory_tier: Option<String>,
-        /// Explicit variant/eligibility evidence.
-        billing: Option<ContainerBilling>,
+        /// Explicit measured session or duration evidence.
+        usage: Option<ContainerUsage>,
     },
     /// Anthropic execution interval facts; request counts remain diagnostic.
     AnthropicExecution {
-        /// Original accounting provenance.
+        /// Original measurement provenance.
         provenance: Provenance,
         /// Upstream execution container.
         container_id: String,
-        /// Authoritative economic interval with homogeneous exemption treatment.
+        /// Authoritative observed execution interval.
         interval_id: Option<String>,
         /// Authoritative interval duration, including preloading when applicable.
         duration_seconds: Option<Count>,
-        /// Evidence-backed charging classification for the whole interval.
-        disposition: ExecutionDisposition,
         /// Original code_execution_requests, never interpreted as sessions.
         code_execution_requests: Option<u64>,
-        /// Evidence-backed organization allowance allocated to this interval.
-        allocated_free_seconds: Option<Count>,
     },
     /// OpenAI Responses image-generation leaf facts.
     OpenAiImage {
-        /// Original accounting provenance.
+        /// Original measurement provenance.
         provenance: Provenance,
         /// Original parent response/run ID; never the retrieval request ID.
         parent_id: String,
@@ -303,10 +254,6 @@ pub enum HostedEvidence {
 pub struct HostedDiagnostics {
     /// Provider request counter, which is not a container-session count.
     pub code_execution_requests: Option<u64>,
-    /// Observed exempt duration, kept separately from billed execution seconds.
-    pub exempt_seconds: Option<Count>,
-    /// Gross-duration policy measures usage without claiming net invoice cost.
-    pub gross_duration: bool,
     /// Selected image model, useful for explaining the rated subject.
     pub leaf_model: Option<String>,
 }
@@ -324,26 +271,20 @@ pub enum UnresolvedReason {
     MissingInterval,
     /// Container memory tier is absent or has no configured binding.
     MissingTier,
-    /// Eligibility/variant or exemption treatment is unknown/mismatched.
-    MissingEligibility,
+    /// Requested physical quantity is absent or mismatched.
+    MissingMeasurement,
     /// Duration is absent, negative, inexact or outside supported arithmetic.
     InvalidDuration,
-    /// Duration rule is not configured coherently.
-    InvalidDurationRule,
-    /// Organization-wide allocation is unknown or invalid.
-    MissingAllowance,
     /// No actual leaf model can be established.
     MissingModel,
     /// Actual leaf model lacks an approved accounting subject.
     MissingBinding,
-    /// One or more declared classes have no configured rate.
-    MissingRate,
     /// Duplicate classes would overlap or overwrite leaf quantities.
     OverlappingClasses,
     /// Image schema is unknown, incomplete or internally inconsistent.
     InvalidImageUsage,
     /// Evidence and configured provider component differ.
-    TariffMismatch,
+    MeasurementMismatch,
     /// Identity or SDK observation bounds were exceeded.
     InvalidObservation,
 }
@@ -371,7 +312,7 @@ pub enum HostedOutcome {
     Unresolved {
         /// Precise missing or conflicting evidence.
         reason: UnresolvedReason,
-        /// Diagnostics retained even when no billed amount is knowable.
+        /// Diagnostics retained even when the requested measurement is unknown.
         diagnostics: HostedDiagnostics,
     },
     /// No settlement: historical input or intermediate output.
@@ -425,10 +366,10 @@ pub fn normalize(
             return Err(UnresolvedReason::MissingCustody);
         }
         if config.account_namespace.is_empty()
-            || config.tariff_version.is_empty()
+            || config.schema_version.is_empty()
             || config.tool_version.is_empty()
             || config.account_namespace != provenance.account_namespace
-            || config.tariff_version != provenance.tariff_version
+            || config.schema_version != provenance.schema_version
             || config.tool_version != provenance.tool_version
         {
             return Err(UnresolvedReason::ProvenanceMismatch);
@@ -456,14 +397,14 @@ fn normalize_final(
     evidence: &HostedEvidence,
     diagnostics: &mut HostedDiagnostics,
 ) -> Result<Observation, UnresolvedReason> {
-    let (event, component, subject, counts) = match (&config.tariff, evidence) {
+    let (event, component, subject, counts) = match (&config.measurement, evidence) {
         (
-            HostedTariff::OpenAiContainer { variant, tiers },
+            HostedMeasurement::OpenAiContainer { variant, tiers },
             HostedEvidence::OpenAiContainer {
                 container_id,
                 interval_id,
                 memory_tier,
-                billing,
+                usage,
                 ..
             },
         ) => {
@@ -472,20 +413,13 @@ fn normalize_final(
                 .as_ref()
                 .and_then(|tier| tiers.get(tier))
                 .ok_or(UnresolvedReason::MissingTier)?;
-            check_rate(binding)?;
-            let amount = match (variant, billing) {
-                (ContainerTariff::Session, Some(ContainerBilling::Session)) => Count::ONE,
+            let amount = match (variant, usage) {
+                (ContainerMeasure::Session, Some(ContainerUsage::Session)) => Count::ONE,
                 (
-                    ContainerTariff::EligibleMinutes { duration },
-                    Some(ContainerBilling::EligibleMinutes { duration_seconds }),
-                ) => {
-                    let seconds = duration_total(*duration_seconds, duration)?;
-                    if seconds.micros() % 60 != 0 {
-                        return Err(UnresolvedReason::InvalidDuration);
-                    }
-                    Count::from_micros(seconds.micros() / 60)
-                }
-                _ => return Err(UnresolvedReason::MissingEligibility),
+                    ContainerMeasure::DurationSeconds,
+                    Some(ContainerUsage::DurationSeconds { duration_seconds }),
+                ) => measured_seconds(*duration_seconds)?,
+                _ => return Err(UnresolvedReason::MissingMeasurement),
             };
             (
                 key(&["openai", &config.account_namespace, container_id, interval])?,
@@ -495,55 +429,17 @@ fn normalize_final(
             )
         }
         (
-            HostedTariff::AnthropicExecution {
-                binding,
-                duration,
-                allowance,
-            },
+            HostedMeasurement::AnthropicExecution { binding },
             HostedEvidence::AnthropicExecution {
                 container_id,
                 interval_id,
                 duration_seconds,
-                disposition,
-                allocated_free_seconds,
                 ..
             },
         ) => {
             let interval = interval(interval_id)?;
-            check_rate(binding)?;
-            let seconds = duration_seconds.ok_or(UnresolvedReason::InvalidDuration)?;
-            if seconds < Count::ZERO {
-                return Err(UnresolvedReason::InvalidDuration);
-            }
-            let amount = match disposition {
-                ExecutionDisposition::Unknown => return Err(UnresolvedReason::MissingEligibility),
-                ExecutionDisposition::Exempt => {
-                    diagnostics.exempt_seconds = Some(seconds);
-                    Count::ZERO
-                }
-                ExecutionDisposition::Billable => {
-                    let gross = duration_total(seconds, duration)?;
-                    match allowance {
-                        AllowancePolicy::Unresolved => {
-                            return Err(UnresolvedReason::MissingAllowance)
-                        }
-                        AllowancePolicy::GrossDuration => {
-                            diagnostics.gross_duration = true;
-                            gross
-                        }
-                        AllowancePolicy::Reconciled => {
-                            let free =
-                                allocated_free_seconds.ok_or(UnresolvedReason::MissingAllowance)?;
-                            if free < Count::ZERO || free > gross {
-                                return Err(UnresolvedReason::MissingAllowance);
-                            }
-                            gross
-                                .checked_sub(free)
-                                .map_err(|_| UnresolvedReason::MissingAllowance)?
-                        }
-                    }
-                }
-            };
+            let amount =
+                measured_seconds(duration_seconds.ok_or(UnresolvedReason::InvalidDuration)?)?;
             (
                 key(&[
                     "anthropic",
@@ -557,7 +453,7 @@ fn normalize_final(
             )
         }
         (
-            HostedTariff::OpenAiImage {
+            HostedMeasurement::OpenAiImage {
                 models,
                 documented_default,
             },
@@ -602,12 +498,6 @@ fn normalize_final(
             if classes.iter().copied().collect::<BTreeSet<_>>().len() != classes.len() {
                 return Err(UnresolvedReason::OverlappingClasses);
             }
-            if classes
-                .iter()
-                .any(|class| !binding.priced_classes.contains(class))
-            {
-                return Err(UnresolvedReason::MissingRate);
-            }
             let quantities =
                 image_quantities(usage.as_ref().ok_or(UnresolvedReason::InvalidImageUsage)?)?;
             let counts = classes
@@ -622,7 +512,7 @@ fn normalize_final(
                 counts,
             )
         }
-        _ => return Err(UnresolvedReason::TariffMismatch),
+        _ => return Err(UnresolvedReason::MeasurementMismatch),
     };
     let mut observation = Observation::new(context.scope, event, component)
         .rated_to(subject)
@@ -649,13 +539,6 @@ fn interval(value: &Option<String>) -> Result<&str, UnresolvedReason> {
         .ok_or(UnresolvedReason::MissingInterval)
 }
 
-fn check_rate(binding: &RatedClass) -> Result<(), UnresolvedReason> {
-    if !binding.rate_available {
-        return Err(UnresolvedReason::MissingRate);
-    }
-    Ok(())
-}
-
 fn key(parts: &[&str]) -> Result<Vec<u8>, UnresolvedReason> {
     if parts.iter().any(|part| part.is_empty() || part.len() > 256) {
         return Err(UnresolvedReason::InvalidObservation);
@@ -668,21 +551,11 @@ fn key(parts: &[&str]) -> Result<Vec<u8>, UnresolvedReason> {
     Ok(key)
 }
 
-fn duration_total(seconds: Count, rule: &DurationRule) -> Result<Count, UnresolvedReason> {
-    if rule.quantum_seconds == 0 {
-        return Err(UnresolvedReason::InvalidDurationRule);
-    }
-    if seconds < Count::ZERO {
+fn measured_seconds(seconds: Count) -> Result<Count, UnresolvedReason> {
+    if seconds < Count::ZERO || !seconds.fits_a_64_bit_column() {
         return Err(UnresolvedReason::InvalidDuration);
     }
-    let quantum = i128::from(rule.quantum_seconds) * 1_000_000;
-    let minimum = i128::from(rule.minimum_seconds) * 1_000_000;
-    let micros = seconds.micros().max(minimum);
-    let rounded = micros
-        .checked_add(quantum - 1)
-        .and_then(|value| (value / quantum).checked_mul(quantum))
-        .ok_or(UnresolvedReason::InvalidDuration)?;
-    Ok(Count::from_micros(rounded))
+    Ok(seconds)
 }
 
 fn image_quantities(usage: &ImageUsage) -> Result<[u64; 6], UnresolvedReason> {

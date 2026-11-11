@@ -10,51 +10,50 @@ fn count(value: i128) -> Count {
 fn context() -> HostedContext {
     HostedContext {
         scope: [7; 32],
-        evidence_ref: b"protected:hosted-fixture-and-tariff".to_vec(),
+        evidence_ref: b"protected:hosted-fixture-and-schema".to_vec(),
     }
 }
 
 fn provenance() -> Provenance {
     Provenance {
         account_namespace: "account-a".into(),
-        tariff_version: "fixture-2026-11-10".into(),
+        schema_version: "fixture-2026-11-10".into(),
         tool_version: "fixture-tool-v1".into(),
         stage: EvidenceStage::Final,
     }
 }
 
-fn config(tariff: HostedTariff) -> HostedConfig {
+fn config(measurement: HostedMeasurement) -> HostedConfig {
     let source = provenance();
     HostedConfig {
         account_namespace: source.account_namespace,
-        tariff_version: source.tariff_version,
+        schema_version: source.schema_version,
         tool_version: source.tool_version,
-        tariff,
+        measurement,
     }
 }
 
-fn rated(class: u32) -> RatedClass {
-    RatedClass {
+fn rated(class: u32) -> ClassBinding {
+    ClassBinding {
         class,
         rated_subject: 2,
-        rate_available: true,
     }
 }
 
-fn container_config(variant: ContainerTariff) -> HostedConfig {
-    config(HostedTariff::OpenAiContainer {
+fn container_config(variant: ContainerMeasure) -> HostedConfig {
+    config(HostedMeasurement::OpenAiContainer {
         variant,
         tiers: BTreeMap::from([("1g".into(), rated(10)), ("4g".into(), rated(11))]),
     })
 }
 
-fn container(billing: Option<ContainerBilling>) -> HostedEvidence {
+fn container(usage: Option<ContainerUsage>) -> HostedEvidence {
     HostedEvidence::OpenAiContainer {
         provenance: provenance(),
         container_id: "cntr_same".into(),
         interval_id: Some("economic-interval-1".into()),
         memory_tier: Some("1g".into()),
-        billing,
+        usage,
     }
 }
 
@@ -82,8 +81,8 @@ fn stage(evidence: &mut HostedEvidence, stage: EvidenceStage) {
 
 #[test]
 fn container_identity_preserves_interval_reuse_and_separates_accounts() {
-    let mut config = container_config(ContainerTariff::Session);
-    let mut evidence = container(Some(ContainerBilling::Session));
+    let mut config = container_config(ContainerMeasure::Session);
+    let mut evidence = container(Some(ContainerUsage::Session));
     let first = observation(normalize(&context(), &config, &evidence));
     assert_eq!(
         first,
@@ -116,12 +115,12 @@ fn container_identity_preserves_interval_reuse_and_separates_accounts() {
 }
 
 #[test]
-fn container_id_alone_is_not_an_interval_or_eligibility_proof() {
-    let config = container_config(ContainerTariff::Session);
+fn container_id_alone_is_not_an_interval_or_measurement_proof() {
+    let config = container_config(ContainerMeasure::Session);
     let mut evidence = container(None);
     unresolved(
         normalize(&context(), &config, &evidence),
-        UnresolvedReason::MissingEligibility,
+        UnresolvedReason::MissingMeasurement,
     );
     if let HostedEvidence::OpenAiContainer { interval_id, .. } = &mut evidence {
         *interval_id = None;
@@ -133,76 +132,52 @@ fn container_id_alone_is_not_an_interval_or_eligibility_proof() {
 }
 
 #[test]
-fn container_tiers_and_minute_minimum_are_explicit_and_distinct() {
-    let config = container_config(ContainerTariff::EligibleMinutes {
-        duration: DurationRule {
-            minimum_seconds: 300,
-            quantum_seconds: 60,
-        },
-    });
-    let mut evidence = container(Some(ContainerBilling::EligibleMinutes {
+fn container_tiers_preserve_raw_seconds_without_minimum_or_rounding() {
+    let config = container_config(ContainerMeasure::DurationSeconds);
+    let mut evidence = container(Some(ContainerUsage::DurationSeconds {
         duration_seconds: count(30),
     }));
     let small = observation(normalize(&context(), &config, &evidence));
-    assert_eq!(small.counts, BTreeMap::from([(10, count(5))]));
+    assert_eq!(small.counts, BTreeMap::from([(10, count(30))]));
     if let HostedEvidence::OpenAiContainer {
-        memory_tier,
-        billing,
-        ..
+        memory_tier, usage, ..
     } = &mut evidence
     {
         *memory_tier = Some("4g".into());
-        *billing = Some(ContainerBilling::EligibleMinutes {
+        *usage = Some(ContainerUsage::DurationSeconds {
             duration_seconds: count(301),
         });
     }
     let large = observation(normalize(&context(), &config, &evidence));
-    assert_eq!(large.counts, BTreeMap::from([(11, count(6))]));
+    assert_eq!(large.counts, BTreeMap::from([(11, count(301))]));
     // Conflicting tier evidence stays the same event; it cannot bypass host quarantine.
     assert_eq!(small.event_key, large.event_key);
     unresolved(
         normalize(
             &context(),
             &config,
-            &container(Some(ContainerBilling::Session)),
+            &container(Some(ContainerUsage::Session)),
         ),
-        UnresolvedReason::MissingEligibility,
+        UnresolvedReason::MissingMeasurement,
     );
 }
 
 #[test]
-fn container_missing_rates_tiers_and_invalid_duration_are_unresolved() {
-    let mut config = container_config(ContainerTariff::Session);
-    if let HostedTariff::OpenAiContainer { tiers, .. } = &mut config.tariff {
-        tiers.get_mut("1g").unwrap().rate_available = false;
-    }
-    unresolved(
-        normalize(
-            &context(),
-            &config,
-            &container(Some(ContainerBilling::Session)),
-        ),
-        UnresolvedReason::MissingRate,
-    );
-    let config = container_config(ContainerTariff::EligibleMinutes {
-        duration: DurationRule {
-            minimum_seconds: 300,
-            quantum_seconds: 60,
-        },
-    });
+fn container_missing_tiers_and_invalid_duration_are_unresolved() {
+    let config = container_config(ContainerMeasure::DurationSeconds);
     for seconds in [Count::from_micros(-1), Count::from_micros(i128::MAX)] {
         unresolved(
             normalize(
                 &context(),
                 &config,
-                &container(Some(ContainerBilling::EligibleMinutes {
+                &container(Some(ContainerUsage::DurationSeconds {
                     duration_seconds: seconds,
                 })),
             ),
             UnresolvedReason::InvalidDuration,
         );
     }
-    let mut evidence = container(Some(ContainerBilling::Session));
+    let mut evidence = container(Some(ContainerUsage::Session));
     if let HostedEvidence::OpenAiContainer { memory_tier, .. } = &mut evidence {
         *memory_tier = None;
     }
@@ -212,15 +187,8 @@ fn container_missing_rates_tiers_and_invalid_duration_are_unresolved() {
     );
 }
 
-fn anthropic_config(allowance: AllowancePolicy) -> HostedConfig {
-    config(HostedTariff::AnthropicExecution {
-        binding: rated(20),
-        duration: DurationRule {
-            minimum_seconds: 300,
-            quantum_seconds: 1,
-        },
-        allowance,
-    })
+fn anthropic_config() -> HostedConfig {
+    config(HostedMeasurement::AnthropicExecution { binding: rated(20) })
 }
 
 fn execution() -> HostedEvidence {
@@ -229,15 +197,13 @@ fn execution() -> HostedEvidence {
         container_id: "container-1".into(),
         interval_id: Some("execution-interval-1".into()),
         duration_seconds: Some(count(30)),
-        disposition: ExecutionDisposition::Billable,
         code_execution_requests: Some(1),
-        allocated_free_seconds: None,
     }
 }
 
 #[test]
 fn anthropic_request_counter_never_substitutes_for_execution_duration() {
-    let config = anthropic_config(AllowancePolicy::GrossDuration);
+    let config = anthropic_config();
     let mut evidence = execution();
     if let HostedEvidence::AnthropicExecution {
         duration_seconds, ..
@@ -260,8 +226,8 @@ fn anthropic_request_counter_never_substitutes_for_execution_duration() {
 }
 
 #[test]
-fn anthropic_preloading_can_bill_with_zero_requests_and_exemption_is_separate() {
-    let config = anthropic_config(AllowancePolicy::GrossDuration);
+fn anthropic_duration_is_raw_even_without_execution_requests() {
+    let config = anthropic_config();
     let mut evidence = execution();
     if let HostedEvidence::AnthropicExecution {
         code_execution_requests,
@@ -273,76 +239,30 @@ fn anthropic_preloading_can_bill_with_zero_requests_and_exemption_is_separate() 
     let outcome = normalize(&context(), &config, &evidence);
     assert_eq!(
         observation(outcome.clone()).counts,
-        BTreeMap::from([(20, count(300))])
+        BTreeMap::from([(20, count(30))])
     );
     assert!(matches!(
         outcome,
         HostedOutcome::Observation {
             diagnostics: HostedDiagnostics {
                 code_execution_requests: Some(0),
-                gross_duration: true,
                 ..
             },
             ..
         }
     ));
-    if let HostedEvidence::AnthropicExecution { disposition, .. } = &mut evidence {
-        *disposition = ExecutionDisposition::Exempt;
-    }
-    let exempt = normalize(
-        &context(),
-        &anthropic_config(AllowancePolicy::Unresolved),
-        &evidence,
-    );
-    assert_eq!(
-        observation(exempt.clone()).counts,
-        BTreeMap::from([(20, Count::ZERO)])
-    );
-    assert!(
-        matches!(exempt, HostedOutcome::Observation { diagnostics: HostedDiagnostics { exempt_seconds: Some(seconds), .. }, .. } if seconds == count(30))
-    );
-}
-
-#[test]
-fn anthropic_account_allowance_requires_explicit_policy_and_valid_allocation() {
-    let mut evidence = execution();
-    unresolved(
-        normalize(
-            &context(),
-            &anthropic_config(AllowancePolicy::Unresolved),
-            &evidence,
-        ),
-        UnresolvedReason::MissingAllowance,
-    );
-    let config = anthropic_config(AllowancePolicy::Reconciled);
-    unresolved(
-        normalize(&context(), &config, &evidence),
-        UnresolvedReason::MissingAllowance,
-    );
-    for free in [count(-1), count(301)] {
+    for raw in [Count::ZERO, Count::from_micros(30_500_001), count(301)] {
         if let HostedEvidence::AnthropicExecution {
-            allocated_free_seconds,
-            ..
+            duration_seconds, ..
         } = &mut evidence
         {
-            *allocated_free_seconds = Some(free);
+            *duration_seconds = Some(raw);
         }
-        unresolved(
-            normalize(&context(), &config, &evidence),
-            UnresolvedReason::MissingAllowance,
+        assert_eq!(
+            observation(normalize(&context(), &config, &evidence)).counts,
+            BTreeMap::from([(20, raw)])
         );
     }
-    if let HostedEvidence::AnthropicExecution {
-        allocated_free_seconds,
-        ..
-    } = &mut evidence
-    {
-        *allocated_free_seconds = Some(count(120));
-    }
-    assert_eq!(
-        observation(normalize(&context(), &config, &evidence)).counts,
-        BTreeMap::from([(20, count(180))])
-    );
 }
 
 fn image_binding(subject: u32) -> ImageBinding {
@@ -354,12 +274,11 @@ fn image_binding(subject: u32) -> ImageBinding {
         cached_image_input: 33,
         text_output: 34,
         image_output: 35,
-        priced_classes: (30..=35).collect(),
     }
 }
 
 fn image_config() -> HostedConfig {
-    config(HostedTariff::OpenAiImage {
+    config(HostedMeasurement::OpenAiImage {
         models: BTreeMap::from([
             ("image-a".into(), image_binding(3)),
             ("image-b".into(), image_binding(4)),
@@ -495,20 +414,16 @@ fn absent_cache_unknown_schema_and_inconsistent_image_totals_stay_unresolved() {
 }
 
 #[test]
-fn image_binding_rate_and_class_collisions_fail_closed() {
+fn image_binding_and_class_collisions_fail_closed() {
     for (change, expected) in [
         (0, UnresolvedReason::MissingBinding),
-        (1, UnresolvedReason::MissingRate),
         (2, UnresolvedReason::OverlappingClasses),
     ] {
         let mut config = image_config();
-        if let HostedTariff::OpenAiImage { models, .. } = &mut config.tariff {
+        if let HostedMeasurement::OpenAiImage { models, .. } = &mut config.measurement {
             let binding = models.get_mut("image-b").unwrap();
             match change {
                 0 => binding.rated_subject = 0,
-                1 => {
-                    binding.priced_classes.remove(&35);
-                }
                 _ => binding.cached_text_input = binding.text_input,
             }
         }
@@ -520,13 +435,10 @@ fn image_binding_rate_and_class_collisions_fail_closed() {
 fn historical_partial_and_pending_never_create_final_zero_observations() {
     for (mut evidence, config) in [
         (image(), image_config()),
+        (execution(), anthropic_config()),
         (
-            execution(),
-            anthropic_config(AllowancePolicy::GrossDuration),
-        ),
-        (
-            container(Some(ContainerBilling::Session)),
-            container_config(ContainerTariff::Session),
+            container(Some(ContainerUsage::Session)),
+            container_config(ContainerMeasure::Session),
         ),
     ] {
         stage(&mut evidence, EvidenceStage::Historical);
@@ -570,7 +482,7 @@ fn custody_provenance_and_identity_bounds_are_required() {
         UnresolvedReason::MissingCustody,
     );
     let mut mismatch = config.clone();
-    mismatch.tariff_version = "new-tariff-cannot-reprice-existing-event".into();
+    mismatch.schema_version = "different-measurement-schema".into();
     unresolved(
         normalize(&context(), &mismatch, &evidence),
         UnresolvedReason::ProvenanceMismatch,
@@ -600,37 +512,34 @@ fn typed_evidence_roundtrips_and_unknown_fields_are_refused() {
 }
 
 #[test]
-fn duration_rule_cannot_silently_round_an_unrepresentable_minute_quantity() {
-    let config = container_config(ContainerTariff::EligibleMinutes {
-        duration: DurationRule {
-            minimum_seconds: 300,
-            quantum_seconds: 1,
-        },
-    });
-    unresolved(
-        normalize(
+fn container_fractional_seconds_are_exact_and_invoice_rules_are_not_configuration() {
+    let config = container_config(ContainerMeasure::DurationSeconds);
+    let raw = Count::from_micros(301_000_001);
+    assert_eq!(
+        observation(normalize(
             &context(),
             &config,
-            &container(Some(ContainerBilling::EligibleMinutes {
-                duration_seconds: count(301),
-            })),
-        ),
-        UnresolvedReason::InvalidDuration,
+            &container(Some(ContainerUsage::DurationSeconds {
+                duration_seconds: raw
+            }))
+        ))
+        .counts,
+        BTreeMap::from([(10, raw)])
     );
-    let config = container_config(ContainerTariff::EligibleMinutes {
-        duration: DurationRule {
-            minimum_seconds: 300,
-            quantum_seconds: 0,
-        },
-    });
-    unresolved(
-        normalize(
-            &context(),
-            &config,
-            &container(Some(ContainerBilling::EligibleMinutes {
-                duration_seconds: count(300),
-            })),
-        ),
-        UnresolvedReason::InvalidDurationRule,
-    );
+    for field in [
+        "duration",
+        "allowance",
+        "minimum_seconds",
+        "quantum_seconds",
+    ] {
+        let mut value = serde_json::to_value(anthropic_config()).unwrap();
+        value["measurement"][field] = serde_json::json!(0);
+        assert!(serde_json::from_value::<HostedConfig>(value).is_err());
+    }
+    let mut binding = serde_json::to_value(rated(20)).unwrap();
+    binding["rate_available"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<ClassBinding>(binding).is_err());
+    let mut evidence = serde_json::to_value(execution()).unwrap();
+    evidence["disposition"] = serde_json::json!("exempt");
+    assert!(serde_json::from_value::<HostedEvidence>(evidence).is_err());
 }
