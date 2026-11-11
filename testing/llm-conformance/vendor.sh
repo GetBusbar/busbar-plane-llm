@@ -49,6 +49,19 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Confined owner suites consume controller-staged public inputs. The selftest's
+# file:// drift fixtures remain local and continue through the same digest checks.
+fetch() {
+  if [ -n "${CONFORMANCE_CAPABILITIES+x}" ]; then
+    case "$2" in
+      file://*) curl --proto '=file' --proto-redir '=file' -fsSL -m 300 -o "$1" "$2" ;;
+      *) echo "vendor: pinned spec is unavailable offline; controller must stage it" >&2; return 1 ;;
+    esac
+  else
+    curl -fsSL -m 300 -o "$1" "$2"
+  fi
+}
+
 sha256_raw() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 # json-canonical: digest of the document re-serialized with sorted keys and no whitespace, so a
 # server that varies key order per request (Google's discovery endpoint does) still pins.
@@ -86,7 +99,7 @@ if [ "$MODE" = drift ]; then
       unreachable=$((unreachable+1)); continue
     fi
     tmp="$(mktemp "${TMPDIR:-/tmp}/busbar-llm-drift.XXXXXX")"
-    if ! curl -fsSL -m 300 -o "$tmp" "$upstream"; then
+    if ! fetch "$tmp" "$upstream"; then
       echo "vendor: LIVE DRIFT UNMEASURED for ${spec}: download failed for ${upstream}" >&2
       rm -f "$tmp"; unreachable=$((unreachable+1)); continue
     fi
@@ -117,13 +130,13 @@ if [ "$MODE" = repin ]; then
     # keep the download: it is the candidate to diff against the committed copy and, once reviewed,
     # to commit in its place under a new name, with this row pointing at it
     tmp="$(mktemp "${TMPDIR:-/tmp}/busbar-llm-spec-${REPIN}.XXXXXX")"
-    curl -fsSL -m 300 -o "$tmp" "$upstream" || { echo "vendor: download failed for $upstream" >&2; rm -f "$tmp"; exit 4; }
+    fetch "$tmp" "$upstream" || { echo "vendor: download failed for $upstream" >&2; rm -f "$tmp"; exit 4; }
     echo "vendor: candidate kept at $tmp — diff it against ${url#vendored:}, commit it under specs/, point the row at it" >&2
     printf '%s\t%s\t%s\t%s\t%s\n' "$REPIN" "$fmt" "$(digest_of "$fmt" "$tmp")" "vendored:specs/<new file>" "$upstream"
     exit 0
   fi
   tmp="$(mktemp "${TMPDIR:-/tmp}/busbar-llm-spec.XXXXXX")"; trap 'rm -f "$tmp"' EXIT
-  curl -fsSL -m 300 -o "$tmp" "$url" || { echo "vendor: download failed for $url" >&2; exit 4; }
+  fetch "$tmp" "$url" || { echo "vendor: download failed for $url" >&2; exit 4; }
   printf '%s\t%s\t%s\t%s\n' "$REPIN" "$fmt" "$(digest_of "$fmt" "$tmp")" "$url"
   exit 0
 fi
@@ -146,8 +159,10 @@ while IFS=$'\t' read -r spec fmt want url upstream; do
   if [ -s "$file" ]; then
     have="$(digest_of "$fmt" "$file")"
     if [ "$have" = "$want" ]; then
-      rm -f "${dir}/spec.parsed.json"   # a pre-parse of this document that nothing measures; validate.py no longer reads it
-      printf '%s\n' "$want" >"${dir}/.digest"
+      if [ "$MODE" != check ] && [ -z "${CONFORMANCE_CAPABILITIES+x}" ]; then
+        rm -f "${dir}/spec.parsed.json"   # validate.py remeasures and parses the original document
+        printf '%s\n' "$want" >"${dir}/.digest"
+      fi
       echo "cached     ${spec}  ${want:0:12}  ${file}"
       continue
     fi
@@ -170,7 +185,7 @@ while IFS=$'\t' read -r spec fmt want url upstream; do
     if ! cp "$src" "$tmp" 2>/dev/null; then
       echo "vendor: vendored copy for ${spec} is missing: ${src}" >&2; rm -f "$tmp"; fails=$((fails+1)); continue
     fi
-  elif ! curl -fsSL -m 300 -o "$tmp" "$url"; then
+  elif ! fetch "$tmp" "$url"; then
     echo "vendor: download failed for ${spec}: ${url}" >&2; rm -f "$tmp"; fails=$((fails+1)); continue
   fi
   got="$(digest_of "$fmt" "$tmp")"

@@ -801,7 +801,8 @@ for changed in ("Cargo.toml", "Cargo.lock"):
     root = work / changed
     root.mkdir(parents=True)
     for name in ("Cargo.toml", "Cargo.lock", "plane-llm/Cargo.toml",
-                 "testing/conformance/llm.sh", "testing/conformance/requirements-llm.txt"):
+                 "testing/conformance/llm.sh", "testing/conformance/requirements-llm.txt",
+                 "testing/conformance/python.sh"):
         dst = root / name
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source / name, dst)
@@ -837,6 +838,9 @@ for changed in ("Cargo.toml", "Cargo.lock"):
                BUSBAR_ORACLE_SHA256_LINUX_AARCH64="3" * 64,
                BUSBAR_ORACLE_CRATE="cache-fixture", BUSBAR_ORACLE_BIN="cache-fixture",
                BUSBAR_ORACLE_JUDGE_PATH=str(oracle))
+    # This fixture deliberately exercises the legacy failing bootstrap, before pip
+    # or Cargo can run. It owns a disposable host and carries no controller identity.
+    env.pop("CONFORMANCE_CAPABILITIES", None)
     def run_subject():
         return subprocess.run(["bash", str(root / "testing/conformance/llm.sh"), "--subject"],
                               env=env, capture_output=True, text=True)
@@ -890,6 +894,13 @@ if python3 "$here/../conformance/test_llm_subject.py" >"$W/subject-contract.log"
 else
   cat "$W/subject-contract.log"
   say FAIL "recorder subject input or measured binary retention violated its contract"
+fi
+
+if python3 -B "$here/../conformance/test_llm_offline.py" >"$W/offline-contract.log" 2>&1; then
+  say PASS "isolated Python, dependency pins, offline specs and cached-subject refusal hold"
+else
+  cat "$W/offline-contract.log"
+  say FAIL "the isolated owner runtime violated its offline input contract"
 fi
 
 echo

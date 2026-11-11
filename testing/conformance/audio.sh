@@ -30,23 +30,30 @@ A="$repo/testing/audio-conformance"
 H="$repo/testing/llm-conformance"
 TGT="${CARGO_TARGET_DIR:-$repo/target}"
 run="$(dirname "$CONFORMANCE_OUT")/audio-run"
-export BUSBAR_LLM_SPEC_CACHE="${BUSBAR_LLM_SPEC_CACHE:-$TGT/llm-conformance/spec-cache}"
+if [ -z "${CONFORMANCE_CAPABILITIES+x}" ]; then
+  export BUSBAR_LLM_SPEC_CACHE="${BUSBAR_LLM_SPEC_CACHE:-$TGT/llm-conformance/spec-cache}"
+fi
 say() { printf 'audio: %s\n' "$*" >&2; }
 sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1; else shasum -a 256 | cut -d' ' -f1; fi; }
 port() { python3 -I -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
+# shellcheck source=testing/conformance/python.sh
+. "$repo/testing/conformance/python.sh"
+
+runtime_fail=""
+if [ -n "${CONFORMANCE_CAPABILITIES+x}" ]; then
+  llm_python "$repo" "$TGT" >"$CONFORMANCE_OUT/python.log" 2>&1 || runtime_fail="the pinned installed Python environment is unavailable (see python.log)"
+  if [ -z "$runtime_fail" ]; then
+    bash "$H/vendor.sh" --check >"$CONFORMANCE_OUT/vendor.log" 2>&1 \
+      || runtime_fail="the pinned offline spec cache is incomplete (see vendor.log)"
+  fi
+fi
 
 subject_run() {
-  local fail=""
-  # python with PyYAML, from the llm suites' hash-pinned file (the same venv llm.sh builds)
-  local req="$repo/testing/conformance/requirements-llm.txt" venv
-  venv="$TGT/llm-conformance/venv-$(sha < "$req" | cut -c1-12)"
-  if [ ! -x "$venv/bin/python" ] || ! "$venv/bin/python" -c 'import yaml' 2>/dev/null; then
-    rm -rf "$venv"
-    { "${LLM_CONFORMANCE_PYTHON:-python3}" -m venv "$venv" \
-      && "$venv/bin/python" -m pip install --disable-pip-version-check --quiet --require-hashes --only-binary=:all: -r "$req"; } \
-      >"$run/venv.log" 2>&1 || { rm -rf "$venv"; fail="the hash-pinned python environment could not be built (see venv.log)"; }
+  local fail="$runtime_fail"
+  if [ -z "$fail" ] && [ -z "${CONFORMANCE_CAPABILITIES+x}" ]; then
+    llm_python "$repo" "$TGT" >"$run/venv.log" 2>&1 || fail="the pinned python environment is unavailable (see venv.log)"
   fi
-  echo "$venv/bin/python" >"$run/python"
+  printf '%s\n' "${LLM_CONFORMANCE_RUNTIME_PYTHON:-/usr/bin/python3}" >"$run/python"
   [ -n "$fail" ] || bash "$H/vendor.sh" >"$run/vendor.log" 2>&1 || fail="the pinned specs could not be vendored (see vendor.log)"
 
   # the subject: busbar at the pin with this checkout's plane-llm, the build the llm suites judge
@@ -156,7 +163,7 @@ open(out + "/upstream-answer", "wb").write(json.dumps(judge.ERROR).encode() if s
   [ -z "$fail" ] || echo "$fail" >"$run/subject-failed"
 }
 
-if [ ! -f "$run/done" ]; then
+if [ -n "$runtime_fail" ] || [ ! -f "$run/done" ]; then
   rm -rf "$run"; mkdir -p "$run"
   subject_run
   touch "$run/done"

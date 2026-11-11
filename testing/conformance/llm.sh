@@ -19,7 +19,7 @@
 # A dialect is `pass` only when all three hold. A subject that cannot be built or booted is `fail` (armed).
 #
 # Env: CONFORMANCE_SUITE, CONFORMANCE_OUT, BUSBAR_CHECKOUT, BUSBAR_PIN, CARGO_TARGET_DIR (as run.sh sets).
-# Needs: rust, python3 with venv (PyYAML comes from a hash-pinned requirements file), curl, git.
+# Needs: rust, python3 (controller-installed or a hash-pinned venv), curl, git.
 #
 #   bash testing/conformance/llm.sh --selftest   # the swap bites: BUSBAR_CHECKOUT (busbar at the pin) gets
 #                                                # this checkout's plane, and a busbar it cannot swap is refused
@@ -39,7 +39,8 @@ from pathlib import Path
 root, pin = Path(sys.argv[1]), sys.argv[2]
 inputs = ["Cargo.toml", "Cargo.lock", "plane-llm", "testing/llm-conformance",
           "testing/conformance/requirements-llm.txt", "testing/conformance/llm.sh",
-          "testing/conformance/test_llm_subject.py"]
+          "testing/conformance/python.sh", "testing/conformance/capabilities.py",
+          "testing/conformance/test_llm_subject.py", "testing/conformance/test_llm_offline.py"]
 paths = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z", "--cached",
                                  "--others", "--", *inputs]).split(b"\0")
 digest = hashlib.sha256()
@@ -213,28 +214,29 @@ case "$dialect" in anthropic|openai|responses|gemini|bedrock|cohere) ;; *) say "
 key="$(cache_key)" || { say "could not identify conformance inputs"; exit 1; }
 D="$TGT/llm-conformance/$key"
 mkdir -p "$D"
+# shellcheck source=testing/conformance/python.sh
+. "$repo/testing/conformance/python.sh"
+
+# Even a completed shared run cannot hide a missing or changed isolated runtime.
+runtime_fail=""
+if [ -n "${CONFORMANCE_CAPABILITIES+x}" ]; then
+  llm_python "$repo" "$TGT" >"$D/venv.log" 2>&1 || runtime_fail="the pinned installed Python environment is unavailable (see venv.log)"
+  if [ -z "$runtime_fail" ]; then
+    bash "$H/vendor.sh" --check >"$D/vendor.log" 2>&1 \
+      || runtime_fail="the pinned offline spec cache is incomplete (see vendor.log)"
+  fi
+fi
 
 # ── the shared run ───────────────────────────────────────────────────────────────────────────────
 shared_run() {
-  local fail=""   # the first reason the run cannot be judged at all; every suite inherits it
+  local fail="$runtime_fail"   # the first reason the run cannot be judged at all; every suite inherits it
   oracle_preflight >"$D/judge.log" 2>&1 || {
     tail -n 30 "$D/judge.log" >&2
     fail="the trusted oracle judge is unavailable (see judge.log)"
   }
-  # Python with PyYAML, from the hash-pinned file, once per requirements content.
-  local req="$repo/testing/conformance/requirements-llm.txt" venv
-  venv="$TGT/llm-conformance/venv-$(sha < "$req" | cut -c1-12)"
-  if [ -z "$fail" ] && { [ ! -x "$venv/bin/python" ] || ! "$venv/bin/python" -c 'import yaml' 2>/dev/null; }; then
-    rm -rf "$venv"
-    { "${LLM_CONFORMANCE_PYTHON:-python3}" -m venv "$venv" \
-      && "$venv/bin/python" -m pip install --disable-pip-version-check --quiet --require-hashes --only-binary=:all: -r "$req"; } \
-      >"$D/venv.log" 2>&1 || {
-        tail -n 30 "$D/venv.log" >&2
-        rm -rf "$venv"
-        fail="the hash-pinned python environment could not be built (see venv.log)"
-      }
+  if [ -z "$fail" ] && [ -z "${CONFORMANCE_CAPABILITIES+x}" ]; then
+    llm_python "$repo" "$TGT" >"$D/venv.log" 2>&1 || fail="the hash-pinned python environment could not be built (see venv.log)"
   fi
-  [ -z "$fail" ] && export PATH="$venv/bin:$PATH"
 
   # busbar at the pin with this checkout's plane swapped in (written at run time, never committed).
   local SRC="$D/busbar-src"
@@ -294,19 +296,21 @@ PY
 # failure from an earlier check run is not an answer: the line tries again.
 marker="$(dirname "$CONFORMANCE_OUT")/.llm-shared-$key"
 complete() { python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if not d["fail"] and d["selftest_rc"]==0 else 1)' "$D/shared.json" 2>/dev/null; }
-if [ -s "$D/shared.json" ] && { [ -e "$marker" ] || complete; }; then
+if [ -z "$runtime_fail" ] && [ -s "$D/shared.json" ] && { [ -e "$marker" ] || complete; }; then
   say "shared run cached at $D"
 else
   rm -f "$D/shared.json"; shared_run; : > "$marker"
 fi
 if [ "$mode" = subject ]; then
+  python3 -I -c 'import json,sys; sys.exit(1 if json.load(open(sys.argv[1]))["fail"] else 0)' "$D/shared.json" \
+    || { say "the shared run could not produce a measured subject ($D)"; exit 1; }
   [ -x "$D/busbar" ] || { say "the shared run built no busbar ($D)"; exit 1; }
   echo "$D/busbar"; exit 0
 fi
 
 # ── this suite's verdict, from the shared ledger ─────────────────────────────────────────────────
 # The evidence this suite's verdict rests on, kept with the check's outputs (target/conformance/<id>/).
-for f in judge.log swap.log selftest.log build.log record.log run.log venv.log out/report.md out/ledger.tsv shared.json; do
+for f in judge.log swap.log selftest.log build.log record.log run.log venv.log vendor.log out/report.md out/ledger.tsv shared.json; do
   if [ -f "$D/$f" ]; then
     case "$f" in build.log) tail -n 200 "$D/$f" ;; *) cat "$D/$f" ;; esac > "$CONFORMANCE_OUT/$(basename "$f")" 2>/dev/null || true
   fi
