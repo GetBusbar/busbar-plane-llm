@@ -155,15 +155,21 @@ record_subject() {
   CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
     "$1/bin/oracle" record --bin "$2" --plane llm --out "$D/recording" 2>&1 \
     | tee "$D/record.log" \
-    | awk '
-        /^record --native: building the candidate / {
-          if (n++ < 120) { print "llm recorder phase: building run-keyed candidate"; fflush() }
-        }
-        /^[[:space:]]*(Compiling|Checking|Finished) / {
-          if ($2 ~ /^[A-Za-z0-9_-]+$/ && n++ < 120) {
-            print "llm recorder compiler: " $1 " " substr($2, 1, 100); fflush()
-          }
-        }' >&2
+    | python3 -u -c '
+import re, sys
+count = 0
+for line in sys.stdin:
+    message = None
+    if line.startswith("record --native: building the candidate "):
+        message = "llm recorder phase: building run-keyed candidate"
+    else:
+        match = re.match(r"^\s*(Compiling|Checking|Finished) ([A-Za-z0-9_-]+)(?:\s|$)", line)
+        if match:
+            message = "llm recorder compiler: " + match[1] + " " + match[2][:100]
+    if message is not None and count < 120:
+        print(message, flush=True)
+        count += 1
+' >&2
   local results=("${PIPESTATUS[@]}")
   # Preserve the recorder's refusal; a failed evidence sink is also not a recording.
   [ "${results[0]}" = 0 ] || return "${results[0]}"

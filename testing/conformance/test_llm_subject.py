@@ -3,6 +3,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import selectors
+import signal
 import subprocess
 import tempfile
 import unittest
@@ -103,6 +105,37 @@ sys.exit(int(os.environ["RECORDER_EXIT"]))
                 self.assertNotIn("private detail", result.stderr)
                 self.assertNotIn("credential fixture", result.stderr)
                 self.assertEqual(len((self.out / "record.log").read_text().splitlines()), 141)
+
+    def test_recording_phase_is_visible_before_recorder_exit(self):
+        (self.src / "bin").mkdir()
+        oracle = self.src / "bin/oracle"
+        release = self.root / "release-recorder"
+        self.env["RELEASE_RECORDER"] = str(release)
+        oracle.write_text('''#!/usr/bin/env python3
+import os, pathlib, sys, time
+print("record --native: building the candidate private detail", file=sys.stderr, flush=True)
+while not pathlib.Path(os.environ["RELEASE_RECORDER"]).exists():
+    time.sleep(0.01)
+''')
+        oracle.chmod(0o755)
+        proc = subprocess.Popen(["bash", "-c", self.helpers + '\nrecord_subject "$SRC" "$D/line-probe"'],
+                                env=self.env, stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            with selectors.DefaultSelector() as ready:
+                ready.register(proc.stderr, selectors.EVENT_READ)
+                self.assertTrue(ready.select(3), "phase output was buffered until recorder exit")
+            self.assertEqual(proc.stderr.readline(),
+                             b"llm recorder phase: building run-keyed candidate\n")
+            self.assertIsNone(proc.poll())
+        finally:
+            release.touch()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait(timeout=3)
+            proc.stderr.close()
+        self.assertEqual(proc.returncode, 0)
 
     def test_recorded_candidate_path_and_digest_are_required(self):
         probe = self.out / "line-probe"
