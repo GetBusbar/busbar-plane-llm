@@ -656,6 +656,9 @@ EOF
 # named copies of the document inside the digest's own directory: `all` for every copy, `parsed`
 # for the pre-parsed spec.parsed.json alone.
 drift() {
+  # Only the disposable copies passed below may be mutated. Controller-staged specs
+  # are read-only; cp preserves those modes, so restore owner writes on the copy.
+  chmod -R u+rwX "$1" || return 1
   python3 - "$1" "$2" <<'EOF'
 import glob, json, os, sys
 d, what = glob.glob(os.path.join(sys.argv[1], "cohere", "*"))[0], sys.argv[2]
@@ -696,7 +699,9 @@ SRC_CACHE="${BUSBAR_LLM_SPEC_CACHE:-$HOME/.cache/busbar-llm-specs}"
 
 # (n) every copy drifted. `--no-vendor` so this is offline and so the answer comes from the cache
 # check rather than from a re-download quietly repairing the drift mid-test.
-cp -R "$SRC_CACHE" "$W/n-cache"; drift "$W/n-cache" all
+if ! cp -R "$SRC_CACHE" "$W/n-cache" || ! drift "$W/n-cache" all; then
+  say FAIL "(n) could not prepare the drifted spec cache"; exit 1
+fi
 RUN_ARGS="--no-vendor"
 rc="$(BUSBAR_LLM_SPEC_CACHE="$W/n-cache" run "$W/n-rec" "$W/n")"
 RUN_ARGS=""
@@ -710,7 +715,9 @@ fi
 # every cache check passes. The verdict must still be RED on the missing `id`: a pre-parse of a
 # spec is not a spec, and nothing may reach the checker that was not measured against the pin.
 cp -R "$W/n-rec" "$W/o-rec"
-cp -R "$SRC_CACHE" "$W/o-cache"; drift "$W/o-cache" parsed
+if ! cp -R "$SRC_CACHE" "$W/o-cache" || ! drift "$W/o-cache" parsed; then
+  say FAIL "(o) could not prepare the drifted pre-parse cache"; exit 1
+fi
 RUN_ARGS="--no-vendor"
 rc="$(BUSBAR_LLM_SPEC_CACHE="$W/o-cache" run "$W/o-rec" "$W/o")"
 RUN_ARGS=""

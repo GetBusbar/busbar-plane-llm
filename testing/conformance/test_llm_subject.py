@@ -72,6 +72,38 @@ else:
         self.assertEqual(commands[1], ["build", "--locked", "--release", "--manifest-path",
                                        "dist/default/Cargo.toml", "--bin", "busbar"])
 
+    def test_recording_uses_functional_profile_and_keeps_identity_arguments_and_failure(self):
+        (self.src / "bin").mkdir()
+        oracle = self.src / "bin/oracle"
+        oracle.write_text('''#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ["COMMAND_LOG"], "w") as f:
+    json.dump({"args": sys.argv[1:], "lto": os.environ["CARGO_PROFILE_RELEASE_LTO"],
+               "units": os.environ["CARGO_PROFILE_RELEASE_CODEGEN_UNITS"],
+               "judge": os.environ["BUSBAR_ORACLE_JUDGE_PATH"]}, f)
+for i in range(140):
+    print("record --native: building the candidate private detail " + str(i), file=sys.stderr, flush=True)
+print("Authorization: credential fixture", file=sys.stderr, flush=True)
+sys.exit(int(os.environ["RECORDER_EXIT"]))
+''')
+        oracle.chmod(0o755)
+        self.env["BUSBAR_ORACLE_JUDGE_PATH"] = "/controller/immutable-judge"
+        for code in (0, 7):
+            with self.subTest(exit_code=code):
+                self.env["RECORDER_EXIT"] = str(code)
+                result = self.shell('record_subject "$SRC" "$D/line-probe"')
+                self.assertEqual(result.returncode, code, result.stderr)
+                invocation = json.loads(self.log.read_text())
+                self.assertEqual(invocation, {
+                    "args": ["record", "--bin", str(self.out / "line-probe"),
+                             "--plane", "llm", "--out", str(self.out / "recording")],
+                    "lto": "thin", "units": "16", "judge": "/controller/immutable-judge"})
+                self.assertEqual(len(result.stderr.splitlines()), 120)
+                self.assertIn("llm recorder phase: building run-keyed candidate", result.stderr)
+                self.assertNotIn("private detail", result.stderr)
+                self.assertNotIn("credential fixture", result.stderr)
+                self.assertEqual(len((self.out / "record.log").read_text().splitlines()), 141)
+
     def test_recorded_candidate_path_and_digest_are_required(self):
         probe = self.out / "line-probe"
         probe.write_text("line probe fixture")

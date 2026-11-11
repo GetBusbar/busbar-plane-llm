@@ -149,6 +149,27 @@ os.replace(root / "busbar.new", root / "busbar")
 PYSUBJECT
 }
 
+# Match bin/oracle ci-run's functional recording profile. The signed recorder still
+# builds the locked default distribution with its run key and verifies the measured binary.
+record_subject() {
+  CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
+    "$1/bin/oracle" record --bin "$2" --plane llm --out "$D/recording" 2>&1 \
+    | tee "$D/record.log" \
+    | awk '
+        /^record --native: building the candidate / {
+          if (n++ < 120) { print "llm recorder phase: building run-keyed candidate"; fflush() }
+        }
+        /^[[:space:]]*(Compiling|Checking|Finished) / {
+          if ($2 ~ /^[A-Za-z0-9_-]+$/ && n++ < 120) {
+            print "llm recorder compiler: " $1 " " substr($2, 1, 100); fflush()
+          }
+        }' >&2
+  local results=("${PIPESTATUS[@]}")
+  # Preserve the recorder's refusal; a failed evidence sink is also not a recording.
+  [ "${results[0]}" = 0 ] || return "${results[0]}"
+  [ "${results[1]}" = 0 ] && [ "${results[2]}" = 0 ]
+}
+
 # Swap THIS checkout's plane-llm into the staged busbar at $1 (written at run time, never committed).
 # The plane is a git pin of busbar's distribution workspace (dist/default/Cargo.toml's
 # [workspace.dependencies]); the swap patches that pin's source with this checkout's crate and moves the
@@ -265,13 +286,13 @@ shared_run() {
     }
   fi
   if [ -z "$fail" ]; then
-    say "=== subject: record the llm cells"
+    say "=== subject: record the llm cells (functional release profile: thin LTO, 16 codegen units)"
     export MODERNCI_CACHE_DIR="${MODERNCI_CACHE_DIR:-$TGT/llm-conformance/oracle-cache}"
     # The trusted runner supplies the immutable judge identity and pre-fetched judge path.
     # bin/oracle verifies that path against the supplied architecture digest before executing it.
     # Never derive judge authority from a candidate/host file or fetch a judge inside this run.
     rm -rf "$D/recording"
-    "$SRC/bin/oracle" record --bin "$subject_bin" --plane llm --out "$D/recording" >"$D/record.log" 2>&1 || rec_rc=$?
+    record_subject "$SRC" "$subject_bin" || rec_rc=$?
     if [ "$rec_rc" -ne 0 ]; then tail -15 "$D/record.log" >&2; fail="the llm cells could not be recorded (exit $rec_rc; see record.log)"; fi
     if [ -z "$fail" ]; then
       retain_recorded_subject "$subject_bin" >>"$D/record.log" 2>&1 || fail="the recording did not retain its measured subject (see record.log)"

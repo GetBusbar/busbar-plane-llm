@@ -139,6 +139,39 @@ class OfflineSpecs(unittest.TestCase):
                                "--digests", str(self.pins), "--cache-dir", str(self.cache), *args],
                               env=self.env, capture_output=True, text=True, timeout=30)
 
+    def test_negative_control_can_drift_only_its_readonly_cache_copy(self):
+        doc = {"components": {"schemas": {"ChatResponseV2": {
+            "required": ["id"], "properties": {"usage": {"type": "object"}}}}}}
+        data = json.dumps(doc).encode()
+        digest = hashlib.sha256(data).hexdigest()
+        directory = self.root / "source/cohere" / digest
+        directory.mkdir(parents=True)
+        for name in ("spec.json", "spec.parsed.json"):
+            (directory / name).write_bytes(data)
+            (directory / name).chmod(0o444)
+        directory.chmod(0o555)
+        self.addCleanup(directory.chmod, 0o755)
+        self.pins.write_text(f"cohere\traw\t{digest}\thttps://example.invalid/spec.json\n")
+        script = (REPO / "testing/llm-conformance/selftest.sh").read_text()
+        helper = script[script.index("drift() {"):script.index("SRC_CACHE=")]
+        for mode in ("all", "parsed"):
+            with self.subTest(mode=mode):
+                self.cache = self.root / f"cache-{mode}"
+                shutil.copytree(self.root / "source", self.cache)
+                result = subprocess.run(["bash", "-c", helper + '\ndrift "$1" "$2"',
+                                         "drift-probe", str(self.cache), mode],
+                                        env=self.env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                parsed = json.loads((self.cache / "cohere" / digest / "spec.parsed.json").read_text())
+                self.assertEqual(parsed["components"]["schemas"]["ChatResponseV2"]["required"], [])
+                checked = self.vendor("--check")
+                self.assertEqual(checked.returncode, 3 if mode == "all" else 0, checked.stderr)
+                self.assertFalse(self.network.exists())
+                for name in ("spec.json", "spec.parsed.json"):
+                    self.assertEqual((directory / name).read_bytes(), data)
+                    self.assertEqual((directory / name).stat().st_mode & 0o777, 0o444)
+                shutil.rmtree(self.cache)
+
     def test_missing_and_drifted_public_specs_refuse_without_network(self):
         for mode in ((), ("--check",)):
             self.assertEqual(self.vendor(*mode).returncode, 3)
