@@ -23,7 +23,7 @@ path = "src/lib.rs"
 [dependencies]
 busbar-contract = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true, features = ["arbitrary_precision"] }
+serde_json = { workspace = true, features = ["arbitrary_precision", "raw_value"] }
 bytes = { workspace = true }
 # The event-stream frame checksum (CRC-32/ISO-HDLC) and the synthesized-id hex codec.
 crc32fast = { workspace = true }
@@ -37,7 +37,7 @@ busbar-kernel = { workspace = true }
 sonic-rs = { workspace = true }
 jsonschema = { workspace = true }
 tracing-subscriber = { workspace = true }
-serde_json = { workspace = true, features = ["arbitrary_precision"] }
+serde_json = { workspace = true, features = ["arbitrary_precision", "raw_value"] }
 getrandom = { workspace = true }
 busbar-contract = { workspace = true, features = ["test-seal"] }
 busbar-plugin-loader = { workspace = true, features = ["test-support"] }

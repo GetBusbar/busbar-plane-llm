@@ -535,6 +535,7 @@ impl Run {
     /// in one transaction. Generated text and caller data are not retained in the evidence row.
     /// The native owner must separately establish the supported text-only economic profile before
     /// calling this method; unknown hosted/modality evidence must remain unresolved.
+    #[cfg(test)]
     pub fn final_response(
         &self,
         kind: u32,

@@ -2176,3 +2176,8 @@ mod native_interactions_tests;
 #[allow(unsafe_code)]
 #[path = "../tests/support/execution_counts.rs"]
 mod execution_counts;
+
+#[cfg(test)]
+#[allow(unsafe_code)]
+#[path = "../tests/support/responses_tool_counts.rs"]
+mod responses_tool_counts;

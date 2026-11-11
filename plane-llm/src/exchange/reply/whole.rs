@@ -160,7 +160,12 @@ pub fn translate(
 ) -> Whole {
     let egress_op = handler(ctx.egress, ctx.operation);
     let ingress_serves = handler(ctx.ingress, ctx.operation).is_some();
-    let body_json = crate::codec::json::parse::<Value>(bytes);
+    let mut body_json = crate::codec::json::parse::<Value>(bytes);
+    if ctx.egress == "responses" {
+        if let Ok(value) = &mut body_json {
+            crate::codec::openai_responses::tool_usage::mask_ambiguous(bytes, value);
+        }
+    }
     let mut refused = None;
     if body_json.is_err() {
         match opaque(host, ctx, status, egress_op, ingress_serves, bytes) {

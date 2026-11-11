@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! Provider-owned normalization of authenticated hosted-tool evidence.
+//! Nonshipping reference normalization of authenticated hosted-tool evidence.
 //!
 //! This is a typed evidence boundary, not a decoder for arbitrary provider JSON.
 //! Its caller must authenticate evidence and obtain configuration/scope from the
 //! host. In particular, a client cannot assert its own authenticated provenance or scope.
 //! Raw evidence and the measurement schema belong in protected storage behind
 //! `evidence_ref`. Outputs must never also become ordinary billable UnitCounts.
-//! This module supplies adapter APIs only. It does not wire native provider routes,
+//! Compiled only for reference tests. It does not wire native provider routes,
 //! durable provider-ID lookup/checkpoints, scope recovery or reconciliation jobs.
 //!
 //! Provider documentation checked 2026-11-10:

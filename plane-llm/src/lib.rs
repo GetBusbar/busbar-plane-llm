@@ -11,7 +11,7 @@ mod dialect;
 mod exchange;
 mod meta;
 mod migrate;
-pub mod observations;
+mod observations;
 mod options;
 mod plane_door;
 mod refusal;

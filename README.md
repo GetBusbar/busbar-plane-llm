@@ -110,7 +110,8 @@ The split classes belong to the existing token family and declare `cache_write`
 as their parent through neutral host metadata. Host cap/reporting projections
 include both children in that reserved total; raw metering and pricing retain
 only the disjoint components. Historical class indices, including fee index 19,
-are preserved. Hosted-tool settlement remains a separate evidence integration.
+are preserved. Supplemental hosted interval settlement remains a separate evidence integration;
+ordinary Responses tool measurements are reported as described below.
 
 ## Native Interactions and observation accounting
 
@@ -129,17 +130,19 @@ accounting record, and scope close requires all declared final components to
 have non-quarantined host receipts. Native serving retains these records and their
 protected usage facts; it does not delete them when upstream content is deleted.
 
-`observations::hosted` normalizes authenticated, typed supplemental evidence for
+The nonshipping `observations::hosted` reference tests normalize typed supplemental evidence for
 OpenAI container intervals, Anthropic execution duration and image-tool leaf
 models. Configuration binds physical quantity classes and a measurement schema.
 Measured seconds are preserved exactly: no minimum, quantum rounding, exemption
 zeroing, allowance subtraction, or rate-availability decision occurs in the adapter.
-Prices and invoice treatment belong to the host; these observations do not claim
+Prices and invoice treatment belong to the host; these reference cases do not claim
 equivalence to a provider invoice.
-A container ID alone is insufficient. Automatic hosted settlement is not enabled.
+A container ID alone is insufficient for an interval observation. Automatic
+supplemental hosted settlement is not enabled; ordinary Responses aggregate and
+completed-call quantities do not use this adapter.
 The [Responses reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
 exposes image usage as `tool_usage.image_gen`, which can skip incomplete call
-records and omit cache or output detail. Image result items provide no per-call
+records and omit cache or output detail. Raster-image result items provide no per-call
 image usage. Consequently, that aggregate alone cannot establish the complete
 per-call manifest required here, even when some totals are present. The
 [image guide](https://developers.openai.com/api/docs/guides/image-generation)
@@ -153,8 +156,8 @@ parent response. The current live path supplies neither that complete evidence
 nor multiple independent economic scopes within one unit. Typed supplemental
 fixtures do not establish a live evidence acquisition path. Native Interactions
 requests with hosted tools are refused before scope creation or paid dispatch;
-ordinary existing routes do not opt into exact hosted settlement through this
-adapter API.
+ordinary existing routes do not use this nonshipping reference model for
+supplemental settlement.
 
 Native create/get/cancel/delete and create/get streaming are opt-in through the LLM-owned
 `interactions` section. For each concrete Gemini model entry, configure
@@ -229,6 +232,41 @@ nonnegative integer quantity beside independently reported token/search/fetch
 counts. An absent or null execution counter stays unknown; it is not zero seconds.
 Malformed counts are refused without discarding valid token observations.
 
+Responses buffered replies and terminal SSE snapshots now report available
+`tool_usage.image_gen` measurements separately from the base model's `usage`.
+These are response aggregates over available image-call records, not a guarantee
+that every call supplied usage. They stay on the selected serving lane; no leaf
+model identity or per-call price is inferred.
+
+| Stable class indices | Raw quantity |
+| --- | --- |
+| 29–31 | Image-tool text input: uncached, cached, or cache unknown |
+| 32–34 | Image-tool image input: uncached, cached, or cache unknown |
+| 35–37 | Image-tool aggregate input when modality/cache attribution is incomplete: uncached, cached, or cache unknown |
+| 38–39 | Image-tool text and image output when both components are reported |
+| 40 | Image-tool aggregate output when the component partition is unavailable |
+| 41 | Distinct observed completed image-generation calls |
+| 42 | Distinct observed completed code-interpreter calls with a reported container ID |
+| 43 | Distinct observed completed shell calls with a reported `container_reference` environment and container ID |
+
+Input/output aggregate rows and their modality components are mutually exclusive.
+Reported cache quantities partition inclusive input; absent cache quantities use
+an explicit cache-unknown class, never an assumed zero. `total_tokens` validates
+the partition and does not create another row. Partial modality observations
+without a total retain only the supplied parts. Counts deduplicate call IDs within
+the response; repeated terminal SSE snapshots cannot add or reclassify them.
+An absent output list yields no call counts. Missing shell environment evidence
+leaves the hosted-shell count unknown. These counts measure observed completed
+calls, not new containers, sessions, elapsed seconds, or billable intervals.
+
+Malformed, negative, inconsistent, or duplicated quantity evidence refuses the
+affected component while retaining independently known parent-model tokens.
+Large same-protocol JSON replies use bounded projection of aggregate usage and
+call identity/status/environment, discarding image payloads from the metering
+buffer. SSE retains the existing bounded frame limit. Incomplete JSON/SSE does
+not synthesize tool quantities. SVG authoring `svg_usage` is not additionally
+counted because its overlap with the image aggregate is not specified.
+
 The plugin declares and measures units. The host applies the selected rate card,
 including an explicitly zero rate, and handles missing rates. The plugin neither
 reads prices nor decides request exemptions, minimum durations, or organization
@@ -236,16 +274,19 @@ allowances. There is no execution-policy setting or invoice-completeness admissi
 gate. Execution, image-generation, and container requests follow the ordinary
 protocol path; reported quantities do not assert complete provider invoice coverage.
 
-The broader hosted module is still a typed adapter with no production Anthropic
-interval-settlement caller; it is not automatic image/container invoice settlement.
-Complete authenticated interval/image acquisition remains unresolved. Available
-call identities, requested image models, and aggregate cost quantities do not by
-themselves supply the missing complete accounting records.
+The hosted reference module is compiled only for tests and has no production
+Anthropic interval-settlement caller. Its fifteen reference cases are not a
+delivered provider capability. Public crate exports remain the plugin door and
+declaration metadata; observation implementation modules are private.
+Complete authenticated interval/per-call image acquisition remains unresolved.
+The live ordinary path above acquires available aggregate image quantities and
+completed call counts; it does not supply the additional interval facts or complete
+per-call manifest needed by the supplemental adapter.
 The exact public-provider evidence limits checked on 2026-11-10 are:
 
 | Provider path checked | What it supplies | Missing for attributed supplemental measurements |
 | --- | --- | --- |
-| [OpenAI Responses retrieve](https://developers.openai.com/api/reference/go/resources/responses/methods/retrieve) | Aggregate `tool_usage.image_gen` when available | Calls with incomplete usage may be skipped, cache/output detail may be omitted, and no complete per-call leaf manifest is guaranteed. |
+| [OpenAI Responses retrieve](https://developers.openai.com/api/reference/resources/responses/methods/retrieve) | Aggregate `tool_usage.image_gen`, output call IDs/status and hosted container references; acquired by the ordinary live path | Calls with incomplete usage may be skipped, cache/output detail may be omitted, and no complete per-call leaf manifest is guaranteed. |
 | [OpenAI container retrieve](https://developers.openai.com/api/reference/resources/containers/methods/retrieve) | Container identity, creation/last-active time, expiration policy, memory tier | Observed interval identity, measured execution duration, and interval ownership across requests. Expiration policy is not measured execution time. |
 | [OpenAI code-interpreter usage](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/code_interpreter_sessions) and [costs](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs) | Bucketed project session counts; daily cost/quantity groups | No container/session/request identity joining those aggregates to an original caller scope. Account totals cannot be allocated speculatively. |
 | [Anthropic code execution](https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool) | Request count | Measured duration for each observed interval; preloading can accrue time without a call. |
@@ -253,7 +294,7 @@ The exact public-provider evidence limits checked on 2026-11-10 are:
 
 Live acquisition for supplemental interval and complete per-call raster-image
 observations remains unimplemented. The schemas above do not supply all the
-attributed physical measurements required by those typed adapters. This limits
+attributed physical measurements required by that reference adapter. This limits
 measurement coverage; it does not prevent ordinary requests or make reporting raw
 units depend on reconstructing a provider invoice, discounts, or free allowances.
 No paid probe was made and no account aggregate was assigned to an invented caller.

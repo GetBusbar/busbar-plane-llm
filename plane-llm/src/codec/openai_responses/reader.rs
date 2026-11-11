@@ -137,10 +137,13 @@ impl ProtocolReader for ResponsesReader {
         &self,
         body: &serde_json::Value,
     ) -> Option<busbar_contract::billing::TokenUsage> {
-        let usage = body.get(keys::USAGE).filter(|usage| usage.is_object())?;
+        let usage = body.get(keys::USAGE);
+        if usage.is_none() && body.get("tool_usage").is_none() && body.get("output").is_none() {
+            return None;
+        }
 
         Some(
-            read_responses_usage(Some(usage), Some(body))
+            read_responses_usage(usage, Some(body))
                 .ok()?
                 .to_token_usage(),
         )
@@ -1107,11 +1110,11 @@ impl ProtocolReader for ResponsesReader {
                             provider_signal.as_deref().unwrap_or(SIGNAL_RESPONSE_FAILED),
                         );
 
-                        let usage = match response_obj
-                            .get(keys::USAGE)
-                            .filter(|u| !u.is_null())
-                            .map(|u| read_responses_usage(Some(u), Some(response_obj)))
-                            .transpose()
+                        let usage = match read_responses_usage(
+                            response_obj.get(keys::USAGE),
+                            Some(response_obj),
+                        )
+                        .map(Some)
                         {
                             Ok(usage) => usage,
                             Err(refusal) => {
@@ -1217,24 +1220,11 @@ impl ProtocolReader for ResponsesReader {
                         stop_reason
                     };
 
-                    let usage = response_obj
-                        .get(keys::USAGE)
-                        .map(|u| read_responses_usage(Some(u), Some(response_obj)))
-                        .transpose();
-                    let usage = match usage {
-                        Ok(usage) => usage.unwrap_or(crate::codec::ir::IrUsage {
-                            input_tokens: 0,
-                            output_tokens: 0,
-                            cache_creation_input_tokens: None,
-                            cache_read_input_tokens: None,
-                            detail: crate::codec::ir::IrUsageDetail {
-                                service_tier: crate::codec::carry::read_word(
-                                    super::map::WORDS_SERVED_TIER,
-                                    response_obj.get(keys::SERVICE_TIER),
-                                ),
-                                ..Default::default()
-                            },
-                        }),
+                    let usage = match read_responses_usage(
+                        response_obj.get(keys::USAGE),
+                        Some(response_obj),
+                    ) {
+                        Ok(usage) => usage,
                         Err(refusal) => {
                             out.push(IrStreamEvent::Error(refusal));
                             return out;

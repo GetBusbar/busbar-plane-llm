@@ -175,6 +175,9 @@ impl StreamTranslate {
         data: &serde_json::Value,
         out: &mut Vec<u8>,
     ) {
+        if self.egress.name_static() == "responses" && self.message_stopped {
+            return;
+        }
         let ingress_name = self.ingress.name_static();
 
         let seam = crate::codec::drops::Seam {
@@ -504,12 +507,20 @@ impl StreamTranslate {
         event_type: &str,
         data: &serde_json::Value,
     ) {
+        if self.egress.name_static() == "responses" && self.message_stopped {
+            return;
+        }
         let events =
             self.egress
                 .reader()
                 .read_response_events(host, event_type, data, &mut self.decode);
         self.recover_unread_stream_usage(event_type, data, &events);
         for ev in events {
+            if self.egress.name_static() == "responses"
+                && matches!(ev, crate::codec::ir::IrStreamEvent::MessageStop)
+            {
+                self.message_stopped = true;
+            }
             if let crate::codec::ir::IrStreamEvent::MessageStart { usage: Some(u), .. } = &ev {
                 self.start_usage = Some(u.clone());
                 self.fold_reported_usage(u);
@@ -858,10 +869,17 @@ impl StreamTranslate {
             if !self.same_proto {
                 #[cfg(test)]
                 self.decode_calls.set(self.decode_calls.get() + 1);
-                let Ok(value) = crate::codec::json::parse_str::<serde_json::Value>(&data) else {
+                let Ok(mut value) = crate::codec::json::parse_str::<serde_json::Value>(&data)
+                else {
                     self.abort();
                     break;
                 };
+                if self.egress.name_static() == "responses" {
+                    super::openai_responses::tool_usage::mask_ambiguous_event(
+                        data.as_bytes(),
+                        &mut value,
+                    );
+                }
                 self.translate_event(host, event_type, &value, &mut out);
                 continue;
             }
@@ -872,9 +890,16 @@ impl StreamTranslate {
             if reads {
                 #[cfg(test)]
                 self.decode_calls.set(self.decode_calls.get() + 1);
-                let Ok(value) = crate::codec::json::parse_str::<serde_json::Value>(&data) else {
+                let Ok(mut value) = crate::codec::json::parse_str::<serde_json::Value>(&data)
+                else {
                     continue;
                 };
+                if self.egress.name_static() == "responses" {
+                    super::openai_responses::tool_usage::mask_ambiguous_event(
+                        data.as_bytes(),
+                        &mut value,
+                    );
+                }
                 self.extract_usage_only(host, event_type, &value);
             }
 

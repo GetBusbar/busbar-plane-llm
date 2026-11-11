@@ -108,7 +108,7 @@ fn the_tail_is_one_the_contract_accepts() {
     assert_eq!(TAIL.op_classes_len(), 7);
     assert_eq!(
         TAIL.billable_classes_len(),
-        29,
+        44,
         "historical classes and fee retain their indices; native tariff classes are appended"
     );
 
@@ -133,6 +133,21 @@ fn the_tail_is_one_the_contract_accepts() {
             ("cache_write_30m", "token"),
             ("cache_write_12h", "token"),
             ("code_execution_requests", "count"),
+            ("image_tool_uncached_text_input_tokens", "token"),
+            ("image_tool_cached_text_input_tokens", "token"),
+            ("image_tool_text_input_cache_unknown_tokens", "token"),
+            ("image_tool_uncached_image_input_tokens", "token"),
+            ("image_tool_cached_image_input_tokens", "token"),
+            ("image_tool_image_input_cache_unknown_tokens", "token"),
+            ("image_tool_uncached_input_tokens", "token"),
+            ("image_tool_cached_input_tokens", "token"),
+            ("image_tool_input_cache_unknown_tokens", "token"),
+            ("image_tool_text_output_tokens", "token"),
+            ("image_tool_image_output_tokens", "token"),
+            ("image_tool_output_tokens", "token"),
+            ("image_generation_completed_calls", "count"),
+            ("code_interpreter_completed_calls", "count"),
+            ("hosted_shell_completed_calls", "count"),
         ]
     );
     let stated = unsafe { TAIL.billable_classes() };

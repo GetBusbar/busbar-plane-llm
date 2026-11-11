@@ -485,7 +485,7 @@ pub(crate) fn inspect_response_usage(
         {
             return Err(UsageTapFault::BadJson);
         }
-        let v = match crate::codec::json::parse::<Value>(body) {
+        let mut v = match crate::codec::json::parse::<Value>(body) {
             Ok(v) => v,
             Err(_e) => {
                 ::tracing::debug!(diag = %crate::codec::diagnostics::USAGE_TAP_BAD_JSON.banner(),
@@ -497,6 +497,9 @@ pub(crate) fn inspect_response_usage(
                 return Err(UsageTapFault::BadJson);
             }
         };
+        if ingress_protocol == "responses" {
+            super::openai_responses::tool_usage::mask_ambiguous(body, &mut v);
+        }
         match p.reader().read_response(host, &v) {
             Ok(ir) => Ok(Some(ir.usage.to_token_usage())),
             Err(e) => {
@@ -551,7 +554,11 @@ impl OperationHandler for ChatOperation {
         host: &dyn crate::codec::cells::CodecHost,
         body: &[u8],
     ) -> Option<Billing> {
-        let body = crate::codec::json::parse::<Value>(body).ok()?;
+        let mut value = crate::codec::json::parse::<Value>(body).ok()?;
+        if self.0 == "responses" {
+            super::openai_responses::tool_usage::mask_ambiguous(body, &mut value);
+        }
+        let body = value;
         let protocol = self.proto()?;
         let reader = protocol.reader();
 
@@ -615,8 +622,11 @@ impl OperationHandler for ChatOperation {
                 CodecError::Malformed("ambiguous or malformed provider JSON".into())
             })?;
         }
-        let v: Value =
+        let mut v: Value =
             serde_json::from_slice(wire).map_err(|e| CodecError::Malformed(e.to_string()))?;
+        if self.0 == "responses" {
+            super::openai_responses::tool_usage::mask_ambiguous(wire, &mut v);
+        }
         let p = self
             .proto()
             .ok_or_else(|| CodecError::Malformed(format!("unknown protocol {}", self.0)))?;

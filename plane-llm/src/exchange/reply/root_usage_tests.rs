@@ -114,3 +114,62 @@ fn titan_root_count_is_retained_without_nested_or_string_spoofs() {
     }
     assert!(project(br#"{"embedding":[1,,2],"inputTextTokenCount":5}"#, 128, 1).is_none());
 }
+
+#[test]
+fn responses_projection_drops_large_payloads_keeps_metadata_at_each_boundary() {
+    let body = format!(
+        r#"{{"output":[{{"id":"ig_1","type":"image_generation_call","status":"completed","result":"{}é🦀\uD83E\uDD80"}},{{"id":"sh_1","type":"shell_call","status":"completed","environment":{{"type":"container_reference","container_id":"cntr_1"}},"action":{{"commands":["{}"]}}}}],"tool_usage":{{"image_gen":{{"input_tokens":2}}}},"usage":{{"input_tokens":7}}}}"#,
+        "x".repeat(5000),
+        "x".repeat(5000)
+    );
+    for size in [1, 2, 3, 7, 64, body.len()] {
+        let mut scan = RootUsage::new(512);
+        for piece in body.as_bytes().chunks(size) {
+            scan.feed(piece);
+            assert!(scan.capture.len() <= 512);
+            assert!(scan.output_bytes <= 512);
+            if let Some(child) = &scan.output_item {
+                assert!(child.capture.len() <= 512);
+            }
+        }
+        let projected = scan.finish().unwrap();
+        assert!(projected.len() < 512);
+        let value: serde_json::Value = serde_json::from_slice(&projected).unwrap();
+        assert_eq!(value["usage"]["input_tokens"], 7);
+        assert_eq!(value["tool_usage"]["image_gen"]["input_tokens"], 2);
+        assert_eq!(value["output"][0]["id"], "ig_1");
+        assert_eq!(value["output"][1]["environment"]["container_id"], "cntr_1");
+        assert!(value["output"][0].get("result").is_none());
+        assert!(value["output"][1].get("action").is_none());
+    }
+}
+#[test]
+fn responses_projection_ambiguous_tool_metadata_preserves_parent_usage() {
+    for body in [
+        r#"{"usage":{"input_tokens":7},"tool_usage":{"image_gen":{"input_tokens":1,"input_tokens":2}}}"#,
+        r#"{"usage":{"input_tokens":7},"tool_usage":{},"tool_usage":{}}"#,
+        r#"{"usage":{"input_tokens":7},"output":[],"output":[]}"#,
+        r#"{"usage":{"input_tokens":7},"output":[{"id":"a","id":"b","type":"image_generation_call","status":"completed"}]}"#,
+    ] {
+        let value = project(body.as_bytes(), 512, 1).unwrap();
+        assert_eq!(value["usage"]["input_tokens"], 7);
+        assert!(
+            value.get("tool_usage") == Some(&serde_json::Value::Bool(false))
+                || value.get("output") == Some(&serde_json::Value::Bool(false))
+                || value["output"][0]["id"] == serde_json::Value::Bool(false)
+        );
+    }
+}
+#[test]
+fn responses_projection_metadata_overflow_cannot_become_an_empty_call_list() {
+    let body = format!(
+        r#"{{"usage":{{"input_tokens":7}},"output":[{{"id":"{}","type":"image_generation_call","status":"completed"}}]}}"#,
+        "x".repeat(4000)
+    );
+    let value = project(body.as_bytes(), 128, 7).unwrap();
+    assert_eq!(value["usage"]["input_tokens"], 7);
+    assert!(
+        value["output"] == serde_json::Value::Bool(false)
+            || value["output"][0]["id"] == serde_json::Value::Bool(false)
+    );
+}

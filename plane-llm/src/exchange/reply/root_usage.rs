@@ -18,9 +18,17 @@ enum Frame {
     ArrayEnd,
 }
 
-/// Incremental root-member custody, with at most eight `cap`-sized retained values.
+/// Incremental root-member custody with bounded usage fields and slim tool-call metadata.
 pub(super) struct RootUsage {
     cap: usize,
+    tool_item: bool,
+    seen: std::collections::BTreeSet<String>,
+    ambiguous: std::collections::BTreeSet<String>,
+    output_active: bool,
+    output_bad: bool,
+    output_bytes: usize,
+    output_items: Vec<Value>,
+    output_item: Option<Box<RootUsage>>,
     stack: Vec<Frame>,
     started: bool,
     done: bool,
@@ -49,6 +57,14 @@ impl RootUsage {
     pub(super) fn new(cap: usize) -> Self {
         Self {
             cap,
+            tool_item: false,
+            seen: Default::default(),
+            ambiguous: Default::default(),
+            output_active: false,
+            output_bad: false,
+            output_bytes: 0,
+            output_items: Vec::new(),
+            output_item: None,
             stack: Vec::new(),
             started: false,
             done: false,
@@ -83,6 +99,9 @@ impl RootUsage {
     }
 
     fn record(&mut self, byte: u8) {
+        if let Some(item) = &mut self.output_item {
+            item.feed(&[byte]);
+        }
         if self.capturing && !self.oversized {
             if self.capture.len() == self.cap {
                 self.oversized = true;
@@ -187,6 +206,9 @@ impl RootUsage {
                     return;
                 }
                 if self.stack.len() == 1 {
+                    if self.output_active {
+                        self.output_bad |= byte != b'[';
+                    }
                     self.capturing = self.name.is_some();
                     self.oversized = false;
                     self.capture.clear();
@@ -194,6 +216,15 @@ impl RootUsage {
                         self.arrays[index] = (byte == b'[').then_some((0, true));
                     }
                 } else if self.stack.len() == 2 && matches!(frame, Frame::ArrayValue(_)) {
+                    if self.output_active {
+                        if byte == b'{' && !self.output_bad {
+                            let mut child = Self::new(self.cap);
+                            child.tool_item = true;
+                            self.output_item = Some(Box::new(child));
+                        } else {
+                            self.output_bad = true;
+                        }
+                    }
                     self.item_object = byte == b'{';
                     self.item_string = byte == b'"';
                     self.item_fields = [false; 3];
@@ -259,20 +290,38 @@ impl RootUsage {
                                 Some("usageMetadata") => self.image_usage_present[1] = true,
                                 _ => {}
                             }
+                            self.output_active =
+                                !self.tool_item && name.as_deref() == Some("output");
+                            if self.output_active {
+                                self.output_items.clear();
+                                self.output_bytes = 0;
+                                self.output_bad = !self.seen.insert("output".into());
+                            }
                             self.name = name.filter(|s| {
-                                matches!(
-                                    s.as_str(),
-                                    "usage"
-                                        | "usageMetadata"
-                                        | "meta"
-                                        | "trace"
-                                        | "status"
-                                        | "error"
-                                        | "metrics"
-                                        | "inputTextTokenCount"
-                                )
+                                if self.tool_item {
+                                    matches!(
+                                        s.as_str(),
+                                        "id" | "type" | "status" | "container_id" | "environment"
+                                    )
+                                } else {
+                                    matches!(
+                                        s.as_str(),
+                                        "usage"
+                                            | "usageMetadata"
+                                            | "meta"
+                                            | "trace"
+                                            | "status"
+                                            | "error"
+                                            | "metrics"
+                                            | "inputTextTokenCount"
+                                            | "tool_usage"
+                                    )
+                                }
                             });
                             if let Some(name) = &self.name {
+                                if !self.seen.insert(name.clone()) {
+                                    self.ambiguous.insert(name.clone());
+                                }
                                 self.values.remove(name);
                             }
                             if repeated_usage {
@@ -350,6 +399,23 @@ impl RootUsage {
 
     fn finished_value(&mut self) {
         if self.stack.len() == 2 {
+            if self.output_active {
+                if let Some(child) = self.output_item.take() {
+                    if let Some(bytes) = child.finish() {
+                        self.output_bytes = self.output_bytes.saturating_add(bytes.len());
+                        if self.output_bytes <= self.cap && self.output_items.len() < 4096 {
+                            match crate::codec::json::parse::<Value>(&bytes) {
+                                Ok(value) => self.output_items.push(value),
+                                Err(_) => self.output_bad = true,
+                            }
+                        } else {
+                            self.output_bad = true;
+                        }
+                    } else {
+                        self.output_bad = true;
+                    }
+                }
+            }
             if let Some(index) = self.array_key {
                 if let Some((count, valid)) = self.arrays[index].as_mut() {
                     let payload = self.item_object && (self.item_fields[0] || self.item_fields[1]);
@@ -368,22 +434,41 @@ impl RootUsage {
         }
         if self.stack.len() == 1 {
             self.array_key = None;
+            if self.output_active {
+                let value = if self.output_bad {
+                    Value::Bool(false)
+                } else {
+                    Value::Array(std::mem::take(&mut self.output_items))
+                };
+                self.values.insert("output".into(), value);
+                self.output_active = false;
+            }
         }
         if self.stack.len() == 1 && self.capturing {
             if !self.oversized {
-                if self.name.as_deref() == Some("usage")
-                    && crate::codec::json::validate_unique_json(&self.capture).is_err()
-                {
+                let unique = crate::codec::json::validate_unique_json(&self.capture).is_ok();
+                if self.name.as_deref() == Some("usage") && !unique {
                     self.bad = true;
                     return;
                 }
-                match serde_json::from_slice::<Value>(&self.capture) {
+                let ambiguous = (self.tool_item || self.name.as_deref() == Some("tool_usage"))
+                    && (self
+                        .name
+                        .as_ref()
+                        .is_some_and(|name| self.ambiguous.contains(name))
+                        || !unique);
+                match crate::codec::json::parse::<Value>(&self.capture) {
                     Ok(value) => {
                         if let Some(name) = self.name.take() {
-                            self.values.insert(name, value);
+                            self.values
+                                .insert(name, if ambiguous { Value::Bool(false) } else { value });
                         }
                     }
                     Err(_) => self.bad = true,
+                }
+            } else if self.tool_item || self.name.as_deref() == Some("tool_usage") {
+                if let Some(name) = self.name.take() {
+                    self.values.insert(name, Value::Bool(false));
                 }
             }
             self.capturing = false;

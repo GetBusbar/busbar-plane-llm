@@ -17,6 +17,25 @@ pub const WEB_FETCH_REQUESTS_CLASS: &str = "web_fetch_requests";
 /// Anthropic server-side execution requests, exactly as reported; not execution duration.
 pub const CODE_EXECUTION_REQUESTS_CLASS: &str = "code_execution_requests";
 
+/// Response-aggregate tool quantities. Stable appended ABI indices 29 through 43.
+pub const RESPONSES_TOOL_CLASSES: [&str; 15] = [
+    "image_tool_uncached_text_input_tokens",
+    "image_tool_cached_text_input_tokens",
+    "image_tool_text_input_cache_unknown_tokens",
+    "image_tool_uncached_image_input_tokens",
+    "image_tool_cached_image_input_tokens",
+    "image_tool_image_input_cache_unknown_tokens",
+    "image_tool_uncached_input_tokens",
+    "image_tool_cached_input_tokens",
+    "image_tool_input_cache_unknown_tokens",
+    "image_tool_text_output_tokens",
+    "image_tool_image_output_tokens",
+    "image_tool_output_tokens",
+    "image_generation_completed_calls",
+    "code_interpreter_completed_calls",
+    "hosted_shell_completed_calls",
+];
+
 /// The tokens a provider's stated total counts above the itemized buckets this dialect reads (OpenAI
 /// and Responses `total_tokens`, Gemini `totalTokenCount`, Bedrock `totalTokens`): `reported_total -
 /// summed_total` when positive.
@@ -88,10 +107,61 @@ pub const OPEN_CLASSES: &[(&str, &str)] = &[
     (CACHE_WRITE_30M_CLASS, busbar_contract::plane::TOKEN_FAMILY),
     (CACHE_WRITE_12H_CLASS, busbar_contract::plane::TOKEN_FAMILY),
     (CODE_EXECUTION_REQUESTS_CLASS, COUNT),
+    (
+        RESPONSES_TOOL_CLASSES[0],
+        busbar_contract::plane::TOKEN_FAMILY,
+    ),
+    (
+        RESPONSES_TOOL_CLASSES[1],
+        busbar_contract::plane::TOKEN_FAMILY,
+    ),
+    (
+        RESPONSES_TOOL_CLASSES[2],
+        busbar_contract::plane::TOKEN_FAMILY,
+    ),
+    (
+        RESPONSES_TOOL_CLASSES[3],
+        busbar_contract::plane::TOKEN_FAMILY,
+    ),
+    (
+        RESPONSES_TOOL_CLASSES[4],
+        busbar_contract::plane::TOKEN_FAMILY,
+    ),
+    (
+        RESPONSES_TOOL_CLASSES[5],
+        busbar_contract::plane::TOKEN_FAMILY,
+    ),
+    (
+        RESPONSES_TOOL_CLASSES[6],
+        busbar_contract::plane::TOKEN_FAMILY,
+    ),
+    (
+        RESPONSES_TOOL_CLASSES[7],
+        busbar_contract::plane::TOKEN_FAMILY,
+    ),
+    (
+        RESPONSES_TOOL_CLASSES[8],
+        busbar_contract::plane::TOKEN_FAMILY,
+    ),
+    (
+        RESPONSES_TOOL_CLASSES[9],
+        busbar_contract::plane::TOKEN_FAMILY,
+    ),
+    (
+        RESPONSES_TOOL_CLASSES[10],
+        busbar_contract::plane::TOKEN_FAMILY,
+    ),
+    (
+        RESPONSES_TOOL_CLASSES[11],
+        busbar_contract::plane::TOKEN_FAMILY,
+    ),
+    (RESPONSES_TOOL_CLASSES[12], COUNT),
+    (RESPONSES_TOOL_CLASSES[13], COUNT),
+    (RESPONSES_TOOL_CLASSES[14], COUNT),
 ];
 
 /// The number of [`OPEN_CLASSES`], for the const tables that state them one by one.
-pub const OPEN_CLASS_COUNT: usize = 18;
+pub const OPEN_CLASS_COUNT: usize = 33;
 const _: () = assert!(OPEN_CLASSES.len() == OPEN_CLASS_COUNT);
 
 /// Bedrock's guardrail usage counts (`GuardrailUsage`), each with the open class it is ledgered

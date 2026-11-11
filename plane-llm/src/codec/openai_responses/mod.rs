@@ -1210,6 +1210,7 @@ fn write_text_format(rf: &crate::codec::ir::IrResponseFormat) -> serde_json::Val
 }
 
 mod cache_writes;
+pub(crate) mod tool_usage;
 
 /// The Responses usage counts, as data. `input_tokens` includes the cached prefix, so
 /// `input_tokens_details.cached_tokens` is subtracted (saturating) to leave uncached input and
@@ -1267,6 +1268,11 @@ fn read_responses_usage(
 ) -> Result<crate::codec::ir::IrUsage, IrError> {
     let mut ir = crate::codec::usage_count::read_usage(COUNT_LABEL, usage, USAGE)?;
     cache_writes::normalize(usage, &mut ir);
+    if usage.is_some_and(|v| !v.is_null() && !v.is_object()) {
+        ir.detail
+            .refused_counts
+            .push("Responses usage is not an unambiguous object".into());
+    }
 
     ir.detail.usage_identity_note = (!crate::codec::usage_count::refused_any(usage, USAGE))
         .then(|| {
@@ -1278,6 +1284,7 @@ fn read_responses_usage(
             )
         })
         .flatten();
+    tool_usage::read(response, &mut ir);
     ir.detail.service_tier = crate::codec::carry::read_word(
         map::WORDS_SERVED_TIER,
         response.and_then(|r| r.get(keys::SERVICE_TIER)),
