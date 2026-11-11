@@ -150,11 +150,11 @@ PYSUBJECT
 }
 
 # Keep release-mode cfgs and the full locked default distribution for functional probes,
-# without spending their bounded runtime on optimization. The separate release producer
+# with light optimization for both compilation and repeated probe execution. The release producer
 # owns shipping optimization settings. The signed recorder still builds with its run key
 # and verifies the measured executable; these settings apply only to this invocation.
 record_subject() {
-  CARGO_PROFILE_RELEASE_OPT_LEVEL=0 CARGO_PROFILE_RELEASE_LTO=off \
+  CARGO_PROFILE_RELEASE_OPT_LEVEL=1 CARGO_PROFILE_RELEASE_LTO=off \
     CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
     "$1/bin/oracle" record --bin "$2" --plane llm --out "$D/recording" 2>&1 \
     | tee "$D/record.log" \
@@ -295,7 +295,7 @@ shared_run() {
     }
   fi
   if [ -z "$fail" ]; then
-    say "=== subject: record the llm cells (functional release profile: opt-level 0, LTO off, 16 codegen units)"
+    say "=== subject: record the llm cells (functional release profile: opt-level 1, LTO off, 16 codegen units)"
     export MODERNCI_CACHE_DIR="${MODERNCI_CACHE_DIR:-$TGT/llm-conformance/oracle-cache}"
     # The trusted runner supplies the immutable judge identity and pre-fetched judge path.
     # bin/oracle verifies that path against the supplied architecture digest before executing it.

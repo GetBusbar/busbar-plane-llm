@@ -100,7 +100,7 @@ sys.exit(int(os.environ["RECORDER_EXIT"]))
                 self.assertEqual(invocation, {
                     "args": ["record", "--bin", str(self.out / "line-probe"),
                              "--plane", "llm", "--out", str(self.out / "recording")],
-                    "lto": "off", "units": "16", "opt": "0", "judge": "/controller/immutable-judge"})
+                    "lto": "off", "units": "16", "opt": "1", "judge": "/controller/immutable-judge"})
                 self.assertEqual(len(result.stderr.splitlines()), 120)
                 self.assertIn("llm recorder phase: building run-keyed candidate", result.stderr)
                 self.assertNotIn("private detail", result.stderr)
@@ -116,7 +116,7 @@ printf '%s/%s/%s' "$CARGO_PROFILE_RELEASE_OPT_LEVEL" "$CARGO_PROFILE_RELEASE_LTO
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, '3/fat/1')
         invocation = json.loads(self.log.read_text())
-        self.assertEqual((invocation['opt'], invocation['lto'], invocation['units']), ('0', 'off', '16'))
+        self.assertEqual((invocation['opt'], invocation['lto'], invocation['units']), ('1', 'off', '16'))
 
     def test_recording_phase_is_visible_before_recorder_exit(self):
         (self.src / "bin").mkdir()
