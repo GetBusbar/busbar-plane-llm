@@ -1266,6 +1266,25 @@ fn read_responses_usage(
     response: Option<&serde_json::Value>,
 ) -> Result<crate::codec::ir::IrUsage, IrError> {
     let mut ir = crate::codec::usage_count::read_usage(COUNT_LABEL, usage, USAGE)?;
+    if response.is_some_and(|r| {
+        r.get("output")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    matches!(
+                        item.get("type").and_then(serde_json::Value::as_str),
+                        Some("image_generation_call" | "code_interpreter_call")
+                    ) || item
+                        .pointer("/environment/type")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("container_reference")
+                })
+            })
+    }) {
+        ir.detail
+            .refused_counts
+            .push(crate::codec::usage_count::RESPONSES_HOSTED_UNRESOLVED.to_owned());
+    }
     cache_writes::normalize(usage, &mut ir);
 
     ir.detail.usage_identity_note = (!crate::codec::usage_count::refused_any(usage, USAGE))

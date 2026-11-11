@@ -7,6 +7,7 @@
 //! (`busbar-plane-llm-plugin`, via `busbar_contract::export_door!`), so the two cannot answer
 //! differently.
 
+mod execution;
 mod native;
 
 type StaticServices = KindStaticServices<busbar_contract::plugin::markers::PlaneKind>;
@@ -549,6 +550,8 @@ struct Pending {
 /// What the door keeps for one unit, from its `arrive` to its end.
 struct UnitState {
     native: Option<native::Native>,
+    /// Policy facts from the actual outbound request, never caller/response exemption flags.
+    execution: Option<execution::Guard>,
     /// The generation's tables the unit arrived on.
     shaping: Arc<Shaping>,
     /// The arrival, read once at `arrive`.
@@ -590,6 +593,7 @@ impl UnitState {
     fn new(shaping: Arc<Shaping>) -> Self {
         UnitState {
             native: None,
+            execution: None,
             shaping,
             arrived: None,
             caller: Vec::new(),
@@ -1219,6 +1223,7 @@ fn attempt(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
     unit.final_answer = false;
     unit.reply = None;
     unit.request = None;
+    unit.execution = None;
     unit.far_status = 0;
     unit.started = host.clock().map(|c| c.mono_ns);
     let built = if unit.probe {
@@ -1238,6 +1243,33 @@ fn attempt(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
     };
     match built {
         Ok(mut request) => {
+            if !unit.probe {
+                let Some(lane) = unit.shaping.lane(&unit.member) else {
+                    return Answer::hard();
+                };
+                match execution::Guard::prepare(
+                    &request,
+                    lane,
+                    unit.shaping.translate_cap(),
+                    unit.shaping
+                        .anthropic_execution_policy_providers
+                        .contains(&lane.provider),
+                    piece.passthrough,
+                ) {
+                    Ok(guard) => unit.execution = guard,
+                    Err(reason) => {
+                        return answered(refuse::answered(
+                            host,
+                            &attempt::Answer {
+                                status: 400,
+                                envelope: unit.arrived.as_ref().map_or("anthropic", |a| a.dialect),
+                                kind: crate::codec::protocol::KIND_INVALID_REQUEST,
+                                message: reason.into(),
+                            },
+                        ));
+                    }
+                }
+            }
             let egress = unit.shaping.lane(&unit.member).map_or("", |l| l.dialect);
             let answer = Answer {
                 to_far_end: true,
@@ -1302,8 +1334,20 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
     let Some(reply) = unit.reply.as_mut() else {
         return Answer::hard();
     };
+    if let Some(guard) = &mut unit.execution {
+        guard.feed(piece.bytes);
+    }
+    let buffered = unit.execution.as_ref().and_then(|g| g.buffered_body());
+    if buffered.is_some() && !piece.last && (200..300).contains(&unit.far_status) {
+        return Answer::default();
+    }
+    let buffered = (200..300)
+        .contains(&unit.far_status)
+        .then(|| buffered.map(<[u8]>::to_vec))
+        .flatten();
+    let provider_bytes = buffered.as_deref().unwrap_or(piece.bytes);
     if piece.cut {
-        let arrived = piece.bytes;
+        let arrived = provider_bytes;
         let mut fed = if arrived.is_empty() {
             Piece::default()
         } else {
@@ -1322,6 +1366,9 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
         if cut.head.is_none() {
             cut.head = fed.head.take();
         }
+        if unit.execution.is_some() && (200..300).contains(&unit.far_status) {
+            cut.units.refused_counts.push(execution::UNRESOLVED.into());
+        }
         return far_answer(cut, unit.far_status);
     }
 
@@ -1330,7 +1377,28 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
     } else {
         At::default()
     };
-    let mut fed = reply.feed(host, &ctx, piece.bytes, piece.last, time);
+    let mut fed = reply.feed(host, &ctx, provider_bytes, piece.last, time);
+
+    let mut execution_proof = None;
+    if piece.last && (200..300).contains(&unit.far_status) {
+        if let Some(guard) = unit.execution.take() {
+            let proof = if piece.passthrough && guard.buffered_body().is_some() {
+                Err(execution::UNRESOLVED)
+            } else {
+                guard.finish()
+            };
+            match proof {
+                Ok(Some(proof)) => {
+                    fed.units
+                        .refused_counts
+                        .retain(|r| r != execution::UNRESOLVED);
+                    execution_proof = Some(proof);
+                }
+                Ok(None) => {}
+                Err(reason) => fed.units.refused_counts.push(reason.into()),
+            }
+        }
+    }
 
     let dropped = std::mem::take(&mut fed.dropped);
     let synthesized = fed.synthesized;
@@ -1345,6 +1413,12 @@ fn far_end(host: &DoorHost, unit: &mut UnitState, piece: &PieceIn<'_>) -> Answer
             )
         })
         .collect();
+
+    if let Some(proof) = execution_proof {
+        answer
+            .audits
+            .push((AUDIT_APPLIED, b"llm.execution.exempt".to_vec(), proof));
+    }
 
     if synthesized {
         answer.audits.push((

@@ -808,7 +808,7 @@ fn exact_integer(value: &Value) -> Result<u64, StreamIssue> {
 
 // Validate duplicates independently without retaining or reserializing generated text.
 // Numeric visitors discard values; accounting always reads the original exact-number JSON.
-fn validate_unique_json(bytes: &[u8]) -> Result<(), StreamIssue> {
+pub(crate) fn validate_unique_json(bytes: &[u8]) -> Result<(), StreamIssue> {
     struct Unique;
     impl<'de> Deserialize<'de> for Unique {
         fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {

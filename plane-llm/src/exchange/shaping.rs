@@ -116,6 +116,9 @@ pub struct Member {
 /// THE TABLES, read once per generation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Shaping {
+    /// Providers explicitly bound by the operator to the dated Anthropic request-exemption
+    /// tariff. This is a policy selection, not provider attestation or credential inspection.
+    pub anthropic_execution_policy_providers: std::collections::BTreeSet<String>,
     /// Every configured model, by name.
     pub lanes: BTreeMap<String, Lane>,
     /// Every pool's members, in the pool's order, by pool name.
@@ -169,6 +172,8 @@ struct ModelCapabilities {
 #[derive(Deserialize)]
 struct ProviderCfg {
     #[serde(default)]
+    anthropic_execution_policy: Option<AnthropicExecutionPolicy>,
+    #[serde(default)]
     protocol: Option<String>,
     #[serde(default)]
     path: Option<String>,
@@ -186,6 +191,12 @@ struct ProviderCfg {
     native_structured_output: Option<bool>,
     #[serde(default)]
     model_capabilities: Vec<ModelCapabilities>,
+}
+
+#[derive(Deserialize)]
+enum AnthropicExecutionPolicy {
+    #[serde(rename = "web_tools_exempt_2026_11_10")]
+    WebToolsExempt20261110,
 }
 
 #[derive(Deserialize)]
@@ -375,9 +386,13 @@ impl Shaping {
         let blocks: BTreeMap<String, serde_json::Map<String, Value>> =
             section(settings, sections::PROVIDERS)?.unwrap_or_default();
         let mut providers: BTreeMap<String, (ProviderCfg, Vec<SetOption>)> = BTreeMap::new();
+        let mut anthropic_execution_policy_providers = std::collections::BTreeSet::new();
         for (name, block) in blocks {
             let p: ProviderCfg = serde_json::from_value(Value::Object(block.clone()))
                 .map_err(|e| format!("the `{}` settings do not read: {e}", sections::PROVIDERS))?;
+            if p.anthropic_execution_policy.is_some() {
+                anthropic_execution_policy_providers.insert(name.clone());
+            }
 
             let dialect = p.protocol.as_deref().unwrap_or(DEFAULT_PROTOCOL);
             let set = options::read(&name, dialect, &block)?;
@@ -502,6 +517,7 @@ impl Shaping {
             .and_then(|l| l.reasoning_effort_budgets.as_ref());
         let [minimal, low, medium, high] = DEFAULT_REASONING_BUDGETS;
         Ok(Shaping {
+            anthropic_execution_policy_providers,
             lanes,
             pools,
             affinity_headers,

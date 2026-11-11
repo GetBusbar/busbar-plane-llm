@@ -199,6 +199,7 @@ pub const BUSBAR_KEYS: &[&str] = &[
     "health",
     "max_output_key",
     "anthropic_adaptive_thinking",
+    "anthropic_execution_policy",
     "native_structured_output",
     "model_capabilities",
 ];

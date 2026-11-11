@@ -2,6 +2,15 @@
 
 use busbar_contract::Count;
 
+/// A request counter is not priceable execution duration. Only the live outbound request's
+/// authenticated exemption proof may discharge this refusal; codecs alone cannot do so.
+pub(crate) const ANTHROPIC_EXECUTION_UNRESOLVED: &str =
+    "Anthropic execution requires authoritative duration and allowance or a proven request exemption";
+
+/// Hosted image/container usage must not disappear behind the parent model's token report.
+pub(crate) const RESPONSES_HOSTED_UNRESOLVED: &str =
+    "Responses hosted image and container billing requires complete attributable provider evidence";
+
 /// Read the original decimal spelling retained by serde_json's arbitrary_precision feature.
 pub fn read_count(v: &serde_json::Value) -> Option<Count> {
     let serde_json::Value::Number(number) = v else {

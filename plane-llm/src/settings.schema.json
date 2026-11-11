@@ -410,6 +410,17 @@
             },
             "health": {
               "description": "Host-owned provider setting; this plane passes it through without interpreting its value."
+            },
+            "anthropic_execution_policy": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                "web_tools_exempt_2026_11_10",
+                null
+              ],
+              "description": "Explicit operator selection of documented Anthropic execution exemption terms for this provider account. Absent or null disables the exemption. This is a tariff policy, not provider attestation. Caller-key passthrough and streamed execution remain unsupported."
             }
           }
         },

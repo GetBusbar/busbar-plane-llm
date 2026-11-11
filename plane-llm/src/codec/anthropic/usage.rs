@@ -53,6 +53,15 @@ pub(super) fn read_anthropic_usage(
     usage_val: Option<&serde_json::Value>,
 ) -> Result<crate::codec::ir::IrUsage, IrError> {
     let mut usage = read_usage(COUNT_LABEL, usage_val, USAGE)?;
+    if usage_val
+        .and_then(|u| u.pointer("/server_tool_use/code_execution_requests"))
+        .is_some()
+    {
+        usage
+            .detail
+            .refused_counts
+            .push(crate::codec::usage_count::ANTHROPIC_EXECUTION_UNRESOLVED.to_owned());
+    }
     usage.detail.service_tier = usage_val
         .and_then(|u| u.get(keys::SERVICE_TIER))
         .and_then(|v| v.as_str())

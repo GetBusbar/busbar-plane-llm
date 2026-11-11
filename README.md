@@ -219,8 +219,40 @@ are durable. A lost create without a recorded provider ID remains unresolved and
 cannot trigger a replacement create. Historical runs predating work registration
 retain request-driven recovery; this version does not invent background jobs for them.
 
-Authenticated hosted-evidence acquisition remains an external dependency. The
-hosted module is a typed adapter, not automatic image/container invoice settlement.
+Buffered Anthropic Messages requests have a narrow live execution-exemption path.
+An operator must explicitly set
+`providers.<name>.anthropic_execution_policy: web_tools_exempt_2026_11_10` for the
+selected provider. This selects the documented billing terms for that provider's
+configured account; it is not independent provider attestation or hostname
+verification. The default is no applicable policy. The actual outbound request
+must include a supported `web_search_20260209` or
+`web_fetch_20260209` tool (also the explicitly recognized March 2026 versions),
+with its correct provider tool name and use the ordinary `/v1/messages` target.
+Cloud wrappers, caller-key passthrough and streaming execution requests do not
+inherit this policy. Known non-exempt or unproven execution, including container
+reuse, is refused before dispatch. The completed provider Message must match the
+frozen model and contain valid unique JSON and usage fields. Until transport EOF,
+the bounded response is held within `limits.request_body_max_bytes` (the existing
+translation limit). Successful proof permits the reported token/search/fetch
+accounting and records `llm.execution.exempt` under the original host unit. It
+asserts no additional execution charge for that request, not zero execution time,
+an organization allowance, or an exemption for other requests sharing a container.
+Unexpected execution, invalid proof or a cut response yields `COUNT_REFUSED` while
+preserving known token counts. No execution duration is fabricated.
+
+Responses requests declaring image generation, code interpreter, or a hosted shell
+container are also refused before dispatch until a complete settlement path is
+available. Shell requests must explicitly select the local environment to pass this
+guard. Ordinary text and client function tools continue to dispatch. Unexpected
+hosted image/container output marks accounting `COUNT_REFUSED` and retains known
+parent token counts. These admission protections do not complete image/container
+settlement.
+
+The broader hosted module is still a typed adapter with no production Anthropic
+interval-settlement caller; it is not automatic image/container invoice settlement.
+Complete authenticated interval/image acquisition remains unresolved. Available
+call identities, requested image models, and aggregate cost quantities do not by
+themselves supply the missing complete accounting records.
 The exact public-provider evidence limits checked on 2026-11-10 are:
 
 | Provider path checked | What it supplies | Missing for exact hosted settlement |
@@ -231,7 +263,8 @@ The exact public-provider evidence limits checked on 2026-11-10 are:
 | [Anthropic code execution](https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool) | Request count and documented request-level exemptions | Duration and authoritative organization allowance allocation for each economic interval; preloading can accrue time without a call. |
 | [Anthropic analytics costs](https://platform.claude.com/docs/en/api/beta/organization/analytics/cost/list) | Aggregated cost dimensions, including Managed Agents session IDs | The documented session IDs refer to Managed Agents, not Messages code-execution containers, and do not provide their execution interval or allowance allocation. |
 
-Completing those paths requires an authenticated provider export/feed with complete
+Completing general interval and raster-image settlement requires authenticated
+provider evidence with complete
 call or interval identity, usage and allowance facts, plus host-issued interval
 custody. None was established by the public schemas above. No paid probe was made,
 no account aggregate was assigned to a caller, and refusal is not counted as completion
