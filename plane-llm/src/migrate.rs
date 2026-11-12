@@ -25,11 +25,7 @@ impl Migrate for LlmMigration {
         if from == "1.5.5" {
             credential_needs(&settings, &mut needs);
         }
-        Migrated {
-            settings,
-            needs,
-            report: Vec::new(),
-        }
+        Migrated::new(settings, Vec::new(), needs)
     }
     fn migrate(settings: Value, from: &str) -> Migrated {
         let mut needs: Vec<MigrateNeed> = Vec::new();
@@ -47,11 +43,7 @@ impl Migrate for LlmMigration {
         if from == "1.5.5" {
             credential_needs(&settings, &mut needs);
         }
-        Migrated {
-            settings,
-            report: Vec::new(),
-            needs,
-        }
+        Migrated::new(settings, Vec::new(), needs)
     }
 }
 
@@ -86,8 +78,19 @@ fn credential_needs(settings: &Value, needs: &mut Vec<MigrateNeed>) {
 }
 
 #[cfg(test)]
+/// The settings a sealed [`Migrated`] carries, read back under the dev-only test kernel seal.
+fn settings_of(answer: &Migrated) -> serde_json::Value {
+    let seal = busbar_contract::caps::KernelSeal::acquire_for_kernel();
+    serde_json::to_value(
+        busbar_contract::abi::sdk::migrate::MigrationAnswer::from(answer.clone()).authoring(&seal),
+    )
+    .expect("migrated settings serialize")
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn legacy_auth_selects_its_owner_without_lending_catalog_credentials() {
         let settings = serde_json::json!({"providers": {
@@ -95,7 +98,7 @@ mod tests {
             "structured": {"auth":{"module":"oauth"}}
         }});
         let answer = LlmMigration::migrate(settings.clone(), "1.5.5");
-        assert_eq!(answer.settings, settings);
+        assert_eq!(settings_of(&answer), settings);
         assert_eq!(
             answer.needs,
             vec![MigrateNeed::MigrateCredential {
@@ -127,7 +130,7 @@ mod provenance_tests {
             }
         }}});
         let answer = LlmMigration::migrate(settings.clone(), "1.5.5");
-        assert_eq!(answer.settings, settings);
+        assert_eq!(settings_of(&answer), settings);
         assert_eq!(answer.needs.len(), 2);
         for (need, name) in answer.needs.iter().zip(["inherited", "null"]) {
             assert_eq!(
@@ -148,7 +151,7 @@ mod discovery_tests {
     fn provider_only_discovery_converts_credentials_without_destination_changes() {
         let settings = serde_json::json!({"providers":{"old":{"auth":"jwt-bearer","base_url":"http://127.0.0.1","api_key":{"env":"SOURCE"}}}});
         let answer = LlmMigration::migrate_references(settings.clone(), "1.5.5");
-        assert_eq!(answer.settings, settings);
+        assert_eq!(settings_of(&answer), settings);
         assert!(answer.report.is_empty());
         assert_eq!(answer.needs.len(), 1);
         assert!(matches!(
