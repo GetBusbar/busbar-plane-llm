@@ -758,9 +758,21 @@ async fn the_pools_doors_tap_hooks_observe_the_rewritten_request() {
 #[cfg(linked_driver_proofs)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hook_payload_never_carries_auth_headers() {
-    const CALLER_API_KEY: &str = "caller-x-api-key-5b1e0c";
-    const PROXY_SECRET: &str = "Basic cHJveHk6c2VjcmV0LTkxZDM=";
-    const COOKIE: &str = "session=cookie-secret-3a7f";
+    // Obviously synthetic canaries, minted per run so no credential-shaped literal lives in source.
+    let canary = |tag: &str| {
+        let mut nonce = [0u8; 8];
+        getrandom::fill(&mut nonce).expect("the OS CSPRNG is available");
+        format!("test-only-{tag}-{}", hex::encode(nonce))
+    };
+    let caller_api_key = canary("caller-x-api-key");
+    let proxy_secret = {
+        let user_pass = format!("test-only-proxy:{}", canary("proxy-secret"));
+        format!(
+            "Basic {}",
+            busbar_contract::media::base64_encode(user_pass.as_bytes())
+        )
+    };
+    let cookie = format!("session={}", canary("cookie"));
     let _one = ONE_PUBLISHER.lock().await;
     let instance = "serve-door-tap-no-auth";
     let far = seat_far_end(200, SERVED_BY_TWIN).await;
@@ -782,9 +794,9 @@ async fn hook_payload_never_carries_auth_headers() {
                 "messages": [{"role": "user", "content": "the caller's prompt"}]})),
             &[
                 ("authorization", bearer.as_str()),
-                ("x-api-key", CALLER_API_KEY),
-                ("proxy-authorization", PROXY_SECRET),
-                ("cookie", COOKIE),
+                ("x-api-key", caller_api_key.as_str()),
+                ("proxy-authorization", proxy_secret.as_str()),
+                ("cookie", cookie.as_str()),
             ],
         )
         .await;
@@ -800,9 +812,9 @@ async fn hook_payload_never_carries_auth_headers() {
     );
     for secret in [
         rig.token.as_str(),
-        CALLER_API_KEY,
-        PROXY_SECRET,
-        COOKIE,
+        caller_api_key.as_str(),
+        proxy_secret.as_str(),
+        cookie.as_str(),
         "sk-seats",
     ] {
         assert!(
